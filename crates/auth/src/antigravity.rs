@@ -325,6 +325,7 @@ impl AntigravityAuth {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("request failed with status {status}: {}", text.trim()),
+                retry_after: None,
             });
         }
         let load: Value = serde_json::from_str(&text)
@@ -410,6 +411,7 @@ impl AntigravityAuth {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("http {status}: {preview}"),
+                retry_after: None,
             });
         }
         Err(AuthFlowError::other(format!(
@@ -425,6 +427,7 @@ impl AntigravityAuth {
             return Err(AuthFlowError::Status {
                 status: 401,
                 message: "missing refresh token".into(),
+                retry_after: None,
             });
         }
         let secret = self.client_secret()?;
@@ -468,15 +471,41 @@ impl AntigravityAuth {
             .await?;
         let (status, text) = read_text(resp).await?;
         if !(200..300).contains(&status) {
+            // A 429 carries the server's retry hint (Go: ParseRetryDelay -> statusErr.retryAfter).
+            let retry_after = if status == 429 {
+                crate::retry::parse_retry_delay(text.as_bytes())
+            } else {
+                None
+            };
             return Err(AuthFlowError::Status {
                 status,
                 message: text,
+                retry_after,
             });
         }
         serde_json::from_str(&text).map_err(|e| {
             AuthFlowError::other(format!("antigravity token refresh: decode response: {e}"))
         })
     }
+}
+
+/// Startup check: logs one clear warning when antigravity credentials are loaded but no OAuth client
+/// secret is configured (their refresh and re-login would fail later with a config error).
+/// Returns `true` when a warning was logged.
+pub fn warn_if_client_secret_missing(auths: &[Auth]) -> bool {
+    let secret_set = std::env::var(CLIENT_SECRET_ENV).is_ok_and(|s| !s.trim().is_empty());
+    let count = auths
+        .iter()
+        .filter(|a| a.provider.trim().eq_ignore_ascii_case("antigravity"))
+        .count();
+    if secret_set || count == 0 {
+        return false;
+    }
+    tracing::warn!(
+        "{count} antigravity credential(s) loaded but {CLIENT_SECRET_ENV} is not set: token refresh \
+         and login for antigravity will fail until the Google OAuth client secret is provided"
+    );
+    true
 }
 
 fn status_error(prefix: &str, status: u16, body: &str) -> AuthFlowError {
@@ -488,7 +517,11 @@ fn status_error(prefix: &str, status: u16, body: &str) -> AuthFlowError {
     } else {
         format!("{prefix}: status {status}: {body}")
     };
-    AuthFlowError::Status { status, message }
+    AuthFlowError::Status {
+        status,
+        message,
+        retry_after: None,
+    }
 }
 
 pub fn default_redirect_uri() -> String {

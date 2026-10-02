@@ -134,6 +134,7 @@ async fn refresh_meta(auth: &mut Auth, proxy: &str) -> Result<()> {
         return Err(AuthFlowError::Status {
             status: 401,
             message: "meta executor: missing API key or DCA token".into(),
+            retry_after: None,
         });
     }
     let minted = MetaAuth::new(proxy)?

@@ -43,23 +43,26 @@ pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 pub type Prompt =
     Arc<dyn Fn(String) -> BoxFuture<std::result::Result<String, String>> + Send + Sync>;
 
-/// Prompt that prints the message and reads one line from stdin.
+/// Prompt that prints the message and reads one line from stdin. The read runs on a detached
+/// thread: a blocked stdin read cannot be cancelled, and a runtime-owned blocking task would hang
+/// process exit until the user pressed Enter.
 pub fn stdin_prompt() -> Prompt {
     Arc::new(|message: String| {
         Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            std::thread::spawn(move || {
                 use std::io::{BufRead, Write};
                 print!("{message}");
                 let _ = std::io::stdout().flush();
                 let mut line = String::new();
-                std::io::stdin()
+                let res = std::io::stdin()
                     .lock()
                     .read_line(&mut line)
                     .map(|_| line)
-                    .map_err(|e| e.to_string())
-            })
-            .await
-            .map_err(|e| e.to_string())?
+                    .map_err(|e| e.to_string());
+                let _ = tx.send(res);
+            });
+            rx.await.map_err(|_| "stdin reader stopped".to_string())?
         })
     })
 }
@@ -162,6 +165,9 @@ pub struct LoginOptions {
     pub no_browser: bool,
     /// Overrides the local callback listener port (CLI only).
     pub callback_port: Option<u16>,
+    /// Listen on every interface instead of loopback (Go always does). Needed when the callback
+    /// port is published from a container; SSH-tunnel logins work with loopback.
+    pub callback_bind_all: bool,
     /// e.g. `codex_login_mode = device`.
     pub metadata: BTreeMap<String, String>,
     /// Per-request proxy override, `""` inherits the global/environment proxy.
@@ -290,17 +296,19 @@ impl LoginSession {
     }
 
     /// Feeds a redirect (pasted URL, management callback endpoint) to the running login.
-    pub fn submit_callback(
+    pub async fn submit_callback(
         &self,
         payload: CallbackPayload,
     ) -> std::result::Result<(), crate::sessions::CallbackError> {
-        self.sessions.submit_callback(
-            self.auth_dir.as_deref(),
-            self.start.provider.session_name(),
-            &self.start.state,
-            &payload.code,
-            &payload.error,
-        )
+        self.sessions
+            .submit_callback(
+                self.auth_dir.as_deref(),
+                self.start.provider.session_name(),
+                &self.start.state,
+                &payload.code,
+                &payload.error,
+            )
+            .await
     }
 
     /// Cancels a pending login; the background task stops without saving. Returns whether it was
@@ -489,10 +497,18 @@ async fn wait_for_redirect(
                 if !env.pending() {
                     return Err(fail(AuthFlowError::Cancelled, ""));
                 }
-                if let Some(dir) = env.auth_dir.clone().filter(|_| env.mgmt())
-                    && let Some(p) = crate::sessions::take_callback_file(&dir, env.provider.session_name(), &env.state) {
+                if let Some(dir) = env.auth_dir.clone().filter(|_| env.mgmt()) {
+                    let (provider, state) = (env.provider.session_name(), env.state.clone());
+                    let taken = tokio::task::spawn_blocking(move || {
+                        crate::sessions::take_callback_file(&dir, provider, &state)
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+                    if let Some(p) = taken {
                         return Ok(Waited::Redirect(Redirect { code: p.code, state: p.state, error: p.error, description: String::new() }));
                     }
+                }
             }
             _ = &mut prompt_timer, if prompt_armed && prompt_idle => {
                 // A browser result that is already ready wins over asking the user.
@@ -641,6 +657,7 @@ async fn claude_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
             env.opts
                 .callback_port
                 .unwrap_or(claude::DEFAULT_CALLBACK_PORT),
+            env.opts.callback_bind_all,
         )
         .await?;
         port = Some(s.port());
@@ -680,7 +697,8 @@ async fn claude_run(
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
         return Err(AuthFlowError::other("unexpected token paste").into());
     };
-    drop(server);
+    // Keep the callback server alive until the flow ends so the browser can still load /success.
+    let _server_until_done = server;
 
     if !r.error.is_empty() {
         return Err(fail(
@@ -775,6 +793,7 @@ async fn codex_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
             env.opts
                 .callback_port
                 .unwrap_or(codex::DEFAULT_CALLBACK_PORT),
+            env.opts.callback_bind_all,
         )
         .await?;
         port = Some(s.port());
@@ -814,7 +833,8 @@ async fn codex_run(
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
         return Err(AuthFlowError::other("unexpected token paste").into());
     };
-    drop(server);
+    // Keep the callback server alive until the flow ends so the browser can still load /success.
+    let _server_until_done = server;
 
     if !r.error.is_empty() {
         return Err(fail(
@@ -935,6 +955,7 @@ async fn antigravity_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
         let s = CallbackServer::start(
             Flavor::Antigravity,
             env.opts.callback_port.unwrap_or(antigravity::CALLBACK_PORT),
+            env.opts.callback_bind_all,
         )
         .await?;
         let port = s.port();
@@ -976,7 +997,8 @@ async fn antigravity_run(
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
         return Err(AuthFlowError::other("unexpected token paste").into());
     };
-    drop(server);
+    // Keep the callback server alive until the flow ends so the browser can still load /success.
+    let _server_until_done = server;
 
     let (code, got_state, error) = (
         r.code.trim().to_string(),
@@ -1185,7 +1207,7 @@ async fn devin_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
         ));
     }
 
-    let server = CallbackServer::start(Flavor::Devin, env.opts.callback_port.unwrap_or(0))
+    let server = CallbackServer::start(Flavor::Devin, env.opts.callback_port.unwrap_or(0), false)
         .await
         .map_err(|e| {
             AuthFlowError::other(format!("failed to start devin oauth callback server: {e}"))
@@ -1262,7 +1284,8 @@ async fn devin_run(
         };
         wait_for_redirect(&mut env, &mut server, cfg).await?
     };
-    drop(server);
+    // Keep the callback server alive until the flow ends so the browser can still load /success.
+    let _server_until_done = server;
 
     let session_token = match waited {
         Waited::Token(raw) => devin::format_session_token(&raw),

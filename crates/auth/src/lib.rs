@@ -23,7 +23,7 @@
 //! let session = manager.start_login(Provider::Claude, LoginOptions::management("")).await?;
 //! respond_json(session.start_info().to_json());                    // {"status":"ok","url","state"}
 //! let (http_status, body) = manager.sessions().poll_status(&state); // wait | ok | error
-//! let (http_status, body) = manager.sessions().handle_oauth_callback(Some(auth_dir), &req);
+//! let (http_status, body) = manager.sessions().handle_oauth_callback(Some(auth_dir), &req).await;
 //! ```
 //!
 //! Known gaps vs the Go app: no TLS ClientHello fingerprinting (Claude uses a uTLS Firefox profile
@@ -54,6 +54,7 @@ pub mod oauth;
 pub mod pkce;
 mod redact;
 pub mod refresh;
+pub mod retry;
 pub mod sessions;
 pub mod singleflight;
 pub mod storage;

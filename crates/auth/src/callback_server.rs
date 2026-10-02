@@ -68,13 +68,17 @@ pub struct CallbackServer {
 impl CallbackServer {
     /// Binds the provider's port (all interfaces, like Go's `:port`; Devin binds loopback) and
     /// starts serving. Fails with `PortInUse` when the port is taken.
-    pub async fn start(flavor: Flavor, port: u16) -> Result<CallbackServer, AuthFlowError> {
+    pub async fn start(
+        flavor: Flavor,
+        port: u16,
+        bind_all: bool,
+    ) -> Result<CallbackServer, AuthFlowError> {
         let port = if port == 0 && flavor != Flavor::Devin {
             flavor.default_port()
         } else {
             port
         };
-        let listener = bind(flavor, port).await.map_err(|e| {
+        let listener = bind(flavor, port, bind_all).await.map_err(|e| {
             if e.kind() == io::ErrorKind::AddrInUse {
                 AuthFlowError::authentication(
                     AuthErrorKind::PortInUse,
@@ -212,8 +216,12 @@ fn forward_location(target_base: &str, request_target: &str) -> String {
     }
 }
 
-async fn bind(flavor: Flavor, port: u16) -> io::Result<TcpListener> {
-    if flavor == Flavor::Devin {
+/// Loopback only unless `bind_all` is set. The Go app listens on every interface (`:port`), which
+/// exposes the redirect receiver to the network; remote logins are served by an SSH tunnel to
+/// 127.0.0.1 anyway, so loopback is the default here. Set `bind_all` for containers that publish
+/// the port.
+async fn bind(flavor: Flavor, port: u16, bind_all: bool) -> io::Result<TcpListener> {
+    if flavor == Flavor::Devin || !bind_all {
         return TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await;
     }
     match TcpListener::bind(SocketAddr::from(([0u16; 8], port))).await {
@@ -579,7 +587,7 @@ mod tests {
 
     #[tokio::test]
     async fn devin_flavor_delivers_result_on_loopback() {
-        let mut server = CallbackServer::start(Flavor::Devin, 0)
+        let mut server = CallbackServer::start(Flavor::Devin, 0, false)
             .await
             .unwrap_or_else(|_| unreachable!());
         let port = server.port();
@@ -597,7 +605,9 @@ mod tests {
     async fn codex_flavor_errors_and_success_page() {
         // Port 0 means "default port" for non-Devin flavors; use a dedicated high port instead.
         let port = free_port();
-        let mut server = CallbackServer::start(Flavor::Codex, port).await.unwrap();
+        let mut server = CallbackServer::start(Flavor::Codex, port, false)
+            .await
+            .unwrap();
         let resp = get(port, "/auth/callback?code=c1&state=s1").await;
         assert!(resp.starts_with("HTTP/1.1 302"), "{resp}");
         assert!(resp.contains("Location: /success"));
@@ -619,8 +629,10 @@ mod tests {
     #[tokio::test]
     async fn port_in_use_is_reported() {
         let port = free_port();
-        let _first = CallbackServer::start(Flavor::Claude, port).await.unwrap();
-        match CallbackServer::start(Flavor::Claude, port).await {
+        let _first = CallbackServer::start(Flavor::Claude, port, false)
+            .await
+            .unwrap();
+        match CallbackServer::start(Flavor::Claude, port, false).await {
             Err(AuthFlowError::Authentication {
                 kind: AuthErrorKind::PortInUse,
                 ..
@@ -631,7 +643,9 @@ mod tests {
 
     #[tokio::test]
     async fn wait_times_out_with_callback_timeout() {
-        let mut server = CallbackServer::start(Flavor::Devin, 0).await.unwrap();
+        let mut server = CallbackServer::start(Flavor::Devin, 0, false)
+            .await
+            .unwrap();
         match server.wait(Duration::from_millis(50)).await {
             Err(AuthFlowError::Authentication {
                 kind: AuthErrorKind::CallbackTimeout,

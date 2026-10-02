@@ -4,3 +4,4 @@ node_modules/
 /ui/dist/
 *.log
 /conformance/*.jsonl
+/.claude/worktrees/

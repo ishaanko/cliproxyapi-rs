@@ -50,7 +50,8 @@ const DEVICE_POOL_SIZE: usize = 1;
 const DEVICE_ID_BYTES: usize = 32;
 
 /// Per-refresh-token "blocked until" after a 429.
-static REFRESH_BLOCK: LazyLock<Mutex<HashMap<String, Instant>>> =
+type BlockedUntil = (Instant, chrono::DateTime<chrono::Utc>);
+static REFRESH_BLOCK: LazyLock<Mutex<HashMap<String, BlockedUntil>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static REFRESH_FLIGHT: LazyLock<SingleFlight<ClaudeTokenData>> =
     LazyLock::new(SingleFlight::default);
@@ -173,6 +174,8 @@ impl Default for ClaudeEndpoints {
 #[derive(Clone)]
 pub struct ClaudeAuth {
     client: reqwest::Client,
+    /// Same transport plus the 10 s TLS handshake bound Go applies to refresh requests only.
+    refresh_client: reqwest::Client,
     token_url: String,
     refresh_url: String,
     profile_url: String,
@@ -182,13 +185,17 @@ pub struct ClaudeAuth {
 impl ClaudeAuth {
     /// `proxy_url`: per-auth override, else the global proxy (`""` inherits the environment).
     pub fn new(proxy_url: &str) -> Result<Self> {
-        let client = build_client_ext(proxy_url, None, Some(HANDSHAKE_TIMEOUT))?;
-        Ok(Self::with_client(client))
+        let client = build_client_ext(proxy_url, None, None)?;
+        let refresh_client = build_client_ext(proxy_url, None, Some(HANDSHAKE_TIMEOUT))?;
+        let mut auth = Self::with_client(client);
+        auth.refresh_client = refresh_client;
+        Ok(auth)
     }
 
     /// Uses a caller-supplied client (tests, shared transports).
     pub fn with_client(client: reqwest::Client) -> Self {
         Self {
+            refresh_client: client.clone(),
             client,
             token_url: TOKEN_URL.to_string(),
             refresh_url: REFRESH_TOKEN_URL.to_string(),
@@ -324,6 +331,7 @@ impl ClaudeAuth {
 
     async fn fetch_control_plane(
         &self,
+        client: &reqwest::Client,
         endpoint: &str,
         access_token: &str,
         label: &str,
@@ -334,7 +342,7 @@ impl ClaudeAuth {
                 "fetch Claude OAuth {label}: access token is empty"
             )));
         }
-        let req = axios_headers(self.client.get(endpoint))
+        let req = axios_headers(client.get(endpoint))
             .header("Authorization", format!("Bearer {access_token}"))
             .header("Cache-Control", "no-cache");
         let resp = req.send().await.map_err(|e| {
@@ -350,6 +358,7 @@ impl ClaudeAuth {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("fetch Claude OAuth {label} failed with status {status}"),
+                retry_after: None,
             });
         }
         Ok(body)
@@ -357,8 +366,17 @@ impl ClaudeAuth {
 
     /// Account identity of an access token; requires a non-empty account uuid.
     pub async fn fetch_oauth_profile(&self, access_token: &str) -> Result<OAuthProfile> {
+        self.fetch_oauth_profile_with(&self.client, access_token)
+            .await
+    }
+
+    async fn fetch_oauth_profile_with(
+        &self,
+        client: &reqwest::Client,
+        access_token: &str,
+    ) -> Result<OAuthProfile> {
         let body = self
-            .fetch_control_plane(&self.profile_url, access_token, "profile")
+            .fetch_control_plane(client, &self.profile_url, access_token, "profile")
             .await?;
         let profile: OAuthProfile = serde_json::from_str(&body).map_err(|e| {
             AuthFlowError::other(format!("parse Claude OAuth profile response: {e}"))
@@ -374,7 +392,12 @@ impl ClaudeAuth {
     /// `claude_cli` roles lookup; the payload stays opaque.
     pub async fn fetch_oauth_roles(&self, access_token: &str) -> Result<Value> {
         let body = self
-            .fetch_control_plane(&self.roles_url, access_token, "claude_cli roles")
+            .fetch_control_plane(
+                &self.client,
+                &self.roles_url,
+                access_token,
+                "claude_cli roles",
+            )
             .await?;
         serde_json::from_str(&body).map_err(|_| {
             AuthFlowError::other(
@@ -418,7 +441,7 @@ impl ClaudeAuth {
         })
         .map_err(|e| AuthFlowError::other(format!("failed to marshal request body: {e}")))?;
 
-        let resp = axios_headers(self.client.post(&self.refresh_url))
+        let resp = axios_headers(self.refresh_client.post(&self.refresh_url))
             .body(body)
             .send()
             .await
@@ -438,9 +461,13 @@ impl ClaudeAuth {
 
         if status != 200 {
             if status == 429 {
-                REFRESH_BLOCK
-                    .lock()
-                    .insert(refresh_token.to_string(), Instant::now() + retry_after);
+                REFRESH_BLOCK.lock().insert(
+                    refresh_token.to_string(),
+                    (
+                        Instant::now() + retry_after,
+                        crate::util::now_plus_secs(retry_after.as_secs() as i64),
+                    ),
+                );
                 return Err(AuthFlowError::Refresh {
                     status,
                     message: text,
@@ -468,7 +495,10 @@ impl ClaudeAuth {
             expire: expiry_local(token.expires_in),
             ..Default::default()
         };
-        match self.fetch_oauth_profile(&token.access_token).await {
+        match self
+            .fetch_oauth_profile_with(&self.refresh_client, &token.access_token)
+            .await
+        {
             Ok(profile) => {
                 data.email = profile.account.email;
                 data.account_uuid = profile.account.uuid;
@@ -503,10 +533,15 @@ impl ClaudeAuth {
                 }
             }
         }
-        let cause = last_err.map(|e| e.to_string()).unwrap_or_default();
-        Err(AuthFlowError::Other(format!(
-            "token refresh failed after {max_retries} attempts: {cause}"
-        )))
+        match last_err {
+            Some(source) => Err(AuthFlowError::RetriesExhausted {
+                attempts: max_retries,
+                source: Box::new(source),
+            }),
+            None => Err(AuthFlowError::other(format!(
+                "token refresh failed after {max_retries} attempts"
+            ))),
+        }
     }
 
     /// Builds the credential file struct from a login bundle.
@@ -569,15 +604,28 @@ pub fn apply_refresh_to_auth(auth: &mut Auth, td: &ClaudeTokenData) {
 }
 
 fn blocked_error(refresh_token: &str) -> Option<AuthFlowError> {
-    let until = REFRESH_BLOCK.lock().get(refresh_token).copied()?;
+    let (until, wall) = REFRESH_BLOCK.lock().get(refresh_token).copied()?;
     if until <= Instant::now() {
         return None;
     }
     Some(AuthFlowError::Refresh {
         status: 429,
-        message: "refresh temporarily blocked".to_string(),
+        message: format!(
+            "refresh temporarily blocked until {}",
+            crate::util::format_rfc3339_local(wall)
+        ),
         retryable: false,
     })
+}
+
+/// Seconds as a `Duration`, `None` when it would not fit Go's i64-nanosecond `time.Duration`
+/// (so `ParseDuration` would have failed). Negative values become zero.
+fn bounded_duration(secs: f64) -> Option<Duration> {
+    const MAX_SECS: f64 = (i64::MAX / 1_000_000_000) as f64;
+    if !secs.is_finite() || secs > MAX_SECS {
+        return None;
+    }
+    Duration::try_from_secs_f64(secs.max(0.0)).ok()
 }
 
 fn clamp_backoff(d: Duration) -> Duration {
@@ -593,9 +641,11 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
     };
+    // Values that do not fit a Duration (inf, 1e20, NaN) are treated as unparseable, like Go's
+    // ParseDuration failing, and fall through to the next source / the 5 s minimum.
     if let Some(raw) = get("retry-after") {
-        if let Ok(secs) = raw.parse::<f64>() {
-            return clamp_backoff(Duration::from_secs_f64(secs.max(0.0)));
+        if let Some(d) = raw.parse::<f64>().ok().and_then(bounded_duration) {
+            return clamp_backoff(d);
         }
         if let Ok(when) = chrono::DateTime::parse_from_rfc2822(&raw) {
             let delta = (when.with_timezone(&chrono::Utc) - chrono::Utc::now())
@@ -604,10 +654,11 @@ fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
             return clamp_backoff(delta);
         }
     }
-    if let Some(raw) = get("retry-after-ms")
-        && let Ok(ms) = raw.parse::<f64>()
+    if let Some(d) = get("retry-after-ms")
+        .and_then(|raw| raw.parse::<f64>().ok())
+        .and_then(|ms| bounded_duration(ms / 1000.0))
     {
-        return clamp_backoff(Duration::from_secs_f64((ms / 1000.0).max(0.0)));
+        return clamp_backoff(d);
     }
     REFRESH_MIN_BACKOFF
 }
@@ -881,6 +932,19 @@ mod tests {
         let mut h = reqwest::header::HeaderMap::new();
         h.insert("retry-after-ms", "30000".parse().unwrap());
         assert_eq!(parse_retry_after(&h), Duration::from_secs(30));
+        // Hostile values never panic and fall back to the 5 s minimum.
+        for hostile in ["inf", "NaN", "1e20", "1e400", "-5"] {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert("retry-after", hostile.parse().unwrap());
+            assert_eq!(parse_retry_after(&h), Duration::from_secs(5), "{hostile}");
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert("retry-after-ms", hostile.parse().unwrap());
+            assert_eq!(
+                parse_retry_after(&h),
+                Duration::from_secs(5),
+                "ms {hostile}"
+            );
+        }
     }
 
     #[test]

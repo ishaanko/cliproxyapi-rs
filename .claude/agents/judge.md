@@ -12,4 +12,6 @@ Check, in order:
 2. Correctness: panics on untrusted input, unwraps, wrong JSON ordering semantics (`Map::remove` vs `shift_remove`), streaming state bugs, async/blocking mistakes.
 3. Quality: idiomatic Rust, no dead code, no slop tests, concise accurate comments.
 
+Put any scratch under `/home/ishaan/box/cliproxyapirust/tmp/scratch/judge-<slice>/`, never `/tmp`, and delete it when done.
+
 Do not rewrite the code yourself unless a fix is a few lines. Return: VERDICT (accept / accept-with-fixes / reject), then a numbered list of required fixes with file:line and the Go reference location, then optional nits.
