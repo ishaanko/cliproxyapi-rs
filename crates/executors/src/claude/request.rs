@@ -1080,3 +1080,23 @@ pub fn apply_claude_headers_with_native_profile(
     }
     Ok(())
 }
+
+/// Sets a top-level string field unless it already holds that value (Go: helps.SetStringIfDifferent).
+pub fn set_string_if_different_bytes(body: &[u8], path: &str, value: &str) -> Vec<u8> {
+    let mut root = cpa_json::parse(body);
+    if root.g(path).as_str() == Some(value) {
+        return body.to_vec();
+    }
+    cpa_json::set(&mut root, path, value);
+    cpa_json::to_vec(&root)
+}
+
+/// Sets a boolean field unless it already holds that value (Go: helps.SetBoolIfDifferent).
+pub fn set_bool_if_different_bytes(body: &[u8], path: &str, value: bool) -> Vec<u8> {
+    let mut root = cpa_json::parse(body);
+    if root.g(path).v() == Some(&Value::Bool(value)) {
+        return body.to_vec();
+    }
+    cpa_json::set(&mut root, path, value);
+    cpa_json::to_vec(&root)
+}

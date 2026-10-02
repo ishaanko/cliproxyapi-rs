@@ -59,8 +59,48 @@ pub(super) struct Prepared {
     pub api_key: String,
 }
 
+/// Translates one payload to the Claude schema (Go: helps.TranslateRequestWithAPIKeyModelCompatibility,
+/// minus the Codex multi-agent rewrite).
+pub(super) fn translate_request_single(
+    headers: &HeaderMap,
+    from: Format,
+    model: &str,
+    payload: &[u8],
+    stream: bool,
+    is_compat: bool,
+) -> Vec<u8> {
+    let payload = crate::helps::codex_tool_integers::normalize_codex_tool_integer_types(payload, Some(headers));
+    let to = Format::Claude;
+    if is_compat {
+        let translated = match from {
+            Format::OpenAI => Some(
+                cpa_translator::claude::openai::chat_completions::convert_openai_request_to_claude_with_compat(
+                    model, &payload, stream,
+                ),
+            ),
+            Format::OpenAIResponse => Some(
+                cpa_translator::claude::openai::responses::convert_openai_responses_request_to_claude_with_compat(
+                    model, &payload, stream,
+                ),
+            ),
+            _ => None,
+        };
+        if let Some(translated) = translated {
+            let summary = extract_translated_summary_config(&payload, from.as_str(), to.as_str());
+            return apply_summary_config_for_model(translated, to.as_str(), model, &summary);
+        }
+    }
+    cpa_translator::translate_request_envelope(
+        &Ctx::default(),
+        from,
+        to,
+        RequestEnvelope { model: model.to_string(), stream, body: payload, ..Default::default() },
+    )
+    .body
+}
+
 /// Translates the pre-translation payload and the working payload (Go:
-/// helps.TranslateRequestPairWithAPIKeyModelCompatibility, minus the Codex multi-agent rewrite).
+/// helps.TranslateRequestPairWithAPIKeyModelCompatibility); identical inputs translate once.
 fn translate_request_pair(
     headers: &HeaderMap,
     from: Format,
@@ -70,45 +110,13 @@ fn translate_request_pair(
     stream: bool,
     is_compat: bool,
 ) -> (Vec<u8>, Vec<u8>) {
-    let translate = |payload: &[u8]| -> Vec<u8> {
-        let mut payload = payload.to_vec();
-        if crate::helps::payload::is_codex_user_agent(Some(headers)) {
-            payload = crate::helps::codex_tool_integers::normalize_codex_tool_integer_types(&payload, Some(headers));
-        }
-        let to = Format::Claude;
-        if is_compat {
-            let translated = match from {
-                Format::OpenAI => Some(
-                    cpa_translator::claude::openai::chat_completions::convert_openai_request_to_claude_with_compat(
-                        model, &payload, stream,
-                    ),
-                ),
-                Format::OpenAIResponse => Some(
-                    cpa_translator::claude::openai::responses::convert_openai_responses_request_to_claude_with_compat(
-                        model, &payload, stream,
-                    ),
-                ),
-                _ => None,
-            };
-            if let Some(translated) = translated {
-                let summary = extract_translated_summary_config(&payload, from.as_str(), to.as_str());
-                return apply_summary_config_for_model(translated, to.as_str(), model, &summary);
-            }
-        }
-        cpa_translator::translate_request_envelope(
-            &Ctx::default(),
-            from,
-            to,
-            RequestEnvelope { model: model.to_string(), stream, body: payload, ..Default::default() },
-        )
-        .body
-    };
-    let original = translate(original_payload);
+    let original = translate_request_single(headers, from, model, original_payload, stream, is_compat);
     if original_payload == request_payload {
         let working = original.clone();
         return (original, working);
     }
-    (original, translate(request_payload))
+    let working = translate_request_single(headers, from, model, request_payload, stream, is_compat);
+    (original, working)
 }
 
 /// Signature sanitizer for thinking blocks coming from other providers, then the web-search
@@ -210,7 +218,7 @@ impl ClaudeExecutor {
             upstream_stream,
             is_compat,
         );
-        body = crate::helps::payload::set_string_if_different_bytes(&body, "model", &upstream_model);
+        body = set_string_if_different_bytes(&body, "model", &upstream_model);
 
         body = apply_request_thinking(&body, &req, opts, from.as_str(), to.as_str(), "claude", false)
             .map_err(|e| ExecError::new(e.status_code(), e.to_string()))?;
@@ -380,7 +388,7 @@ impl ClaudeExecutor {
             // authority. Native non-stream Haiku helpers omit `stream` rather than send false.
             let stream_field_exists = cpa_json::parse(&body).g("stream").exists();
             if !detection.helper_profile || stream_field_exists || upstream_stream {
-                body = crate::helps::payload::set_bool_if_different_bytes(&body, "stream", upstream_stream);
+                body = set_bool_if_different_bytes(&body, "stream", upstream_stream);
             }
         }
 
@@ -494,6 +502,46 @@ impl ClaudeExecutor {
         result
     }
 
+    /// Sends the prepared request and maps a non-2xx response to its classified error
+    /// (Go: the shared send + error half of Execute/ExecuteStream/CountTokens).
+    pub(super) async fn send_upstream(
+        &self,
+        cfg: &Config,
+        auth: &Auth,
+        opts: &Options,
+        p: &Prepared,
+    ) -> Result<reqwest::Response, ExecError> {
+        let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
+        let model_level_cooling = cfg.claude.model_level_cooling;
+        let resp = match super::http::send_messages(&client, &p.url, &p.headers, &p.body_for_upstream).await {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::debug!("claude upstream request failed: {}", err.message);
+                return Err(wrap_claude_fast_request_error(p.fast_request, 0, err));
+            }
+        };
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(resp);
+        }
+        let resp_headers = resp.headers().clone();
+        let body = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => Bytes::from(format!("failed to read error response body: {e}")),
+        };
+        tracing::debug!(
+            "request error, error status: {status}, error message: {}",
+            crate::helps::logging::summarize_error_body(
+                resp_headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or(""),
+                &body
+            )
+        );
+        if p.fast_request {
+            return Err(new_claude_fast_direct_response_error(status, &resp_headers, &body));
+        }
+        Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &body, model_level_cooling))
+    }
+
     async fn send_non_stream(
         &self,
         cfg: &Config,
@@ -504,34 +552,9 @@ impl ClaudeExecutor {
         reporter: &UsageReporter,
     ) -> Result<Response, ExecError> {
         let to = Format::Claude;
-        let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
-        let model_level_cooling = cfg.claude.model_level_cooling;
-        let resp = match super::http::send_messages(&client, &p.url, &p.headers, &p.body_for_upstream).await {
-            Ok(r) => r,
-            Err(err) => {
-                tracing::debug!("claude upstream request failed: {err}");
-                return Err(wrap_claude_fast_request_error(p.fast_request, 0, err));
-            }
-        };
+        let resp = self.send_upstream(cfg, auth, opts, p).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        if !(200..300).contains(&status) {
-            let body = match resp.bytes().await {
-                Ok(b) => b,
-                Err(e) => Bytes::from(format!("failed to read error response body: {e}")),
-            };
-            tracing::debug!(
-                "request error, error status: {status}, error message: {}",
-                crate::helps::logging::summarize_error_body(
-                    resp_headers.get("content-type").and_then(|v| v.to_str().ok()).unwrap_or(""),
-                    &body
-                )
-            );
-            if p.fast_request {
-                return Err(new_claude_fast_direct_response_error(status, &resp_headers, &body));
-            }
-            return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &body, model_level_cooling));
-        }
         let data = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {

@@ -34,7 +34,7 @@ pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     let _ = &cfg;
     #[allow(unused_mut)]
     let mut executors: Vec<DynExecutor> = Vec::new();
-    // executors.push(claude::new(cfg.clone()));
+    executors.push(claude::new(cfg.clone()));
     // executors.push(codex::new(cfg.clone()));
     // executors.push(gemini::new(cfg.clone()));
     // executors.push(antigravity::new(cfg.clone()));
