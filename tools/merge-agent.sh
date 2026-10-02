@@ -7,7 +7,9 @@ cd "$(git rev-parse --show-toplevel)"
 git checkout -q Cargo.lock 2>/dev/null || true
 if [ -n "$(git status --porcelain)" ]; then echo "working tree dirty"; git status --short; exit 1; fi
 git merge --no-ff --no-commit "$branch" || true
-if git diff --name-only --diff-filter=U | grep -qv '^Cargo.lock$'; then
+python3 tools/dedupe-toml.py
+git add crates/*/Cargo.toml 2>/dev/null || true
+if git diff --name-only --diff-filter=U | grep -qvE '^(Cargo.lock|crates/[^/]+/Cargo.toml)$'; then
   echo "non-lockfile conflicts:"; git diff --name-only --diff-filter=U; exit 1
 fi
 git checkout --theirs Cargo.lock 2>/dev/null || true
