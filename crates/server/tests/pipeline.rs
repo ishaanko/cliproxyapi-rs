@@ -269,3 +269,19 @@ async fn zstd_request_bodies_are_decoded_for_openai_endpoints() {
     assert_eq!(resp.status(), 200);
     assert!(h.exec.seen.lock()[0].1.contains("zstd-me"));
 }
+
+/// `X-CPA-TRACE-ID` is stamped once a credential was picked, including on streams and on
+/// upstream error replies; requests that fail before selection carry none.
+#[tokio::test]
+async fn trace_id_header_follows_credential_selection() {
+    let h = harness("trace", |_| {}).await;
+    h.script("err400", Script::Fail(ExecError::new(400, "nope")));
+    let (_, headers, _) = h.call("POST", "/v1/chat/completions", &[], &h.chat_stream("hi")).await;
+    assert!(headers.contains_key("x-cpa-trace-id"));
+    let (status, headers, _) = h.call("POST", "/v1/chat/completions", &[], &h.chat("err400")).await;
+    assert_eq!(status, 400);
+    assert!(headers.contains_key("x-cpa-trace-id"));
+    let (status, headers, _) = h.call("POST", "/v1/chat/completions", &[], r#"{"model":"nope","messages":[]}"#).await;
+    assert_eq!(status, 400);
+    assert!(!headers.contains_key("x-cpa-trace-id"));
+}
