@@ -10,6 +10,7 @@ use crate::headers::write_upstream_headers;
 use crate::reply::{JSON, Reply};
 use crate::req::ReqInfo;
 
+pub mod alpha_search;
 pub mod claude;
 pub mod gemini;
 pub mod images;

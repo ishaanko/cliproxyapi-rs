@@ -10,7 +10,7 @@ use constant_time_eq_lite::eq as ct_eq;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 
-use crate::handlers::{claude, gemini, images, openai, responses, videos};
+use crate::handlers::{alpha_search, claude, gemini, images, openai, responses, videos};
 use crate::middleware::{access_log, api_key_auth, cors, recover_panic, safe_mode, trace_header};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
@@ -77,12 +77,14 @@ const ROUTE_TABLE: &[(&str, &str)] = &[
     ("GET", "/v1/responses"),
     ("POST", "/v1/responses"),
     ("POST", "/v1/responses/compact"),
+    ("POST", "/v1/alpha/search"),
     ("POST", "/openai/v1/videos"),
     ("GET", "/openai/v1/videos/:video_id/content"),
     ("GET", "/openai/v1/videos/:video_id"),
     ("GET", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses/compact"),
+    ("POST", "/backend-api/codex/alpha/search"),
     ("GET", "/v1beta/models"),
     ("POST", "/v1beta/interactions"),
     ("GET", "/v1beta/models/*action"),
@@ -176,6 +178,7 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/messages/count_tokens", post(claude::count_tokens))
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route("/alpha/search", post(alpha_search::alpha_search))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
@@ -191,6 +194,7 @@ fn proxy_routes(state: &AppState) -> Router {
     let codex_direct = Router::new()
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route("/alpha/search", post(alpha_search::alpha_search))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);

@@ -6,8 +6,7 @@
 //! usage tracker, optional model catalog) and call [`build_router`] /
 //! [`build_router_with_management`], then [`serve::serve`].
 //!
-//! Not ported: realtime/live endpoints, image and video generation (501), `/v1/alpha/search`,
-//! the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
+//! Not ported: realtime/live endpoints, the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
 
 // `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
 #![allow(clippy::result_large_err)]

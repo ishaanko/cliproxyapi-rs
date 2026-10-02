@@ -42,6 +42,7 @@ use serde_json::Value;
 use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 
+pub use creds::codex_creds;
 pub use quota::parse_codex_quota_event_headers;
 pub use ws::{close_codex_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
