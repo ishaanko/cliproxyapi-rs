@@ -127,21 +127,22 @@ fn parse_queue_count(raw: &str) -> Result<usize, ApiError> {
     }
 }
 
-/// Go executor type names (`reflect.Type.Name`) by provider id, as the usage queue reports them.
-fn go_executor_type(provider: &str) -> &'static str {
-    match provider {
-        "claude" => "ClaudeExecutor",
-        "codex" => "CodexAutoExecutor",
-        "xai" => "XAIAutoExecutor",
-        "gemini" | "gemini-interactions" => "GeminiExecutor",
-        "vertex" => "GeminiVertexExecutor",
-        "aistudio" => "AIStudioExecutor",
-        "antigravity" => "AntigravityExecutor",
-        "kimi" | "kimi-ai" => "KimiExecutor",
-        "devin" => "DevinExecutor",
-        "meta" => "MetaExecutor",
-        _ => "OpenAICompatExecutor",
+/// `http.Header` as JSON: canonical header names mapped to value lists, keys sorted.
+fn response_headers_json(headers: &axum::http::HeaderMap) -> serde_json::Value {
+    let mut map: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for (name, value) in headers {
+        let canonical = name
+            .as_str()
+            .split('-')
+            .map(|part| {
+                let mut chars = part.chars();
+                chars.next().map(|c| c.to_ascii_uppercase().to_string() + chars.as_str()).unwrap_or_default()
+            })
+            .collect::<Vec<_>>()
+            .join("-");
+        map.entry(canonical).or_default().push(String::from_utf8_lossy(value.as_bytes()).into_owned());
     }
+    json!(map)
 }
 
 /// One usage event in the shape of Go's `redisqueue` record (`queuedUsageDetail`). Fields the
@@ -186,10 +187,11 @@ fn queue_record(e: &UsageEvent, sources: &HashMap<String, String>) -> serde_json
         .unwrap_or(&r.source);
     put("source", source.clone().into());
     put("auth_index", r.auth_index.clone().into());
-    put("client_ip", "".into());
-    put("resolved_client_ip", "".into());
-    put("x_forwarded_for", "".into());
-    put("user_agent", "".into());
+    let x = &r.extra;
+    put("client_ip", x.client_ip.clone().into());
+    put("resolved_client_ip", x.resolved_client_ip.clone().into());
+    put("x_forwarded_for", x.x_forwarded_for.clone().into());
+    put("user_agent", x.user_agent.clone().into());
     put(
         "tokens",
         json!({
@@ -207,6 +209,9 @@ fn queue_record(e: &UsageEvent, sources: &HashMap<String, String>) -> serde_json
     put("generate", true.into());
     put("stream", r.stream.into());
     put("fail", fail);
+    if !x.response_headers.is_empty() {
+        put("response_headers", response_headers_json(&x.response_headers));
+    }
     put("accounting_version", 2.into());
     put(
         "token_breakdown",
@@ -229,7 +234,7 @@ fn queue_record(e: &UsageEvent, sources: &HashMap<String, String>) -> serde_json
         }),
     );
     put("provider", non_empty(&r.provider, "unknown").into());
-    put("executor_type", go_executor_type(r.provider.trim()).into());
+    put("executor_type", non_empty(&r.executor_type, "unknown").into());
     put("model", model.into());
     put("alias", alias.into());
     put("endpoint", r.endpoint.clone().into());
@@ -237,8 +242,15 @@ fn queue_record(e: &UsageEvent, sources: &HashMap<String, String>) -> serde_json
     put("api_key", r.api_key.trim().into());
     put("request_id", r.request_id.clone().into());
     put("execution_id", uuid::Uuid::new_v4().to_string().into());
-    if !r.request_id.is_empty() {
-        put("trace_id", r.request_id.clone().into());
+    let trace_id = if x.trace_id.is_empty() { r.request_id.as_str() } else { x.trace_id.as_str() };
+    if !trace_id.is_empty() {
+        put("trace_id", trace_id.into());
+    }
+    if !x.session_id.is_empty() {
+        put("session_id", x.session_id.clone().into());
+    }
+    if !x.parent_session_id.is_empty() {
+        put("parent_session_id", x.parent_session_id.clone().into());
     }
     put("reasoning_effort", "".into());
     put("service_tier", "auto".into());

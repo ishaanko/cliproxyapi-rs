@@ -182,9 +182,9 @@ async fn gemini_actions_and_alt_framing() {
     assert_eq!(status, 200);
     assert_eq!(headers[header::CONTENT_TYPE], "text/event-stream");
     assert_eq!(out, "data: {\"candidates\":[1]}\n\ndata: {\"candidates\":[2]}\n\n");
-    // alt=json: raw chunks, no SSE headers
+    // alt=json: raw chunks, no SSE headers; net/http sniffs the first write as text
     let (_, headers, out) = h.call("POST", &format!("{}?alt=json", path("streamGenerateContent")), &[], body).await;
-    assert!(headers.get(header::CONTENT_TYPE).is_none());
+    assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
     assert_eq!(out, "{\"candidates\":[1]}{\"candidates\":[2]}");
     // alt=sse behaves like no alt
     let (_, _, out) = h.call("POST", &format!("{}?alt=sse", path("streamGenerateContent")), &[], body).await;

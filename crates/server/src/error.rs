@@ -163,15 +163,15 @@ pub fn is_selection_error(err: &ExecError) -> bool {
     selection_parts(err).is_some()
 }
 
-/// Model-level cooldown (`modelCooldownError`): its text is a JSON body with that code.
-fn is_model_cooldown(err: &ExecError) -> bool {
-    err.message.contains("\"model_cooldown\"")
-}
-
 /// `executionErrorMessage`: converts an executor failure to a handler error.
 pub fn exec_error_message(err: &ExecError) -> ErrorMessage {
-    // `coreauth.SafeResponseHeaders`: only selection / cooldown failures expose Retry-After.
-    let retry_after = err.retry_after.filter(|_| is_selection_error(err) || is_model_cooldown(err));
+    // `coreauth.SafeResponseHeaders`: only conductor cooldown / unavailable failures expose
+    // Retry-After, read from the headers the conductor attached (never upstream's own).
+    let retry_after = cpa_runtime::conductor::errors::safe_response_headers(err)
+        .get(axum::http::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(Duration::from_secs);
     ErrorMessage {
         status: err.status,
         text: exec_error_text(err),

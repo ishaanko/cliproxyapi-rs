@@ -177,7 +177,7 @@ impl Manager {
                 error: Some(result_error_from_error(error)),
                 options: opts.clone(),
                 skip_quota_observation: false,
-                response_headers: error.headers.clone(),
+                response_headers: error.recorded_headers(),
             };
             let facts = |started: Instant, tokens| UsageFacts {
                 latency: started.elapsed(),

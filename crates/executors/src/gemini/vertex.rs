@@ -16,7 +16,7 @@ use serde_json::Map;
 use super::common::{
     PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error, compact_unsupported, error_body,
     fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, observed_lines, original_payload, post_json,
-    pre_send, read_body, set_header, set_model, thinking_error, translate_request, translator_input, upstream_error,
+    pre_send, read_body, set_header, set_model, thinking_error, translate_request, upstream_error,
     usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
@@ -541,7 +541,7 @@ impl GeminiVertexExecutor {
                 if let Some(detail) = parse_gemini_stream_usage(&line) {
                     pump.usage.observe(detail, true);
                 }
-                if !pump.feed(translator_input(response_format, &line)).await {
+                if !pump.feed(&line).await {
                     return;
                 }
             }

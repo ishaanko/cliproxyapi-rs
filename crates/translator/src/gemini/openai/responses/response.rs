@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use cpa_core::util::{
+    go_any,
     restore_sanitized_tool_name, responses_tool_reverse_identity_map, sanitized_tool_name_map, unwrap_responses_custom_tool_input,
     ResponsesToolIdentity,
 };
@@ -245,8 +246,15 @@ fn determine_web_search_stream_mode(model_name: &str, request_model_name: &str, 
     false
 }
 
+/// Where the echoed `model` comes from: the request only, or the request with a fallback (the
+/// response's `modelVersion`, when it exists) for the non-stream conversion.
+pub(super) enum ModelEcho<'a> {
+    RequestOnly,
+    WithFallback(Option<&'a str>),
+}
+
 /// Echo fields copied from the request into the response object.
-pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value, include_model: bool) {
+pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value, model_echo: ModelEcho<'_>) {
     let p = |name: &str| if prefix.is_empty() { name.to_string() } else { format!("{prefix}.{name}") };
     let get = |name: &str| req.g(name);
     let v = get("instructions");
@@ -261,11 +269,11 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     if v.exists() {
         cpa_json::set(target, &p("max_tool_calls"), v.int());
     }
-    if include_model {
-        let v = get("model");
-        if v.exists() {
-            cpa_json::set(target, &p("model"), v.str());
-        }
+    let v = get("model");
+    if v.exists() {
+        cpa_json::set(target, &p("model"), v.str());
+    } else if let ModelEcho::WithFallback(Some(fallback)) = model_echo {
+        cpa_json::set(target, &p("model"), fallback);
     }
     let v = get("parallel_tool_calls");
     if v.exists() {
@@ -279,7 +287,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     }
     let v = get("reasoning");
     if v.exists() {
-        cpa_json::set(target, &p("reasoning"), v.value());
+        cpa_json::set(target, &p("reasoning"), go_any(v.value()));
     }
     for name in ["safety_identifier", "service_tier"] {
         let v = get(name);
@@ -298,7 +306,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     for name in ["text", "tool_choice", "tools"] {
         let v = get(name);
         if v.exists() {
-            cpa_json::set(target, &p(name), v.value());
+            cpa_json::set(target, &p(name), go_any(v.value()));
         }
     }
     let v = get("top_logprobs");
@@ -316,7 +324,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     for name in ["user", "metadata"] {
         let v = get(name);
         if v.exists() {
-            cpa_json::set(target, &p(name), v.value());
+            cpa_json::set(target, &p(name), go_any(v.value()));
         }
     }
 }
@@ -911,7 +919,7 @@ impl Stream<'_> {
 
         if let Some(req_json) = pick_request_json(self.original, self.request) {
             let parsed = cpa_json::parse(req_json);
-            echo_request_fields(&mut completed, "response", unwrap_request_root(&parsed), true);
+            echo_request_fields(&mut completed, "response", unwrap_request_root(&parsed), ModelEcho::RequestOnly);
         }
 
         self.emit_late_citations();

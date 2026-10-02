@@ -114,6 +114,7 @@ fn executor(cfg: Config) -> (DevinExecutor, watch::Sender<Arc<Config>>) {
             .no_gzip()
             .no_brotli()
             .no_deflate()
+            .no_zstd()
             .build()
             .unwrap(),
     );

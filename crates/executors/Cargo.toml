@@ -40,7 +40,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = ["ring",
 flate2 = "1"
 webpki-roots = "1"
 tiktoken-rs = "0.7"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "gzip", "brotli", "deflate", "socks", "stream", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "gzip", "brotli", "zstd", "deflate", "socks", "stream", "json"] }
 aes-gcm = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 

@@ -59,9 +59,11 @@ impl Reply {
 
     pub fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+        let mut headers = self.headers;
+        crate::sniff::ensure_content_type(&mut headers, &self.body);
         let mut resp = Response::new(Body::from(self.body));
         *resp.status_mut() = status;
-        *resp.headers_mut() = self.headers;
+        *resp.headers_mut() = headers;
         resp
     }
 }

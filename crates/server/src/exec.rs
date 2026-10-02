@@ -65,6 +65,11 @@ pub struct ExecArgs<'a> {
     pub pinned_auth_id: Option<&'a str>,
     /// The client is connected over a Responses websocket (lets the Codex executor use its upstream websocket).
     pub downstream_websocket: bool,
+    /// The request continues a response and is valid only on the session's live upstream
+    /// websocket (Go: `WithRequiredUpstreamWebsocket`).
+    pub required_upstream_websocket: bool,
+    /// Called with the auth id of every credential pick (Go: `WithSelectedAuthIDCallback`).
+    pub on_selected_auth: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -81,6 +86,8 @@ impl<'a> ExecArgs<'a> {
             execution_session_id: None,
             pinned_auth_id: None,
             downstream_websocket: false,
+            required_upstream_websocket: false,
+            on_selected_auth: None,
         }
     }
 }
@@ -144,7 +151,24 @@ impl Pipeline {
         if let Some(session) = a.execution_session_id.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::EXECUTION_SESSION_ID.into(), json!(session));
         }
+        // Request facts the usage record reports (Go: ClientRequestMetadata, GetRequestID).
+        let remote_ip = self.info.remote.map(|a| a.ip().to_string()).unwrap_or_default();
+        let forwarded = self.info.headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(", ");
+        let user_agent = self.info.header("User-Agent");
+        for (key, value) in [
+            (meta::CLIENT_IP, remote_ip.as_str()),
+            (meta::RESOLVED_CLIENT_IP, self.info.client_ip.trim()),
+            (meta::X_FORWARDED_FOR, forwarded.trim()),
+            (meta::USER_AGENT, user_agent.trim()),
+            (cpa_runtime::conductor::usage::META_REQUEST_ID, self.info.request_id.trim()),
+            (meta::TRACE_ID, self.info.request_id.trim()),
+        ] {
+            if !value.is_empty() {
+                md.insert(key.into(), json!(value));
+            }
+        }
         if let Some(key) = &self.info.api_key {
+            md.insert(cpa_runtime::conductor::usage::META_CLIENT_API_KEY.into(), json!(key));
             let scope = caller_scope(key);
             if !scope.is_empty() {
                 md.insert(meta::CALLER_SCOPE.into(), json!(scope));
@@ -152,6 +176,9 @@ impl Pipeline {
         }
         if a.downstream_websocket {
             md.insert(cpa_executors::codex::META_DOWNSTREAM_WEBSOCKET.into(), json!(true));
+        }
+        if a.required_upstream_websocket {
+            md.insert(cpa_executors::codex::META_REQUIRED_UPSTREAM_WEBSOCKET.into(), json!(true));
         }
         md.insert(meta::REQUESTED_MODEL.into(), json!(a.model));
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
@@ -186,7 +213,13 @@ impl Pipeline {
         opts.metadata = metadata;
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
-        opts.selected_auth = Some(SelectedAuthCallback(Arc::new(move |_auth_id, index| trace.record(index, &request_id))));
+        let on_selected = a.on_selected_auth.clone();
+        opts.selected_auth = Some(SelectedAuthCallback(Arc::new(move |auth_id, index| {
+            trace.record(index, &request_id);
+            if let Some(cb) = &on_selected {
+                cb(auth_id);
+            }
+        })));
         (req, opts)
     }
 

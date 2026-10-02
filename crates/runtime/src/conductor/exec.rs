@@ -453,7 +453,7 @@ impl Manager {
                         error: Some(result_error_from_error(&err)),
                         options: opts.clone(),
                         skip_quota_observation: matches!(kind, RoundKind::Unary(Kind::Count)),
-                        response_headers: err.headers.clone(),
+                        response_headers: err.recorded_headers(),
                     };
                     self.mark_result_inner(result, None);
                     last_err = Some(err.into());
@@ -604,7 +604,7 @@ impl Manager {
                 Err(err) => {
                     result.error = Some(result_error_from_error(&err));
                     result.retry_after = err.retry_after;
-                    result.response_headers = err.headers.clone();
+                    result.response_headers = err.recorded_headers();
                     if kind == Kind::Execute {
                         result.credential_scope = err.credential_scoped;
                     }

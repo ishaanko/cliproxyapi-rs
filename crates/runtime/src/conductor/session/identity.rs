@@ -44,6 +44,57 @@ pub const CANDIDATE_SESSION_PREFIXES: [&str; 18] = [
     "derived:",
 ];
 
+/// Legacy protocol prefixes unwrapped before projecting to a UUID (Go: knownSessionPrefixes).
+const KNOWN_SESSION_PREFIXES: [&str; 20] = [
+    "lcp:v1:", "lcp:", "ctx:v1:", "ctx:", "codex:", "claude:", "header:", "session:", "affinity:", "slot:", "task:", "conv:", "thread:",
+    "clientreq:", "geminicache:", "pck:", "user:", "execution:", "agy:", "derived:",
+];
+
+fn is_canonical_uuid(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 36 && b.iter().enumerate().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { *c == b'-' } else { c.is_ascii_hexdigit() })
+}
+
+/// Deterministic 36-character lowercase UUID for any session id (Go: NormalizeToCanonicalUUID):
+/// UUIDs pass through, known prefixes are unwrapped, everything else is projected to a UUIDv8.
+pub fn normalize_to_canonical_uuid(raw_id: &str) -> String {
+    let mut clean = raw_id.trim();
+    if clean.is_empty() {
+        return String::new();
+    }
+    if is_canonical_uuid(clean) {
+        return clean.to_lowercase();
+    }
+    loop {
+        let Some(prefix) = KNOWN_SESSION_PREFIXES.iter().find(|p| clean.starts_with(**p)) else {
+            break;
+        };
+        clean = clean[prefix.len()..].trim();
+    }
+    if clean.is_empty() {
+        return String::new();
+    }
+    if is_canonical_uuid(clean) {
+        return clean.to_lowercase();
+    }
+    if let Some(idx) = clean.find(':').filter(|i| *i > 0) {
+        let candidate = clean[idx + 1..].trim();
+        if is_canonical_uuid(candidate) {
+            return candidate.to_lowercase();
+        }
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"cpa:canonical-uuid:v1\x00");
+    hasher.update(clean.as_bytes());
+    let sum = hasher.finalize();
+    let mut u = [0u8; 16];
+    u.copy_from_slice(&sum[..16]);
+    u[6] = (u[6] & 0x0f) | 0x80;
+    u[8] = (u[8] & 0x3f) | 0x80;
+    let hex: String = u.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
+}
+
 /// Irreversible namespace for a downstream caller credential (Go: CallerScope).
 pub fn caller_scope(value: &str) -> String {
     let value = value.trim();

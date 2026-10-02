@@ -175,7 +175,8 @@ fn build_client(setting: &ProxySetting, pool: PoolSettings) -> Result<reqwest::C
         .tcp_keepalive(Duration::from_secs(30))
         // Go's transport asks for gzip only.
         .no_brotli()
-        .no_deflate();
+        .no_deflate()
+        .no_zstd();
     if pool.short_mode || pool.max_idle_conns_per_host <= 0 {
         builder = builder.pool_max_idle_per_host(0);
     } else {

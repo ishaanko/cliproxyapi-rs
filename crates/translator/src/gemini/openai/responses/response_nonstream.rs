@@ -10,7 +10,7 @@ use cpa_json::{json, Value, J};
 use super::lenient::gjson_valid;
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::response::{
-    echo_request_fields, next_func_call_id_counter, next_response_id_counter, pick_request_json, set_usage,
+    echo_request_fields, ModelEcho, next_func_call_id_counter, next_response_id_counter, pick_request_json, set_usage,
     unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
 };
 use super::signature_carrier::{encode_gemini_responses_carrier, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_STANDALONE, CARRIER_TEXT};
@@ -152,14 +152,9 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     // Echo request fields when present; the model falls back to the response modelVersion.
     if let Some(req_value) = &req_value {
         let req = unwrap_request_root(req_value);
-        let model = req.g("model");
         let model_version = root.g("modelVersion");
-        if model.exists() {
-            cpa_json::set(&mut resp, "model", model.str());
-        } else if model_version.exists() {
-            cpa_json::set(&mut resp, "model", model_version.str());
-        }
-        echo_request_fields(&mut resp, "", req, false);
+        let fallback = model_version.exists().then(|| model_version.str());
+        echo_request_fields(&mut resp, "", req, ModelEcho::WithFallback(fallback.as_deref()));
     } else {
         let model_version = root.g("modelVersion");
         if model_version.exists() {

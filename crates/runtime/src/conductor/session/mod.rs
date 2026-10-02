@@ -14,6 +14,7 @@ pub mod info;
 
 pub use cache::SessionCache;
 pub use identity::{
+    normalize_to_canonical_uuid,
     CANDIDATE_SESSION_PREFIXES, caller_scope, canonical_session_id, derive_id, enrich,
     explicit_session_ids, is_subagent_session, session_ids,
 };

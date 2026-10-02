@@ -563,6 +563,7 @@ pub fn classify_claude_upstream_error_with_cooling(
     model_level_cooling: bool,
 ) -> ExecError {
     let mut err = status_err(status_code, String::from_utf8_lossy(body).into_owned());
+    err.response_headers = headers.clone();
     if status_code == 429 || (400..600).contains(&status_code) {
         err.retry_after = parse_claude_rate_limit_reset(headers, chrono::Utc::now());
     }

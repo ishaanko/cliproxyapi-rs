@@ -117,6 +117,7 @@ pub fn start_sse_stream<H: StreamHooks + 'static>(
         set_sse_headers(&mut headers);
     }
     crate::headers::write_upstream_headers(&mut headers, upstream_headers);
+    crate::sniff::ensure_content_type(&mut headers, &initial);
     let (tx, out_rx) = mpsc::channel::<Bytes>(16);
     tokio::spawn(async move {
         if !initial.is_empty() && tx.send(Bytes::from(initial)).await.is_err() {

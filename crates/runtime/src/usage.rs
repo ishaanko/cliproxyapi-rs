@@ -52,8 +52,23 @@ pub struct UsageFailure {
     pub body: String,
 }
 
+/// Request context a usage record carries for the usage queue (Go: `ClientRequestMetadata`,
+/// the trace id and the upstream response headers). Not part of the aggregate/ring-buffer JSON.
+#[derive(Debug, Clone, Default)]
+pub struct UsageExtra {
+    pub client_ip: String,
+    pub resolved_client_ip: String,
+    pub x_forwarded_for: String,
+    pub user_agent: String,
+    /// Canonical UUID.
+    pub session_id: String,
+    pub parent_session_id: String,
+    pub trace_id: String,
+    pub response_headers: http::HeaderMap,
+}
+
 /// One usage event (field names match the Go usage-queue record).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct UsageRecord {
     #[serde(serialize_with = "serialize_ts")]
     pub timestamp: DateTime<Utc>,
@@ -78,6 +93,8 @@ pub struct UsageRecord {
     pub stream: bool,
     pub fail: UsageFailure,
     pub tokens: TokenUsage,
+    #[serde(skip)]
+    pub extra: UsageExtra,
 }
 
 /// A [`UsageRecord`] in the ring buffer: the record plus its sequence number. Serializes to the
@@ -443,6 +460,7 @@ mod tests {
             failed,
             stream: false,
             fail: UsageFailure::default(),
+            extra: Default::default(),
             tokens: TokenUsage {
                 input_tokens: 3,
                 output_tokens: 2,
