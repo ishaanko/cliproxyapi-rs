@@ -1,0 +1,23 @@
+[package]
+name = "cpa-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Shared base layer ported from internal/{constant,misc,registry,util,signature,cache,thinking,
+# client/codex/apply-patch}. Translators, executors and the server all build on it.
+[dependencies]
+cpa-json.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+once_cell.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+uuid.workspace = true
+rand.workspace = true
+chrono.workspace = true
+tracing.workspace = true

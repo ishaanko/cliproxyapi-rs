@@ -1,0 +1,13 @@
+[package]
+name = "cpa-conformance"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Differential test runner: replays Go-oracle golden cases through the Rust translators.
+[dependencies]
+cpa-json.workspace = true
+cpa-translator = { path = "../translator" }
+serde_json.workspace = true
+flate2 = "1"

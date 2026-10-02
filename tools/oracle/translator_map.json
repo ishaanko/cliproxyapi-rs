@@ -1,0 +1,251 @@
+[
+ {
+  "dir": "antigravity/claude",
+  "client": "claude",
+  "upstream": "antigravity",
+  "request": "ConvertClaudeRequestToAntigravity",
+  "stream": "ConvertAntigravityResponseToClaude",
+  "nonstream": "ConvertAntigravityResponseToClaudeNonStream",
+  "tokencount": "ClaudeTokenCount"
+ },
+ {
+  "dir": "antigravity/gemini",
+  "client": "gemini",
+  "upstream": "antigravity",
+  "request": "ConvertGeminiRequestToAntigravity",
+  "stream": "ConvertAntigravityResponseToGemini",
+  "nonstream": "ConvertAntigravityResponseToGeminiNonStream",
+  "tokencount": "GeminiTokenCount"
+ },
+ {
+  "dir": "antigravity/interactions",
+  "client": "interactions",
+  "upstream": "antigravity",
+  "request": "ConvertInteractionsRequestToAntigravity",
+  "stream": "ConvertAntigravityResponseToInteractions",
+  "nonstream": "ConvertAntigravityResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "antigravity/openai/chat-completions",
+  "client": "openai",
+  "upstream": "antigravity",
+  "request": "ConvertOpenAIRequestToAntigravity",
+  "stream": "ConvertAntigravityResponseToOpenAI",
+  "nonstream": "ConvertAntigravityResponseToOpenAINonStream"
+ },
+ {
+  "dir": "antigravity/openai/responses",
+  "client": "openai-response",
+  "upstream": "antigravity",
+  "request": "ConvertOpenAIResponsesRequestToAntigravity",
+  "stream": "ConvertAntigravityResponseToOpenAIResponses",
+  "nonstream": "ConvertAntigravityResponseToOpenAIResponsesNonStream"
+ },
+ {
+  "dir": "claude/gemini",
+  "client": "gemini",
+  "upstream": "claude",
+  "request": "ConvertGeminiRequestToClaude",
+  "stream": "ConvertClaudeResponseToGemini",
+  "nonstream": "ConvertClaudeResponseToGeminiNonStream",
+  "tokencount": "GeminiTokenCount"
+ },
+ {
+  "dir": "claude/interactions",
+  "client": "interactions",
+  "upstream": "claude",
+  "request": "ConvertInteractionsRequestToClaude",
+  "stream": "ConvertClaudeResponseToInteractions",
+  "nonstream": "ConvertClaudeResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "claude/openai/chat-completions",
+  "client": "openai",
+  "upstream": "claude",
+  "request": "ConvertOpenAIRequestToClaude",
+  "stream": "ConvertClaudeResponseToOpenAI",
+  "nonstream": "ConvertClaudeResponseToOpenAINonStream"
+ },
+ {
+  "dir": "claude/openai/responses",
+  "client": "openai-response",
+  "upstream": "claude",
+  "request": "ConvertOpenAIResponsesRequestToClaude",
+  "stream": "ConvertClaudeResponseToOpenAIResponses",
+  "nonstream": "ConvertClaudeResponseToOpenAIResponsesNonStream"
+ },
+ {
+  "dir": "codex/claude",
+  "client": "claude",
+  "upstream": "codex",
+  "request": "ConvertClaudeRequestToCodex",
+  "stream": "ConvertCodexResponseToClaude",
+  "nonstream": "ConvertCodexResponseToClaudeNonStream",
+  "tokencount": "ClaudeTokenCount"
+ },
+ {
+  "dir": "codex/gemini",
+  "client": "gemini",
+  "upstream": "codex",
+  "request": "ConvertGeminiRequestToCodex",
+  "stream": "ConvertCodexResponseToGemini",
+  "nonstream": "ConvertCodexResponseToGeminiNonStream",
+  "tokencount": "GeminiTokenCount"
+ },
+ {
+  "dir": "codex/interactions",
+  "client": "interactions",
+  "upstream": "codex",
+  "request": "ConvertInteractionsRequestToCodex",
+  "stream": "ConvertCodexResponseToInteractions",
+  "nonstream": "ConvertCodexResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "codex/openai/chat-completions",
+  "client": "openai",
+  "upstream": "codex",
+  "request": "ConvertOpenAIRequestToCodex",
+  "stream": "ConvertCodexResponseToOpenAI",
+  "nonstream": "ConvertCodexResponseToOpenAINonStream"
+ },
+ {
+  "dir": "codex/openai/responses",
+  "client": "openai-response",
+  "upstream": "codex",
+  "request": "ConvertOpenAIResponsesRequestToCodex",
+  "stream": "ConvertCodexResponseToOpenAIResponses",
+  "nonstream": "ConvertCodexResponseToOpenAIResponsesNonStream"
+ },
+ {
+  "dir": "gemini/claude",
+  "client": "claude",
+  "upstream": "gemini",
+  "request": "ConvertClaudeRequestToGemini",
+  "stream": "ConvertGeminiResponseToClaude",
+  "nonstream": "ConvertGeminiResponseToClaudeNonStream",
+  "tokencount": "ClaudeTokenCount"
+ },
+ {
+  "dir": "gemini/gemini",
+  "client": "gemini",
+  "upstream": "gemini",
+  "request": "ConvertGeminiRequestToGemini",
+  "stream": "PassthroughGeminiResponseStream",
+  "nonstream": "PassthroughGeminiResponseNonStream",
+  "tokencount": "GeminiTokenCount"
+ },
+ {
+  "dir": "gemini/interactions",
+  "client": "interactions",
+  "upstream": "interactions",
+  "request": "ConvertInteractionsRequestToInteractions",
+  "stream": "ConvertInteractionsResponsePassthrough",
+  "nonstream": "ConvertInteractionsResponsePassthroughNonStream"
+ },
+ {
+  "dir": "gemini/interactions",
+  "client": "interactions",
+  "upstream": "gemini",
+  "request": "ConvertInteractionsRequestToGemini",
+  "stream": "ConvertGeminiResponseToInteractions",
+  "nonstream": "ConvertGeminiResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "gemini/interactions",
+  "client": "gemini",
+  "upstream": "interactions",
+  "request": "ConvertGeminiRequestToInteractions",
+  "stream": "ConvertInteractionsResponseToGemini",
+  "nonstream": "ConvertInteractionsResponseToGeminiNonStream"
+ },
+ {
+  "dir": "gemini/openai/chat-completions",
+  "client": "openai",
+  "upstream": "gemini",
+  "request": "ConvertOpenAIRequestToGemini",
+  "stream": "ConvertGeminiResponseToOpenAI",
+  "nonstream": "ConvertGeminiResponseToOpenAINonStream"
+ },
+ {
+  "dir": "gemini/openai/responses",
+  "client": "openai-response",
+  "upstream": "gemini",
+  "request": "ConvertOpenAIResponsesRequestToGemini",
+  "stream": "ConvertGeminiResponseToOpenAIResponses",
+  "nonstream": "ConvertGeminiResponseToOpenAIResponsesNonStream"
+ },
+ {
+  "dir": "interactions/claude",
+  "client": "claude",
+  "upstream": "interactions",
+  "request": "ConvertClaudeRequestToInteractions",
+  "stream": "ConvertInteractionsResponseToClaude",
+  "nonstream": "ConvertInteractionsResponseToClaudeNonStream"
+ },
+ {
+  "dir": "openai/claude",
+  "client": "claude",
+  "upstream": "openai",
+  "request": "ConvertClaudeRequestToOpenAI",
+  "stream": "ConvertOpenAIResponseToClaude",
+  "nonstream": "ConvertOpenAIResponseToClaudeNonStream",
+  "tokencount": "ClaudeTokenCount"
+ },
+ {
+  "dir": "openai/gemini",
+  "client": "gemini",
+  "upstream": "openai",
+  "request": "ConvertGeminiRequestToOpenAI",
+  "stream": "ConvertOpenAIResponseToGemini",
+  "nonstream": "ConvertOpenAIResponseToGeminiNonStream",
+  "tokencount": "GeminiTokenCount"
+ },
+ {
+  "dir": "openai/interactions/chat-completions",
+  "client": "openai",
+  "upstream": "interactions",
+  "request": "ConvertOpenAIRequestToInteractions",
+  "stream": "ConvertInteractionsResponseToOpenAI",
+  "nonstream": "ConvertInteractionsResponseToOpenAINonStream"
+ },
+ {
+  "dir": "openai/interactions/chat-completions",
+  "client": "interactions",
+  "upstream": "openai",
+  "request": "ConvertInteractionsRequestToOpenAI",
+  "stream": "ConvertOpenAIResponseToInteractions",
+  "nonstream": "ConvertOpenAIResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "openai/interactions/responses",
+  "client": "openai-response",
+  "upstream": "interactions",
+  "request": "ConvertOpenAIResponsesRequestToInteractions",
+  "stream": "ConvertInteractionsResponseToOpenAIResponses",
+  "nonstream": "ConvertInteractionsResponseToOpenAIResponsesNonStream"
+ },
+ {
+  "dir": "openai/interactions/responses",
+  "client": "interactions",
+  "upstream": "openai-response",
+  "request": "ConvertInteractionsRequestToOpenAIResponses",
+  "stream": "ConvertOpenAIResponsesResponseToInteractions",
+  "nonstream": "ConvertOpenAIResponsesResponseToInteractionsNonStream"
+ },
+ {
+  "dir": "openai/openai/chat-completions",
+  "client": "openai",
+  "upstream": "openai",
+  "request": "ConvertOpenAIRequestToOpenAI",
+  "stream": "ConvertOpenAIResponseToOpenAI",
+  "nonstream": "ConvertOpenAIResponseToOpenAINonStream"
+ },
+ {
+  "dir": "openai/openai/responses",
+  "client": "openai-response",
+  "upstream": "openai",
+  "request": "ConvertOpenAIResponsesRequestToOpenAIChatCompletions",
+  "stream": "ConvertOpenAIChatCompletionsResponseToOpenAIResponses",
+  "nonstream": "ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream"
+ }
+]
