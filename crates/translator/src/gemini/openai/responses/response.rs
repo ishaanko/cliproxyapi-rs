@@ -10,6 +10,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use cpa_core::util::{
+    go_any,
     restore_sanitized_tool_name, responses_tool_reverse_identity_map, sanitized_tool_name_map, unwrap_responses_custom_tool_input,
     ResponsesToolIdentity,
 };
@@ -279,7 +280,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     }
     let v = get("reasoning");
     if v.exists() {
-        cpa_json::set(target, &p("reasoning"), v.value());
+        cpa_json::set(target, &p("reasoning"), go_any(v.value()));
     }
     for name in ["safety_identifier", "service_tier"] {
         let v = get(name);
@@ -298,7 +299,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     for name in ["text", "tool_choice", "tools"] {
         let v = get(name);
         if v.exists() {
-            cpa_json::set(target, &p(name), v.value());
+            cpa_json::set(target, &p(name), go_any(v.value()));
         }
     }
     let v = get("top_logprobs");
@@ -316,7 +317,7 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     for name in ["user", "metadata"] {
         let v = get(name);
         if v.exists() {
-            cpa_json::set(target, &p(name), v.value());
+            cpa_json::set(target, &p(name), go_any(v.value()));
         }
     }
 }

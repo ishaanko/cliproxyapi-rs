@@ -4,6 +4,7 @@
 use crate::common::unix_now;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use cpa_core::util::go_any;
 use cpa_core::applypatch;
 use cpa_json::{J, Res, Value};
 
@@ -1108,7 +1109,7 @@ impl State {
                     "citations_delta" => {
                         let citation = d.g("citation");
                         if citation.exists() {
-                            self.message_annotations.push(citation.value());
+                            self.message_annotations.push(go_any(citation.value()));
                         }
                         return vec![];
                     }
@@ -1331,7 +1332,7 @@ fn echo_request_fields(req: &Value, target: &mut Value, prefix: &str) {
             Echo::Int => cpa_json::set(target, &path, v.int()),
             Echo::Bool => cpa_json::set(target, &path, v.bool()),
             Echo::Float => cpa_json::set(target, &path, cpa_json::num_f64(v.float())),
-            Echo::Value => cpa_json::set(target, &path, v.value()),
+            Echo::Value => cpa_json::set(target, &path, go_any(v.value())),
         };
     }
 }
@@ -1735,11 +1736,11 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
                         let citation = d.g("citation");
                         if citation.exists() {
                             if let Some(slot) = slot.filter(|&s| items[s].item_type == "message") {
-                                items[slot].annotations.push(citation.value());
+                                items[slot].annotations.push(go_any(citation.value()));
                             } else if let Some(active) = active_message_item {
-                                items[active].annotations.push(citation.value());
+                                items[active].annotations.push(go_any(citation.value()));
                             } else {
-                                pending_annotations.push(citation.value());
+                                pending_annotations.push(go_any(citation.value()));
                             }
                         }
                     }

@@ -41,6 +41,16 @@ pub fn go_json_sorted(v: &Value, style: GoJsonStyle) -> Option<String> {
     Some(out)
 }
 
+/// What Go's `gjson.Result.Value()` followed by a marshal produces (sorted keys, float64
+/// numbers); the value unchanged when a number overflows float64. Port sites where Go passes
+/// `v.Value()` or a `[]interface{}` to sjson through this.
+pub fn go_any(v: Value) -> Value {
+    match go_json_sorted(&v, GoJsonStyle::MARSHAL_ANY) {
+        Some(s) => cpa_json::parse_str(&s),
+        None => v,
+    }
+}
+
 /// `json.Marshal(string)`: quoted, HTML-escaped (`<`, `>`, `&`), U+2028/2029 escaped.
 pub fn go_json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);

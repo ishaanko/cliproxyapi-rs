@@ -6,8 +6,6 @@ mod response;
 mod tools;
 
 use cpa_core::format::Format;
-use cpa_core::util::{go_json_sorted, GoJsonStyle};
-use cpa_json::Value;
 
 use cpa_json::{raw_at, raw_children, Res};
 
@@ -34,14 +32,7 @@ pub fn register(r: &mut Registry) {
     );
 }
 
-/// What Go's `gjson.Result.Value()` followed by a marshal produces: object keys sorted, numbers
-/// round-tripped through float64. Used where Go sets `v.Value()` or `[]interface{}` into sjson.
-fn go_any(v: Value) -> Value {
-    match go_json_sorted(&v, GoJsonStyle::MARSHAL_ANY) {
-        Some(s) => cpa_json::parse_str(&s),
-        None => v,
-    }
-}
+use cpa_core::util::go_any;
 
 /// The request JSON used to resolve tool declarations: the original request when valid, else the
 /// translated one, else none.
