@@ -318,8 +318,50 @@ mod tests {
     }
 
     #[test]
-    fn frame_split_across_chunks_is_reassembled() {
-        let out = run(&["data: {\"model\":\"u", "p\"}\n\n"]);
-        assert!(out.contains("\"model\":\"alias\""), "{out}");
+    fn data_prefix_without_space_is_preserved() {
+        let mut r = StreamRewriter::new("k2.5");
+        let out = r
+            .rewrite_chunk(b"event:message_start\ndata:{\"type\":\"message_start\",\"message\":{\"model\":\"kimi-k2.5\"}}\n\n")
+            .unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("\"model\":\"k2.5\"") && out.contains("data:{") && !out.contains("kimi-k2.5"), "{out}");
+    }
+
+    #[test]
+    fn event_line_buffers_until_its_data_frame_arrives_without_duplication() {
+        let mut r = StreamRewriter::new("gpt-5.4-fast");
+        assert_eq!(r.rewrite_chunk(b"event: response.created\n"), None);
+        let out = r
+            .rewrite_chunk(b"data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-5.4\"}}\n\n")
+            .unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(out.matches("event: response.created").count(), 1, "{out}");
+        assert!(out.ends_with("\n\n") && out.contains("\"model\":\"gpt-5.4-fast\""), "{out}");
+        assert!(r.finish().is_none());
+    }
+
+    #[test]
+    fn codex_line_by_line_chunks_are_all_rewritten() {
+        let mut r = StreamRewriter::new("gpt-5.4-fast");
+        let lines: [&[u8]; 6] = [
+            b"event: response.created\n",
+            b"data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-5.4\"}}\n",
+            b"\n",
+            b"event: response.completed\n",
+            b"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.4\"}}\n",
+            b"\n",
+        ];
+        let mut out = Vec::new();
+        for l in lines {
+            if let Some(c) = r.rewrite_chunk(l) {
+                out.extend(c);
+            }
+        }
+        if let Some(t) = r.finish() {
+            out.extend(t);
+        }
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(out.matches("gpt-5.4-fast").count(), 2, "{out}");
+        assert!(!out.contains("\"model\":\"gpt-5.4\""), "{out}");
     }
 }

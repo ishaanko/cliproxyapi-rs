@@ -1204,8 +1204,8 @@ mod tests {
 
     #[test]
     fn summary_sanitizes_and_bounds() {
-        let s = extract_upstream_error_summary(r#"status: {"error":{"code":"x","message":"bad key sk-abcdefghij here"}}"#);
-        assert!(s.contains("sk-[REDACTED]"), "{s}");
+        let s = extract_upstream_error_summary(r#"status: {"error":{"code":"x","message":"upstream rejected sk-abcdefghij"}}"#);
+        assert_eq!(s, "x: upstream rejected sk-[REDACTED]");
         let long = "a".repeat(400);
         assert_eq!(sanitize_upstream_error_summary(&long).chars().count(), 256);
         assert_eq!(
