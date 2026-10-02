@@ -1,0 +1,4 @@
+disable-image-generation: passthrough
+gpt-image-2-base-model: ' gpt-5 '
+video-result-auth-cache-ttl: 30m
+routing: {strategy: fill-first, session-affinity: true, session-affinity-ttl: 2h, session-affinity-subagents: false}

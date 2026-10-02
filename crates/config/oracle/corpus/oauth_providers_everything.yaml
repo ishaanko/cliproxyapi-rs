@@ -1,0 +1,20 @@
+oauth:
+  auth-dir: ~/x
+  auth-auto-refresh-workers: 4
+  providers:
+    aistudio: {ws-auth: false}
+    codex: {response-steering: true, header-defaults: {user-agent: u}, live-media-relay: {max-sessions: 3}}
+    claude: {claude-code: {disable-cloaking-model-list: true}, header-defaults: {os: o}}
+    antigravity: {signature-cache-enabled: false, signature-bypass-strict: true, antigravity-credits: true, connection-pool: {enabled: true}}
+    xai: {inject-x-search: true}
+    devin: {sensitive-words: [x]}
+multimedia: {disable-image-generation: chat}
+observability:
+  logs: {debug: true, request-log: true}
+  usage: {usage-statistics-enabled: true}
+  pprof: {enable: true, addr: "0.0.0.0:1"}
+requests: {proxy-url: socks5://p, streaming: {keepalive-seconds: 5}, payload: {default: []}}
+server: {host: h, trusted-proxies: [10.0.0.1], commercial-mode: true, discovery: {enabled: true, interfaces: {include: [a]}, auth-required: false}}
+access: {api-keys: [a, b]}
+credentials: {concurrency: {max-limit: 5}, in-flight: {max-details: 5}}
+routing: {force-model-prefix: true, retry: {request-retry: 2, max-retry-credentials: 1, max-retry-interval: 9}, cooldown: {disable-cooling: true, save-cooldown-status: true, transient-error-cooldown-seconds: -1}}

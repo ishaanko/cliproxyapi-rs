@@ -1,0 +1,4 @@
+debug: yes
+ws-auth: no
+logging-to-file: on
+commercial-mode: Off

@@ -1,0 +1,23 @@
+[package]
+name = "cpa-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Port of internal/config (+ sdk/config) and the config parts of internal/watcher.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng = "0.10"
+serde_ignored = "0.1"
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+sha2.workspace = true
+hex.workspace = true
+bcrypt = "0.17"
+notify = "8"
+dotenvy = "0.15"
+
+[dev-dependencies]
+tempfile = "3"

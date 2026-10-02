@@ -1,0 +1,10 @@
+payload:
+  default:
+    - {models: [{name: 'gpt-*', protocol: openai, headers: {X: y}, match: [{a: 1}], exist: [p]}], params: {t: 0.5, nothing: null}}
+  default-raw:
+    - {models: [{name: m}], params: {a: '{"ok": true}', b: 5}}
+    - {models: [{name: m}], params: {a: 'not json'}}
+  override-raw:
+    - {models: [{name: m}], params: {a: '[1, 2]'}}
+  filter:
+    - {models: [{name: m}], params: [a.b]}

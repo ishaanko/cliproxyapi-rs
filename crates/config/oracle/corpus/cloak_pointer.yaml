@@ -1,0 +1,5 @@
+claude-api-key:
+  - api-key: a
+    cloak: {}
+  - api-key: b
+    cloak: {cache-user-id: false, strict-mode: true}

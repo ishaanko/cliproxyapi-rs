@@ -1,0 +1,11 @@
+plugins:
+  enabled: true
+  dir: custom
+  store-sources: [' https://a ', '']
+  store-auth:
+    - {match: ' https://p/ ', apply-to: [Registry, artifact, registry], type: ' Bearer ', token-env: ' T '}
+    - {match: ''}
+  auth-revision: 7
+  configs:
+    sample: {}
+    other: {enabled: true, priority: 3, nested: {k: v}, list: [1, 2], nothing: null}

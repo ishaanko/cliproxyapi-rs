@@ -1,0 +1,40 @@
+request-retry: 9
+api-keys:
+  codex:
+    - name: shared
+      base-url: https://example.invalid
+      priority: 7
+      prefix: group
+      proxy-url: direct
+      headers: {X-Group: yes}
+      models: [{name: model, alias: alias}]
+      excluded-models: [blocked]
+      disable-cooling: true
+      request-retry: 3
+      keys:
+        - api-key: inherited
+          priority: null
+          headers: null
+          disable-cooling: null
+          request-retry: null
+        - api-key: overridden
+          weight: 0
+          priority: 0
+          prefix: ''
+          proxy-url: ''
+          headers: {}
+          models: []
+          excluded-models: []
+          disable-cooling: false
+          request-retry: 0
+        - api-key: global-retry
+          request-retry: -1
+  claude:
+    - name: c
+      base-url: https://c.invalid
+      keys: [{api-key: x, fingerprint-profile: ' OAuth-CLI ', cloak: {mode: ' always ', sensitive-words: [' w ', '']}}]
+  openai-compatibility:
+    - name: Compat
+      base-url: https://o.invalid
+      keys: [{api-key: k, weight: 3}]
+      models: [{name: m, alias: a, image: true}]

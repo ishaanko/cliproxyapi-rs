@@ -1,0 +1,6 @@
+claude-header-defaults: {user-agent: ' ua ', os: ' linux ', stabilize-device-profile: true}
+codex-header-defaults: {user-agent: ' c ', beta-features: ' b '}
+disable-claude-cloak-mode: true
+claude-code: {disable-cloaking-model-list: true}
+claude:
+  model-level-cooling: true

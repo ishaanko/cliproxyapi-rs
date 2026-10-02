@@ -1,0 +1,4 @@
+tls: {enable: true}
+server: {tls: {cert: c.pem}}
+remote-management: {allow-remote: true}
+management: {secret-key: ""}

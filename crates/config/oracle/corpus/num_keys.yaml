@@ -1,0 +1,2 @@
+api-keys: [12345, true, 1.5, "x"]
+gemini-api-key: [{api-key: 42, prefix: 7}]

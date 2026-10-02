@@ -1,0 +1,4 @@
+zzz: 1
+server: {port: 9, zzz: 2}
+oauth: {providers: {codex: {zzz: 3}}}
+home: {enabled: true}

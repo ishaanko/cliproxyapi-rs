@@ -1,0 +1,2 @@
+gemini-api-key: [{api-key: k, weight: -5}]
+codex-api-key: [{api-key: c, base-url: https://c, weight: 1000000}]
