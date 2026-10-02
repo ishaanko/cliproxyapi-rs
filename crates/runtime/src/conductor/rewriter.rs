@@ -21,7 +21,7 @@ fn valid_json(data: &[u8]) -> bool {
 }
 
 /// Rewrites known model fields in one JSON document.
-fn rewrite_model(data: &[u8], target: &str) -> Vec<u8> {
+pub(crate) fn rewrite_model(data: &[u8], target: &str) -> Vec<u8> {
     if target.is_empty() || data.is_empty() {
         return data.to_vec();
     }

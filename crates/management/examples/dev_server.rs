@@ -51,6 +51,10 @@ impl AuthRegistry for DirRegistry {
     }
 
     async fn remove(&self, _id: &str) {}
+
+    async fn force_refresh_auth(&self, _id: &str) -> Result<Auth, String> {
+        Err("refresh is not available in the dev server".into())
+    }
 }
 
 const CONFIG: &str = "\

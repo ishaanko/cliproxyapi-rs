@@ -26,7 +26,9 @@ use super::util::{after, canonical_model_key, dedupe_strings};
 impl Manager {
     /// Records an execution outcome: updates cooldown/quota state, registry availability, hooks and
     /// session affinity (Go: MarkResult). Usage is recorded by the execution paths, which know the
-    /// latency and token counts.
+    /// latency and token counts. Credentials are not written to the auth store here (only the
+    /// cooldown snapshot is persisted, when a cooldown store is set); callers that need that use
+    /// `update`.
     pub fn mark_result(&self, result: ExecResult) {
         self.mark_result_inner(result, None);
     }
@@ -481,23 +483,28 @@ impl Manager {
         *self.cooldown_store.write() = store;
     }
 
+    /// Takes the snapshot and saves it under the save lock, so concurrent saves are serialized
+    /// and the last writer always holds the newest state (Go: snapshot inside the store lock).
+    fn save_cooldown_snapshot(&self, store: &dyn CooldownStateStore) {
+        let _guard = self.cooldown_save_lock.lock();
+        let records = self.cooldown_snapshot_records();
+        if let Err(e) = store.save(&records) {
+            tracing::warn!("failed to persist cooldown state: {e}");
+        }
+    }
+
     /// Saves the current cooldown records without blocking the caller (file I/O runs on the
     /// blocking pool when a runtime is available, inline otherwise).
     pub(crate) fn persist_cooldown_states_detached(&self) {
         let Some(store) = self.cooldown_store.read().clone() else {
             return;
         };
-        let records = self.cooldown_snapshot_records();
-        let save = move || {
-            if let Err(e) = store.save(&records) {
-                tracing::warn!("failed to persist cooldown state: {e}");
-            }
-        };
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                handle.spawn_blocking(save);
+                let this = self.clone();
+                handle.spawn_blocking(move || this.save_cooldown_snapshot(store.as_ref()));
             }
-            Err(_) => save(),
+            Err(_) => self.save_cooldown_snapshot(store.as_ref()),
         }
     }
 
@@ -506,11 +513,9 @@ impl Manager {
         let Some(store) = self.cooldown_store.read().clone() else {
             return;
         };
-        let records = self.cooldown_snapshot_records();
-        let res = tokio::task::spawn_blocking(move || store.save(&records)).await;
-        if let Ok(Err(e)) = res {
-            tracing::warn!("failed to persist cooldown state: {e}");
-        }
+        let this = self.clone();
+        let _ =
+            tokio::task::spawn_blocking(move || this.save_cooldown_snapshot(store.as_ref())).await;
     }
 
     /// Restores unexpired persisted records into registered credentials (Go: RestoreCooldownStates).

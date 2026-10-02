@@ -68,6 +68,10 @@ impl AuthRegistry for FakeRegistry {
     async fn remove(&self, id: &str) {
         self.auths.lock().remove(id);
     }
+
+    async fn force_refresh_auth(&self, id: &str) -> Result<Auth, String> {
+        self.get(id).ok_or_else(|| format!("auth not found: {id}"))
+    }
 }
 
 struct Harness {

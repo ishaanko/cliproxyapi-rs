@@ -155,7 +155,8 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
 
     // The service owns config reload, the credential manager, the auth store and model
     // registration; executors are registered through its builder by the executor layer.
-    let service = match ServiceBuilder::new(&config_path).dotenv_dir(None).build() {
+    let usage = Arc::new(UsageTracker::default());
+    let service = match ServiceBuilder::new(&config_path).dotenv_dir(None).usage(usage.clone()).build() {
         Ok(s) => Arc::new(s),
         Err(e) => {
             tracing::error!("failed to build proxy service: {e}");
@@ -170,7 +171,6 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     let manager = service.manager();
     let store = service.store();
     let sessions = Arc::new(OAuthSessions::default());
-    let usage = Arc::new(UsageTracker::default());
 
     let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
     state.build = build.clone();

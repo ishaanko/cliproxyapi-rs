@@ -56,34 +56,37 @@ pub fn eq_fold(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b) || a.to_lowercase() == b.to_lowercase()
 }
 
-pub fn lower_trim(s: &str) -> String {
-    s.trim().to_lowercase()
-}
-
 /// `time.Time` helpers over `Option<DateTime>` where `None` is the zero time.
 pub fn after(t: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     t.is_some_and(|t| t > now)
 }
 
-pub fn max_time(a: Option<DateTime<Utc>>, b: Option<DateTime<Utc>>) -> Option<DateTime<Utc>> {
-    match (a, b) {
-        (Some(x), Some(y)) => Some(x.max(y)),
-        (x, None) => x,
-        (None, y) => y,
-    }
+/// Longest span we do arithmetic with (100 years); upstream hints and metadata can be absurd.
+const MAX_SPAN_DAYS: i64 = 36_500;
+
+/// `std::time::Duration` as a bounded chrono duration (never fails, never overflows later math).
+pub fn to_chrono(d: Duration) -> chrono::Duration {
+    chrono::Duration::from_std(d)
+        .unwrap_or(chrono::Duration::days(MAX_SPAN_DAYS))
+        .min(chrono::Duration::days(MAX_SPAN_DAYS))
+}
+
+/// `t + d`, saturating at the maximum representable time instead of panicking.
+pub fn add_chrono(t: DateTime<Utc>, d: chrono::Duration) -> DateTime<Utc> {
+    t.checked_add_signed(d)
+        .unwrap_or(if d > chrono::Duration::zero() {
+            DateTime::<Utc>::MAX_UTC
+        } else {
+            DateTime::<Utc>::MIN_UTC
+        })
 }
 
 pub fn add_duration(now: DateTime<Utc>, d: Duration) -> DateTime<Utc> {
-    now + chrono::Duration::from_std(d).unwrap_or(chrono::Duration::MAX)
+    add_chrono(now, to_chrono(d))
 }
 
 pub fn chrono_to_std(d: chrono::Duration) -> Duration {
     d.to_std().unwrap_or(Duration::ZERO)
-}
-
-/// JSON object lookup that returns the string value or `""`.
-pub fn str_field<'a>(v: &'a Value, key: &str) -> &'a str {
-    v.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
 /// Metadata string value, trimmed. Accepts strings only (Go also accepted `[]byte`).
@@ -123,6 +126,12 @@ pub fn dedupe_strings(values: Vec<String>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_durations_do_not_overflow_time_math() {
+        let now = chrono::Utc::now();
+        assert!(add_duration(now, std::time::Duration::MAX) >= now);
+    }
 
     #[test]
     fn suffix_uses_last_paren_and_requires_closing() {

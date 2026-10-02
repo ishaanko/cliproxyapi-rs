@@ -512,6 +512,9 @@ impl Manager {
         elig: Eligibility,
     ) -> Result<Auth, ExecError> {
         let mut md = opts.metadata.clone();
+        if self.selector().affinity().is_some() {
+            super::selector::resolve_affinity_ids(&opts.headers, &opts.original_request, &mut md);
+        }
         let picked = self.pick_next_mixed(
             &[provider.to_string()],
             model,

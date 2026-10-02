@@ -245,7 +245,7 @@ impl Manager {
         let mut cooldown_changed = false;
         let persist_meta_mint = matches!(mode, UpdateMode::Prepare | UpdateMode::Refresh)
             && auth.provider.trim().eq_ignore_ascii_case("meta");
-        let (mut result, saved_clone) = {
+        let mut result = {
             let mut st = self.state.write();
             let Some(existing) = st.auths.get(&auth.id).cloned() else {
                 return Ok(None);
@@ -341,19 +341,36 @@ impl Manager {
                     clear_cooldown_state_for_auth(&mut auth, now) || cooldown_changed;
             }
             auth.ensure_index();
-            let mut stored = existing;
-            overlay(&mut stored, auth.clone());
-            st.auths.insert(auth.id.clone(), stored.clone());
-            (auth, stored)
+            // A minted Meta key must reach the store before requests can use it, so it is
+            // installed only after it was persisted (below).
+            if !persist_meta_mint {
+                let mut stored = existing;
+                overlay(&mut stored, auth.clone());
+                st.auths.insert(auth.id.clone(), stored);
+            }
+            auth
         };
-        // A minted Meta key must reach the store before requests can use it.
-        let _ = saved_clone;
-        self.queue_refresh_reschedule(&result.id);
         if persist_meta_mint {
             if let Err(e) = self.persist(&mut result).await {
                 return Err(plain_error(format!("persist meta auth: {e}")));
             }
-        } else if !opts.skip_persist
+            // A concurrent reload or removal must not be overwritten by an obsolete mint.
+            let mut st = self.state.write();
+            match st.auths.get_mut(&result.id) {
+                Some(stored) if stored.registration_epoch == result.registration_epoch => {
+                    overlay(stored, result.clone());
+                }
+                _ => {
+                    return Err(plain_error(format!(
+                        "update auth {}: credential changed while persisting",
+                        result.id
+                    )));
+                }
+            }
+        }
+        self.queue_refresh_reschedule(&result.id);
+        if !persist_meta_mint
+            && !opts.skip_persist
             && let Err(e) = self.persist(&mut result).await
         {
             tracing::warn!(
@@ -393,6 +410,19 @@ impl Manager {
             (provider, executor)
         };
         self.queue_refresh_unschedule(id);
+        // Drop the per-auth refresh lock unless a refresh is holding it. (`persist_locks` stay:
+        // their (epoch, generation) high-water mark rejects stale saves from the removed auth.)
+        {
+            let mut locks = self.refresh_locks.lock();
+            if locks.get(id).is_some_and(|l| Arc::strong_count(l) == 1) {
+                locks.remove(id);
+            }
+        }
+        // Pool offsets are keyed `<auth id>|<provider key>|<model>` (see `openai_compat_model_pool_key`).
+        let pool_prefix = format!("{}|", id.to_lowercase());
+        self.pool_offsets
+            .lock()
+            .retain(|k, _| !k.starts_with(&pool_prefix));
         if let Some(aff) = self.selector().affinity() {
             aff.invalidate_auth(id);
         }

@@ -143,18 +143,23 @@ pub(crate) fn requested_model_alias(opts: &Options, fallback: &str) -> String {
     }
 }
 
-pub(crate) fn publish_selected_auth_metadata(metadata: &mut Metadata, auth: &Auth) {
-    if !auth.id.trim().is_empty() {
-        metadata.insert(
-            meta::SELECTED_AUTH_ID.into(),
-            Value::String(auth.id.trim().into()),
+/// Publishes the chosen credential to the request metadata and the caller's callback (Go:
+/// publishSelectedAuthMetadata).
+pub(crate) fn publish_selected_auth_metadata(opts: &mut Options, auth: &Auth) {
+    let id = auth.id.trim();
+    let index = auth.index.trim();
+    if !id.is_empty() {
+        opts.metadata
+            .insert(meta::SELECTED_AUTH_ID.into(), Value::String(id.into()));
+    }
+    if !index.is_empty() {
+        opts.metadata.insert(
+            meta::SELECTED_AUTH_INDEX.into(),
+            Value::String(index.into()),
         );
     }
-    if !auth.index.trim().is_empty() {
-        metadata.insert(
-            meta::SELECTED_AUTH_INDEX.into(),
-            Value::String(auth.index.trim().into()),
-        );
+    if let Some(cb) = &opts.selected_auth {
+        (cb.0)(id, index);
     }
 }
 
@@ -177,11 +182,15 @@ pub(crate) fn ensure_canonical_session_metadata(
     }
 }
 
+pub(crate) fn is_claude_oauth(auth: &Auth) -> bool {
+    auth.provider.trim().eq_ignore_ascii_case("claude")
+        && auth.attr("auth_kind").eq_ignore_ascii_case("oauth")
+}
+
 /// Claude OAuth credentials map a cancelled request to a plain return: no result is recorded so
 /// the credential is not penalized for the client hanging up.
 pub(crate) fn claude_cancelled(auth: &Auth, err: &ExecError) -> bool {
-    auth.provider.trim().eq_ignore_ascii_case("claude")
-        && auth.attr("auth_kind").eq_ignore_ascii_case("oauth")
+    is_claude_oauth(auth)
         && err.status == 0
         && err.message.trim().eq_ignore_ascii_case("context canceled")
 }
@@ -205,6 +214,17 @@ pub(crate) enum AuthAttempt {
 }
 
 impl Manager {
+    /// Derives the session ids once per request (outside any lock) when affinity is enabled.
+    pub(crate) fn prepare_affinity_ids(&self, opts: &mut Options) {
+        if self.selector().affinity().is_some() {
+            super::selector::resolve_affinity_ids(
+                &opts.headers,
+                &opts.original_request,
+                &mut opts.metadata,
+            );
+        }
+    }
+
     pub(crate) async fn execute_unary(
         &self,
         kind: Kind,
@@ -213,6 +233,7 @@ impl Manager {
         mut opts: Options,
     ) -> Result<Response, ExecError> {
         session::enrich(&mut req, &mut opts);
+        self.prepare_affinity_ids(&mut opts);
         let normalized = normalize_providers(providers);
         if normalized.is_empty() {
             return Err(provider_not_found("no provider supplied"));
@@ -280,6 +301,7 @@ impl Manager {
         mut opts: Options,
     ) -> Result<StreamResult, ExecError> {
         session::enrich(&mut req, &mut opts);
+        self.prepare_affinity_ids(&mut opts);
         let normalized = normalize_providers(providers);
         if normalized.is_empty() {
             return Err(provider_not_found("no provider supplied"));
@@ -398,7 +420,7 @@ impl Manager {
                 executor,
                 provider,
             } = picked;
-            publish_selected_auth_metadata(&mut opts.metadata, &auth);
+            publish_selected_auth_metadata(&mut opts, &auth);
             round_attempted.insert(auth.id.clone());
             tried.insert(auth.id.clone());
 

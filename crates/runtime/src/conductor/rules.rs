@@ -14,6 +14,25 @@ use super::errors::{CODE_FORCE_COOLDOWN, CODE_REQUEST_SCOPED, auth_error_base_me
 use super::models::resolve_openai_compat_config_for_auth;
 use crate::executor::ExecError;
 
+/// Compiled rule patterns, cached (invalid patterns are cached as `None` and never match).
+static REGEX_CACHE: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<String, Option<Regex>>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn regex_matches(pattern: &str, body: &str) -> bool {
+    let re = {
+        let mut cache = REGEX_CACHE.lock();
+        if cache.len() > 256 && !cache.contains_key(pattern) {
+            cache.clear();
+        }
+        cache
+            .entry(pattern.to_string())
+            .or_insert_with(|| Regex::new(pattern).ok())
+            .clone()
+    };
+    re.is_some_and(|re| re.is_match(body))
+}
+
 pub const ACTION_STOP: &str = "stop";
 pub const ACTION_STOP_AND_COOLDOWN: &str = "stop-and-cooldown";
 pub const ACTION_CONTINUE: &str = "continue";
@@ -130,7 +149,7 @@ pub fn match_action(auth: &Auth, err: &ExecError, cfg: &Config) -> Option<&'stat
             matched = rule
                 .match_regexr
                 .iter()
-                .any(|p| !p.is_empty() && Regex::new(p).is_ok_and(|re| re.is_match(&body)));
+                .any(|p| !p.is_empty() && regex_matches(p, &body));
         }
         if !matched {
             continue;

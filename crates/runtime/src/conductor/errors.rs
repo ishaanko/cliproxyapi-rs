@@ -1232,7 +1232,6 @@ pub fn is_request_retry_round_error(err: &ExecError) -> bool {
 
 /// Go: resultErrorFromError. Classifies an executor failure into the stored `AuthError`.
 pub fn result_error_from_error(err: &ExecError) -> AuthError {
-    let is_go_error = err.auth_code.is_some() || err.code.is_some();
     let mut code = match (&err.auth_code, err.code) {
         (Some(c), _) => c.clone(),
         (None, Some(c)) => error_code_str(c).to_string(),
@@ -1259,7 +1258,6 @@ pub fn result_error_from_error(err: &ExecError) -> AuthError {
     {
         code = CODE_TRANSIENT_TRANSPORT.into();
     }
-    let _ = is_go_error;
     AuthError {
         code,
         message,

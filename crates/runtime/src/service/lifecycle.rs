@@ -21,8 +21,9 @@ use tokio::task::JoinHandle;
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
 use super::models::{ModelRegistration, apply_registration, openai_compat_info_from_auth, resolve_models_for_auth};
 use super::sync::{AuthSync, AuthUpdate, AuthUpdateAction};
-use crate::conductor::{Manager, SharedManager};
+use crate::conductor::{CooldownStateStore, FileCooldownStateStore, Manager, SharedManager};
 use crate::executor::{DynExecutor, ExecError};
+use crate::usage::UsageTracker;
 
 /// Builds an executor for a provider key no registered executor handles (Go: the default branch
 /// of `registerExecutorForAuth` creates an OpenAI-compatible executor per provider key). Return
@@ -72,8 +73,7 @@ pub trait ManagerPort: Send + Sync {
     /// A batch of auth updates finished (Go: `RefreshAPIKeyModelAlias`).
     fn auth_batch_applied(&self) {}
 
-    /// An auth was removed. TODO(executor): Go closes the Codex / xAI websocket sessions of
-    /// `auth_id` here when `provider` is `codex` or `xai` (reason `auth_removed`).
+    /// An auth was removed (the manager closes the Codex / xAI websocket sessions of `auth_id`).
     async fn auth_removed(&self, _auth_id: &str, _provider: &str) {}
 }
 
@@ -114,6 +114,7 @@ pub struct ServiceBuilder {
     executors: Vec<DynExecutor>,
     executor_factory: Option<ExecutorFactory>,
     manager: Option<SharedManager>,
+    usage: Option<Arc<UsageTracker>>,
     port: Option<Arc<dyn ManagerPort>>,
     registry: &'static ModelRegistry,
     dotenv_dir: Option<PathBuf>,
@@ -130,6 +131,7 @@ impl ServiceBuilder {
             executors: Vec::new(),
             executor_factory: None,
             manager: None,
+            usage: None,
             port: None,
             registry: global_registry(),
             dotenv_dir: std::env::current_dir().ok(),
@@ -158,6 +160,12 @@ impl ServiceBuilder {
     /// Uses an existing manager instead of creating one (Go: `WithCoreAuthManager`).
     pub fn manager(mut self, manager: SharedManager) -> Self {
         self.manager = Some(manager);
+        self
+    }
+
+    /// Usage tracker the manager records into; defaults to a fresh one (see [`Service::usage`]).
+    pub fn usage(mut self, usage: Arc<UsageTracker>) -> Self {
+        self.usage = Some(usage);
         self
     }
 
@@ -226,6 +234,7 @@ impl ServiceBuilder {
             started: AtomicBool::new(false),
             store,
             manager,
+            usage: self.usage.unwrap_or_default(),
             port,
             registry: self.registry,
             sync: Arc::new(Mutex::new(AuthSync::new(config.clone(), config.auth_dir.clone()))),
@@ -252,6 +261,7 @@ struct Inner {
     started: AtomicBool,
     store: Arc<FileTokenStore>,
     manager: SharedManager,
+    usage: Arc<UsageTracker>,
     port: Arc<dyn ManagerPort>,
     registry: &'static ModelRegistry,
     /// Only touched inside `spawn_blocking` (it scans files) and under `apply_lock`.
@@ -313,6 +323,12 @@ impl Service {
         self.inner.manager.clone()
     }
 
+    /// The usage tracker the manager records into; its `enabled` flag follows
+    /// `usage-statistics-enabled`.
+    pub fn usage(&self) -> Arc<UsageTracker> {
+        self.inner.usage.clone()
+    }
+
     pub fn store(&self) -> Arc<FileTokenStore> {
         self.inner.store.clone()
     }
@@ -352,6 +368,10 @@ impl Service {
         blocking(move || ensure_auth_dir(&dir)).await??;
         inner.store.set_base_dir(&cfg.auth_dir);
         inner.port.config_changed(&cfg);
+        inner.manager.set_store(Some(inner.store.clone()));
+        inner.manager.set_usage_tracker(Some(inner.usage.clone()));
+        inner.usage.set_enabled(cfg.usage_statistics_enabled);
+        inner.manager.set_cooldown_state_store(cooldown_store_for(&cfg));
 
         let pending = std::mem::take(&mut *inner.pending_executors.lock());
         for executor in pending {
@@ -380,6 +400,9 @@ impl Service {
             let updates = inner.with_sync(|sync| sync.reload_clients(true, &[], false)).await;
             inner.apply_updates_locked(&guard, updates).await;
         }
+        inner.restore_cooldowns(&cfg).await;
+        // Go: core auth auto-refresh, every 15 minutes.
+        inner.manager.start_auto_refresh(AUTO_REFRESH_INTERVAL);
 
         if let Some((config_rx, auth_watcher)) = watchers {
             let task = tokio::spawn(run_loop(Arc::downgrade(inner), config_rx, Some(auth_watcher)));
@@ -446,6 +469,7 @@ impl Service {
             task.abort();
         }
         self.inner.config_watcher.lock().take();
+        self.inner.manager.stop_auto_refresh();
     }
 }
 
@@ -455,6 +479,17 @@ impl Drop for Inner {
             task.abort();
         }
     }
+}
+
+/// How often the manager's auto-refresh loop wakes up (Go: 15 minutes).
+const AUTO_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// The cooldown state store `save-cooldown-status` asks for: `.cds` files under the auth dir.
+fn cooldown_store_for(cfg: &Config) -> Option<Arc<dyn CooldownStateStore>> {
+    if !cfg.save_cooldown_status || cfg.auth_dir.is_empty() {
+        return None;
+    }
+    Some(Arc::new(FileCooldownStateStore::with_auth_dir(&cfg.auth_dir, &cfg.auth_dir)))
 }
 
 /// Go `ensureAuthDir`.
@@ -538,6 +573,16 @@ impl Inner {
         self.config_tx.borrow().clone()
     }
 
+    /// Reapplies persisted cooldown records to the registered credentials when
+    /// `save-cooldown-status` is on.
+    async fn restore_cooldowns(&self, cfg: &Config) {
+        if cfg.save_cooldown_status
+            && let Err(err) = self.manager.restore_cooldown_states().await
+        {
+            tracing::warn!("failed to restore cooldown state: {err}");
+        }
+    }
+
     fn register_executor(&self, executor: DynExecutor) {
         self.registered_executors.lock().insert(executor.identifier().to_string());
         self.port.register_executor(executor);
@@ -601,6 +646,10 @@ impl Inner {
         let plan = ReloadPlan::between(Some(&old), &new);
         self.config_tx.send_replace(new.clone());
         self.port.config_changed(&new);
+        self.usage.set_enabled(new.usage_statistics_enabled);
+        if old.save_cooldown_status != new.save_cooldown_status || (new.save_cooldown_status && old.auth_dir != new.auth_dir) {
+            self.manager.set_cooldown_state_store(cooldown_store_for(&new));
+        }
         let mut new_watcher = None;
         if plan.auth_dir_changed {
             self.store.set_base_dir(&new.auth_dir);
@@ -631,6 +680,7 @@ impl Inner {
             })
             .await;
         self.apply_updates_locked(&guard, updates).await;
+        self.restore_cooldowns(&new).await;
         ConfigOutcome { accepted: true, new_watcher }
     }
 

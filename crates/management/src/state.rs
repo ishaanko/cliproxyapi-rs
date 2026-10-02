@@ -46,6 +46,8 @@ pub trait AuthRegistry: Send + Sync {
     /// Insert or update (and persist) a credential, returning the stored record.
     async fn update(&self, auth: Auth) -> Result<Auth, String>;
     async fn remove(&self, id: &str);
+    /// Exchange the credential's refresh token now and store the result (Go: `ForceRefreshAuth`).
+    async fn force_refresh_auth(&self, id: &str) -> Result<Auth, String>;
 }
 
 #[async_trait::async_trait]
@@ -64,6 +66,10 @@ impl AuthRegistry for Manager {
 
     async fn remove(&self, id: &str) {
         Manager::remove(self, id).await
+    }
+
+    async fn force_refresh_auth(&self, id: &str) -> Result<Auth, String> {
+        Manager::force_refresh_auth(self, id).await.map_err(|e| e.message)
     }
 }
 
