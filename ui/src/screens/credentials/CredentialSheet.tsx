@@ -123,9 +123,11 @@ export function CredentialSheet({ file: f, onClose }: { file: CredentialFile; on
             Clear cooldown
           </Button>
         )}
-        <Button icon="download" onClick={() => void downloadCredential(f.name).catch((e: unknown) => toast.error(errorText(e)))}>
-          Download
-        </Button>
+        {f.source === "file" && (
+          <Button icon="download" onClick={() => void downloadCredential(f.name).catch((e: unknown) => toast.error(errorText(e)))}>
+            Download
+          </Button>
+        )}
         <Button
           variant="danger"
           icon="trash"
@@ -152,7 +154,8 @@ function RoutingForm({ f, onSaved }: { f: CredentialFile; onSaved: () => Promise
   const initial = {
     priority: f.priority?.toString() ?? "",
     weight: f.weight?.toString() ?? "",
-    prefix: f.prefix ?? "",
+    // The list never reports prefix, so the field starts empty and means "unchanged".
+    prefix: "",
     note: f.note ?? "",
   };
   const [form, setForm] = useState(initial);
@@ -173,11 +176,26 @@ function RoutingForm({ f, onSaved }: { f: CredentialFile; onSaved: () => Promise
         body[k] = n;
       }
     }
-    for (const k of ["prefix", "note"] as const) if (form[k] !== initial[k]) body[k] = form[k].trim() === "" ? null : form[k].trim();
+    if (form.prefix.trim() !== "") body.prefix = form.prefix.trim();
+    if (form.note !== initial.note) body.note = form.note.trim() === "" ? null : form.note.trim();
     setSaving(true);
     try {
       await api.patch("/credentials/fields", body);
       toast.ok("Saved");
+      await onSaved();
+    } catch (e) {
+      toast.error(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // The server ignores null for prefix, so clearing sends an empty string.
+  async function clearPrefix() {
+    setSaving(true);
+    try {
+      await api.patch("/credentials/fields", { name: f.name, prefix: "" });
+      toast.ok("Prefix cleared");
       await onSaved();
     } catch (e) {
       toast.error(errorText(e));
@@ -198,7 +216,12 @@ function RoutingForm({ f, onSaved }: { f: CredentialFile; onSaved: () => Promise
         </Field>
       </div>
       <Field label="Prefix">
-        <Input value={form.prefix} onChange={set("prefix")} placeholder="team" />
+        <div className="flex gap-2">
+          <Input value={form.prefix} onChange={set("prefix")} placeholder="Unchanged, current value is not reported" />
+          <Button disabled={saving} onClick={() => void clearPrefix()}>
+            Clear
+          </Button>
+        </div>
       </Field>
       <Field label="Note">
         <Input value={form.note} onChange={set("note")} />

@@ -42,7 +42,7 @@ export default function Providers({ sub }: { sub: string[] }) {
     const ok = await confirm({ title: "Delete provider", body: `${entryTitle(e, index)} will be removed from the config.`, confirm: "Delete", danger: true });
     if (!ok) return;
     try {
-      await updateProviderGroup(group, (list) => list.filter((_, i) => i !== index));
+      await updateProviderGroup(group, (list) => list.filter((_, i) => i !== index), { index, entry: e });
       toast.ok("Provider deleted");
       await qc.invalidateQueries({ queryKey: qk.providers });
     } catch (err) {

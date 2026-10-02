@@ -211,7 +211,9 @@ dialog::backdrop {
 @media (prefers-reduced-motion: reduce) {
   .enter-fade,
   .enter-slide,
-  .enter-pop {
+  .enter-pop,
+  dialog.modal[open],
+  dialog.sheet[open] {
     animation: none;
   }
 }

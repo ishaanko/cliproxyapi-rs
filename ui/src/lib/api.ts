@@ -150,7 +150,10 @@ export async function verifyKey(key: string): Promise<void> {
   captureMeta(res);
   if (res.ok) return;
   if (res.status === 401) throw new ApiError(401, "Invalid management key");
-  if (res.status === 403) throw new ApiError(403, "Remote management is disabled on this server");
+  if (res.status === 403) {
+    const e = await errorFrom(res);
+    throw new ApiError(403, e.message && e.message !== "Forbidden" ? e.message : "Management access denied", e.code);
+  }
   if (res.status === 404) throw new ApiError(404, "Management API is not enabled");
   throw await errorFrom(res);
 }
