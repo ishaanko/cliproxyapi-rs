@@ -6,7 +6,7 @@ use cpa_core::applypatch;
 use cpa_json::{J, Res, Value, json};
 
 use crate::codex::util::{build_short_name_map, truncate_bytes};
-use cpa_json::raw_at;
+use crate::common::raw_in;
 
 /// One assistant tool call awaiting its `tool` message.
 struct PendingToolCall {
@@ -109,6 +109,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
 
     let mut input_items: Vec<Value> = Vec::new();
     if messages.is_array() {
+        let message_raws = cpa_json::raw_children(raw_json, "messages");
         for (i, m) in messages.array().iter().enumerate() {
             let role = m.g("role").str();
 
@@ -137,12 +138,8 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
                 };
 
                 let mut tool_output = json!({"type": output_type, "call_id": tool_call_id});
-                set_tool_call_output_content(
-                    &mut tool_output,
-                    &m.g("content"),
-                    raw_json,
-                    &format!("messages.{i}.content"),
-                );
+                let content_raw = raw_in(message_raws.get(i), "content");
+                set_tool_call_output_content(&mut tool_output, &m.g("content"), content_raw);
                 input_items.push(tool_output);
                 continue;
             }
@@ -412,34 +409,30 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
     cpa_json::to_vec(&out)
 }
 
-/// Sets `output` of a tool output item from a Chat Completions tool message `content`. `src` and
-/// `path` locate `content` in the source text for the verbatim fallbacks.
-fn set_tool_call_output_content(
-    func_output: &mut Value,
-    content: &Res<'_>,
-    src: &[u8],
-    path: &str,
-) {
+/// Sets `output` of a tool output item from a Chat Completions tool message `content`. `raw` is
+/// the source text of `content` for the verbatim fallbacks.
+fn set_tool_call_output_content(func_output: &mut Value, content: &Res<'_>, raw: Option<&str>) {
     if content.is_string() {
         // A string holding a JSON array with image parts is unpacked into content parts.
         let s = content.str();
         let structured = cpa_json::parse_str(&s);
         if has_tool_output_image_part(&Res::of(&structured)) {
-            set_tool_call_output_content(func_output, &Res::of(&structured), s.as_bytes(), "");
+            set_tool_call_output_content(func_output, &Res::of(&structured), Some(&s));
             return;
         }
         cpa_json::set(func_output, "output", s);
     } else if content.is_array() {
+        let item_raws = raw.map(|r| cpa_json::raw_children(r.as_bytes(), "")).unwrap_or_default();
         let items: Vec<Value> = content
             .array()
             .iter()
             .enumerate()
-            .map(|(k, item)| tool_output_content_part(item, src, &join_path(path, k)))
+            .map(|(k, item)| tool_output_content_part(item, item_raws.get(k).copied()))
             .collect();
         cpa_json::set(func_output, "output", Value::Array(items));
     } else {
         let mut fallback = if content.exists() {
-            raw_at(src, path).map_or_else(|| content.raw(), str::to_string)
+            raw.map_or_else(|| content.raw(), str::to_string)
         } else {
             String::new()
         };
@@ -450,15 +443,8 @@ fn set_tool_call_output_content(
     }
 }
 
-fn join_path(path: &str, index: usize) -> String {
-    if path.is_empty() {
-        index.to_string()
-    } else {
-        format!("{path}.{index}")
-    }
-}
-
-fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
+/// One tool output content part; `raw` is its source text.
+fn tool_output_content_part(item: &Res<'_>, raw: Option<&str>) -> Value {
     let item_type = item.g("type").str();
     match item_type.as_str() {
         "text" | "input_text" | "output_text" => {
@@ -475,7 +461,7 @@ fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
                 )
             };
             if image_url.is_empty() && file_id.is_empty() {
-                return tool_output_fallback_part(item, src, path);
+                return tool_output_fallback_part(item, raw);
             }
             let mut part = json!({"type": "input_image"});
             if !image_url.is_empty() {
@@ -499,7 +485,7 @@ fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
             let file_data = item.g("file.file_data").str();
             let file_url = item.g("file.file_url").str();
             if file_id.is_empty() && file_data.is_empty() && file_url.is_empty() {
-                return tool_output_fallback_part(item, src, path);
+                return tool_output_fallback_part(item, raw);
             }
             let mut part = json!({"type": "input_file"});
             if !file_id.is_empty() {
@@ -517,7 +503,7 @@ fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
             }
             part
         }
-        _ => tool_output_fallback_part(item, src, path),
+        _ => tool_output_fallback_part(item, raw),
     }
 }
 
@@ -541,9 +527,9 @@ fn has_tool_output_image_part(content: &Res<'_>) -> bool {
 }
 
 /// Unsupported tool output parts are forwarded as their source text.
-fn tool_output_fallback_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
+fn tool_output_fallback_part(item: &Res<'_>, raw: Option<&str>) -> Value {
     let mut text = if item.exists() {
-        raw_at(src, path).map_or_else(|| item.raw(), str::to_string)
+        raw.map_or_else(|| item.raw(), str::to_string)
     } else {
         String::new()
     };

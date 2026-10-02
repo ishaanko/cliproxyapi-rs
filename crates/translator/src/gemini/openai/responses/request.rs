@@ -22,7 +22,7 @@ use super::signature_carrier::{
     normalize_gemini_responses_carriers, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_SIGNATURE_FIELD,
     CARRIER_SUMMARY_FIELD, CARRIER_TEXT,
 };
-use super::lenient::{collect_output_raws, parse_gjson, restore_raw, RawTexts};
+use super::lenient::{collect_output_raws, parse_gjson, RawTexts};
 use super::trailing_signature::restore_gemini_responses_text_signatures;
 use super::web_search::{
     allows_responses_web_search_tool_choice, extract_responses_web_search_allowed_domains, has_responses_web_search_tool,
@@ -43,7 +43,7 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
 
     // Base Gemini template; thinkingConfig is only added when requested.
     let mut out = json!({"contents": []});
-    let root = parse_gjson(input_raw_json).unwrap_or(Value::Null);
+    let root = cpa_json::parse(input_raw_json);
     let raw_outputs = collect_output_raws(input_raw_json, &root);
 
     // Tools and the forward map are computed first so contents and declarations agree on names.
@@ -898,7 +898,7 @@ fn build_openai_responses_standalone_tool_output_text_parts(item: &Res<'_>) -> V
 }
 
 /// The `functionResponse` part for a tool output (the Go helper returns a one-element list).
-fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names_by_call_id: &HashMap<String, String>, raws: &RawTexts) -> Vec<Value> {
+fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names_by_call_id: &HashMap<String, String>, raws: &RawTexts<'_>) -> Vec<Value> {
     let call_id = extract_responses_call_id(item);
     let function_name = if let Some(matched) = function_names_by_call_id.get(&call_id) {
         matched.clone()
@@ -935,7 +935,7 @@ fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names
             image_parts.push(gemini_responses_inline_data_part(&mime_type, &data));
             cpa_json::set(&mut function_response, "functionResponse.response.result", "");
         } else {
-            let raw = restore_raw(raws, output_result.raw());
+            let raw = raws.restore(&output_result);
             set_function_response_result_raw(&mut function_response, "functionResponse.response.result", &raw);
         }
     } else if output_result.exists() && !output_result.is_null() {

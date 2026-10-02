@@ -9,7 +9,8 @@ use cpa_core::util::{
     go_json_sorted, has_unsupported_unicode_property_escape, is_claude_code_attribution_system_text, GoJsonStyle,
     SCHEMA_MAP_KEYWORDS, SCHEMA_VALUE_KEYWORDS,
 };
-use cpa_json::{raw_at, Map, Res, Value, J};
+use crate::common::raw_in;
+use cpa_json::{raw_children, Map, Res, Value, J};
 
 use crate::common;
 
@@ -136,6 +137,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
         let mut pending_system_reminders: Vec<Value> = Vec::new();
         let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
 
+        let message_raws = raw_children(input_bytes, "messages");
         for (message_index, message) in messages.array().into_iter().enumerate() {
             let role = message.g("role").str();
             let mut content_result = message.g("content");
@@ -168,6 +170,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                 // Images pulled out of tool_result content for user-message relay.
                 let mut relayed_tool_images: Vec<Value> = Vec::new();
 
+                let part_raws = message_raws.get(message_index).map(|m| raw_children(m.as_bytes(), "content")).unwrap_or_default();
                 let aligned_parts = content_result.array();
                 let original_indices = original_part_indices(&original_content.array(), &aligned_parts);
                 for (slot, part) in aligned_parts.into_iter().enumerate() {
@@ -211,8 +214,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                                 let input = part.g("input");
                                 if input.exists() {
                                     // Go copies `input.Raw` verbatim (client whitespace included).
-                                    let path = format!("messages.{message_index}.content.{part_index}.input");
-                                    let raw = raw_at(input_bytes, &path).map_or_else(|| input.raw(), str::to_string);
+                                    let raw = raw_in(part_raws.get(part_index), "input").map_or_else(|| input.raw(), str::to_string);
                                     cpa_json::set(&mut tool_call, "function.arguments", raw);
                                 } else {
                                     cpa_json::set(&mut tool_call, "function.arguments", "{}");
@@ -229,10 +231,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                             }
                             let (content, images) = convert_claude_tool_result_content(
                                 &part.g("content"),
-                                &RawSource {
-                                    json: input_bytes,
-                                    path: format!("messages.{message_index}.content.{part_index}.content"),
-                                },
+                                &RawSource::new(raw_in(part_raws.get(part_index), "content")),
                             );
                             cpa_json::set(&mut tool_result, "content", content);
                             relayed_tool_images.extend(images);
@@ -523,21 +522,25 @@ fn original_part_indices(original: &[Res<'_>], aligned: &[Res<'_>]) -> Vec<usize
         .collect()
 }
 
-/// Where a value sits in the original request, for verbatim `Raw` copies.
+/// Source text of a tool_result `content` and of its elements, for verbatim `Raw` copies.
 struct RawSource<'a> {
-    json: &'a [u8],
-    /// Dotted gjson path of the tool_result `content`.
-    path: String,
+    whole: Option<&'a str>,
+    items: Vec<&'a str>,
 }
 
-impl RawSource<'_> {
+impl<'a> RawSource<'a> {
+    fn new(whole: Option<&'a str>) -> Self {
+        let items = whole.map(|w| raw_children(w.as_bytes(), "")).unwrap_or_default();
+        Self { whole, items }
+    }
+
     /// Original text of the value (or of its `index`th element), falling back to compact JSON.
     fn raw(&self, index: Option<usize>, fallback: &Res<'_>) -> String {
-        let path = match index {
-            Some(i) => format!("{}.{i}", self.path),
-            None => self.path.clone(),
+        let found = match index {
+            Some(i) => self.items.get(i).copied(),
+            None => self.whole,
         };
-        raw_at(self.json, &path).map_or_else(|| fallback.raw(), str::to_string)
+        found.map_or_else(|| fallback.raw(), str::to_string)
     }
 }
 

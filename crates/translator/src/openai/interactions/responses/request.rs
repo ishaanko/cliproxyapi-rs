@@ -7,7 +7,7 @@ use cpa_core::util;
 use cpa_json::{Res, Value, J};
 
 use super::{first_existing, first_non_empty, is_antigravity_model, json_string_value, set_items, set_json_value, tmpl};
-use super::raw_text::{parse_lenient, restore_input_raw_text};
+use super::raw_text::restore_input_raw_text;
 use crate::common;
 
 /// Go: `isDevinModel`.
@@ -85,7 +85,7 @@ fn interactions_thinking_effort(root: &Value) -> String {
 
 /// Client OpenAI Responses request -> upstream Interactions request.
 pub(super) fn convert_openai_responses_request_to_interactions(model_name: &str, input_raw_json: &[u8], stream: bool) -> Vec<u8> {
-    let root = parse_lenient(input_raw_json);
+    let root = cpa_json::parse(input_raw_json);
     let mut out = tmpl(r#"{"model":"","input":[]}"#);
     let model = request_model(model_name, &root);
     cpa_json::set(&mut out, "model", model.as_str());
@@ -212,7 +212,7 @@ fn copy_object_tool_choice(out: &mut Value, tool_choice: &Res<'_>, for_antigravi
 
 /// Client Interactions request -> upstream OpenAI Responses request.
 pub(super) fn convert_interactions_request_to_openai_responses(model_name: &str, input_raw_json: &[u8], stream: bool) -> Vec<u8> {
-    let mut root = parse_lenient(input_raw_json);
+    let mut root = cpa_json::parse(input_raw_json);
     restore_input_raw_text(input_raw_json, &mut root);
     let mut out = tmpl(r#"{"model":"","input":[]}"#);
     let model = request_model(model_name, &root);

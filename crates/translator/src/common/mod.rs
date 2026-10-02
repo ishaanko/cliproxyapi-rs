@@ -24,6 +24,7 @@ mod file_data;
 mod gemini;
 mod interactions_usage;
 mod openai_tools;
+mod raw;
 mod request;
 mod responses;
 
@@ -39,6 +40,7 @@ pub use file_data::*;
 pub use gemini::*;
 pub use interactions_usage::*;
 pub use openai_tools::*;
+pub use raw::*;
 pub use request::*;
 pub use responses::*;
 

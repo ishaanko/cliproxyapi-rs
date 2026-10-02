@@ -5,11 +5,10 @@ use cpa_json::{Res, Value, J};
 
 use super::{copy_number, first_existing, first_non_empty, is_antigravity_model, json_string_value, set_items, tmpl};
 use crate::common;
-use crate::openai::interactions::responses::raw_text::parse_lenient;
 use crate::openai::interactions::responses::raw_text::restore_input_raw_text;
 
 pub(super) fn convert_interactions_request_to_openai(model_name: &str, input_raw_json: &[u8], stream: bool) -> Vec<u8> {
-    let mut root = parse_lenient(input_raw_json);
+    let mut root = cpa_json::parse(input_raw_json);
     restore_input_raw_text(input_raw_json, &mut root);
     let mut out = tmpl(r#"{"model":"","messages":[]}"#);
     let model = first_non_empty(&[model_name, &root.g("model").str()]);

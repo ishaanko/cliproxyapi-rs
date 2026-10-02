@@ -6,7 +6,6 @@ use std::collections::HashSet;
 
 use cpa_json::{Res, Value, J};
 
-use super::raw_text::parse_lenient;
 use super::request::{responses_content_part_to_interactions, responses_function_call_to_interactions};
 use super::{
     first_non_empty, is_antigravity_model, json_string_value, response_model, set_items, sse_payload, tmpl, unix_nanos,
@@ -89,7 +88,7 @@ pub(super) fn convert_openai_responses_response_to_interactions_non_stream(
     raw: &[u8],
     _param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let root = parse_lenient(raw);
+    let root = cpa_json::parse(raw);
     let mut out = tmpl(r#"{"id":"","object":"interaction","status":"completed","model":"","steps":[]}"#);
     let status = root.g("status").str();
     if !status.is_empty() {
@@ -118,7 +117,7 @@ fn convert_event(model_name: &str, raw: &[u8], st: &mut StreamState) -> Events {
         append_done(&mut out, st);
         return out;
     }
-    let root = parse_lenient(&payload);
+    let root = cpa_json::parse(&payload);
     match root.g("type").str().as_str() {
         "response.created" => {
             let mut out = Vec::new();

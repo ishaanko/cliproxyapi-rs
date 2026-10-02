@@ -4,7 +4,8 @@
 use std::collections::HashMap;
 
 use cpa_core::thinking;
-use cpa_json::{raw_at, Res, Value, J};
+use crate::common::raw_in;
+use cpa_json::{raw_children, Res, Value, J};
 use sha2::{Digest, Sha256};
 
 use crate::common;
@@ -144,6 +145,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
 
     let contents = root.g("contents");
     if contents.is_array() {
+        let content_raws = raw_children(input, "contents");
         for (msg_idx, content) in contents.array().into_iter().enumerate() {
             let mut role = content.g("role").str();
             let parts = content.g("parts");
@@ -162,6 +164,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
             let mut dropped_thought = false;
 
             if parts.is_array() {
+                let part_raws = content_raws.get(msg_idx).map(|c| raw_children(c.as_bytes(), "parts")).unwrap_or_default();
                 for (part_idx, part) in parts.array().into_iter().enumerate() {
                     if common::is_gemini_thought_part(&part) {
                         dropped_thought = true;
@@ -188,7 +191,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
 
                     // Verbatim `Raw` of a sub-value of this part (client whitespace included).
                     let part_raw = |sub: &str, fallback: &Res<'_>| -> String {
-                        raw_at(input, &format!("contents.{msg_idx}.parts.{part_idx}.{sub}")).map_or_else(|| fallback.raw(), str::to_string)
+                        raw_in(part_raws.get(part_idx), sub).map_or_else(|| fallback.raw(), str::to_string)
                     };
 
                     let function_call = part.g("functionCall");

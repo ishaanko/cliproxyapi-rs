@@ -23,8 +23,8 @@ pub fn convert_interactions_request_to_gemini(model_name: &str, raw: &[u8], _str
     copy_interactions_tools(&mut out, &root);
     copy_interactions_tool_choice(&mut out, &root);
     copy_interactions_service_tier(&mut out, &root);
-    let mut ctx = InputContext::new(raw);
-    append_interactions_input(&mut ctx, &root.g("input"));
+    let mut ctx = InputContext::new();
+    append_interactions_input(&mut ctx, &root.g("input"), cpa_json::raw_at(raw, "input"));
     // SetRawArrayItems is a no-op for an empty list.
     if !ctx.items.is_empty() {
         cpa_json::set(&mut out, "contents", Value::Array(ctx.items));
@@ -573,19 +573,17 @@ fn copy_interactions_tools(out: &mut Value, root: &Value) {
 
 // ------------------------------------------------------------------ input
 
-/// Accumulates Gemini contents while walking Interactions input steps. `src` is the request
-/// source, used to copy function results containing `$ref` as source text.
-struct InputContext<'a> {
-    src: &'a [u8],
+/// Accumulates Gemini contents while walking Interactions input steps.
+struct InputContext {
     items: Vec<Value>,
     in_model_turn: bool,
     last_step_type: String,
     pending_signature: String,
 }
 
-impl<'a> InputContext<'a> {
-    fn new(src: &'a [u8]) -> Self {
-        Self { src, items: Vec::new(), in_model_turn: false, last_step_type: String::new(), pending_signature: String::new() }
+impl InputContext {
+    fn new() -> Self {
+        Self { items: Vec::new(), in_model_turn: false, last_step_type: String::new(), pending_signature: String::new() }
     }
 
     fn last_role_is(&self, role: &str) -> bool {
@@ -658,7 +656,8 @@ fn append_gemini_text_content(items: &mut Vec<Value>, role: &str, text: &str) {
     items.push(gemini_content(role, vec![gemini_text_part_json(text, false)]));
 }
 
-fn append_interactions_input(ctx: &mut InputContext, input: &Res<'_>) {
+/// `raw` is the source text of `input`, used to copy function results containing `$ref` verbatim.
+fn append_interactions_input(ctx: &mut InputContext, input: &Res<'_>, raw: Option<&str>) {
     if !input.exists() {
         return;
     }
@@ -668,23 +667,30 @@ fn append_interactions_input(ctx: &mut InputContext, input: &Res<'_>) {
         return;
     }
     if input.is_array() {
+        let raws = child_raws(raw, "");
         for (i, item) in input.array().into_iter().enumerate() {
-            append_interactions_step_to_gemini(ctx, &item.value(), "user", &format!("input.{i}"));
+            append_interactions_step_to_gemini(ctx, &item.value(), "user", raws.get(i).copied());
         }
     } else if input.g("steps").is_array() {
         let role = input.g("role").str();
         let default_role = if role == "model" || role == "assistant" { "model" } else { "user" };
+        let raws = child_raws(raw, "steps");
         for (i, step) in input.g("steps").array().into_iter().enumerate() {
-            append_interactions_step_to_gemini(ctx, &step.value(), default_role, &format!("input.steps.{i}"));
+            append_interactions_step_to_gemini(ctx, &step.value(), default_role, raws.get(i).copied());
         }
     } else {
-        append_interactions_step_to_gemini(ctx, &input.value(), "user", "input");
+        append_interactions_step_to_gemini(ctx, &input.value(), "user", raw);
     }
     ctx.flush_pending_signature();
 }
 
-/// `path` locates `item` in the request source.
-fn append_interactions_step_to_gemini(ctx: &mut InputContext<'_>, item: &Value, default_role: &str, path: &str) {
+/// Source text of each child of the array at `path` inside `raw` (empty when unavailable).
+fn child_raws<'a>(raw: Option<&'a str>, path: &str) -> Vec<&'a str> {
+    raw.map(|r| cpa_json::raw_children(r.as_bytes(), path)).unwrap_or_default()
+}
+
+/// `raw` is the source text of `item`.
+fn append_interactions_step_to_gemini(ctx: &mut InputContext, item: &Value, default_role: &str, raw: Option<&str>) {
     if let Some(text) = item.as_str() {
         if ctx.in_model_turn {
             ctx.flush_pending_signature();
@@ -703,8 +709,9 @@ fn append_interactions_step_to_gemini(ctx: &mut InputContext<'_>, item: &Value, 
         } else if item_role == "user" {
             role = "user".into();
         }
+        let raws = child_raws(raw, "steps");
         for (i, child) in steps.array().into_iter().enumerate() {
-            append_interactions_step_to_gemini(ctx, &child.value(), &role, &format!("{path}.steps.{i}"));
+            append_interactions_step_to_gemini(ctx, &child.value(), &role, raws.get(i).copied());
         }
         return;
     }
@@ -765,7 +772,7 @@ fn append_interactions_step_to_gemini(ctx: &mut InputContext<'_>, item: &Value, 
         }
         "function_result" => {
             ctx.end_model_turn();
-            let part = build_gemini_function_result_part(item, cpa_json::raw_at(ctx.src, &format!("{path}.result")));
+            let part = build_gemini_function_result_part(item, raw.and_then(|r| cpa_json::raw_at(r.as_bytes(), "result")));
             if ctx.last_step_type == "function_result" && ctx.last_role_is("user") {
                 if let Some(last) = ctx.items.last_mut() {
                     append_user_content_part(last, part);

@@ -250,6 +250,7 @@ pub(super) fn responses_tool_output_text(output: &Res<'_>, src: &RawSrc<'_>) -> 
     }
     if output.is_array() {
         let mut b = String::new();
+        let part_srcs = src.children();
         for (k, part) in output.array().iter().enumerate() {
             if part.is_string() {
                 b.push_str(&part.str());
@@ -257,7 +258,7 @@ pub(super) fn responses_tool_output_text(output: &Res<'_>, src: &RawSrc<'_>) -> 
             }
             let text = part.g("text");
             if text.exists() {
-                b.push_str(&src.child(k).child("text").string(&text));
+                b.push_str(&part_srcs.get(k).map_or(RawSrc::none(), |p| p.child("text")).string(&text));
             }
         }
         return b;
@@ -279,8 +280,7 @@ pub(super) fn unwrap_custom_tool_input(arguments: &str) -> String {
         }
         // Non-strings come back as the original text of the value.
         let doc = lenient_start(arguments).map_or(arguments, |start| &arguments[start..]);
-        let src = RawSrc::new(doc.as_bytes(), "input".into());
-        return src.raw(&v);
+        return RawSrc::new(doc.as_bytes()).child("input").raw(&v);
     }
     arguments.to_string()
 }

@@ -184,7 +184,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
 
     let root = cpa_json::parse(input_bytes);
     let tool_index = ToolIndex::new(&root);
-    let root_src = RawSrc::new(input_bytes, String::new());
+    let root_src = RawSrc::new(input_bytes);
 
     cpa_json::set(&mut out, "model", model_name);
     cpa_json::set(&mut out, "stream", stream);
@@ -295,12 +295,9 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
 
         // Normalization keeps item order, so item `idx` is `input.<idx>` in the original request.
         let aligned_with_request = input_items.len() == raw_input_array.len();
+        let item_srcs = if aligned_with_request { root_src.child("input").children() } else { Vec::new() };
         for (item_index, item) in input_items.iter().enumerate() {
-            let item_src = if aligned_with_request {
-                RawSrc::new(input_bytes, format!("input.{item_index}"))
-            } else {
-                RawSrc::none()
-            };
+            let item_src = item_srcs.get(item_index).copied().unwrap_or(RawSrc::none());
             let mut item_type = item.g("type").str();
             if item_type.is_empty() && !item.g("role").str().is_empty() {
                 item_type = "message".into();
@@ -602,24 +599,25 @@ fn convert_text_format_to_chat_response_format(text_format: &Res<'_>) -> Option<
 /// content parts, everything else its text form.
 fn set_function_call_output_content(tool_message: &mut Value, output: &Res<'_>, src: &RawSrc<'_>) {
     let mut structured = output.clone();
-    let mut structured_src = src.clone();
+    let text = if output.is_string() { output.str() } else { String::new() };
+    // A JSON string output is its own document.
+    let mut structured_src: RawSrc<'_> = *src;
     if output.is_string() {
-        let text = output.str();
         if !cpa_json::valid(text.as_bytes()) {
             cpa_json::set(tool_message, "content", text);
             return;
         }
         structured = Res::owned(cpa_json::parse_str(&text));
-        // A JSON string output is its own document.
-        structured_src = RawSrc::owned(text.into_bytes());
+        structured_src = RawSrc::new(text.as_bytes());
     }
 
     if has_chat_tool_output_image_part(&structured) {
+        let item_srcs = structured_src.children();
         let content_items: Vec<Value> = structured
             .array()
             .iter()
             .enumerate()
-            .map(|(k, item)| chat_tool_output_content_part(item, &structured_src.child(k)))
+            .map(|(k, item)| chat_tool_output_content_part(item, &item_srcs.get(k).copied().unwrap_or(RawSrc::none())))
             .collect();
         cpa_json::set(tool_message, "content", Value::Array(content_items));
         return;

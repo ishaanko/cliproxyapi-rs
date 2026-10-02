@@ -223,18 +223,17 @@ fn image_part(item: &Res<'_>) -> Value {
     part
 }
 
-/// Where a tool_result's `content` sits in the original request text, so a stringified (`$ref`)
-/// result can keep its original whitespace.
+/// The original text of a tool_result's `content`, so a stringified (`$ref`) result can keep its
+/// original whitespace.
 #[derive(Clone, Copy)]
 struct RawSource<'a> {
-    input: &'a [u8],
-    path: &'a str,
+    text: &'a str,
 }
 
 impl<'a> RawSource<'a> {
-    fn text(&self, sub_path: &str) -> Option<&'a str> {
-        let path = if sub_path.is_empty() { self.path.to_string() } else { format!("{}.{sub_path}", self.path) };
-        cpa_json::raw_at(self.input, &path)
+    /// Original text of every element of an array `content`, in one pass.
+    fn items(&self) -> Vec<&'a str> {
+        cpa_json::raw_children(self.text.as_bytes(), "")
     }
 }
 
@@ -254,6 +253,7 @@ fn build_function_response(
         cpa_json::set(&mut fr, result_path, result.str());
     } else if result.is_array() {
         let items = result.array();
+        let item_raws = raw_src.map(|r| r.items()).unwrap_or_default();
         let mut non_image: Vec<(Res<'_>, Option<&str>)> = Vec::with_capacity(items.len());
         let mut image_parts: Vec<Value> = Vec::new();
         for (k, item) in items.iter().enumerate() {
@@ -261,7 +261,7 @@ fn build_function_response(
                 image_parts.push(image_part(item));
                 continue;
             }
-            non_image.push((item.clone(), raw_src.and_then(|r| r.text(&k.to_string()))));
+            non_image.push((item.clone(), item_raws.get(k).copied()));
         }
         match non_image.len() {
             0 => {
@@ -287,10 +287,10 @@ fn build_function_response(
             cpa_json::set(&mut fr, "parts", Value::Array(vec![image_part(result)]));
             cpa_json::set(&mut fr, result_path, "");
         } else {
-            function_response::set_function_response_result(&mut fr, result_path, result, raw_src.and_then(|r| r.text("")));
+            function_response::set_function_response_result(&mut fr, result_path, result, raw_src.map(|r| r.text));
         }
     } else if result.exists() {
-        function_response::set_function_response_result(&mut fr, result_path, result, raw_src.and_then(|r| r.text("")));
+        function_response::set_function_response_result(&mut fr, result_path, result, raw_src.map(|r| r.text));
     } else {
         cpa_json::set(&mut fr, result_path, "");
     }
@@ -538,6 +538,8 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
 
     let messages = raw.g("messages");
     if messages.is_array() {
+        // Source text of each message, resolved on first use (only tool_results need it).
+        let message_raws: std::cell::OnceCell<Vec<&str>> = std::cell::OnceCell::new();
         for (message_index, message) in messages.array().iter().enumerate() {
             let role_result = message.g("role");
             if !role_result.is_string() {
@@ -566,6 +568,7 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
                 // Alignment may reorder tool_result blocks; keep the original order to locate raw text.
                 let original_content = message.g("content");
                 let original_blocks = original_content.array();
+                let block_raws: std::cell::OnceCell<Vec<&str>> = std::cell::OnceCell::new();
                 let contents_result = if original_role == "user" {
                     common::align_claude_tool_results(contents_result, &preceding_tool_use_ids)
                 } else {
@@ -662,8 +665,15 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
                                 }
                             };
                             let original_index = original_blocks.iter().position(|b| b.v() == Some(content));
-                            let result_path = original_index.map(|j0| format!("messages.{message_index}.content.{j0}.content"));
-                            let raw_src = result_path.as_deref().map(|path| RawSource { input: input_raw_json, path });
+                            let raw_src = original_index
+                                .and_then(|j0| {
+                                    let blocks = block_raws.get_or_init(|| {
+                                        let messages = message_raws.get_or_init(|| cpa_json::raw_children(input_raw_json, "messages"));
+                                        messages.get(message_index).map(|m| cpa_json::raw_children(m.as_bytes(), "content")).unwrap_or_default()
+                                    });
+                                    crate::common::raw_in(blocks.get(j0), "content")
+                                })
+                                .map(|text| RawSource { text });
                             let fr = build_function_response(&tool_call_id, &func_name, &content.g("content"), &function_name_map, raw_src);
                             parts.items.push(json!({"functionResponse": fr}));
                         }

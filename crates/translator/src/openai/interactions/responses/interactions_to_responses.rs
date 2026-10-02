@@ -13,7 +13,7 @@ use cpa_core::util::{self, ResponsesToolIdentity};
 use cpa_core::applypatch;
 use cpa_json::{Res, Value, J};
 
-use super::raw_text::{parse_lenient, restore_step_arguments};
+use super::raw_text::restore_step_arguments;
 use super::request::{
     interactions_content_part_to_responses, interactions_content_texts, interactions_function_call_to_responses_with_identity,
 };
@@ -166,7 +166,7 @@ pub(super) fn convert_interactions_response_to_openai_responses_non_stream(
     raw: &[u8],
     param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let mut root = parse_lenient(raw);
+    let mut root = cpa_json::parse(raw);
     restore_step_arguments(raw, &mut root);
     let mut out = tmpl(r#"{"id":"","object":"response","status":"completed","model":"","output":[]}"#);
     cpa_json::set(&mut out, "id", first_non_empty(&[&root.g("id").str(), &root.g("interaction.id").str()]));
@@ -265,7 +265,7 @@ fn convert_event(model_name: &str, original: &[u8], translated: &[u8], raw: &[u8
     if st.terminal {
         return vec![];
     }
-    let mut root = parse_lenient(&payload);
+    let mut root = cpa_json::parse(&payload);
     restore_step_arguments(&payload, &mut root);
     if root.is_null() {
         return vec![];

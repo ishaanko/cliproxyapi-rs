@@ -7,7 +7,7 @@ use base64::Engine;
 use cpa_core::misc::mime_type_for_extension;
 use cpa_json::{json, Res, Value};
 
-use super::lenient::{restore_raw, RawTexts};
+use super::lenient::RawTexts;
 use crate::common::normalize_openai_file_data;
 
 /// Go `base64.StdEncoding`: padding required, non-zero trailing bits tolerated.
@@ -656,7 +656,7 @@ struct OutputBlock {
 /// Flattens an array tool output: media blocks become inline parts (second value of the result
 /// tuple's images); text blocks collapse to a string, anything else stays raw JSON.
 /// Returns (result, is_raw_json, media parts).
-pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws: &RawTexts) -> (String, bool, Vec<Value>) {
+pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws: &RawTexts<'_>) -> (String, bool, Vec<Value>) {
     let mut image_parts: Vec<Value> = Vec::new();
     let mut non_image_entries: Vec<OutputBlock> = Vec::new();
     let mut has_content_block = false;
@@ -671,17 +671,17 @@ pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws
         let b_type = block.g("type").str();
         if b_type == "input_text" || b_type == "output_text" || b_type == "text" {
             has_content_block = true;
-            non_image_entries.push(OutputBlock { text: block.g("text").str(), is_text: true, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: block.g("text").str(), is_text: true, raw: raws.restore(&block) });
         } else if block.is_string() {
-            non_image_entries.push(OutputBlock { text: block.str(), is_text: true, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: block.str(), is_text: true, raw: raws.restore(&block) });
         } else {
             has_non_text_block = true;
-            non_image_entries.push(OutputBlock { text: restore_raw(raws, block.raw()), is_text: false, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: raws.restore(&block), is_text: false, raw: raws.restore(&block) });
         }
     }
 
     if !has_content_block {
-        return (restore_raw(raws, output_result.raw()), true, Vec::new());
+        return (raws.restore(output_result), true, Vec::new());
     }
 
     match non_image_entries.len() {

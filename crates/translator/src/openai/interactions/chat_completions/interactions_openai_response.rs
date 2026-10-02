@@ -9,7 +9,6 @@ use super::{
     first_non_empty, interactions_text_step, is_antigravity_model, openai_reasoning_texts, set_items, sse_payload, tmpl, unix_nanos,
 };
 use crate::common;
-use crate::openai::interactions::responses::raw_text::parse_lenient;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream state (Go: `openAIToInteractionsStreamState`).
@@ -50,7 +49,7 @@ pub(super) fn convert_openai_response_to_interactions_non_stream(
     raw: &[u8],
     _param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let root = parse_lenient(raw);
+    let root = cpa_json::parse(raw);
     let mut out = tmpl(r#"{"id":"","status":"completed","object":"interaction","model":"","steps":[]}"#);
     let id = first_non_empty(&[&root.g("id").str(), &format!("interaction_{}", unix_nanos())]);
     cpa_json::set(&mut out, "id", id);
@@ -98,7 +97,7 @@ fn convert_stream(model_name: &str, raw: &[u8], st: &mut StreamState) -> Vec<Vec
         done(&mut out, st);
         return out;
     }
-    let root = parse_lenient(&payload);
+    let root = cpa_json::parse(&payload);
     let usage = root.g("usage");
     if usage.exists() {
         st.usage = Some(usage.value());
