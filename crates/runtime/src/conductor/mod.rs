@@ -52,6 +52,8 @@ pub mod rules;
 pub mod selector;
 pub mod session;
 mod stream;
+#[cfg(test)]
+mod tests;
 pub mod usage;
 pub mod util;
 
