@@ -77,7 +77,8 @@ pub fn load_config_optional(path: impl AsRef<Path>, optional: bool) -> Result<Co
             Err(_) if optional => return Ok(Config::empty_optional()),
             Err(err) => {
                 return Err(ConfigError::invalid(format!(
-                    "failed to parse config file: {err}"
+                    "failed to parse config file: {}",
+                    decode_error_text(root, &text, &err)
                 )));
             }
         },
@@ -116,12 +117,27 @@ pub fn parse_config_bytes(data: &[u8]) -> Result<Config> {
     let root =
         parse_yaml(text).map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?;
     let mut cfg = match &root {
-        Some(root) => decode_config(root)
-            .map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?,
+        Some(root) => decode_config(root).map_err(|e| {
+            ConfigError::invalid(format!(
+                "parse config payload: {}",
+                decode_error_text(root, text, &e)
+            ))
+        })?,
         None => Config::parse_defaults(),
     };
     finalize(&mut cfg, false, |_| {})?;
     Ok(cfg)
+}
+
+/// The text of a failed decode: yaml.v3's wording for a type mismatch, else the error as is.
+fn decode_error_text(root: &Value, text: &str, err: &ConfigError) -> String {
+    flatten_v8(root)
+        .ok()
+        .and_then(|mut flat| {
+            strip_nulls(&mut flat);
+            crate::goerr::unmarshal_message(&flat, text)
+        })
+        .unwrap_or_else(|| err.to_string())
 }
 
 /// Decodes a parsed document of any layout into a [`Config`] (the port of `Config.UnmarshalYAML`):

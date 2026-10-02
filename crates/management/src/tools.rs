@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::credentials::auth_by_index;
-use crate::http::{ApiError, ApiResult, ok_json};
+use crate::http::{ApiError, ApiResult, ok_json, ok_struct};
 use crate::state::ManagementState;
 
 const API_CALL_TIMEOUT: Duration = Duration::from_secs(60);
@@ -314,10 +314,14 @@ fn proxy_from_api_key_config(cfg: &Config, auth: &Auth) -> String {
 /// A client without environment proxies (Go: the cloned default transport with `Proxy = nil`),
 /// routed through `proxy` when it is a real proxy URL.
 fn build_client(proxy: &ProxySetting) -> reqwest::Client {
+    // Go's default transport asks for gzip only and identifies as Go-http-client.
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .timeout(API_CALL_TIMEOUT)
-        .no_proxy();
+        .no_proxy()
+        .brotli(false)
+        .deflate(false)
+        .user_agent("Go-http-client/1.1");
     if let ProxySetting::Proxy(p) = proxy
         && let Ok(proxy) = reqwest::Proxy::all(p)
     {
@@ -472,7 +476,7 @@ pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> 
         .bytes()
         .await
         .map_err(|_| ApiError::new(502, "failed to read response"))?;
-    Ok(ok_json(
+    Ok(ok_struct(
         &json!({"status_code": status, "header": header, "body": String::from_utf8_lossy(&bytes)}),
     ))
 }
@@ -565,7 +569,7 @@ pub(crate) async fn latest_version(State(st): State<ManagementState>) -> ApiResu
 /// `GET /plugins`: the shape Go returns when no plugin is installed.
 pub(crate) async fn list_plugins(State(st): State<ManagementState>) -> ApiResult {
     let cfg = st.cfg();
-    Ok(ok_json(
+    Ok(ok_struct(
         &json!({"plugins_enabled": false, "plugins_dir": cfg.plugins.dir, "plugins": []}),
     ))
 }

@@ -50,8 +50,16 @@ impl IntoResponse for ApiError {
 
 pub(crate) type ApiResult<T = Response> = Result<T, ApiError>;
 
-/// JSON response with the given status.
+/// JSON response with the given status. Top-level object keys are sorted: Go builds nearly every
+/// management answer from a `gin.H` map, which `encoding/json` writes in key order. Nested values
+/// keep their own order (they are structs in Go). Use [`json_struct`] for a struct body.
 pub(crate) fn json_response<T: Serialize>(status: u16, body: &T) -> Response {
+    let value = serde_json::to_value(body).unwrap_or(Value::Null);
+    json_struct(status, &sort_top(value))
+}
+
+/// Like [`json_response`] but keeps the field order of the body (Go struct responses).
+pub(crate) fn json_struct<T: Serialize>(status: u16, body: &T) -> Response {
     let bytes = serde_json::to_vec(body).unwrap_or_else(|_| b"null".to_vec());
     let mut resp = Response::new(Body::from(bytes));
     *resp.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -62,8 +70,25 @@ pub(crate) fn json_response<T: Serialize>(status: u16, body: &T) -> Response {
     resp
 }
 
+/// Sorts the keys of a top-level JSON object (`map[string]any` marshalling).
+pub(crate) fn sort_top(value: Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            Value::Object(entries.into_iter().collect())
+        }
+        other => other,
+    }
+}
+
 pub(crate) fn ok_json<T: Serialize>(body: &T) -> Response {
     json_response(200, body)
+}
+
+/// 200 with a struct body (field order kept).
+pub(crate) fn ok_struct<T: Serialize>(body: &T) -> Response {
+    json_struct(200, body)
 }
 
 pub(crate) fn no_store(mut resp: Response) -> Response {

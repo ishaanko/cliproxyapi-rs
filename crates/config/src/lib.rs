@@ -10,8 +10,10 @@
 mod comments;
 pub mod diff;
 mod duration;
+mod emit;
 mod env;
 mod error;
+mod goerr;
 mod json_view;
 mod layout;
 mod lenient;
@@ -30,6 +32,7 @@ pub use comments::normalize_comment_indentation;
 pub use duration::{DurationParseError, GoDuration};
 pub use env::load_dotenv;
 pub use error::{ConfigError, Result};
+pub use layout::marshal_document;
 pub use layout::{
     MAX_CREDENTIAL_WEIGHT, WarnFn, normalize_config_layout, set_v8_migration_warn_func,
     validate_v8_config,

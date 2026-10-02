@@ -319,7 +319,8 @@ fn migration_comments_unknown_sections_and_stays_idempotent() {
     }
     for expected in [
         "# home:",
-        "#   enabled: true",
+        "#     enabled: true",
+        "#     host: ignored.example",
         "# enable-gemini-cli-endpoint: true",
         "# forgotten-setting:",
     ] {

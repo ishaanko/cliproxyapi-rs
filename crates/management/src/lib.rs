@@ -23,14 +23,21 @@ mod cooldown;
 mod credential_edit;
 mod credentials;
 mod gate;
+mod gin_routes;
+mod go_json;
 mod http;
+mod key_lists;
 mod logs;
 mod oauth;
 mod observability;
+mod plugin_store;
+mod plugins_v0;
 mod routing;
+mod settings_v0;
 mod state;
 mod tools;
-mod yaml_comments;
+mod v0_routes;
+mod v0_util;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -42,6 +49,7 @@ use bytes::Bytes;
 
 use config_v8::{ConfigRequest, split_path};
 
+pub use gin_routes::GIN_ROUTES;
 pub use oauth::oauth_redirect_router;
 pub use state::{AuthRegistry, BuildInfo, ManagementState, ReloadHook};
 
@@ -97,10 +105,7 @@ pub fn router(state: ManagementState) -> Router {
     let v8 = Router::new()
         .route(
             "/config",
-            get(config_root)
-                .put(config_root)
-                .patch(config_root)
-                .delete(config_root),
+            get(config_root).put(config_root).patch(config_root),
         )
         .route("/config.yaml", get(config_yaml).put(config_yaml))
         .route(
@@ -208,6 +213,7 @@ pub fn router(state: ManagementState) -> Router {
 
     Router::new()
         .nest("/v8/management", v8)
+        .nest("/v0/management", v0_routes::router(state.clone()))
         .merge(callbacks)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(gate::cors))

@@ -226,7 +226,7 @@ fn list_blocking(
             Value::Null
         };
         entry.insert("cooldowns".into(), cooldowns);
-        Some(Value::Object(entry))
+        Some(crate::http::sort_top(Value::Object(entry)))
     };
 
     if let Some(p) = pagination {
@@ -740,10 +740,24 @@ async fn write_auth_file(st: &ManagementState, name: &str, data: &[u8]) -> Resul
 }
 
 fn parse_auth_metadata(data: &[u8]) -> Result<Metadata, String> {
+    crate::go_json::check_valid(data).map_err(|e| format!("invalid auth file: {e}"))?;
     let parsed: Value =
         serde_json::from_slice(data).map_err(|e| format!("invalid auth file: {e}"))?;
-    let Value::Object(mut metadata) = parsed else {
-        return Err("invalid auth file: json: cannot unmarshal into Go value of type map[string]interface {}".into());
+    let mut metadata = match parsed {
+        Value::Object(m) => m,
+        // `json.Unmarshal` of `null` into a map leaves it nil without an error.
+        Value::Null => Metadata::new(),
+        other => {
+            let kind = match other {
+                Value::Array(_) => "array",
+                Value::String(_) => "string",
+                Value::Number(_) => "number",
+                _ => "bool",
+            };
+            return Err(format!(
+                "invalid auth file: json: cannot unmarshal {kind} into Go value of type map[string]interface {{}}"
+            ));
+        }
     };
     credmeta::normalize_credential_metadata(&mut metadata);
     credmeta::validate_metadata_weight(&metadata).map_err(|e| format!("invalid auth file: {e}"))?;
