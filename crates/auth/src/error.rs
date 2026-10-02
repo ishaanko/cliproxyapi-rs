@@ -58,14 +58,26 @@ pub enum AuthFlowError {
     #[error("{}", format_oauth(.code, .description))]
     OAuth { code: String, description: String },
     /// Non-2xx from a provider endpoint (Antigravity `HTTPStatusError`, token endpoints).
+    /// `retry_after` carries a server-provided 429 delay when one was parsed.
     #[error("{message}")]
-    Status { status: u16, message: String },
+    Status {
+        status: u16,
+        message: String,
+        retry_after: Option<std::time::Duration>,
+    },
     /// Claude refresh failure carrying retry semantics (`refreshHTTPError`).
     #[error("token refresh failed with status {status}: {message}")]
     Refresh {
         status: u16,
         message: String,
         retryable: bool,
+    },
+    /// A refresh that failed on every allowed attempt (`token refresh failed after N attempts: %w`);
+    /// status, retry hint and retryability are those of the last error.
+    #[error("token refresh failed after {attempts} attempts: {source}")]
+    RetriesExhausted {
+        attempts: u32,
+        source: Box<AuthFlowError>,
     },
     #[error("{0}")]
     Config(String),
@@ -125,12 +137,31 @@ impl AuthFlowError {
         AuthFlowError::Other(msg.into())
     }
 
+    /// A non-2xx response without a retry hint.
+    pub fn status(status: u16, message: impl Into<String>) -> Self {
+        AuthFlowError::Status {
+            status,
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+
+    /// Server-requested retry delay (`retryAfter` of Go's status errors), if any.
+    pub fn retry_after(&self) -> Option<std::time::Duration> {
+        match self {
+            AuthFlowError::Status { retry_after, .. } => *retry_after,
+            AuthFlowError::RetriesExhausted { source, .. } => source.retry_after(),
+            _ => None,
+        }
+    }
+
     /// HTTP status carried by the error, when it has one (`StatusCode()` in Go).
     pub fn status_code(&self) -> Option<u16> {
         match self {
             AuthFlowError::Status { status, .. } | AuthFlowError::Refresh { status, .. } => {
                 Some(*status)
             }
+            AuthFlowError::RetriesExhausted { source, .. } => source.status_code(),
             _ => None,
         }
     }
@@ -139,6 +170,7 @@ impl AuthFlowError {
     pub fn is_retryable_refresh(&self) -> bool {
         match self {
             AuthFlowError::Refresh { retryable, .. } => *retryable,
+            AuthFlowError::RetriesExhausted { source, .. } => source.is_retryable_refresh(),
             _ => true,
         }
     }

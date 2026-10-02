@@ -270,7 +270,7 @@ impl OAuthSessions {
     /// `WriteOAuthCallbackFileForPendingSession` generalized: delivers in-process when the session
     /// has an inbox, else writes the callback file. Errors with `NotPending` unless the session is
     /// pending for the (normalized) provider.
-    pub fn submit_callback(
+    pub async fn submit_callback(
         &self,
         auth_dir: Option<&Path>,
         provider: &str,
@@ -293,8 +293,12 @@ impl OAuthSessions {
         }
         let dir = auth_dir
             .filter(|d| !d.as_os_str().is_empty())
-            .ok_or_else(|| CallbackError::Io("auth dir is empty".into()))?;
-        write_callback_file(dir, &canonical, state, &payload)
+            .ok_or_else(|| CallbackError::Io("auth dir is empty".into()))?
+            .to_path_buf();
+        let state = state.to_string();
+        tokio::task::spawn_blocking(move || write_callback_file(&dir, &canonical, &state, &payload))
+            .await
+            .map_err(|e| CallbackError::Io(e.to_string()))?
             .map(|_| ())
             .map_err(CallbackError::Io)
     }
@@ -302,7 +306,7 @@ impl OAuthSessions {
     /// `handleOAuthCallback`: validation and error mapping of the manual / redirect callback
     /// endpoints. `(http status, body)`; success is `200 {"status":"ok"}` (callback accepted, not
     /// necessarily finished).
-    pub fn handle_oauth_callback(
+    pub async fn handle_oauth_callback(
         &self,
         auth_dir: Option<&Path>,
         req: &CallbackRequest,
@@ -366,7 +370,10 @@ impl OAuthSessions {
         if !session.provider.eq_ignore_ascii_case(&canonical) {
             return err(400, "provider does not match state");
         }
-        match self.submit_callback(auth_dir, &canonical, &state, &code, &err_msg) {
+        match self
+            .submit_callback(auth_dir, &canonical, &state, &code, &err_msg)
+            .await
+        {
             Ok(()) => (200, json!({"status": "ok"})),
             Err(CallbackError::NotPending) => match self.get(&state) {
                 Some(s) if !s.status.is_empty() => err(409, &s.status),
@@ -539,8 +546,8 @@ mod tests {
         assert!(s.get("old").is_none());
     }
 
-    #[test]
-    fn callback_endpoint_error_mapping() {
+    #[tokio::test]
+    async fn callback_endpoint_error_mapping() {
         let s = OAuthSessions::default();
         let dir = tempfile::tempdir().unwrap();
         let req = |provider: &str, state: &str, code: &str| CallbackRequest {
@@ -549,29 +556,38 @@ mod tests {
             code: code.into(),
             ..Default::default()
         };
-        let call = |r: &CallbackRequest| s.handle_oauth_callback(Some(dir.path()), r);
+        async fn call(
+            s: &OAuthSessions,
+            dir: &std::path::Path,
+            r: &CallbackRequest,
+        ) -> (u16, Value) {
+            s.handle_oauth_callback(Some(dir), r).await
+        }
 
-        assert_eq!(call(&req("", "", "c")).0, 400);
-        assert_eq!(call(&req("", "bad/state", "c")).1["error"], "invalid state");
+        assert_eq!(call(&s, dir.path(), &req("", "", "c")).await.0, 400);
         assert_eq!(
-            call(&req("", "st", "")).1["error"],
+            call(&s, dir.path(), &req("", "bad/state", "c")).await.1["error"],
+            "invalid state"
+        );
+        assert_eq!(
+            call(&s, dir.path(), &req("", "st", "")).await.1["error"],
             "code or error is required"
         );
-        assert_eq!(call(&req("", "st", "c")).0, 404);
+        assert_eq!(call(&s, dir.path(), &req("", "st", "c")).await.0, 404);
 
         s.register("st", "anthropic");
         assert_eq!(
-            call(&req("openai", "st", "c")).1["error"],
+            call(&s, dir.path(), &req("openai", "st", "c")).await.1["error"],
             "provider does not match state"
         );
         assert_eq!(
-            call(&req("!!", "st", "c")).1["error"],
+            call(&s, dir.path(), &req("!!", "st", "c")).await.1["error"],
             "unsupported provider"
         );
 
         // No inbox: falls back to the callback file, which the waiter reads and removes.
         assert_eq!(
-            call(&req("claude", "st", " the-code ")),
+            call(&s, dir.path(), &req("claude", "st", " the-code ")).await,
             (200, json!({"status": "ok"}))
         );
         let got = take_callback_file(dir.path(), "anthropic", "st").unwrap();
@@ -590,17 +606,17 @@ mod tests {
             redirect_url: "http://localhost:54545/callback?code=zz&state=st".into(),
             ..Default::default()
         };
-        assert_eq!(call(&r).0, 200);
+        assert_eq!(call(&s, dir.path(), &r).await.0, 200);
 
         s.set_error("st", "Bad request");
         assert_eq!(
-            call(&req("", "st", "c")),
+            call(&s, dir.path(), &req("", "st", "c")).await,
             (409, json!({"status": "error", "error": "Bad request"}))
         );
         s.register("done", "codex");
         s.complete("done");
         assert_eq!(
-            call(&req("", "done", "c")).1["error"],
+            call(&s, dir.path(), &req("", "done", "c")).await.1["error"],
             "oauth flow is already completed"
         );
     }
@@ -610,10 +626,12 @@ mod tests {
         let s = OAuthSessions::default();
         let (tx, mut rx) = mpsc::unbounded_channel();
         s.register_with_inbox("st", "codex", tx);
-        s.submit_callback(None, "codex", "st", "c1", "").unwrap();
+        s.submit_callback(None, "codex", "st", "c1", "")
+            .await
+            .unwrap();
         assert_eq!(rx.recv().await.unwrap().code, "c1");
         assert!(matches!(
-            s.submit_callback(None, "xai", "st", "c", ""),
+            s.submit_callback(None, "xai", "st", "c", "").await,
             Err(CallbackError::NotPending)
         ));
     }
