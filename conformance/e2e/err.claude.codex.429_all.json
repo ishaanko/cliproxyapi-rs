@@ -1,0 +1,186 @@
+{
+  "id": "err.claude.codex.429_all",
+  "desc": "claude client -> codex upstream: 429_all",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-80228c41b545cfb8-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "type": "error",
+            "error": {
+              "type": "rate_limit_error",
+              "message": "mock upstream error 429"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "retry-after": "1"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "type": "error",
+            "error": {
+              "type": "rate_limit_error",
+              "message": "All credentials for model gpt-5.5 are cooling down via provider codex (last error: rate_limit_exceeded: mock upstream error 429)"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "instructions": "",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "stream": true,
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "prompt_cache_key": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31"
+      }
+    },
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-1",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "instructions": "",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "stream": true,
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "tools": [
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "prompt_cache_key": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31"
+      }
+    }
+  ]
+}

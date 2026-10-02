@@ -121,20 +121,14 @@ impl Executor for Mock {
             Step::Ok(p) => {
                 let (tx, rx) = mpsc::channel(8);
                 tx.try_send(Ok(payload_for(p, auth))).unwrap();
-                Ok(StreamResult {
-                    headers: Default::default(),
-                    chunks: rx,
-                })
+                Ok(StreamResult::new(Default::default(), rx))
             }
             Step::Idle(first) => {
                 let (tx, rx) = mpsc::channel(4);
                 tx.try_send(Ok(Bytes::from_static(first.as_bytes())))
                     .unwrap();
                 self.held.lock().push(tx);
-                Ok(StreamResult {
-                    headers: Default::default(),
-                    chunks: rx,
-                })
+                Ok(StreamResult::new(Default::default(), rx))
             }
             Step::Stream(items) => {
                 let (tx, rx) = mpsc::channel(items.len().max(1) + 1);
@@ -142,10 +136,7 @@ impl Executor for Mock {
                     tx.try_send(item.map(|s| Bytes::from_static(s.as_bytes())))
                         .unwrap();
                 }
-                Ok(StreamResult {
-                    headers: Default::default(),
-                    chunks: rx,
-                })
+                Ok(StreamResult::new(Default::default(), rx))
             }
         }
     }

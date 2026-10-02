@@ -40,7 +40,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -74,11 +75,11 @@
             ],
             "output": [
               {
-                "id": "<fc:1>",
+                "id": "<volatile>",
                 "type": "function_call",
                 "status": "completed",
                 "arguments": "{\"city\":\"Paris\"}",
-                "call_id": "<call:1>",
+                "call_id": "call_<id:1>_1",
                 "name": "get_weather"
               }
             ],
@@ -106,6 +107,7 @@
       "query": "",
       "credential": "sk-gemini-1",
       "headers": {
+        "accept-encoding": "gzip",
         "content-type": "application/json",
         "user-agent": "<go-default-ua>",
         "x-goog-api-key": "sk-gemini-1"
@@ -168,5 +170,8 @@
         "model": "gemini-2.5-flash"
       }
     }
+  ],
+  "volatile": [
+    "/steps/0/response/body/value/output/0/id"
   ]
 }

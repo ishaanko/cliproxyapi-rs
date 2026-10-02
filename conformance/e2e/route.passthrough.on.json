@@ -28,7 +28,9 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-cache",
           "content-type": "application/json",
-          "x-e2e-upstream": "from-upstream"
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>",
+          "x-e2e-upstream": "from-upstream",
+          "x-ratelimit-remaining": "5"
         },
         "body": {
           "type": "json",
@@ -91,7 +93,9 @@
           "cache-control": "no-cache",
           "connection": "keep-alive",
           "content-type": "text/event-stream",
-          "x-e2e-upstream": "from-upstream"
+          "x-cpa-trace-id": "<ts14>-904eeaa86b64bbcf-<uuid:2>",
+          "x-e2e-upstream": "from-upstream",
+          "x-ratelimit-remaining": "5"
         },
         "body": {
           "type": "sse",
@@ -208,6 +212,7 @@
       "credential": "sk-claude-1",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
@@ -244,6 +249,7 @@
       "credential": "sk-claude-2",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
         "content-type": "application/json",

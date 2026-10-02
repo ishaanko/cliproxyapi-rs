@@ -1,0 +1,174 @@
+{
+  "id": "history.thinking.chat.compat",
+  "desc": "turn carrying previous reasoning: chat client -> compat upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "reasoning_effort": "high",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Weather in Paris?"
+            },
+            {
+              "role": "assistant",
+              "content": "Checking.",
+              "reasoning_content": "The user wants weather; call the tool.",
+              "tool_calls": [
+                {
+                  "id": "call_abc123",
+                  "type": "function",
+                  "function": {
+                    "name": "get_weather",
+                    "arguments": "{\"city\":\"Paris\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call_abc123",
+              "content": "18C"
+            },
+            {
+              "role": "user",
+              "content": "And Rome?"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "chatcmpl-mock01",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "mock-gpt-4o",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "Hello from mock",
+                  "reasoning_content": "Let me think."
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 11,
+              "completion_tokens": 7,
+              "total_tokens": 18,
+              "completion_tokens_details": {
+                "reasoning_tokens": 3
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "reasoning_effort": "high",
+        "messages": [
+          {
+            "role": "user",
+            "content": "Weather in Paris?"
+          },
+          {
+            "role": "assistant",
+            "content": "Checking.",
+            "reasoning_content": "The user wants weather; call the tool.",
+            "tool_calls": [
+              {
+                "id": "call_abc123",
+                "type": "function",
+                "function": {
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_abc123",
+            "content": "18C"
+          },
+          {
+            "role": "user",
+            "content": "And Rome?"
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

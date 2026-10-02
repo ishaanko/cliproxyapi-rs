@@ -21,7 +21,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-80228c41b545cfb8-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -73,10 +74,12 @@
       "credential": "sk-codex-2",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
         "content-type": "application/json",
         "originator": "codex-tui",
-        "session-id": "<uuid:1>",
+        "session-id": "71f2b058-574d-5062-947c-562c511cf85d",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
       "body": {
@@ -106,7 +109,7 @@
             "output_format": "png"
           }
         ],
-        "prompt_cache_key": "<uuid:1>"
+        "prompt_cache_key": "71f2b058-574d-5062-947c-562c511cf85d"
       }
     },
     {
@@ -117,10 +120,12 @@
       "credential": "sk-codex-1",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-codex-1",
+        "connection": "Keep-Alive",
         "content-type": "application/json",
         "originator": "codex-tui",
-        "session-id": "<uuid:1>",
+        "session-id": "71f2b058-574d-5062-947c-562c511cf85d",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
       "body": {
@@ -150,7 +155,7 @@
             "output_format": "png"
           }
         ],
-        "prompt_cache_key": "<uuid:1>"
+        "prompt_cache_key": "71f2b058-574d-5062-947c-562c511cf85d"
       }
     }
   ]

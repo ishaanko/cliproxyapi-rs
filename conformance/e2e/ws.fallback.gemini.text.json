@@ -30,7 +30,8 @@
       "response": {
         "status": 101,
         "headers": {
-          "connection": "Upgrade"
+          "connection": "Upgrade",
+          "upgrade": "websocket"
         },
         "body": {
           "type": "ws",
@@ -199,6 +200,7 @@
       "query": "alt=sse",
       "credential": "sk-gemini-1",
       "headers": {
+        "accept-encoding": "gzip",
         "content-type": "application/json",
         "user-agent": "<go-default-ua>",
         "x-goog-api-key": "sk-gemini-1"

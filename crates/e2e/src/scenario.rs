@@ -61,4 +61,8 @@ pub struct Capture {
     pub desc: String,
     pub steps: Vec<StepCapture>,
     pub upstream: Vec<UpstreamCapture>,
+    /// JSON pointers of leaves that differed between the two recording runs; `check` ignores
+    /// their values (they are stored as `<volatile>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volatile: Vec<String>,
 }

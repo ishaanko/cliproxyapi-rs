@@ -236,20 +236,23 @@ fn streaming_options(out: &mut Vec<Scenario>) {
         Scenario::new("route.bootstrap.retry1", "bootstrap-retries 1 calls the executor again before the first byte", two_failures, vec![chat_stream(compat).into()])
             .profile(profiles::bootstrap_one),
     );
-    let slow = |reply: Reply| Script::steps(vec![Step::always(reply).delayed(1500).stalled(2500)]);
+    // 1s keep-alive interval against a 3.5s stall: ticks at 1s, 2s, 3s, each 0.5s or more away
+    // from the upstream's own timing.
+    let stalled = |reply: Reply| Script::steps(vec![Step::always(reply).stalled(3500)]);
+    let delayed = |reply: Reply| Script::steps(vec![Step::always(reply).delayed(3500)]);
     out.push(
-        Scenario::new("route.keepalive.stream", "keepalive-seconds emits SSE comments while upstream stalls mid-stream", slow(Reply::ok(Content::Text)), vec![chat_stream(claude).into()])
+        Scenario::new("route.keepalive.stream", "keepalive-seconds emits SSE comments while upstream stalls mid-stream", stalled(Reply::ok(Content::Text)), vec![chat_stream(claude).into()])
             .profile(profiles::stream_keepalive),
     );
     out.push(
-        Scenario::new("route.keepalive.nonstream", "nonstream-keepalive-interval writes blank lines before the JSON body", slow(Reply::ok(Content::Text)), vec![chat(claude).into()])
+        Scenario::new("route.keepalive.nonstream", "nonstream-keepalive-interval writes blank lines before the JSON body", delayed(Reply::ok(Content::Text)), vec![chat(claude).into()])
             .profile(profiles::nonstream_keepalive),
     );
     out.push(
         Scenario::new(
             "route.keepalive.nonstream_error",
             "an error after a keep-alive newline is delivered with status 200",
-            slow(Reply::error(400)),
+            delayed(Reply::error(400)),
             vec![chat(claude).into()],
         )
         .profile(profiles::nonstream_keepalive),

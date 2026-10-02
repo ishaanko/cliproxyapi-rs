@@ -96,7 +96,7 @@ fn stream_of(items: Vec<Chunk>) -> Result<StreamResult, ExecError> {
     for item in items {
         let _ = tx.try_send(item.map(|s| Bytes::from_static(s.as_bytes())));
     }
-    Ok(StreamResult { headers: Default::default(), chunks: rx })
+    Ok(StreamResult::new(Default::default(), rx))
 }
 
 pub struct Harness {

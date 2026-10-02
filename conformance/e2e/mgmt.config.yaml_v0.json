@@ -19,7 +19,11 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-store",
           "content-type": "application/yaml; charset=utf-8",
-          "x-content-type-options": "nosniff"
+          "x-content-type-options": "nosniff",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
         },
         "body": {
           "type": "text",

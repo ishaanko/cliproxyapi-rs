@@ -168,6 +168,9 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         return 0;
     }
     let config_rx = service.subscribe_config();
+    for executor in cpa_executors::all_executors(config_rx.clone()) {
+        service.register_executor(executor);
+    }
     let manager = service.manager();
     let store = service.store();
     let sessions = Arc::new(OAuthSessions::default());

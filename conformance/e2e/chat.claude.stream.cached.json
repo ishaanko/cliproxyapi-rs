@@ -1,0 +1,182 @@
+{
+  "id": "chat.claude.stream.cached",
+  "desc": "chat client -> claude upstream, stream, cached",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "claude-sonnet-4-5-20250929",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "data": {
+                "id": "msg_mock01",
+                "object": "chat.completion.chunk",
+                "created": "<now>",
+                "model": "claude-sonnet-4-5-20250929",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "role": "assistant"
+                    },
+                    "finish_reason": null
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "id": "msg_mock01",
+                "object": "chat.completion.chunk",
+                "created": "<now>",
+                "model": "claude-sonnet-4-5-20250929",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "content": "Hello from "
+                    },
+                    "finish_reason": null
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "id": "msg_mock01",
+                "object": "chat.completion.chunk",
+                "created": "<now>",
+                "model": "claude-sonnet-4-5-20250929",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "content": "mock"
+                    },
+                    "finish_reason": null
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "id": "msg_mock01",
+                "object": "chat.completion.chunk",
+                "created": "<now>",
+                "model": "claude-sonnet-4-5-20250929",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                  }
+                ],
+                "usage": {
+                  "prompt_tokens": 19,
+                  "completion_tokens": 7,
+                  "total_tokens": 26,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 5,
+                    "cached_creation_tokens": 3,
+                    "cache_write_tokens": 3
+                  }
+                }
+              }
+            },
+            {
+              "data": {
+                "id": "msg_mock01",
+                "object": "chat.completion.chunk",
+                "created": "<now>",
+                "model": "claude-sonnet-4-5-20250929",
+                "choices": [],
+                "usage": {
+                  "prompt_tokens": 19,
+                  "completion_tokens": 7,
+                  "total_tokens": 26,
+                  "prompt_tokens_details": {
+                    "cached_tokens": 5,
+                    "cached_creation_tokens": 3,
+                    "cache_write_tokens": 3
+                  }
+                }
+              }
+            },
+            {
+              "data": "[DONE]"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    }
+  ]
+}

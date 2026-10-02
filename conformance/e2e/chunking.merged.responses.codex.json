@@ -1,0 +1,371 @@
+{
+  "id": "chunking.merged.responses.codex",
+  "desc": "upstream stream written merged: responses client -> codex upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "input": "What is the weather in Paris?",
+          "stream": true,
+          "reasoning": {
+            "effort": "high"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "response.created",
+              "data": {
+                "type": "response.created",
+                "sequence_number": 0,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "model": "gpt-5.5",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "store": false
+                }
+              }
+            },
+            {
+              "event": "response.in_progress",
+              "data": {
+                "type": "response.in_progress",
+                "sequence_number": 1,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "model": "gpt-5.5",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "store": false
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 2,
+                "output_index": 0,
+                "item": {
+                  "id": "rs_mock01",
+                  "type": "reasoning",
+                  "summary": []
+                }
+              }
+            },
+            {
+              "event": "response.reasoning_summary_part.added",
+              "data": {
+                "type": "response.reasoning_summary_part.added",
+                "sequence_number": 3,
+                "item_id": "rs_mock01",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": {
+                  "type": "summary_text",
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.delta",
+              "data": {
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 4,
+                "item_id": "rs_mock01",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "Let me "
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.delta",
+              "data": {
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 5,
+                "item_id": "rs_mock01",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "think."
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.done",
+              "data": {
+                "type": "response.reasoning_summary_text.done",
+                "sequence_number": 6,
+                "item_id": "rs_mock01",
+                "output_index": 0,
+                "summary_index": 0,
+                "text": "Let me think."
+              }
+            },
+            {
+              "event": "response.reasoning_summary_part.done",
+              "data": {
+                "type": "response.reasoning_summary_part.done",
+                "sequence_number": 7,
+                "item_id": "rs_mock01",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": {
+                  "type": "summary_text",
+                  "text": "Let me think."
+                }
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 8,
+                "output_index": 0,
+                "item": {
+                  "id": "rs_mock01",
+                  "type": "reasoning",
+                  "summary": [
+                    {
+                      "type": "summary_text",
+                      "text": "Let me think."
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 9,
+                "output_index": 1,
+                "item": {
+                  "id": "msg_mock01",
+                  "type": "message",
+                  "status": "in_progress",
+                  "role": "assistant",
+                  "content": []
+                }
+              }
+            },
+            {
+              "event": "response.content_part.added",
+              "data": {
+                "type": "response.content_part.added",
+                "sequence_number": 10,
+                "item_id": "msg_mock01",
+                "output_index": 1,
+                "content_index": 0,
+                "part": {
+                  "type": "output_text",
+                  "annotations": [],
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 11,
+                "item_id": "msg_mock01",
+                "output_index": 1,
+                "content_index": 0,
+                "delta": "Hello from "
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 12,
+                "item_id": "msg_mock01",
+                "output_index": 1,
+                "content_index": 0,
+                "delta": "mock"
+              }
+            },
+            {
+              "event": "response.output_text.done",
+              "data": {
+                "type": "response.output_text.done",
+                "sequence_number": 13,
+                "item_id": "msg_mock01",
+                "output_index": 1,
+                "content_index": 0,
+                "text": "Hello from mock"
+              }
+            },
+            {
+              "event": "response.content_part.done",
+              "data": {
+                "type": "response.content_part.done",
+                "sequence_number": 14,
+                "item_id": "msg_mock01",
+                "output_index": 1,
+                "content_index": 0,
+                "part": {
+                  "type": "output_text",
+                  "annotations": [],
+                  "text": "Hello from mock"
+                }
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 15,
+                "output_index": 1,
+                "item": {
+                  "id": "msg_mock01",
+                  "type": "message",
+                  "status": "completed",
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "output_text",
+                      "annotations": [],
+                      "text": "Hello from mock"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "event": "response.completed",
+              "data": {
+                "type": "response.completed",
+                "sequence_number": 16,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "completed",
+                  "model": "gpt-5.5",
+                  "output": [
+                    {
+                      "id": "rs_mock01",
+                      "type": "reasoning",
+                      "summary": [
+                        {
+                          "type": "summary_text",
+                          "text": "Let me think."
+                        }
+                      ]
+                    },
+                    {
+                      "id": "msg_mock01",
+                      "type": "message",
+                      "status": "completed",
+                      "role": "assistant",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [],
+                          "text": "Hello from mock"
+                        }
+                      ]
+                    }
+                  ],
+                  "parallel_tool_calls": true,
+                  "store": false,
+                  "usage": {
+                    "input_tokens": 11,
+                    "input_tokens_details": {
+                      "cached_tokens": 0
+                    },
+                    "output_tokens": 7,
+                    "output_tokens_details": {
+                      "reasoning_tokens": 3
+                    },
+                    "total_tokens": 18
+                  }
+                }
+              }
+            },
+            {
+              "trailing_whitespace": "\n"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "71f2b058-574d-5062-947c-562c511cf85d",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "reasoning": {
+          "effort": "high"
+        },
+        "store": false,
+        "parallel_tool_calls": true,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "instructions": "",
+        "tools": [
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "prompt_cache_key": "71f2b058-574d-5062-947c-562c511cf85d"
+      }
+    }
+  ]
+}

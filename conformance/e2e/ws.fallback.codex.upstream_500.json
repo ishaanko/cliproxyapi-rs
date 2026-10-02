@@ -30,7 +30,8 @@
       "response": {
         "status": 101,
         "headers": {
-          "connection": "Upgrade"
+          "connection": "Upgrade",
+          "upgrade": "websocket"
         },
         "body": {
           "type": "ws",
@@ -49,10 +50,12 @@
       "credential": "sk-codex-2",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
         "content-type": "application/json",
         "originator": "codex-tui",
-        "session-id": "<uuid:1>",
+        "session-id": "<volatile>",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
       "body": {
@@ -82,7 +85,7 @@
             "output_format": "png"
           }
         ],
-        "prompt_cache_key": "<uuid:1>"
+        "prompt_cache_key": "<volatile>"
       }
     },
     {
@@ -93,10 +96,12 @@
       "credential": "sk-codex-1",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-codex-1",
+        "connection": "Keep-Alive",
         "content-type": "application/json",
         "originator": "codex-tui",
-        "session-id": "<uuid:1>",
+        "session-id": "<volatile>",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
       "body": {
@@ -126,8 +131,14 @@
             "output_format": "png"
           }
         ],
-        "prompt_cache_key": "<uuid:1>"
+        "prompt_cache_key": "<volatile>"
       }
     }
+  ],
+  "volatile": [
+    "/upstream/0/body/prompt_cache_key",
+    "/upstream/0/headers/session-id",
+    "/upstream/1/body/prompt_cache_key",
+    "/upstream/1/headers/session-id"
   ]
 }

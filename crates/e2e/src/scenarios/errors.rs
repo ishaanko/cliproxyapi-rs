@@ -124,21 +124,11 @@ const ALL_CASES: &[Case] = &[
     Case::JsonCutAbort,
 ];
 
-const COMMON_CASES: &[Case] = &[
-    Case::Unauthorized,
-    Case::RateLimitFailover,
-    Case::AllServerError,
-    Case::ServerErrorFailover,
-    Case::StreamBootstrapFailover,
-    Case::StreamMidError,
-    Case::StreamCutAbort,
-];
-
 const DIALECTS: [Dialect; 4] = [
     Dialect { name: "chat", request: chat, cases: ALL_CASES },
-    Dialect { name: "claude", request: claude, cases: COMMON_CASES },
-    Dialect { name: "responses", request: responses, cases: COMMON_CASES },
-    Dialect { name: "gemini", request: gemini, cases: &[Case::Unauthorized, Case::RateLimitFailover, Case::AllServerError, Case::StreamMidError, Case::StreamCutAbort] },
+    Dialect { name: "claude", request: claude, cases: ALL_CASES },
+    Dialect { name: "responses", request: responses, cases: ALL_CASES },
+    Dialect { name: "gemini", request: gemini, cases: ALL_CASES },
 ];
 
 pub fn scenarios() -> Vec<Scenario> {

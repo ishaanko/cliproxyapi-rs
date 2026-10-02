@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use crate::client::{Body, Client, Observed, ObsBody, Step};
 use crate::config::{ConfigSpec, Layout};
 use crate::mock::LoggedRequest;
-use crate::normalize::Normalizer;
+use crate::normalize::{Normalizer, sort_model_listing};
 use crate::scenario::{Capture, Scenario, StepCapture, UpstreamCapture};
 use crate::server::ServerProc;
 
@@ -79,6 +79,11 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
                 *h = "<cooldown>".into();
             }
             normalize_body(&mut n, &mut response.body);
+            if is_model_list(&request) {
+                if let ObsBody::Json { value, .. } = &mut response.body {
+                    sort_model_listing(value);
+                }
+            }
             StepCapture { request, response }
         })
         .collect();
@@ -101,7 +106,13 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
             }
         })
         .collect();
-    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), steps, upstream })
+    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), steps, upstream, volatile: vec![] })
+}
+
+/// The model-list endpoints return Go-map-ordered arrays; their order carries no meaning.
+fn is_model_list(request: &Value) -> bool {
+    let path = request["path"].as_str().unwrap_or_default().split('?').next().unwrap_or_default();
+    request["method"] == "GET" && matches!(path, "/v1/models" | "/v1beta/models")
 }
 
 fn error_kind(e: &anyhow::Error) -> &'static str {

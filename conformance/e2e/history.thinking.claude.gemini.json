@@ -1,0 +1,223 @@
+{
+  "id": "history.thinking.claude.gemini",
+  "desc": "turn carrying previous reasoning: claude client -> gemini upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "max_tokens": 4096,
+          "thinking": {
+            "type": "enabled",
+            "budget_tokens": 2048
+          },
+          "messages": [
+            {
+              "role": "user",
+              "content": "Weather in Paris?"
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "thinking",
+                  "thinking": "The user wants weather; call the tool.",
+                  "signature": "EqQBCkYIBxgCKkDfakeSignatureForTheE2EHarnessOnly=="
+                },
+                {
+                  "type": "redacted_thinking",
+                  "data": "ZmFrZS1yZWRhY3RlZC1ibG9i"
+                },
+                {
+                  "type": "tool_use",
+                  "id": "toolu_abc123",
+                  "name": "get_weather",
+                  "input": {
+                    "city": "Paris"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_abc123",
+                  "content": "18C"
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": "And Rome?"
+            }
+          ],
+          "tools": [
+            {
+              "name": "get_weather",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "mockresp01",
+            "type": "message",
+            "role": "assistant",
+            "model": "gemini-2.5-flash",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "Let me think."
+              },
+              {
+                "type": "text",
+                "text": "Hello from mock"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 10
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:generateContent",
+      "query": "",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "accept-encoding": "gzip",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Weather in Paris?"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "thoughtSignature": "skip_thought_signature_validator",
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  },
+                  "id": "toolu_abc123"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "And Rome?"
+              },
+              {
+                "functionResponse": {
+                  "name": "get_weather",
+                  "response": {
+                    "result": "18C"
+                  },
+                  "id": "toolu_abc123"
+                }
+              }
+            ]
+          }
+        ],
+        "model": "gemini-2.5-flash",
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 2048
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ]
+      }
+    }
+  ]
+}

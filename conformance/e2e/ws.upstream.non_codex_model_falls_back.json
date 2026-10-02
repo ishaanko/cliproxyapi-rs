@@ -30,7 +30,8 @@
       "response": {
         "status": 101,
         "headers": {
-          "connection": "Upgrade"
+          "connection": "Upgrade",
+          "upgrade": "websocket"
         },
         "body": {
           "type": "ws",
@@ -200,6 +201,7 @@
       "credential": "sk-claude-1",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
