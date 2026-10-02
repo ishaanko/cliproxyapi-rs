@@ -190,3 +190,19 @@ where
         }
     })
 }
+
+/// Go: helps.StopApplyPatchStream, usable from spawned tasks (see [`end_apply_patch_stream`]).
+/// Propagates a retained failure after its one translated frame; true when the stream failed.
+pub async fn stop_apply_patch_stream(
+    param: &mut cpa_translator::Param,
+    reporter: &crate::helps::usage::UsageReporter,
+    out: &crate::helps::apply_patch::ChunkSender,
+    gateway_err: cpa_runtime::executor::ExecError,
+) -> bool {
+    use crate::helps::apply_patch::record_apply_patch_stream_failure;
+    if !record_apply_patch_stream_failure(param, reporter, &gateway_err) {
+        return false;
+    }
+    let _ = out.send(Err(gateway_err)).await;
+    true
+}
