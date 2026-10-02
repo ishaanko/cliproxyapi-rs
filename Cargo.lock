@@ -632,6 +632,7 @@ dependencies = [
  "cpa-json",
  "cpa-runtime",
  "cpa-translator",
+ "flate2",
  "futures-util",
  "hex",
  "http",
@@ -644,13 +645,16 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "thiserror",
  "tiktoken-rs",
  "tokio",
+ "tokio-rustls",
  "tracing",
  "url",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]

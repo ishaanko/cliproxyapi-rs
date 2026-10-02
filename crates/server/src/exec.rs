@@ -63,6 +63,8 @@ pub struct ExecArgs<'a> {
     pub auth_selection_model: Option<&'a str>,
     pub execution_session_id: Option<&'a str>,
     pub pinned_auth_id: Option<&'a str>,
+    /// The client is connected over a Responses websocket (lets the Codex executor use its upstream websocket).
+    pub downstream_websocket: bool,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -78,6 +80,7 @@ impl<'a> ExecArgs<'a> {
             auth_selection_model: None,
             execution_session_id: None,
             pinned_auth_id: None,
+            downstream_websocket: false,
         }
     }
 }
@@ -146,6 +149,9 @@ impl Pipeline {
             if !scope.is_empty() {
                 md.insert(meta::CALLER_SCOPE.into(), json!(scope));
             }
+        }
+        if a.downstream_websocket {
+            md.insert(cpa_executors::codex::META_DOWNSTREAM_WEBSOCKET.into(), json!(true));
         }
         md.insert(meta::REQUESTED_MODEL.into(), json!(a.model));
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
