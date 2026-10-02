@@ -23,7 +23,7 @@ pub struct Ctx {
 /// registry then suppresses passthrough fallbacks (Go: `ToolInputError()` contract).
 #[derive(Default)]
 pub struct Param {
-    state: Option<Box<dyn Any + Send>>,
+    state: Option<Box<dyn Any + Send + Sync>>,
     pub tool_input_error: Option<String>,
 }
 
@@ -35,7 +35,7 @@ impl Param {
 
     /// Get the state of type `T`, initialising it with `init` on first use. If a state of a
     /// different type is present it is replaced.
-    pub fn state<T: Any + Send>(&mut self, init: impl FnOnce() -> T) -> &mut T {
+    pub fn state<T: Any + Send + Sync>(&mut self, init: impl FnOnce() -> T) -> &mut T {
         if !self.state.as_ref().is_some_and(|s| s.is::<T>()) {
             self.state = Some(Box::new(init()));
         }
@@ -43,7 +43,7 @@ impl Param {
     }
 
     /// Existing state of type `T`, if any.
-    pub fn get<T: Any + Send>(&mut self) -> Option<&mut T> {
+    pub fn get<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
         self.state.as_mut().and_then(|s| s.downcast_mut::<T>())
     }
 }
