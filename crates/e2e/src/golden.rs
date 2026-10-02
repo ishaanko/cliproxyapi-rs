@@ -45,7 +45,15 @@ pub fn load(dir: &Path, id: &str) -> Result<Option<Capture>> {
         return Ok(None);
     }
     let text = std::fs::read_to_string(&path)?;
-    Ok(Some(serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?))
+    let mut cap: Capture = serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
+    // Same rule as the capture normalizer: a literal `Accept: */*` equals no Accept header
+    // (reqwest always adds it; goldens recorded before the rule still carry Go's explicit one).
+    for up in &mut cap.upstream {
+        if up.headers.get("accept").is_some_and(|v| v == "*/*") {
+            up.headers.remove("accept");
+        }
+    }
+    Ok(Some(cap))
 }
 
 /// Golden ids present on disk (excluding the report and `actual/`).
