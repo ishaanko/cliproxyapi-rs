@@ -180,10 +180,10 @@ fn is_id_key(k: &str) -> bool {
     k == "id" || k.ends_with("_id") || k.ends_with("Id")
 }
 
-/// Generated identifiers: long-ish with a random-looking alphanumeric tail.
+/// Generated identifiers: long-ish with a random-looking alphanumeric segment (e.g.
+/// `call_<24 random>`, `toolu_<unix nanos>_<counter>`).
 fn looks_generated(s: &str) -> bool {
-    let tail = s.rsplit(['_', '-']).next().unwrap_or(s);
-    s.len() >= 12 && tail.len() >= 8 && tail.chars().all(|c| c.is_ascii_alphanumeric())
+    s.len() >= 12 && s.split(['_', '-']).any(|seg| seg.len() >= 8 && seg.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
 /// Replace generated ids with first-appearance placeholders and timestamps with "<ts>".

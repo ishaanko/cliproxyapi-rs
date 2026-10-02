@@ -46,7 +46,7 @@ pub use oauth::oauth_redirect_router;
 pub use state::{AuthRegistry, BuildInfo, ManagementState, ReloadHook};
 
 /// Largest accepted request body (credential uploads, config documents).
-const MAX_BODY_BYTES: usize = 100 * 1024 * 1024;
+pub(crate) const MAX_BODY_BYTES: usize = 100 * 1024 * 1024;
 
 async fn config_root(State(st): State<ManagementState>, method: Method, body: Bytes) -> Response {
     config_v8::handle(
@@ -97,15 +97,18 @@ pub fn router(state: ManagementState) -> Router {
     let v8 = Router::new()
         .route(
             "/config",
-            get(config_root).put(config_root).patch(config_root),
+            get(config_root)
+                .put(config_root)
+                .patch(config_root)
+                .delete(config_root),
         )
         .route("/config.yaml", get(config_yaml).put(config_yaml))
         .route(
             "/config/",
-            get(config_node_empty)
-                .put(config_node_empty)
-                .patch(config_node_empty)
-                .delete(config_node_empty),
+            get(config_root)
+                .put(config_root)
+                .patch(config_root)
+                .delete(config_root),
         )
         .route(
             "/config/{*path}",
@@ -209,21 +212,4 @@ pub fn router(state: ManagementState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(gate::cors))
         .with_state(state)
-}
-
-async fn config_node_empty(
-    State(st): State<ManagementState>,
-    method: Method,
-    body: Bytes,
-) -> Response {
-    config_v8::handle(
-        &st,
-        ConfigRequest {
-            method,
-            yaml: false,
-            parts: Vec::new(),
-            body,
-        },
-    )
-    .await
 }
