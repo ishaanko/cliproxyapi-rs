@@ -64,9 +64,10 @@ pub fn convert_antigravity_response_to_interactions(
             append_status_update(&mut out, st);
             st.started = true;
         }
+        let part_raws = cpa_json::raw_children(&payload, &format!("{raw_prefix}candidates.0.content.parts"));
         root.g("candidates.0.content.parts").for_each(|index, part| {
             // Go copies `args.Raw` into the delta: keep the upstream text as sent.
-            let raw_args = cpa_json::raw_at(&payload, &format!("{raw_prefix}candidates.0.content.parts.{}.functionCall.args", index.int()));
+            let raw_args = crate::common::raw_in(usize::try_from(index.int()).ok().and_then(|i| part_raws.get(i)), "functionCall.args");
             append_part_to_stream(&mut out, st, &part, raw_args);
             true
         });

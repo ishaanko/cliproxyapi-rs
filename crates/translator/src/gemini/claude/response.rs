@@ -52,8 +52,8 @@ fn part_signature<'a>(part: &'a Res<'_>) -> Res<'a> {
 }
 
 /// Source text of a part's `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(src: &[u8], part_index: usize, args: &Res<'_>) -> String {
-    cpa_json::raw_at(src, &format!("candidates.0.content.parts.{part_index}.functionCall.args"))
+fn args_raw(part_raw: Option<&&str>, args: &Res<'_>) -> String {
+    crate::common::raw_in(part_raw, "functionCall.args")
         .map(str::to_string)
         .unwrap_or_else(|| args.raw())
 }
@@ -120,6 +120,7 @@ pub fn convert_gemini_response_to_claude(
     // Each part can contain text content, thinking content, or function calls.
     let parts = root.g("candidates.0.content.parts");
     if parts.is_array() {
+        let part_raws = cpa_json::raw_children(raw, "candidates.0.content.parts");
         for (part_index, part) in parts.array().into_iter().enumerate() {
             let part_text = part.g("text");
             let function_call = part.g("functionCall");
@@ -193,7 +194,7 @@ pub fn convert_gemini_response_to_claude(
                     if args.exists() {
                         let data = delta_event(
                             p.response_index,
-                            json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
+                            json!({ "type": "input_json_delta", "partial_json": args_raw(part_raws.get(part_index), &args) }),
                         );
                         event(&mut output, "content_block_delta", &data);
                     }
@@ -229,7 +230,7 @@ pub fn convert_gemini_response_to_claude(
                 if args.exists() {
                     let data = delta_event(
                         p.response_index,
-                        json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
+                        json!({ "type": "input_json_delta", "partial_json": args_raw(part_raws.get(part_index), &args) }),
                     );
                     event(&mut output, "content_block_delta", &data);
                 }

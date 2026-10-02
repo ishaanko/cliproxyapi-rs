@@ -34,8 +34,8 @@ fn parse_create_time(s: &str) -> Option<i64> {
 }
 
 /// Source text of `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(src: &[u8], path: &str, args: &Res<'_>) -> String {
-    cpa_json::raw_at(src, path).map(str::to_string).unwrap_or_else(|| args.raw())
+fn args_raw(part_raw: Option<&&str>, args: &Res<'_>) -> String {
+    crate::common::raw_in(part_raw, "functionCall.args").map(str::to_string).unwrap_or_else(|| args.raw())
 }
 
 fn inline_data_of<'a>(part: &'a Res<'_>) -> Res<'a> {
@@ -170,6 +170,7 @@ pub fn convert_gemini_response_to_openai(
             };
 
             if parts.is_array() {
+                let part_raws = cpa_json::raw_children(raw, &format!("candidates.{candidate_pos}.content.parts"));
                 for (part_pos, part) in parts.array().into_iter().enumerate() {
                     let part_text = part_text_of(&part);
                     let function_call = part.g("functionCall");
@@ -222,8 +223,7 @@ pub fn convert_gemini_response_to_openai(
                         cpa_json::set(&mut call, "function.name", fc_name);
                         let args = function_call.g("args");
                         if args.exists() {
-                            let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(part_raws.get(part_pos), &args));
                         }
                         set_assistant_role(&mut template);
                         cpa_json::set(&mut template, "choices.0.delta.tool_calls.-1", call);
@@ -332,6 +332,7 @@ pub fn convert_gemini_response_to_openai_non_stream(
                 let mut reasoning_content = String::new();
                 let (mut has_text, mut has_reasoning) = (false, false);
 
+                let part_raws = cpa_json::raw_children(raw, &format!("candidates.{candidate_pos}.content.parts"));
                 for (part_pos, part) in parts.array().into_iter().enumerate() {
                     let part_text = part_text_of(&part);
                     let function_call = part.g("functionCall");
@@ -353,8 +354,7 @@ pub fn convert_gemini_response_to_openai_non_stream(
                         cpa_json::set(&mut call, "function.name", fc_name);
                         let args = function_call.g("args");
                         if args.exists() {
-                            let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(part_raws.get(part_pos), &args));
                         }
                         tool_calls.push(call);
                     } else if inline_data.exists() {

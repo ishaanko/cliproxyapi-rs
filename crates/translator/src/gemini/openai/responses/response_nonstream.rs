@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use cpa_core::util::{restore_sanitized_tool_name, responses_tool_reverse_identity_map, sanitized_tool_name_map, unwrap_responses_custom_tool_input, ResponsesToolIdentity};
 use cpa_json::{json, Value, J};
 
-use super::lenient::{gjson_valid, parse_gjson};
+use super::lenient::gjson_valid;
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::response::{
     echo_request_fields, next_func_call_id_counter, next_response_id_counter, parse_create_time, pick_request_json, set_usage,
@@ -120,7 +120,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     param: &mut Param,
 ) -> Option<Vec<u8>> {
     let valid_json = gjson_valid(raw_json);
-    let (root, wrapped) = unwrap_gemini_response_root(parse_gjson(raw_json).unwrap_or(Value::Null));
+    let (root, wrapped) = unwrap_gemini_response_root(cpa_json::parse(raw_json));
     let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw_json, "response").map(str::as_bytes).unwrap_or(raw_json) } else { raw_json };
     let req_json = pick_request_json(original_request_raw_json, request_raw_json);
     let req_value: Option<Value> = req_json.map(cpa_json::parse);
@@ -192,6 +192,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
 
     let parts = root.g("candidates.0.content.parts");
     if parts.exists() && parts.is_array() {
+        let part_raws = cpa_json::raw_children(root_raw, "candidates.0.content.parts");
         for (key, p) in parts.array().iter().enumerate() {
             let mut part_idx = key as i64;
             let p_idx = p.g("partIndex");
@@ -277,7 +278,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                 // Raw argument text as sent (gjson `Raw`): whitespace and duplicate keys preserved.
                 let args = fc.g("args");
                 let args_str = if args.exists() {
-                    cpa_json::raw_at(root_raw, &format!("candidates.0.content.parts.{key}.functionCall.args")).map(str::to_string).unwrap_or_else(|| args.raw())
+                    crate::common::raw_in(part_raws.get(key), "functionCall.args").map(str::to_string).unwrap_or_else(|| args.raw())
                 } else {
                     String::new()
                 };

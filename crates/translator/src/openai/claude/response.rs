@@ -15,6 +15,8 @@ struct State {
     model: String,
     created_at: i64,
     tool_name_map: Option<HashMap<String, String>>,
+    /// Whether the original request streams (parsed from it once, on the first non-[DONE] line).
+    request_streams: Option<bool>,
     /// True once a tool_use content_block_start has been emitted on the wire. Raw upstream
     /// tool_calls presence can produce stop_reason=tool_use with zero announced tool blocks.
     saw_tool_call: bool,
@@ -48,6 +50,7 @@ impl Default for State {
             model: String::new(),
             created_at: 0,
             tool_name_map: None,
+            request_streams: None,
             saw_tool_call: false,
             content_accumulator: String::new(),
             tool_calls_accumulator: BTreeMap::new(),
@@ -129,8 +132,11 @@ pub fn convert_openai_response_to_claude(
         return convert_openai_done_to_anthropic(state);
     }
 
-    let stream_result = cpa_json::parse(original).g("stream").v().cloned();
-    if !matches!(stream_result, Some(ref v) if !matches!(v, Value::Bool(false))) {
+    let streams = *state.request_streams.get_or_insert_with(|| {
+        let root = cpa_json::parse(original);
+        matches!(root.g("stream").v(), Some(v) if !matches!(v, Value::Bool(false)))
+    });
+    if !streams {
         return convert_openai_non_streaming_to_anthropic(raw);
     }
     convert_openai_streaming_chunk_to_anthropic(raw, state)

@@ -86,6 +86,10 @@ pub struct Params {
     current_thinking_signed: bool,
     /// Sanitized Gemini function name -> original Claude tool name.
     tool_name_map: HashMap<String, String>,
+    /// `model` of the translated request, fixed for the stream.
+    model_name: std::sync::Arc<str>,
+    /// Whether the request asked for translated web search grounding, fixed for the stream.
+    web_search_stream_mode: bool,
 }
 
 static TOOL_USE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -215,9 +219,18 @@ pub fn convert_antigravity_response_to_claude(
     raw_json: &[u8],
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
-    let params = param.state(|| Params { tool_name_map: util::disambiguated_tool_name_map(original_request_raw_json), ..Default::default() });
-    let request = cpa_json::parse(request_raw_json);
-    let model_name = request.g("model").str();
+    let params = param.state(|| {
+        let request = cpa_json::parse(request_raw_json);
+        let original = cpa_json::parse(original_request_raw_json);
+        Params {
+            tool_name_map: util::disambiguated_tool_name_map(original_request_raw_json),
+            model_name: request.g("model").str().into(),
+            web_search_stream_mode: should_translate_grounding(&original, &request),
+            ..Default::default()
+        }
+    });
+    let model_name = std::sync::Arc::clone(&params.model_name);
+    let web_search_stream_mode = params.web_search_stream_mode;
 
     if raw_json == b"[DONE]" {
         let mut em = Emitter { p: params, out: Vec::with_capacity(256), model: &model_name };
@@ -235,9 +248,7 @@ pub fn convert_antigravity_response_to_claude(
         return vec![];
     }
 
-    let original = cpa_json::parse(original_request_raw_json);
     let root = cpa_json::parse(raw_json);
-    let web_search_stream_mode = should_translate_grounding(&original, &request);
     let mut em = Emitter { p: params, out: Vec::with_capacity(1024), model: &model_name };
 
     // message_start is only sent for the very first chunk.
@@ -293,9 +304,10 @@ pub fn convert_antigravity_response_to_claude(
     if parts_result.is_array() && web_search_stream_mode && !em.p.has_web_search_tool && !handled_web_search_grounding {
         append_web_search_buffered_text(&parts_result, &mut em.p.web_search_text_buffer);
     } else if parts_result.is_array() && !handled_web_search_grounding {
+        let part_raws = cpa_json::raw_children(raw_json, "response.candidates.0.content.parts");
         for (i, part) in parts_result.array().iter().enumerate() {
             // Go copies `args.Raw` into partial_json, so keep the upstream text as sent.
-            let raw_args = cpa_json::raw_at(raw_json, &format!("response.candidates.0.content.parts.{i}.functionCall.args"));
+            let raw_args = crate::common::raw_in(part_raws.get(i), "functionCall.args");
             convert_part(&mut em, part, raw_args);
         }
     }

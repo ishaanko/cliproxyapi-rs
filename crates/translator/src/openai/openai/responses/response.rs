@@ -376,9 +376,10 @@ fn emit_pending_function_args(st: &mut State, out: &mut Out, key: &str) {
         return;
     }
     let sent = st.func_args_sent.get(key).copied().unwrap_or(0);
-    let Some(args) = st.func_args_buf.get(key).filter(|b| b.len() > sent).cloned() else {
+    let Some(args) = st.func_args_buf.get(key).filter(|b| b.len() > sent) else {
         return;
     };
+    let total = args.len();
     let delta = args[sent..].to_string();
     if st.func_item_custom.contains(key) {
         if let Some(patch_call) = st.apply_patch_calls.get_mut(key) {
@@ -396,7 +397,7 @@ fn emit_pending_function_args(st: &mut State, out: &mut Out, key: &str) {
                 }
                 Ok(_) => {}
             }
-            st.func_args_sent.insert(key.to_string(), args.len());
+            st.func_args_sent.insert(key.to_string(), total);
         }
         return;
     }
@@ -408,7 +409,7 @@ fn emit_pending_function_args(st: &mut State, out: &mut Out, key: &str) {
     cpa_json::set(&mut ad, "output_index", st.func_output_ix.get(key).copied().unwrap_or(0));
     cpa_json::set(&mut ad, "delta", delta);
     emit(out, "response.function_call_arguments.delta", &ad);
-    st.func_args_sent.insert(key.to_string(), args.len());
+    st.func_args_sent.insert(key.to_string(), total);
 }
 
 fn stop_reasoning(st: &mut State, out: &mut Out, text: &str) {

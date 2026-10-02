@@ -129,7 +129,8 @@ pub fn convert_antigravity_response_to_openai(
 
     let parts = raw.g("response.candidates.0.content.parts");
     if parts.is_array() {
-        let name_map = params.sanitized_name_map.clone().unwrap_or_default();
+        let name_map = params.sanitized_name_map.get_or_insert_with(HashMap::new);
+        let part_raws = cpa_json::raw_children(raw_json, "response.candidates.0.content.parts");
         for (i, part) in parts.array().iter().enumerate() {
             let part_text = part.g("text");
             let function_call = part.g("functionCall");
@@ -170,7 +171,7 @@ pub fn convert_antigravity_response_to_openai(
                 }
 
                 let mut function_call_template = json!({"id": "", "index": 0, "type": "function", "function": {"name": "", "arguments": ""}});
-                let fc_name = util::restore_sanitized_tool_name(&name_map, &function_call.g("name").str());
+                let fc_name = util::restore_sanitized_tool_name(name_map, &function_call.g("name").str());
                 let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
                 let counter = FUNCTION_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
                 cpa_json::set(&mut function_call_template, "id", format!("{fc_name}-{nanos}-{counter}"));
@@ -179,7 +180,7 @@ pub fn convert_antigravity_response_to_openai(
                 let args = function_call.g("args");
                 if args.exists() {
                     // Go copies `args.Raw`: keep the upstream text as sent.
-                    let raw_args = cpa_json::raw_at(raw_json, &format!("response.candidates.0.content.parts.{i}.functionCall.args"));
+                    let raw_args = crate::common::raw_in(part_raws.get(i), "functionCall.args");
                     cpa_json::set(&mut function_call_template, "function.arguments", raw_args.map_or_else(|| args.raw(), str::to_string));
                 }
                 cpa_json::set(&mut template, "choices.0.delta.role", "assistant");

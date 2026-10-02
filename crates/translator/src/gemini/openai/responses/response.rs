@@ -395,7 +395,6 @@ pub fn convert_gemini_response_to_openai_responses(
     let (root, wrapped) = unwrap_gemini_response_root(parsed);
     let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw, "response").map(str::as_bytes).unwrap_or(raw) } else { raw };
 
-    let req_value = req_json.map(cpa_json::parse);
     let out = {
         let mut stream = Stream {
             st: &mut *st,
@@ -403,7 +402,7 @@ pub fn convert_gemini_response_to_openai_responses(
             model_name,
             original: original_request_raw_json,
             request: request_raw_json,
-            req_value: req_value.as_ref(),
+            req_json,
         };
         stream.run(&root, root_raw, valid_json);
         stream.out
@@ -443,8 +442,8 @@ struct Stream<'a> {
     model_name: &'a str,
     original: &'a [u8],
     request: &'a [u8],
-    /// Parsed request (Go: reqJSON).
-    req_value: Option<&'a Value>,
+    /// Request used for tool and web search lookups (Go: reqJSON), parsed on demand.
+    req_json: Option<&'a [u8]>,
 }
 
 impl Stream<'_> {
@@ -470,8 +469,8 @@ impl Stream<'_> {
             self.st.web_search_query = self.st.web_search_queries[0].clone();
         }
         if self.st.web_search_query.is_empty() {
-            if let Some(req) = self.req_value {
-                self.st.web_search_query = extract_responses_web_search_query(unwrap_request_root(req));
+            if let Some(req) = self.req_json.map(cpa_json::parse) {
+                self.st.web_search_query = extract_responses_web_search_query(unwrap_request_root(&req));
             }
         }
     }
@@ -870,8 +869,9 @@ impl Stream<'_> {
         // Parts (text / thought / functionCall).
         let parts = root.g("candidates.0.content.parts");
         if parts.exists() && parts.is_array() {
+            let part_raws = cpa_json::raw_children(root_raw, "candidates.0.content.parts");
             for (part_idx_in_chunk, part) in parts.array().iter().enumerate() {
-                let args_raw = cpa_json::raw_at(root_raw, &format!("candidates.0.content.parts.{part_idx_in_chunk}.functionCall.args"));
+                let args_raw = crate::common::raw_in(part_raws.get(part_idx_in_chunk), "functionCall.args");
                 if !self.process_part(part_idx_in_chunk as i64, part, args_raw, valid_json) {
                     break;
                 }
