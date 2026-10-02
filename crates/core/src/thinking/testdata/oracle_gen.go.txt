@@ -1,0 +1,420 @@
+// Go oracle generator for the ignored Rust test `thinking_oracle_file_matches_go`.
+// Not compiled here. To use: copy a CLIProxyAPI checkout, save this file as
+// internal/thinking/zz_gen_test.go (package thinking_test), and run
+//   go test ./internal/thinking/ -run TestZZGen -count=1
+// It writes /tmp/oracle_wide.jsonl (about 247k records: ApplyThinking, ApplyThinkingWithModelInfo*,
+// summary extract/apply, effort labels, strip, ValidateConfig). Then, in this repo:
+//   THINKING_ORACLE=/tmp/oracle_wide.jsonl cargo test -p cpa-core thinking_oracle -- --ignored
+
+package thinking_test
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/thinking"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/antigravity"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/claude"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/codex"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/gemini"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/interactions"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/kimi"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/openai"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/thinking/provider/xai"
+)
+
+func ts(min, max int, zero, dyn bool, levels ...string) *registry.ThinkingSupport {
+	return &registry.ThinkingSupport{Min: min, Max: max, ZeroAllowed: zero, DynamicAllowed: dyn, Levels: levels}
+}
+
+func matrixModels() []*registry.ModelInfo {
+	return []*registry.ModelInfo{
+		{ID: "level-model", Type: "openai", Thinking: ts(0, 0, false, false, "minimal", "low", "medium", "high")},
+		{ID: "level-subset-model", Type: "gemini", Thinking: ts(0, 0, false, false, "low", "high")},
+		{ID: "gemini-budget-model", Type: "gemini", Thinking: ts(128, 20000, false, true)},
+		{ID: "gemini-mixed-model", Type: "gemini", Thinking: ts(128, 32768, false, true, "low", "high")},
+		{ID: "gemini-toggle-mixed-model", Type: "gemini", Thinking: ts(128, 32768, true, true, "low", "high")},
+		{ID: "claude-budget-model", Type: "claude", Thinking: ts(1024, 128000, true, false)},
+		{ID: "claude-opus-4-6-model", Type: "claude", MaxCompletionTokens: 128000, Thinking: ts(1024, 128000, true, false, "low", "medium", "high", "max")},
+		{ID: "claude-sonnet-4-6-model", Type: "claude", MaxCompletionTokens: 64000, Thinking: ts(1024, 128000, true, false, "low", "medium", "high")},
+		{ID: "antigravity-budget-model", Type: "antigravity", Thinking: ts(128, 20000, true, true)},
+		{ID: "kimi-toggle-thinking-model", Type: "kimi", Thinking: ts(0, 0, true, false, "low", "medium", "high")},
+		{ID: "kimi-tiered-thinking-model", Type: "kimi", Thinking: ts(0, 0, false, false, "low", "medium", "high")},
+		{ID: "xai-level-model", Type: "xai", Thinking: ts(0, 0, true, false, "none", "low", "medium", "high")},
+		{ID: "no-thinking-model", Type: "openai"},
+		{ID: "user-defined-model", Type: "openai", UserDefined: true},
+	}
+}
+
+var wideModels = []string{
+	"level-model", "level-subset-model", "gemini-budget-model", "gemini-mixed-model", "gemini-toggle-mixed-model",
+	"claude-budget-model", "claude-opus-4-6-model", "claude-sonnet-4-6-model", "antigravity-budget-model",
+	"kimi-toggle-thinking-model", "kimi-tiered-thinking-model", "xai-level-model", "no-thinking-model", "user-defined-model",
+	"claude-opus-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6", "claude-opus-4-6", "claude-3-7-sonnet-20250219",
+	"gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-3-pro-preview", "gemini-3.6-flash", "gpt-5.5", "gpt-6-astra",
+	"gpt-6-sol", "kimi-k2.5", "kimi-k2.8", "kimi-k3", "claude-opus-4-6-thinking", "gemini-3.1-pro-low", "grok-4.7",
+	"grok-3-mini", "unknown-model-xyz",
+}
+
+var wideBodies = []string{
+	``, `not json`, `[]`, `{}`, `{"model":"m","max_tokens":4096}`, `{"max_tokens":1000}`,
+	// claude
+	`{"max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":8192}}`,
+	`{"max_tokens":2000,"thinking":{"type":"enabled","budget_tokens":8192}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":64000}}`,
+	`{"max_tokens":200000,"thinking":{"type":"enabled","budget_tokens":200000}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":0}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":-1}}`,
+	`{"thinking":{"type":"enabled"}}`,
+	`{"thinking":{"type":"enabled"},"output_config":{"effort":"high"}}`,
+	`{"thinking":{"type":"enabled"},"output_config":{"effort":"  "}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":4096,"display":"summarized"}}`,
+	`{"thinking":{"type":"adaptive"},"output_config":{"effort":"high"}}`,
+	`{"thinking":{"type":"adaptive"},"output_config":{"effort":"max"}}`,
+	`{"thinking":{"type":"adaptive"},"output_config":{"effort":"XHigh"}}`,
+	`{"thinking":{"type":"adaptive"},"output_config":{"effort":"low","other":1}}`,
+	`{"thinking":{"type":"adaptive","display":"omitted"},"output_config":{"effort":"medium"}}`,
+	`{"thinking":{"type":"adaptive"}}`,
+	`{"thinking":{"type":"auto"},"output_config":{"effort":"none"}}`,
+	`{"thinking":{"type":"auto"},"output_config":{"effort":"auto"}}`,
+	`{"thinking":{"type":"disabled"}}`,
+	`{"thinking":{"type":"disabled","budget_tokens":1024},"output_config":{"effort":"high"}}`,
+	`{"output_config":{"effort":"high"}}`,
+	// gemini
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":0}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":-1,"includeThoughts":true}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":1000,"includeThoughts":false}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":64000}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":8192,"include_thoughts":true}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinking_budget":2048,"include_thoughts":false}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"high","includeThoughts":true}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"none"}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"auto"}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":"xhigh"}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinking_level":"minimal","thinkingBudget":500}}}`,
+	`{"generationConfig":{"maxOutputTokens":500,"thinkingConfig":{"thinkingBudget":4000}}}`,
+	// antigravity
+	`{"request":{"generationConfig":{"thinkingConfig":{"thinkingBudget":0}}}}`,
+	`{"request":{"generationConfig":{"thinkingConfig":{"thinkingBudget":-1,"includeThoughts":true}}}}`,
+	`{"request":{"generationConfig":{"thinkingConfig":{"thinkingBudget":30000,"includeThoughts":false}}}}`,
+	`{"request":{"generationConfig":{"maxOutputTokens":2000,"thinkingConfig":{"thinkingBudget":8000}}}}`,
+	`{"request":{"generationConfig":{"maxOutputTokens":1500,"thinkingConfig":{"thinkingBudget":5000,"include_thoughts":true}}}}`,
+	`{"request":{"generationConfig":{"thinkingConfig":{"thinkingLevel":"high"}}}}`,
+	`{"request":{"generationConfig":{"thinkingConfig":{"thinking_level":"none","includeThoughts":true}}}}`,
+	// openai chat
+	`{"reasoning_effort":"none"}`, `{"reasoning_effort":"low"}`, `{"reasoning_effort":"high"}`, `{"reasoning_effort":"xhigh"}`,
+	`{"reasoning_effort":"HIGH"}`, `{"reasoning_effort":"auto"}`, `{"reasoning_effort":"max"}`, `{"reasoning_effort":"minimal"}`,
+	`{"reasoning_effort":null}`, `{"reasoning_effort":17}`, `{"reasoning_effort":""}`,
+	`{"reasoning_effort":"high","reasoning":{"exclude":true}}`,
+	`{"reasoning_effort":"high","include_reasoning":false}`,
+	`{"reasoning":{"enabled":true}}`,
+	`{"reasoning_effort":"high","extra_body":{"google":{"thinking_config":{"include_thoughts":false}}}}`,
+	// responses / codex
+	`{"reasoning":{"effort":"high","summary":"auto"}}`,
+	`{"reasoning":{"effort":"low","summary":"concise"}}`,
+	`{"reasoning":{"effort":"none","summary":"detailed"}}`,
+	`{"reasoning":{"effort":"xhigh"}}`,
+	`{"reasoning":{"effort":"max"}}`,
+	`{"reasoning":{"effort":"auto"}}`,
+	`{"reasoning":{"summary":null}}`,
+	`{"reasoning":{"generate_summary":"detailed"}}`,
+	`{"reasoning":{"summary":"auto"}}`,
+	`{"reasoning":{"effort":"high","other":7},"input":[{"type":"configuration_update","reasoning":{"effort":"low"}},{"role":"user","content":"ok"}]}`,
+	`{"input":[{"type":"configuration_update","reasoning":{"effort":"medium"}},{"type":"configuration_update","reasoning":{"effort":"none"}},{"role":"user","content":"ok"}]}`,
+	`{"reasoning":{"summary":"auto"},"input":[{"type":"configuration_update","tools":[]},{"role":"user","content":"ok"}]}`,
+	`{"reasoning":{"effort":"high"},"input":{"type":"configuration_update"}}`,
+	// kimi
+	`{"thinking":{"type":"enabled","effort":"high"}}`,
+	`{"thinking":{"type":"enabled"},"reasoning_effort":"low"}`,
+	`{"thinking":{"type":"disabled"},"reasoning_effort":"low"}`,
+	`{"thinking":{"effort":"auto"}}`,
+	`{"thinking":{"effort":""}}`,
+	`{"thinking":{"type":"enabled","effort":"max","keep":"all"}}`,
+	// interactions
+	`{"generation_config":{"thinking_level":"high"}}`,
+	`{"generation_config":{"thinkingLevel":"NONE","thinking_summaries":"none"}}`,
+	`{"generation_config":{"thinking_level":"auto"}}`,
+	`{"generation_config":{"thinking_budget":4096,"thinking_summaries":"auto"}}`,
+	`{"generation_config":{"thinkingBudget":0}}`,
+	`{"generation_config":{"thinking_config":{"thinking_level":"minimal","include_thoughts":true}}}`,
+	`{"generation_config":{"thinkingConfig":{"thinkingBudget":-1,"includeThoughts":false}}}`,
+	`{"generation_config":{"thinking_level":"xhigh"},"generationConfig":{"thinkingLevel":"low"}}`,
+	`{"generation_config":{"thinking_summaries":"auto"},"reasoning":{"summary":"none"}}`,
+	// odd shapes
+	`{"thinking":{"type":"enabled","budget_tokens":"8192"}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":8192.7}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":1e3},"max_tokens":"100"}`,
+	`{"thinking":{"type":"enabled","budget_tokens":-5}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":99999999999999999999}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":true}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":null}}`,
+	`{"thinking":{"type":"enabled","budget_tokens":4096},"max_tokens":0}`,
+	`{"thinking":{"type":"enabled","budget_tokens":4096},"max_tokens":-1}`,
+	`{"thinking":{"type":"enabled","budget_tokens":4096},"max_tokens":1500.5}`,
+	`{"thinking":"enabled"}`, `{"thinking":[1]}`, `{"thinking":null}`, `{"thinking":5,"output_config":"x"}`,
+	`{"output_config":{}}`, `{"thinking":{"type":"adaptive"},"output_config":{"effort":123}}`,
+	`{ "thinking" : { "type" : "enabled" , "budget_tokens" : 4096 } , "max_tokens" : 9000 }`,
+	`{"x":"é<>&","thinking":{"type":"enabled","budget_tokens":2048},"big":12345678901234567890123}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":"512"}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingBudget":3.9,"includeThoughts":"true"}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":5}}}`,
+	`{"generationConfig":{"thinkingConfig":{"thinkingLevel":""}}}`,
+	`{"generationConfig":{"thinkingConfig":null}}`, `{"generationConfig":[1]}`, `{"generationConfig":{"thinkingConfig":[1]}}`,
+	`{"request":{"generationConfig":{"maxOutputTokens":"900","thinkingConfig":{"thinkingBudget":2000}}}}`,
+	`{"request":[1]}`,
+	`{"reasoning_effort":" high "}`, `{"reasoning_effort":true}`, `{"reasoning_effort":{"a":1}}`,
+	`{"reasoning":{"effort":" LOW "}}`, `{"reasoning":{"effort":42}}`, `{"reasoning":"x"}`, `{"reasoning":[1]}`, `{"reasoning":null}`,
+	`{"reasoning":{"effort":"high","summary":"AUTO"}}`, `{"reasoning":{"summary":true}}`,
+	`{"thinking":{"type":"ENABLED","effort":"High"}}`, `{"thinking":{"type":"enabled","effort":null}}`, `{"thinking":{"type":5}}`,
+	`{"generation_config":{"thinking_level":" High "}}`, `{"generation_config":[1]}`, `{"generation_config":{"thinking_summaries":"AUTO "}}`,
+	`{"input":[{"type":"configuration_update","reasoning":{"effort":" High "}},{"type":"configuration_update"},5,"x",null]}`,
+	`{"input":"hi","reasoning":{"effort":"high"}}`,
+}
+
+var wideSuffixes = []string{"", "", "", "(none)", "(auto)", "(-1)", "(0)", "(512)", "(1024)", "(8192)", "(24576)", "(64000)", "(minimal)", "(low)", "(medium)", "(high)", "(xhigh)", "(max)", "(HIGH)", "(bogus)", "()", "(08192)"}
+var wideFrom = []string{"openai", "openai-response", "claude", "gemini", "codex", "antigravity", "interactions", "", "kimi"}
+var wideTo = []string{"gemini", "claude", "openai", "codex", "openai-response", "antigravity", "kimi", "kimi-ai", "xai", "interactions", "bogus", " Claude "}
+
+func pick(n int, parts ...string) int {
+	h := fnv.New64a()
+	for _, p := range parts {
+		h.Write([]byte(p))
+		h.Write([]byte{0})
+	}
+	return int(h.Sum64() % uint64(n))
+}
+
+type rec map[string]any
+
+func TestZZGen(t *testing.T) {
+	reg := registry.GetGlobalRegistry()
+	reg.RegisterClient("zz-gen", "test", matrixModels())
+	defer reg.UnregisterClient("zz-gen")
+
+	f, err := os.Create("/tmp/oracle_wide.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriterSize(f, 1<<20)
+	defer w.Flush()
+	emit := func(r rec) {
+		b, _ := json.Marshal(r)
+		w.Write(b)
+		w.WriteByte('\n')
+	}
+
+	// kind=apply: registry lookup path.
+	n := 0
+	for _, model := range wideModels {
+		for _, to := range wideTo {
+			for bi, body := range wideBodies {
+				key := fmt.Sprintf("%s|%s|%d", model, to, bi)
+				for variant := 0; variant < 2; variant++ {
+					from := wideFrom[pick(len(wideFrom), key, "from", fmt.Sprint(variant))]
+					suffix := ""
+					if variant == 1 {
+						suffix = wideSuffixes[pick(len(wideSuffixes), key, "suffix")]
+					}
+					providerKey := to
+					if pick(5, key, "pk") == 0 {
+						providerKey = "claude"
+					}
+					m := model + suffix
+					out, err := thinking.ApplyThinking([]byte(body), m, from, to, providerKey)
+					r := rec{"kind": "apply", "model": m, "from": from, "to": to, "providerKey": providerKey, "input": body, "output": string(out), "err": err != nil}
+					if err != nil {
+						r["errMsg"] = err.Error()
+						if te, ok := err.(*thinking.ThinkingError); ok {
+							r["errCode"] = string(te.Code)
+						}
+					}
+					emit(r)
+					n++
+				}
+			}
+		}
+	}
+	fmt.Println("apply records", n)
+
+	// kind=applyInfo: exact model info path with source bodies.
+	type spec struct {
+		ID           string
+		Type         string
+		HasThinking  bool
+		Min, Max     int
+		Zero, Dyn    bool
+		Levels       []string
+		MaxCompl     int
+		CfgUpdate    bool
+		UserDefined  bool
+	}
+	specs := []spec{
+		{ID: "s-level", Type: "openai", HasThinking: true, Levels: []string{"low", "medium", "high"}},
+		{ID: "s-level-xmax", Type: "openai", HasThinking: true, Levels: []string{"high", "max"}},
+		{ID: "s-claude-adaptive", Type: "claude", HasThinking: true, Min: 1024, Max: 128000, Zero: true, Levels: []string{"low", "medium", "high", "max"}, MaxCompl: 64000},
+		{ID: "s-claude-levels-only", Type: "claude", HasThinking: true, Levels: []string{"high"}},
+		{ID: "s-claude-manual", Type: "claude", HasThinking: true, Min: 1024, Max: 16000, MaxCompl: 32000},
+		{ID: "s-gemini-hybrid", Type: "gemini", HasThinking: true, Min: 128, Max: 32768, Dyn: true, Levels: []string{"low", "high"}},
+		{ID: "s-gemini-budget", Type: "gemini", HasThinking: true, Min: 128, Max: 20000, Zero: true, Dyn: true},
+		{ID: "s-antigravity-claude", Type: "antigravity", HasThinking: true, Min: 1024, Max: 64000, MaxCompl: 8192},
+		{ID: "s-codex", Type: "codex", HasThinking: true, Levels: []string{"low", "medium", "high", "xhigh"}},
+		{ID: "s-codex-cfg", Type: "codex", HasThinking: true, CfgUpdate: true, Levels: []string{"low", "medium", "high", "xhigh"}},
+		{ID: "s-codex-nothinking-cfg", Type: "codex", CfgUpdate: true},
+		{ID: "s-xai", Type: "xai", HasThinking: true, Zero: true, Levels: []string{"none", "low", "high"}},
+		{ID: "s-kimi", Type: "kimi", HasThinking: true, Levels: []string{"low", "medium", "high"}},
+		{ID: "s-none", Type: "openai"},
+		{ID: "s-user", Type: "openai", UserDefined: true},
+		{ID: "s-user-cfg", Type: "codex", UserDefined: true, CfgUpdate: true},
+		{ID: "s-compat", Type: "openai-compatibility", HasThinking: true, Levels: []string{"high", "xhigh"}},
+		{ID: "s-interactions", Type: "gemini", HasThinking: true, Levels: []string{"Low", "HIGH"}},
+	}
+	toForTypes := []string{"claude", "openai", "codex", "gemini", "antigravity", "kimi", "xai", "interactions", "openai-response"}
+	m2 := 0
+	for _, sp := range specs {
+		for _, to := range toForTypes {
+			for bi, body := range wideBodies {
+				key := fmt.Sprintf("%s|%s|%d|info", sp.ID, to, bi)
+				for variant := 0; variant < 2; variant++ {
+					from := wideFrom[pick(len(wideFrom), key, "from", fmt.Sprint(variant))]
+					srcIdx := pick(len(wideBodies), key, "src", fmt.Sprint(variant))
+					source := wideBodies[srcIdx]
+					if variant == 0 && pick(4, key, "nosrc") == 0 {
+						source = ""
+					}
+					suffix := wideSuffixes[pick(len(wideSuffixes), key, "suffix", fmt.Sprint(variant))]
+					normalized := pick(5, key, "norm", fmt.Sprint(variant)) == 0
+					var mi *registry.ModelInfo
+					nilInfo := sp.ID == "s-user" && pick(3, key, "nil") == 0
+					if !nilInfo {
+						mi = &registry.ModelInfo{ID: sp.ID, Type: sp.Type, MaxCompletionTokens: sp.MaxCompl, SupportConfigurationUpdate: sp.CfgUpdate, UserDefined: sp.UserDefined}
+						if sp.HasThinking {
+							mi.Thinking = &registry.ThinkingSupport{Min: sp.Min, Max: sp.Max, ZeroAllowed: sp.Zero, DynamicAllowed: sp.Dyn, Levels: sp.Levels}
+						}
+					}
+					m := sp.ID + suffix
+					providerKey := to
+					if sp.Type == "openai-compatibility" && pick(2, key, "pk") == 0 {
+						providerKey = "openrouter"
+					}
+					var summary thinking.SummaryConfig
+					useExplicit := pick(3, key, "explicit") == 0
+					if useExplicit {
+						summary = thinking.ExtractSummaryConfig([]byte(source), from)
+					}
+					var out []byte
+					var err error
+					if useExplicit {
+						out, err = thinking.ApplyThinkingWithModelInfoAndSummary([]byte(body), []byte(source), m, from, to, providerKey, mi, summary, normalized)
+					} else {
+						out, err = thinking.ApplyThinkingWithModelInfo([]byte(body), []byte(source), m, from, to, providerKey, mi)
+					}
+					r := rec{"kind": "applyInfo", "model": m, "from": from, "to": to, "providerKey": providerKey, "input": body, "source": source,
+						"explicitSummary": useExplicit, "summaryMode": int(summary.Mode), "summaryDetail": summary.Detail, "normalized": normalized,
+						"output": string(out), "err": err != nil}
+					if mi == nil {
+						r["info"] = nil
+					} else {
+						r["info"] = map[string]any{"id": sp.ID, "type": sp.Type, "hasThinking": sp.HasThinking, "min": sp.Min, "max": sp.Max, "zero": sp.Zero,
+							"dyn": sp.Dyn, "levels": sp.Levels, "maxCompl": sp.MaxCompl, "cfgUpdate": sp.CfgUpdate, "userDefined": sp.UserDefined}
+					}
+					if err != nil {
+						r["errMsg"] = err.Error()
+					}
+					emit(r)
+					m2++
+				}
+			}
+		}
+	}
+	fmt.Println("applyInfo records", m2)
+
+	// kind=summary: extraction, application and effort labels.
+	formats := []string{"openai", "openai-response", "codex", "claude", "gemini", "antigravity", "interactions", "kimi", "bogus", " OpenAI "}
+	summaryModels := []string{"", "claude-opus-5", "claude-haiku-4-5-20251001", "claude-sonnet-4-6(high)", "unknown-claude", "gemini-3.6-flash"}
+	m3 := 0
+	for _, body := range wideBodies {
+		for _, format := range formats {
+			c := thinking.ExtractSummaryConfig([]byte(body), format)
+			e := thinking.ExtractExplicitSummaryConfig([]byte(body), format)
+			tr := thinking.ExtractTranslatedSummaryConfig([]byte(body), format, "claude")
+			emit(rec{"kind": "summaryExtract", "input": body, "format": format,
+				"mode": int(c.Mode), "detail": c.Detail, "explicitMode": int(e.Mode), "explicitDetail": e.Detail,
+				"translatedMode": int(tr.Mode), "translatedDetail": tr.Detail})
+			m3++
+			for _, model := range summaryModels {
+				for mode := 1; mode <= 2; mode++ {
+					for _, detail := range []string{"", "concise", "detailed", "weird"} {
+						if mode == 2 && detail != "" {
+							continue
+						}
+						cfg := thinking.SummaryConfig{Mode: thinking.SummaryMode(mode), Detail: detail}
+						out := thinking.ApplySummaryConfigForModel([]byte(body), format, model, cfg)
+						emit(rec{"kind": "summaryApply", "input": body, "format": format, "model": model, "mode": mode, "detail": detail, "output": string(out)})
+						m3++
+					}
+				}
+			}
+			out := thinking.ApplyTranslatedSummaryToClaude([]byte(`{"max_tokens":32000}`), []byte(body), format, "claude-opus-5")
+			emit(rec{"kind": "summaryToClaude", "source": body, "format": format, "output": string(out)})
+			for _, model := range append(summaryModels, "gpt-6-astra(high)", "m(none)", "m(auto)", "m(512)", "m(xyz)") {
+				emit(rec{"kind": "effort", "input": body, "provider": format, "model": model,
+					"effort": thinking.ExtractReasoningEffort([]byte(body), format, model),
+					"translated": thinking.ExtractTranslatedReasoningEffort([]byte(body), format)})
+				m3++
+			}
+			emit(rec{"kind": "strip", "input": body, "provider": format, "output": string(thinking.StripThinkingConfig([]byte(body), strings.ToLower(strings.TrimSpace(format))))})
+		}
+	}
+	fmt.Println("summary records", m3)
+
+	// kind=validate: direct ValidateConfig table.
+	cfgs := []thinking.ThinkingConfig{
+		{Mode: thinking.ModeBudget, Budget: 1}, {Mode: thinking.ModeBudget, Budget: 500}, {Mode: thinking.ModeBudget, Budget: 8192},
+		{Mode: thinking.ModeBudget, Budget: 64000}, {Mode: thinking.ModeBudget, Budget: 300000}, {Mode: thinking.ModeBudget, Budget: -5},
+		{Mode: thinking.ModeBudget, Budget: 0}, {Mode: thinking.ModeNone}, {Mode: thinking.ModeNone, Level: "low"}, {Mode: thinking.ModeNone, Budget: 7},
+		{Mode: thinking.ModeAuto, Budget: -1}, {Mode: thinking.ModeLevel, Level: "none"}, {Mode: thinking.ModeLevel, Level: "auto"},
+		{Mode: thinking.ModeLevel, Level: "minimal"}, {Mode: thinking.ModeLevel, Level: "high"}, {Mode: thinking.ModeLevel, Level: "HIGH"},
+		{Mode: thinking.ModeLevel, Level: "xhigh"}, {Mode: thinking.ModeLevel, Level: "max"}, {Mode: thinking.ModeLevel, Level: "ultra"}, {Mode: thinking.ModeLevel, Level: ""},
+	}
+	allSpecs := specs
+	m4 := 0
+	for _, sp := range allSpecs {
+		for _, from := range []string{"openai", "claude", "gemini", "codex", "antigravity", "", "interactions"} {
+			for _, to := range []string{"openai", "claude", "gemini", "codex", "antigravity", "kimi", "xai"} {
+				for ci, c := range cfgs {
+					for _, suffix := range []bool{false, true} {
+						var mi *registry.ModelInfo
+						mi = &registry.ModelInfo{ID: sp.ID, Type: sp.Type, UserDefined: sp.UserDefined}
+						if sp.HasThinking {
+							mi.Thinking = &registry.ThinkingSupport{Min: sp.Min, Max: sp.Max, ZeroAllowed: sp.Zero, DynamicAllowed: sp.Dyn, Levels: sp.Levels}
+						}
+						_ = ci
+						res, err := thinking.ValidateConfig(c, mi, from, to, suffix)
+						r := rec{"kind": "validate", "spec": sp.ID, "from": from, "to": to, "fromSuffix": suffix,
+							"mode": int(c.Mode), "budget": c.Budget, "level": string(c.Level),
+							"info": map[string]any{"id": sp.ID, "type": sp.Type, "hasThinking": sp.HasThinking, "min": sp.Min, "max": sp.Max, "zero": sp.Zero,
+								"dyn": sp.Dyn, "levels": sp.Levels, "maxCompl": sp.MaxCompl, "cfgUpdate": sp.CfgUpdate, "userDefined": sp.UserDefined},
+							"err": err != nil}
+						if err != nil {
+							r["errMsg"] = err.Error()
+						} else {
+							r["outMode"] = int(res.Mode)
+							r["outBudget"] = res.Budget
+							r["outLevel"] = string(res.Level)
+						}
+						emit(r)
+						m4++
+					}
+				}
+			}
+		}
+	}
+	fmt.Println("validate records", m4)
+}
