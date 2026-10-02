@@ -146,6 +146,26 @@ pub struct ProfileOrg {
     pub name: String,
 }
 
+/// Endpoint URLs, overridable for tests and gateways.
+#[derive(Debug, Clone)]
+pub struct ClaudeEndpoints {
+    pub token_url: String,
+    pub refresh_url: String,
+    pub profile_url: String,
+    pub roles_url: String,
+}
+
+impl Default for ClaudeEndpoints {
+    fn default() -> Self {
+        Self {
+            token_url: TOKEN_URL.into(),
+            refresh_url: REFRESH_TOKEN_URL.into(),
+            profile_url: PROFILE_URL.into(),
+            roles_url: ROLES_URL.into(),
+        }
+    }
+}
+
 /// Claude OAuth client. Cheap to construct; holds a reqwest client with the proxy applied.
 #[derive(Clone)]
 pub struct ClaudeAuth {
@@ -174,12 +194,12 @@ impl ClaudeAuth {
         }
     }
 
-    /// Redirects every endpoint to a mock server (tests).
-    pub fn with_endpoints(mut self, token_url: &str, refresh_url: &str, profile_url: &str, roles_url: &str) -> Self {
-        self.token_url = token_url.to_string();
-        self.refresh_url = refresh_url.to_string();
-        self.profile_url = profile_url.to_string();
-        self.roles_url = roles_url.to_string();
+    /// Replaces the endpoint URLs.
+    pub fn with_endpoints(mut self, e: ClaudeEndpoints) -> Self {
+        self.token_url = e.token_url;
+        self.refresh_url = e.refresh_url;
+        self.profile_url = e.profile_url;
+        self.roles_url = e.roles_url;
         self
     }
 

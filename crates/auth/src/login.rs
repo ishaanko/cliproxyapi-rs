@@ -167,6 +167,16 @@ pub struct LoginOptions {
     pub kimi_domain: Option<String>,
     /// Devin in management mode: the main server's `/callback` URL used as redirect URI.
     pub devin_redirect_uri: Option<String>,
+    /// Provider endpoint overrides (tests, gateways). Unset fields use the real endpoints.
+    pub endpoints: LoginEndpoints,
+}
+
+/// Optional endpoint overrides for the browser-flow providers.
+#[derive(Clone, Default)]
+pub struct LoginEndpoints {
+    pub claude: Option<claude::ClaudeEndpoints>,
+    pub codex: Option<codex::CodexEndpoints>,
+    pub antigravity: Option<antigravity::AntigravityEndpoints>,
 }
 
 impl LoginOptions {
@@ -540,7 +550,10 @@ const MANUAL_PROMPT_DELAY: Duration = Duration::from_secs(15);
 async fn claude_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let pkce = generate_pkce_codes();
     let state = generate_state();
-    let svc = ClaudeAuth::new(&env.opts.proxy_url)?;
+    let mut svc = ClaudeAuth::new(&env.opts.proxy_url)?;
+    if let Some(e) = env.opts.endpoints.claude.clone() {
+        svc = svc.with_endpoints(e);
+    }
     let mut port = None;
     let server = if env.mgmt() {
         None
@@ -619,7 +632,10 @@ async fn claude_run(
 async fn codex_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let pkce = generate_pkce_codes();
     let state = generate_state();
-    let svc = CodexAuth::new(&env.opts.proxy_url)?;
+    let mut svc = CodexAuth::new(&env.opts.proxy_url)?;
+    if let Some(e) = env.opts.endpoints.codex.clone() {
+        svc = svc.with_endpoints(e);
+    }
     let mut port = None;
     let server = if env.mgmt() {
         None
@@ -679,7 +695,10 @@ fn is_codex_device(opts: &LoginOptions) -> bool {
 }
 
 async fn codex_device_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
-    let svc = CodexAuth::new(&env.opts.proxy_url)?;
+    let mut svc = CodexAuth::new(&env.opts.proxy_url)?;
+    if let Some(e) = env.opts.endpoints.codex.clone() {
+        svc = svc.with_endpoints(e);
+    }
     let code = svc.request_device_user_code().await?;
     let start = LoginStart {
         provider: Provider::Codex,
@@ -726,7 +745,10 @@ async fn cancellable<T>(env: &Env, fut: impl Future<Output = T>) -> std::result:
 // ---- Antigravity ----
 
 async fn antigravity_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
-    let svc = AntigravityAuth::new(&env.opts.proxy_url)?;
+    let mut svc = AntigravityAuth::new(&env.opts.proxy_url)?;
+    if let Some(e) = env.opts.endpoints.antigravity.clone() {
+        svc = svc.with_endpoints(e);
+    }
     svc.ensure_client_secret()?;
     let state = generate_state();
     let (server, redirect_uri, port) = if env.mgmt() {

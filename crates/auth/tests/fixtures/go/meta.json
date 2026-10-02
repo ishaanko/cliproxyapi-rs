@@ -1,0 +1,19 @@
+{
+  "access_token": "key-1",
+  "api_key": "key-1",
+  "auth_kind": "oauth",
+  "base_url": "https://api.meta.ai/v1",
+  "dca_expired": "2026-10-01T13:00:00Z",
+  "dca_expires_at": 1790000000,
+  "dca_token": "dca:tok",
+  "disabled": false,
+  "email": "m@x.com",
+  "expires_in": 3600,
+  "is_subs_active": true,
+  "last_refresh": "2026-10-01T12:00:00Z",
+  "name": "M",
+  "note": "kept",
+  "subs_tier_name": "pro",
+  "token_type": "Bearer",
+  "type": "meta"
+}

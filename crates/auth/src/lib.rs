@@ -28,15 +28,21 @@ pub mod manager;
 pub mod meta;
 pub mod oauth;
 pub mod pkce;
+pub mod refresh;
 pub mod sessions;
 pub mod singleflight;
 pub mod storage;
 pub mod store;
 #[cfg(test)]
+mod e2e_tests;
+#[cfg(test)]
+mod flow_tests;
+#[cfg(test)]
 mod testutil;
 pub mod types;
 pub mod util;
 pub mod vertex;
+pub mod watcher;
 pub mod xai;
 
 pub use error::{AuthFlowError, Result};

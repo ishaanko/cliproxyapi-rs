@@ -399,7 +399,7 @@ pub fn generate_device_fingerprint(seed: &str) -> String {
     out
 }
 
-mod pb {
+pub(crate) mod pb {
     //! Just enough protobuf wire format for the GetUserStatus messages.
 
     pub const VARINT: u8 = 0;

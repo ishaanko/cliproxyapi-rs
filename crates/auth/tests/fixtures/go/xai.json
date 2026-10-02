@@ -1,0 +1,17 @@
+{
+  "access_token": "at",
+  "auth_kind": "oauth",
+  "base_url": "https://api.x.ai/v1",
+  "disabled": false,
+  "email": "grok@x.ai",
+  "expired": "2026-10-01T13:00:00Z",
+  "expires_in": 3600,
+  "id_token": "idt",
+  "label": "mine",
+  "last_refresh": "2026-10-01T12:00:00Z",
+  "refresh_token": "rt",
+  "sub": "sub-1",
+  "token_endpoint": "https://auth.x.ai/oauth2/token",
+  "token_type": "Bearer",
+  "type": "xai"
+}

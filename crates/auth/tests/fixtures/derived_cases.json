@@ -1,0 +1,292 @@
+[
+  {
+    "name": "case-0",
+    "provider": "Claude",
+    "id": "claude-a@b.json",
+    "file_name": "claude-a@b.json",
+    "attributes": {
+      "path": "/auth/dir/claude-a@b.json",
+      "source": "/auth/dir/claude-a@b.json",
+      "source_backend": "file"
+    },
+    "metadata": {
+      "access_token": "eyJhbGciOiJub25lIn0.eyJleHAiOjE5MDAwMDAwMDB9.sig",
+      "expired": "2001-01-01T00:00:00Z",
+      "type": "claude"
+    },
+    "index": "772cac5d6e5e4e2a",
+    "expires_unix": 1900000000,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-1",
+    "provider": "codex",
+    "id": "x.json",
+    "file_name": "x.json",
+    "attributes": {
+      "source": "/a/../a/b/./x.json"
+    },
+    "metadata": {
+      "expired": "2030-01-02T03:04:05+02:00"
+    },
+    "index": "3a0c23ed718a8487",
+    "expires_unix": 1893546245,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-2",
+    "provider": "kimi",
+    "id": "x.json",
+    "file_name": "x.json",
+    "attributes": {
+      "path": "/a/x.json"
+    },
+    "metadata": {
+      "expired": "2030-01-02 10:00:00",
+      "type": " KIMI-ai "
+    },
+    "index": "f60132d9d1f57465",
+    "expires_unix": 1893578400,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-3",
+    "provider": "claude",
+    "id": "claude:abc",
+    "file_name": "claude:abc",
+    "attributes": {
+      "api_key": "sk",
+      "auth_kind": "apikey",
+      "base_url": "https://x",
+      "source": "config:claude[abc]"
+    },
+    "metadata": null,
+    "index": "556b43f9f13e21c8",
+    "expires_unix": null,
+    "auth_kind": "apikey",
+    "source_kind": "config"
+  },
+  {
+    "name": "case-4",
+    "provider": "gemini",
+    "id": "gemini:1",
+    "file_name": "gemini:1",
+    "attributes": {
+      "api_key": "k",
+      "base_url": " https://g "
+    },
+    "metadata": null,
+    "index": "6f6cd33e53bae184",
+    "expires_unix": null,
+    "auth_kind": "apikey",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-5",
+    "provider": "openai-compatibility",
+    "id": "openai-compatibility:n:1",
+    "file_name": "openai-compatibility:n:1",
+    "attributes": {
+      "api_key": "k",
+      "base_url": "https://c",
+      "compat_name": "n"
+    },
+    "metadata": null,
+    "index": "21ede065af76f8c2",
+    "expires_unix": null,
+    "auth_kind": "apikey",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-6",
+    "provider": "codex",
+    "id": "codex:1",
+    "file_name": "codex:1",
+    "attributes": {
+      "api_key": "k2"
+    },
+    "metadata": null,
+    "index": "aab005664edf8186",
+    "expires_unix": null,
+    "auth_kind": "apikey",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-7",
+    "provider": "weird",
+    "id": "plain-id",
+    "file_name": "plain-id",
+    "attributes": null,
+    "metadata": null,
+    "index": "cbfba790b9fc2678",
+    "expires_unix": null,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-8",
+    "provider": "claude",
+    "id": "seeded",
+    "file_name": "seeded",
+    "attributes": {
+      "auth_index_seed": "my|seed"
+    },
+    "metadata": null,
+    "index": "f3b03390387dcfc4",
+    "expires_unix": null,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-9",
+    "provider": "meta",
+    "id": "meta.json",
+    "file_name": "meta.json",
+    "attributes": {
+      "path": "/m/meta.json"
+    },
+    "metadata": {
+      "access_token": "opaque",
+      "expires_in": 3600,
+      "timestamp": 1700000000000
+    },
+    "index": "0677e1af618880b8",
+    "expires_unix": 1700003600,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-10",
+    "provider": "x",
+    "id": "nested.json",
+    "file_name": "nested.json",
+    "attributes": {
+      "path": "/m/nested.json"
+    },
+    "metadata": {
+      "token": {
+        "access_token": "t",
+        "expiry": "2031-05-06T07:08:09Z"
+      }
+    },
+    "index": "c5e122b2ef6209cc",
+    "expires_unix": 1935817689,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-11",
+    "provider": "x",
+    "id": "zero.json",
+    "file_name": "zero.json",
+    "attributes": {
+      "path": "/m/zero.json"
+    },
+    "metadata": {
+      "expired": 0
+    },
+    "index": "d72597a9c228f299",
+    "expires_unix": -62135596800,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-12",
+    "provider": "x",
+    "id": "secs.json",
+    "file_name": "secs.json",
+    "attributes": {
+      "path": "/m/secs.json"
+    },
+    "metadata": {
+      "expires_at": "1900000000"
+    },
+    "index": "a584d27173a298cd",
+    "expires_unix": 1900000000,
+    "auth_kind": "oauth",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-13",
+    "provider": "x",
+    "id": "ms.json",
+    "file_name": "ms.json",
+    "attributes": {
+      "path": "/m/ms.json"
+    },
+    "metadata": {
+      "expire": 1900000000123
+    },
+    "index": "da75a2decdb36b70",
+    "expires_unix": 1900000000,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-14",
+    "provider": "x",
+    "id": "none.json",
+    "file_name": "none.json",
+    "attributes": {
+      "path": "/m/none.json"
+    },
+    "metadata": {
+      "note": "nothing"
+    },
+    "index": "4357e165634b94d9",
+    "expires_unix": null,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-15",
+    "provider": "x",
+    "id": "jwtstr.json",
+    "file_name": "jwtstr.json",
+    "attributes": {
+      "path": "/m/jwtstr.json"
+    },
+    "metadata": {
+      "accessToken": "eyJhbGciOiJub25lIn0.eyJleHAiOiIxOTAwMDAwMDAxIn0.sig"
+    },
+    "index": "dff1ca202bdf53bb",
+    "expires_unix": 1900000001,
+    "auth_kind": "",
+    "source_kind": "file"
+  },
+  {
+    "name": "case-16",
+    "provider": "x",
+    "id": "oauthkind.json",
+    "file_name": "oauthkind.json",
+    "attributes": {
+      "path": "/m/oauthkind.json",
+      "runtime_only": "true"
+    },
+    "metadata": {
+      "email": "e@x"
+    },
+    "index": "f6ccb88cd9aef81e",
+    "expires_unix": null,
+    "auth_kind": "oauth",
+    "source_kind": "memory"
+  },
+  {
+    "name": "case-17",
+    "provider": "x",
+    "id": "runtime",
+    "file_name": "runtime",
+    "attributes": {
+      "auth_kind": "OAuth2",
+      "source": "config:x[1]"
+    },
+    "metadata": null,
+    "index": "0fd733243e4ec00a",
+    "expires_unix": null,
+    "auth_kind": "oauth",
+    "source_kind": "config"
+  }
+]
