@@ -17,3 +17,4 @@ Rules:
 - Commit your work on your branch with conventional commit messages (`feat(translator): ...`). Never add Co-Authored-By trailers. Do not push.
 - Final report: what is done, conformance numbers, known gaps, any edits outside ownership.
 - Put scratch files, throwaway Go oracles and extra cargo target dirs under your worktree's gitignored `target/scratch/` (big disk), never in `/tmp` (small tmpfs shared with other work). For a throwaway copy of the Go repo, `cp -r` it there. Delete scratch when done.
+- Do not spawn sub-agents: work directly (parallel agent fan-out exhausts the account usage limit). Commit progress in small logical commits so work survives interruptions.
