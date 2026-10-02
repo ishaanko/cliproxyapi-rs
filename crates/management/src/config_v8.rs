@@ -55,22 +55,30 @@ pub(crate) fn split_path(path: &str) -> Vec<String> {
     }
 }
 
+/// Serves one config request. The work runs in its own task holding an owned lock guard, so a
+/// client disconnect cannot cancel a write (or its reload) half way or release the lock early.
 pub(crate) async fn handle(st: &ManagementState, req: ConfigRequest) -> Response {
-    let _guard = st.shared.config_lock.lock().await;
-    let path = st.config_path.clone();
-    let mutating = req.method != Method::GET;
-    let result = tokio::task::spawn_blocking(move || run(&path, &req)).await;
-    match result {
-        Ok(Ok(Outcome::Read(resp))) => resp,
-        Ok(Ok(Outcome::Saved)) => {
-            if mutating {
+    let st = st.clone();
+    let task = tokio::spawn(async move {
+        let _guard = st.shared.config_lock.clone().lock_owned().await;
+        let path = st.config_path.clone();
+        let result = tokio::task::spawn_blocking(move || run(&path, &req)).await;
+        match result {
+            Ok(Ok(Outcome::Read(resp))) => resp,
+            Ok(Ok(Outcome::Saved)) => {
                 st.reload_config().await;
+                json_response(200, &json!({"status": "ok", "config-version": 8}))
             }
-            json_response(200, &json!({"status": "ok", "config-version": 8}))
+            Ok(Err(e)) => axum::response::IntoResponse::into_response(e),
+            Err(_) => {
+                axum::response::IntoResponse::into_response(ApiError::new(500, "write_failed"))
+            }
         }
-        Ok(Err(e)) => axum::response::IntoResponse::into_response(e),
-        Err(_) => axum::response::IntoResponse::into_response(ApiError::new(500, "write_failed")),
-    }
+    });
+    task.await.unwrap_or_else(|e| {
+        tracing::error!("config task failed: {e}");
+        axum::response::IntoResponse::into_response(ApiError::new(500, "write_failed"))
+    })
 }
 
 enum Outcome {

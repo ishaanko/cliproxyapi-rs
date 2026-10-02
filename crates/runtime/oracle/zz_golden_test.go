@@ -15,6 +15,8 @@ package cliproxy
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -22,9 +24,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v8/internal/watcher/synthesizer"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/claude"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/gemini"
+	"github.com/router-for-me/CLIProxyAPI/v8/sdk/api/handlers/openai"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
 )
 
@@ -34,6 +41,39 @@ type zzScenario struct {
 	Name       string            `json:"name"`
 	ConfigYAML string            `json:"config_yaml"`
 	AuthFiles  map[string]string `json:"auth_files"`
+	// DumpHandlers also records the /v1/models and /v1beta/models response bodies.
+	DumpHandlers bool `json:"dump_handlers"`
+}
+
+// zzHandlerBodies serves the real model-list handlers over the current global registry.
+func zzHandlerBodies() map[string]any {
+	gin.SetMode(gin.TestMode)
+	base := &handlers.BaseAPIHandler{}
+	oa, cl, ge := openai.NewOpenAIAPIHandler(base), claude.NewClaudeCodeAPIHandler(base), gemini.NewGeminiAPIHandler(base)
+	r := gin.New()
+	r.GET("/openai", oa.OpenAIModels)
+	r.GET("/claude", cl.ClaudeModels)
+	r.GET("/gemini", ge.GeminiModels)
+	r.GET("/gemini/*action", ge.GeminiGetHandler)
+	get := func(path string) map[string]any {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		return map[string]any{"status": w.Code, "body": w.Body.String()}
+	}
+	out := map[string]any{"openai": get("/openai"), "claude": get("/claude"), "gemini": get("/gemini")}
+	var list struct {
+		Models []struct {
+			Name string `json:"name"`
+		} `json:"models"`
+	}
+	if body, ok := out["gemini"].(map[string]any)["body"].(string); ok && json.Unmarshal([]byte(body), &list) == nil && len(list.Models) > 0 {
+		name := list.Models[0].Name
+		out["gemini_name"] = name
+		out["gemini_get_prefixed"] = get("/gemini/" + name)
+		out["gemini_get_bare"] = get("/gemini/" + strings.TrimPrefix(name, "models/"))
+	}
+	out["gemini_get_missing"] = get("/gemini/models/no-such-model")
+	return out
 }
 
 func zzAuth(a *coreauth.Auth) map[string]any {
@@ -186,10 +226,15 @@ func TestZZGolden(t *testing.T) {
 			}
 			lists[h] = ids
 		}
+		var handlerBodies map[string]any
+		if sc.DumpHandlers {
+			handlerBodies = zzHandlerBodies()
+		}
 		for _, a := range auths {
 			reg.UnregisterClient(a.ID)
 		}
 		results = append(results, map[string]any{
+			"handlers":    handlerBodies,
 			"name":        sc.Name,
 			"auths":       dumped,
 			"file_errors": fileErrors,

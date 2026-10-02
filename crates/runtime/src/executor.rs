@@ -141,6 +141,20 @@ pub struct ExecError {
     /// Credential is unusable until re-login (Go: IsTerminalAuth).
     pub terminal_auth: bool,
     pub retryable: bool,
+    /// The failure affects the whole credential across models, not just the requested model
+    /// (Go: IsCredentialScoped, e.g. Claude unified 5h/7d limits).
+    pub credential_scoped: bool,
+    /// Conductor-level machine code (Go `auth.Error.Code`) for errors the conductor itself
+    /// produces: `auth_not_found`, `auth_unavailable`, `model_cooldown`, `provider_not_found`,
+    /// `executor_not_found`, `empty_stream`, `unauthorized`. `None` for upstream errors.
+    pub auth_code: Option<String>,
+    /// The request reached the upstream transport boundary (Go: upstream-attempt marker). Errors
+    /// built by executors default to true; set false for failures before any request was sent
+    /// so the conductor does not prefer them over a synthesized "no auth available".
+    pub upstream_attempted: bool,
+    /// Text of the underlying upstream error a conductor-generated error wraps (Go
+    /// `WithCause`); used to render "last upstream error" details in the HTTP layer.
+    pub cause_text: Option<String>,
 }
 
 impl ExecError {
@@ -154,6 +168,10 @@ impl ExecError {
             code: None,
             terminal_auth: false,
             retryable: false,
+            credential_scoped: false,
+            auth_code: None,
+            upstream_attempted: true,
+            cause_text: None,
         }
     }
 
@@ -167,8 +185,18 @@ impl ExecError {
         self
     }
 
+    pub fn with_retry_after(mut self, retry_after: Duration) -> Self {
+        self.retry_after = Some(retry_after);
+        self
+    }
+
+    pub fn with_credential_scope(mut self) -> Self {
+        self.credential_scoped = true;
+        self
+    }
+
     pub fn is_request_scoped(&self) -> bool {
-        self.code == Some(ErrorCode::RequestScoped)
+        self.code == Some(ErrorCode::RequestScoped) || self.auth_code.as_deref() == Some("request_scoped")
     }
 }
 
@@ -189,6 +217,30 @@ pub trait Executor: Send + Sync {
 
     /// Release per-session resources (e.g. pooled websockets) when a client session ends.
     async fn close_execution_session(&self, _session_id: &str) {}
+
+    /// Execution-local view without OAuth-only configuration, used for API-key credentials
+    /// (Go: APIKeyConfigExecutor.ForAPIKey). `None` means the executor itself is used.
+    fn for_api_key(&self) -> Option<DynExecutor> {
+        None
+    }
+
+    /// Whether the credential needs a request-time update before use (Go:
+    /// RequestAuthPreparer.ShouldPrepareRequestAuth, e.g. minting a Meta API key).
+    fn should_prepare_request_auth(&self, _auth: &Auth) -> bool {
+        false
+    }
+
+    /// Request-time credential update; the conductor merges and persists the returned auth.
+    /// `Ok(None)` keeps the credential unchanged.
+    async fn prepare_request_auth(&self, _auth: &Auth) -> Result<Option<Auth>, ExecError> {
+        Ok(None)
+    }
+
+    /// Whether this executor's tool contract supports the Codex `apply_patch` tool for `model`
+    /// (Go: ApplyPatchSupport).
+    fn supports_apply_patch(&self, _model: &str) -> bool {
+        false
+    }
 }
 
 pub type DynExecutor = Arc<dyn Executor>;

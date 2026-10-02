@@ -138,7 +138,7 @@ pub(crate) async fn cancel_session(State(st): State<ManagementState>, req: Reque
 /// `GET|POST /oauth/callback` (no management key; the pending `state` is the credential).
 pub(crate) async fn callback(State(st): State<ManagementState>, req: Request) -> Response {
     let cb = if req.method() == Method::POST {
-        let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        let body = crate::http::read_body(req.into_body())
             .await
             .unwrap_or_default();
         match serde_json::from_slice::<CallbackRequest>(&body) {
@@ -232,10 +232,13 @@ async fn import_vertex(st: &ManagementState, req: Request) -> ApiResult {
             }
         })?;
     let mut auth = imported.auth;
-    let saved = st
-        .login
-        .save_record(&mut auth)
-        .map_err(|e| ApiError::with_message(500, "save_failed", e.to_string()))?;
+    let login = st.login.clone();
+    let saved = crate::http::blocking(move || {
+        login
+            .save_record(&mut auth)
+            .map_err(|e| ApiError::with_message(500, "save_failed", e.to_string()))
+    })
+    .await?;
     Ok(ok_json(&json!({
         "status": "ok",
         "auth-file": saved.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),

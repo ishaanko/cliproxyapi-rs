@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::http::{ApiError, ApiResult, ok_json, query_trim};
+use crate::http::{ApiError, ApiResult, blocking, ok_json, query_trim};
 use crate::state::ManagementState;
 
 const DEFAULT_LOG_FILE: &str = "main.log";
@@ -829,7 +829,11 @@ fn get_logs_blocking(dir: &Path, raw_cursor: &str, limit_raw: &str, cutoff: i64)
 /// `DELETE /observability/logs`: truncates `main.log` and removes rotated files.
 pub(crate) async fn delete_logs(State(st): State<ManagementState>) -> ApiResult {
     let dir = require_log_setup(&st)?;
-    let entries = match fs::read_dir(&dir) {
+    blocking(move || delete_logs_blocking(&dir)).await
+}
+
+fn delete_logs_blocking(dir: &Path) -> ApiResult {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if not_found(&e) => return Err(ApiError::new(404, "log directory not found")),
         Err(e) => return Err(read_error(e, "list log directory")),
@@ -876,7 +880,11 @@ pub(crate) async fn error_logs(State(st): State<ManagementState>) -> ApiResult {
         return Ok(ok_json(&json!({"files": []})));
     }
     let dir = log_dir(&st)?;
-    let entries = match fs::read_dir(&dir) {
+    blocking(move || error_logs_blocking(&dir)).await
+}
+
+fn error_logs_blocking(dir: &Path) -> ApiResult {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if not_found(&e) => return Ok(ok_json(&json!({"files": []}))),
         Err(e) => return Err(read_error(e, "list request error logs")),
@@ -949,17 +957,19 @@ pub(crate) async fn download_error_log(
     if !name.starts_with("error-") || !name.ends_with(".log") {
         return Err(ApiError::new(404, "log file not found"));
     }
-    let full = resolve_log_file(&dir, &name)?;
-    attachment(&full, &name)
+    blocking(move || {
+        let full = resolve_log_file(&dir, &name)?;
+        attachment(&full, &name)
+    })
+    .await
 }
 
 /// `ShortRequestID`: the last 8 characters of a request id.
 fn short_request_id(id: &str) -> &str {
     let id = id.trim();
-    if id.len() > 8 {
-        id.get(id.len() - 8..).unwrap_or(id)
-    } else {
-        id
+    match id.char_indices().rev().nth(7) {
+        Some((i, _)) => &id[i..],
+        None => id,
     }
 }
 
@@ -1051,12 +1061,16 @@ pub(crate) async fn request_log_by_id(
     if id.contains(['/', '\\']) {
         return Err(ApiError::bad_request("invalid request ID"));
     }
-    let entries = match fs::read_dir(&dir) {
+    blocking(move || request_log_blocking(&dir, &id)).await
+}
+
+fn request_log_blocking(dir: &Path, id: &str) -> ApiResult {
+    let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) if not_found(&e) => return Err(ApiError::new(404, "log directory not found")),
         Err(e) => return Err(read_error(e, "list log directory")),
     };
-    let suffix = format!("-{}.log", short_request_id(&id));
+    let suffix = format!("-{}.log", short_request_id(id));
     let mut matched: Option<(String, std::time::SystemTime)> = None;
     for entry in entries.flatten() {
         if entry.file_type().is_ok_and(|t| t.is_dir()) {
@@ -1088,7 +1102,7 @@ pub(crate) async fn request_log_by_id(
             "log file not found for the given request ID",
         ));
     };
-    let full = resolve_log_file(&dir, &name)?;
+    let full = resolve_log_file(dir, &name)?;
     attachment(&full, &name)
 }
 
