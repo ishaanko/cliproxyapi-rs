@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
 
-use crate::antigravity::function_names;
+use crate::antigravity::{function_names, function_response};
 use crate::common;
 use crate::gemini::common::default_safety_settings;
 
@@ -21,7 +21,7 @@ pub fn convert_interactions_request_to_antigravity(model: &str, input_raw_json: 
     copy_system(&mut out, &root);
     copy_generation_config(&mut out, &root);
     let mut content_items: Vec<Value> = Vec::new();
-    append_input(&mut content_items, &root.g("input"));
+    append_input(&mut content_items, &root.g("input"), input_raw_json);
     if !content_items.is_empty() {
         cpa_json::set(&mut out, "request.contents", Value::Array(content_items));
     }
@@ -262,7 +262,9 @@ impl InputContext {
     }
 }
 
-fn append_input(items: &mut Vec<Value>, input: &Res<'_>) {
+/// `raw` is the request text: `path` arguments below locate steps in it so a stringified (`$ref`)
+/// function result keeps its original whitespace.
+fn append_input(items: &mut Vec<Value>, input: &Res<'_>, raw: &[u8]) {
     if !input.exists() {
         return;
     }
@@ -275,17 +277,17 @@ fn append_input(items: &mut Vec<Value>, input: &Res<'_>) {
     }
     let steps = input.g("steps");
     if input.is_array() {
-        for item in input.array() {
-            append_step(&mut ctx, &item, "user");
+        for (k, item) in input.array().iter().enumerate() {
+            append_step(&mut ctx, item, "user", raw, &format!("input.{k}"));
         }
     } else if steps.exists() && steps.is_array() {
         let role = input.g("role").str();
         let default_role = if role == "model" || role == "assistant" { "model" } else { "user" };
-        for step in steps.array() {
-            append_step(&mut ctx, &step, default_role);
+        for (k, step) in steps.array().iter().enumerate() {
+            append_step(&mut ctx, step, default_role, raw, &format!("input.steps.{k}"));
         }
     } else {
-        append_step(&mut ctx, input, "user");
+        append_step(&mut ctx, input, "user", raw, "input");
     }
     ctx.flush_pending_signature();
     *items = ctx.items;
@@ -299,7 +301,7 @@ fn step_signature(step: &Res<'_>) -> String {
     first_non_empty_string(&[step.g("signature").str(), step.g("thought_signature").str(), step.g("thoughtSignature").str()])
 }
 
-fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str) {
+fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: &[u8], path: &str) {
     if step.is_string() {
         if ctx.in_model_turn {
             ctx.flush_pending_signature();
@@ -319,8 +321,8 @@ fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str) {
         } else {
             default_role
         };
-        for child in steps.array() {
-            append_step(ctx, &child, role);
+        for (k, child) in steps.array().iter().enumerate() {
+            append_step(ctx, child, role, raw, &format!("{path}.steps.{k}"));
         }
         return;
     }
@@ -376,7 +378,7 @@ fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str) {
         }
         "function_result" => {
             ctx.leave_model_turn();
-            let part = build_function_result_part(step);
+            let part = build_function_result_part(step, cpa_json::raw_at(raw, &format!("{path}.result")));
             if ctx.last_step_type == "function_result" && ctx.last_role_is("user") {
                 if let Some(last) = ctx.items.last_mut() {
                     append_user_content_part(last, part);
@@ -486,7 +488,7 @@ fn build_function_call_part(step: &Res<'_>) -> Value {
     part
 }
 
-fn build_function_result_part(step: &Res<'_>) -> Value {
+fn build_function_result_part(step: &Res<'_>, result_raw: Option<&str>) -> Value {
     let mut part = json!({"functionResponse": {"name": "", "response": {}}});
     cpa_json::set(&mut part, "functionResponse.name", step.g("name").str());
     let call_id = step.g("call_id");
@@ -498,8 +500,7 @@ fn build_function_result_part(step: &Res<'_>) -> Value {
     }
     let result = step.g("result");
     if result.exists() {
-        let bytes = common::set_gemini_function_response_result(&cpa_json::to_vec(&part), "functionResponse.response", &result);
-        part = cpa_json::parse(&bytes);
+        function_response::set_function_response_result(&mut part, "functionResponse.response", &result, result_raw);
     }
     part
 }

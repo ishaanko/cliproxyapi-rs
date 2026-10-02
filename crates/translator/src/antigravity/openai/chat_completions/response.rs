@@ -129,7 +129,7 @@ pub fn convert_antigravity_response_to_openai(
     let parts = raw.g("response.candidates.0.content.parts");
     if parts.is_array() {
         let name_map = params.sanitized_name_map.clone().unwrap_or_default();
-        for part in parts.array() {
+        for (i, part) in parts.array().iter().enumerate() {
             let part_text = part.g("text");
             let function_call = part.g("functionCall");
             let mut thought_signature = part.g("thoughtSignature");
@@ -177,7 +177,9 @@ pub fn convert_antigravity_response_to_openai(
                 cpa_json::set(&mut function_call_template, "function.name", fc_name);
                 let args = function_call.g("args");
                 if args.exists() {
-                    cpa_json::set(&mut function_call_template, "function.arguments", args.raw());
+                    // Go copies `args.Raw`: keep the upstream text as sent.
+                    let raw_args = cpa_json::raw_at(raw_json, &format!("response.candidates.0.content.parts.{i}.functionCall.args"));
+                    cpa_json::set(&mut function_call_template, "function.arguments", raw_args.map_or_else(|| args.raw(), str::to_string));
                 }
                 cpa_json::set(&mut template, "choices.0.delta.role", "assistant");
                 cpa_json::set(&mut template, "choices.0.delta.tool_calls.-1", function_call_template);

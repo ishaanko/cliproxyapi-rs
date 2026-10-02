@@ -1,5 +1,6 @@
 mod b64;
 mod function_names;
+mod function_response;
 pub mod claude;
 pub mod gemini;
 pub mod interactions;

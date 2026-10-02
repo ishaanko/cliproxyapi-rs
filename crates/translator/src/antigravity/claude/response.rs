@@ -293,8 +293,10 @@ pub fn convert_antigravity_response_to_claude(
     if parts_result.is_array() && web_search_stream_mode && !em.p.has_web_search_tool && !handled_web_search_grounding {
         append_web_search_buffered_text(&parts_result, &mut em.p.web_search_text_buffer);
     } else if parts_result.is_array() && !handled_web_search_grounding {
-        for part in parts_result.array() {
-            convert_part(&mut em, &part);
+        for (i, part) in parts_result.array().iter().enumerate() {
+            // Go copies `args.Raw` into partial_json, so keep the upstream text as sent.
+            let raw_args = cpa_json::raw_at(raw_json, &format!("response.candidates.0.content.parts.{i}.functionCall.args"));
+            convert_part(&mut em, part, raw_args);
         }
     }
 
@@ -329,7 +331,7 @@ pub fn convert_antigravity_response_to_claude(
     vec![em.out]
 }
 
-fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>) {
+fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>, raw_args: Option<&str>) {
     let part_text = part.g("text");
     let function_call = part.g("functionCall");
     let mut thought_signature = part.g("thoughtSignature");
@@ -437,7 +439,7 @@ fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>) {
 
         let args = function_call.g("args");
         if args.exists() {
-            let delta = json!({"type": "content_block_delta", "index": em.p.response_index, "delta": {"type": "input_json_delta", "partial_json": args.raw()}});
+            let delta = json!({"type": "content_block_delta", "index": em.p.response_index, "delta": {"type": "input_json_delta", "partial_json": raw_args.map_or_else(|| args.raw(), str::to_string)}});
             em.event_value("content_block_delta", &delta);
         }
         em.p.response_type = 3;

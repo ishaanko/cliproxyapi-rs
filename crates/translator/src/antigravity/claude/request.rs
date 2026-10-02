@@ -15,6 +15,7 @@ use super::signature_validation::{
 use super::web_search::{
     build_web_search_request, is_claude_typed_web_search_tool_type, should_build_web_search_request,
 };
+use crate::antigravity::function_response;
 use crate::common;
 use crate::gemini::common::attach_default_safety_settings;
 
@@ -222,38 +223,58 @@ fn image_part(item: &Res<'_>) -> Value {
     part
 }
 
-/// Runs a bytes based `common` helper over a `Value`.
-fn via_bytes(v: &mut Value, f: impl FnOnce(&[u8]) -> Vec<u8>) {
-    let out = f(&cpa_json::to_vec(v));
-    *v = cpa_json::parse(&out);
+/// Where a tool_result's `content` sits in the original request text, so a stringified (`$ref`)
+/// result can keep its original whitespace.
+#[derive(Clone, Copy)]
+struct RawSource<'a> {
+    input: &'a [u8],
+    path: &'a str,
 }
 
-fn build_function_response(tool_call_id: &str, func_name: &str, result: &Res<'_>, function_name_map: &std::collections::HashMap<String, String>) -> Value {
+impl<'a> RawSource<'a> {
+    fn text(&self, sub_path: &str) -> Option<&'a str> {
+        let path = if sub_path.is_empty() { self.path.to_string() } else { format!("{}.{sub_path}", self.path) };
+        cpa_json::raw_at(self.input, &path)
+    }
+}
+
+fn build_function_response(
+    tool_call_id: &str,
+    func_name: &str,
+    result: &Res<'_>,
+    function_name_map: &std::collections::HashMap<String, String>,
+    raw_src: Option<RawSource<'_>>,
+) -> Value {
     let mut fr = json!({});
     cpa_json::set(&mut fr, "id", tool_call_id);
     cpa_json::set(&mut fr, "name", util::map_sanitized_function_name(function_name_map, func_name));
+    let result_path = "response.result";
 
     if result.is_string() {
-        cpa_json::set(&mut fr, "response.result", result.str());
+        cpa_json::set(&mut fr, result_path, result.str());
     } else if result.is_array() {
         let items = result.array();
-        let mut non_image: Vec<String> = Vec::with_capacity(items.len());
+        let mut non_image: Vec<(Res<'_>, Option<&str>)> = Vec::with_capacity(items.len());
         let mut image_parts: Vec<Value> = Vec::new();
-        for item in &items {
+        for (k, item) in items.iter().enumerate() {
             if is_base64_image(item) {
                 image_parts.push(image_part(item));
                 continue;
             }
-            non_image.push(item.raw());
+            non_image.push((item.clone(), raw_src.and_then(|r| r.text(&k.to_string()))));
         }
         match non_image.len() {
             0 => {
-                cpa_json::set(&mut fr, "response.result", "");
+                cpa_json::set(&mut fr, result_path, "");
             }
-            1 => via_bytes(&mut fr, |b| common::set_gemini_function_response_raw(b, "response.result", &non_image[0])),
+            1 => function_response::set_function_response_result(&mut fr, result_path, &non_image[0].0, non_image[0].1),
             _ => {
-                let joined = String::from_utf8_lossy(&common::join_raw_array(&non_image)).into_owned();
-                via_bytes(&mut fr, |b| common::set_gemini_function_response_raw(b, "response.result", &joined));
+                let joined: Vec<Value> = non_image.iter().map(|(item, _)| item.value()).collect();
+                let joined_text = format!(
+                    "[{}]",
+                    non_image.iter().map(|(item, raw)| raw.map_or_else(|| item.raw(), str::to_string)).collect::<Vec<_>>().join(",")
+                );
+                function_response::set_function_response_result(&mut fr, result_path, &Res::owned(Value::Array(joined)), Some(&joined_text));
             }
         }
         // Image data goes inside functionResponse.parts rather than as sibling parts, to keep the
@@ -264,14 +285,14 @@ fn build_function_response(tool_call_id: &str, func_name: &str, result: &Res<'_>
     } else if result.is_object() {
         if is_base64_image(result) {
             cpa_json::set(&mut fr, "parts", Value::Array(vec![image_part(result)]));
-            cpa_json::set(&mut fr, "response.result", "");
+            cpa_json::set(&mut fr, result_path, "");
         } else {
-            via_bytes(&mut fr, |b| common::set_gemini_function_response_result(b, "response.result", result));
+            function_response::set_function_response_result(&mut fr, result_path, result, raw_src.and_then(|r| r.text("")));
         }
     } else if result.exists() {
-        via_bytes(&mut fr, |b| common::set_gemini_function_response_result(b, "response.result", result));
+        function_response::set_function_response_result(&mut fr, result_path, result, raw_src.and_then(|r| r.text("")));
     } else {
-        cpa_json::set(&mut fr, "response.result", "");
+        cpa_json::set(&mut fr, result_path, "");
     }
     fr
 }
@@ -517,7 +538,7 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
 
     let messages = raw.g("messages");
     if messages.is_array() {
-        for message in messages.array() {
+        for (message_index, message) in messages.array().iter().enumerate() {
             let role_result = message.g("role");
             if !role_result.is_string() {
                 continue;
@@ -542,6 +563,9 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
                 continue;
             }
             if contents_result.is_array() {
+                // Alignment may reorder tool_result blocks; keep the original order to locate raw text.
+                let original_content = message.g("content");
+                let original_blocks = original_content.array();
                 let contents_result = if original_role == "user" {
                     common::align_claude_tool_results(contents_result, &preceding_tool_use_ids)
                 } else {
@@ -637,7 +661,10 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
                                     name
                                 }
                             };
-                            let fr = build_function_response(&tool_call_id, &func_name, &content.g("content"), &function_name_map);
+                            let original_index = original_blocks.iter().position(|b| b.v() == Some(content));
+                            let result_path = original_index.map(|j0| format!("messages.{message_index}.content.{j0}.content"));
+                            let raw_src = result_path.as_deref().map(|path| RawSource { input: input_raw_json, path });
+                            let fr = build_function_response(&tool_call_id, &func_name, &content.g("content"), &function_name_map, raw_src);
                             parts.items.push(json!({"functionResponse": fr}));
                         }
                         "image" => {

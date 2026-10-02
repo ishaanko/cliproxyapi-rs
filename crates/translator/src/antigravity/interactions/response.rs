@@ -57,14 +57,17 @@ pub fn convert_antigravity_response_to_interactions(
         if parsed.is_null() && payload.trim_ascii() != b"null" {
             continue;
         }
+        let raw_prefix = if parsed.g("response").exists() { "response." } else { "" };
         let root = restore_function_names(unwrap_response(parsed), &st.tool_name_map);
         if !st.started {
             append_created(&mut out, st, model);
             append_status_update(&mut out, st);
             st.started = true;
         }
-        root.g("candidates.0.content.parts").for_each(|_, part| {
-            append_part_to_stream(&mut out, st, &part);
+        root.g("candidates.0.content.parts").for_each(|index, part| {
+            // Go copies `args.Raw` into the delta: keep the upstream text as sent.
+            let raw_args = cpa_json::raw_at(&payload, &format!("{raw_prefix}candidates.0.content.parts.{}.functionCall.args", index.int()));
+            append_part_to_stream(&mut out, st, &part, raw_args);
             true
         });
         let has_finish = root.g("candidates.0.finishReason").exists();
@@ -275,7 +278,7 @@ fn ensure_step(out: &mut Vec<Vec<u8>>, st: &mut StreamState, step_type: &str, pa
     append_step_start(out, st, step_type, part);
 }
 
-fn append_part_to_stream(out: &mut Vec<Vec<u8>>, st: &mut StreamState, part: &Res<'_>) {
+fn append_part_to_stream(out: &mut Vec<Vec<u8>>, st: &mut StreamState, part: &Res<'_>, raw_args: Option<&str>) {
     let text = part.g("text");
     if text.exists() && !text.str().is_empty() {
         if part.g("thought").bool() {
@@ -300,7 +303,7 @@ fn append_part_to_stream(out: &mut Vec<Vec<u8>>, st: &mut StreamState, part: &Re
         let mut delta = json!({"index": 0, "delta": {"arguments": "", "type": "arguments_delta"}, "event_type": "step.delta"});
         cpa_json::set(&mut delta, "index", st.active_step_index);
         let args = fc.g("args");
-        let arguments = if args.exists() { args.raw() } else { "{}".to_string() };
+        let arguments = if args.exists() { raw_args.map_or_else(|| args.raw(), str::to_string) } else { "{}".to_string() };
         cpa_json::set(&mut delta, "delta.arguments", arguments);
         sse(out, "step.delta", &delta);
         return append_step_stop(out, st);
