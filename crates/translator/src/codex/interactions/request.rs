@@ -3,10 +3,10 @@
 use cpa_core::thinking;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::raw::raw_at;
 use crate::codex::util::{
     file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
 };
+use cpa_json::raw_at;
 
 /// Source bytes plus the output item list being built. `path` arguments below are gjson-style
 /// paths into `src`, used to copy client values verbatim where Go uses `Raw` in a string.
@@ -636,7 +636,7 @@ fn json_string(src: &[u8], value: &Res<'_>, path: &str) -> String {
         return value.str();
     }
     if value.exists() {
-        return raw_at(src, path).unwrap_or_else(|| value.raw());
+        return raw_at(src, path).map_or_else(|| value.raw(), str::to_string);
     }
     "{}".into()
 }
@@ -646,7 +646,7 @@ fn output_string(src: &[u8], value: &Res<'_>, path: &str) -> String {
         return value.str();
     }
     if value.exists() {
-        return raw_at(src, path).unwrap_or_else(|| value.raw());
+        return raw_at(src, path).map_or_else(|| value.raw(), str::to_string);
     }
     String::new()
 }

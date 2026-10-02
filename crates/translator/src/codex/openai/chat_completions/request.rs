@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use cpa_core::applypatch;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::raw::raw_at;
 use crate::codex::util::{build_short_name_map, truncate_bytes};
+use cpa_json::raw_at;
 
 /// One assistant tool call awaiting its `tool` message.
 struct PendingToolCall {
@@ -439,7 +439,7 @@ fn set_tool_call_output_content(
         cpa_json::set(func_output, "output", Value::Array(items));
     } else {
         let mut fallback = if content.exists() {
-            raw_at(src, path).unwrap_or_else(|| content.raw())
+            raw_at(src, path).map_or_else(|| content.raw(), str::to_string)
         } else {
             String::new()
         };
@@ -543,7 +543,7 @@ fn has_tool_output_image_part(content: &Res<'_>) -> bool {
 /// Unsupported tool output parts are forwarded as their source text.
 fn tool_output_fallback_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
     let mut text = if item.exists() {
-        raw_at(src, path).unwrap_or_else(|| item.raw())
+        raw_at(src, path).map_or_else(|| item.raw(), str::to_string)
     } else {
         String::new()
     };

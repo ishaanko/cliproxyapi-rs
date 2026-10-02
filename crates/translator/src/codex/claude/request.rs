@@ -14,9 +14,9 @@ use cpa_core::util::{
 use cpa_json::{J, Res, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::codex::raw::raw_at;
 use crate::codex::util::{build_short_name_map, shorten_name_if_needed, truncate_bytes};
 use crate::common::{align_claude_tool_results, claude_message_system_reminder_text};
+use cpa_json::raw_at;
 
 const DEFAULT_PARAMETERS: &str = r#"{"type":"object","properties":{}}"#;
 
@@ -170,7 +170,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
                             let input = content.g("input");
                             let arguments = if input.exists() {
                                 raw_at(raw_json, &format!("{content_path}.input"))
-                                    .unwrap_or_else(|| input.raw())
+                                    .map_or_else(|| input.raw(), str::to_string)
                             } else {
                                 String::new()
                             };
@@ -191,7 +191,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
                             let fallback_output = || {
                                 if result_content.is_array() || result_content.is_object() {
                                     raw_at(raw_json, &format!("{content_path}.content"))
-                                        .unwrap_or_else(|| result_content.str())
+                                        .map_or_else(|| result_content.str(), str::to_string)
                                 } else {
                                     result_content.str()
                                 }

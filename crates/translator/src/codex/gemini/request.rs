@@ -6,11 +6,11 @@ use cpa_core::thinking;
 use cpa_core::util::walk;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::raw::raw_at;
 use crate::codex::util::{
     build_short_name_map, file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
 };
 use crate::common::is_gemini_thought_part;
+use cpa_json::raw_at;
 
 /// Go: ConvertGeminiRequestToCodex. Maps system instruction, contents (text, media, function
 /// calls and responses paired through a FIFO of call ids), tools, tool config and thinking
@@ -114,7 +114,7 @@ pub fn convert_gemini_request_to_codex(
                     let args = fc.g("args");
                     if args.exists() {
                         let raw_args = raw_at(raw_json, &format!("{part_path}.functionCall.args"))
-                            .unwrap_or_else(|| args.raw());
+                            .map_or_else(|| args.raw(), str::to_string);
                         cpa_json::set(&mut f, "arguments", raw_args);
                     }
                     // Reuse gateway-provided ids when present, otherwise generate one for pairing.
@@ -141,7 +141,7 @@ pub fn convert_gemini_request_to_codex(
                     } else if resp.exists() {
                         let raw_resp =
                             raw_at(raw_json, &format!("{part_path}.functionResponse.response"))
-                                .unwrap_or_else(|| resp.raw());
+                                .map_or_else(|| resp.raw(), str::to_string);
                         cpa_json::set(&mut fno, "output", raw_resp);
                     }
                     // Pair with the oldest queued call id; generate one if the queue is empty.
