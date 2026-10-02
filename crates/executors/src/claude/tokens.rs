@@ -17,7 +17,7 @@ use super::cloaking::{
     validate_claude_mid_system_message_model,
 };
 use super::execute::sanitize_claude_messages_for_claude_upstream_with_debug;
-use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
+use crate::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::credential_identity::claude_agent_session_uuid_for_request;
 use crate::helps::claude_input_tokens::count_claude_input_tokens;
 use super::helps::upstream::is_anthropic_upstream_base;

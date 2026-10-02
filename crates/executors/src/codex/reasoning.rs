@@ -21,6 +21,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::headers::header_value;
+use crate::helps::session::claude_code_execution_scope;
 use super::terminal::status_error_classification;
 
 /// Where the cached items of one conversation live.
@@ -72,41 +73,6 @@ fn scope_from_request(from: Format, req: &Request, opts: &Options, body: &[u8]) 
         session_key: session_key(from, req, opts, &parsed),
         request_fingerprint: input_prefix_fingerprint(&items, items.len()),
     }
-}
-
-/// `claude:<session>:agent:<agent>` identity of a Claude Code request (Go: ClaudeCodeExecutionScope).
-pub fn claude_code_execution_scope(payload: &[u8], headers: &HeaderMap) -> Option<String> {
-    let session = claude_code_session_id(payload, headers);
-    if session.is_empty() {
-        return None;
-    }
-    let agent = header_value(headers, "X-Claude-Code-Agent-Id");
-    let agent = if agent.is_empty() { "main".to_string() } else { agent };
-    Some(format!("claude:{session}:agent:{agent}"))
-}
-
-fn claude_code_session_id(payload: &[u8], headers: &HeaderMap) -> String {
-    let from_header = header_value(headers, "X-Claude-Code-Session-Id");
-    if !from_header.is_empty() {
-        return from_header;
-    }
-    if payload.is_empty() {
-        return String::new();
-    }
-    let user_id = cpa_json::parse(payload).g("metadata.user_id").str();
-    if user_id.is_empty() {
-        return String::new();
-    }
-    if let Some(pos) = user_id.rfind("_session_") {
-        let suffix = &user_id[pos + "_session_".len()..];
-        if !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase() || b == b'-') {
-            return suffix.to_string();
-        }
-    }
-    if user_id.starts_with('{') {
-        return cpa_json::parse(user_id.as_bytes()).g("session_id").str().trim().to_string();
-    }
-    String::new()
 }
 
 /// Session key precedence of the replay cache (Go: codexReasoningReplaySessionKey).

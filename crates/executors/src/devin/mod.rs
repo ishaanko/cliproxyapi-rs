@@ -20,7 +20,6 @@
 pub mod models;
 mod pb;
 pub mod request;
-pub mod sensitive;
 pub mod stream;
 pub mod wire;
 
@@ -49,7 +48,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
-use self::sensitive::SensitiveWordMatcher;
+use crate::helps::cloak_obfuscate::SensitiveWordMatcher;
 use self::stream::{StreamParams, consume_frames_to_interactions, stream_frames};
 use self::wire::{
     CHAT_PATH, ChatRequest, ConnectFrameReader, DEFAULT_BASE_URL, build_get_chat_message_request,

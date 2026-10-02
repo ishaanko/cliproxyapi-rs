@@ -20,7 +20,7 @@ use super::common::{
     is_count_tokens_action, json_headers, observed_lines, original_payload, post_json, read_body, set_header,
     set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
 };
-use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
+use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::interactions;
 use crate::ConfigRx;
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};

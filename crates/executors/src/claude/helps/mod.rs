@@ -9,8 +9,6 @@ use parking_lot::Mutex;
 pub mod builtin_tools;
 pub mod cli_identity_seed;
 pub mod client_detection;
-pub mod cloak_obfuscate;
-pub mod code_session;
 pub mod credential_identity;
 pub mod device_profile;
 pub mod diagnostics;

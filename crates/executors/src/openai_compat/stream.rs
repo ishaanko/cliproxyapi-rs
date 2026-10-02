@@ -13,7 +13,6 @@ use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::status::{transport_error, transport_message};
-use super::translate::observe_body;
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::apply_patch::{
     ChunkSender, apply_patch_translation_error, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream,
@@ -247,7 +246,7 @@ pub fn spawn_chat_stream(resp: reqwest::Response, headers: HeaderMap, p: ChatStr
     let (tx, rx) = mpsc::channel(16);
     let (usage_tx, usage_rx) = oneshot::channel();
     let lines = LineReader::new(
-        Box::pin(observe_body(p.reporter.clone(), resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
+        Box::pin(p.reporter.observe_body_stream(resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     tokio::spawn(async move {
@@ -283,7 +282,7 @@ pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter:
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         let mut observer = StreamResponseModelObserver::new(reporter.clone());
-        let mut body = Box::pin(observe_body(reporter.clone(), resp.bytes_stream(), false));
+        let mut body = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
         while let Some(chunk) = body.next().await {
             match chunk {
                 Ok(chunk) => {

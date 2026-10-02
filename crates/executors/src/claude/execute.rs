@@ -36,7 +36,7 @@ use super::diagnostics::{
 use super::fast_error::{
     claude_request_is_fast, new_claude_fast_direct_response_error, wrap_claude_fast_request_error,
 };
-use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
+use crate::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::credential_identity::{apply_claude_credential_metadata, claude_agent_session_uuid_for_request, claude_request_has_execution_metadata};
 use super::helps::diagnostics::{
     claude_subagent_requests_1h, extract_claude_billing_tags, inject_claude_billing_tags, is_claude_probe_or_helper_request,

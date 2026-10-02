@@ -27,7 +27,6 @@ mod compaction;
 mod credits;
 mod execute;
 mod grounding;
-mod helpers;
 mod pipeline;
 mod replay;
 mod replay_capture;

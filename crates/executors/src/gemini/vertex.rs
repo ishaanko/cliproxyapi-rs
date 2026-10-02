@@ -19,7 +19,7 @@ use super::common::{
     pre_send, read_body, set_header, set_model, thinking_error, translate_request, upstream_error,
     usage_metadata,
 };
-use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
+use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
 use super::vertex_token;
 use crate::ConfigRx;

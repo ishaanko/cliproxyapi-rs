@@ -19,7 +19,7 @@ use super::credits::{
     inject_enabled_credit_types, is_in_short_cooldown, mark_credits_permanently_disabled, mark_short_cooldown,
     new_status_err, should_bypass_short_cooldown,
 };
-use super::helpers::{SensitiveWordMatcher, obfuscate_sensitive_words_in_system_instruction};
+use crate::helps::cloak_obfuscate::{SensitiveWordMatcher, obfuscate_sensitive_words_in_system_instruction};
 use super::replay::{
     ReplayScope, clear_reasoning_replay_on_invalid_signature, prepare_gemini_reasoning_replay_payload,
 };
@@ -110,7 +110,7 @@ impl AntigravityExecutor {
             return payload;
         }
         match SensitiveWordMatcher::new(&cfg.antigravity.sensitive_words) {
-            Some(matcher) => obfuscate_sensitive_words_in_system_instruction(payload, &matcher),
+            Some(matcher) => obfuscate_sensitive_words_in_system_instruction(&payload, Some(&matcher)),
             None => payload,
         }
     }

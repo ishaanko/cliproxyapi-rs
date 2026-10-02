@@ -18,10 +18,8 @@ use crate::helps::claude_input_tokens::count_claude_input_tokens;
 use super::compaction as compaction_mod;
 use super::credits::{decide_429, has_explicit_credits_balance_exhausted_reason, inject_enabled_credit_types};
 use super::execute::convert_stream_to_non_stream;
-use super::helpers::{
-    SensitiveWordMatcher, ensure_gemini_boundary_user_content, ensure_gemini_leading_user_content,
-    obfuscate_sensitive_words_in_system_instruction,
-};
+use crate::helps::cloak_obfuscate::{SensitiveWordMatcher, obfuscate_sensitive_words_in_system_instruction};
+use crate::helps::gemini_content_turns::{ensure_gemini_boundary_user_content, ensure_gemini_leading_user_content};
 use super::replay::{ReplayScope, scope_from_request};
 use super::replay_capture::ReplayAccumulator;
 use super::request::{gemini_to_antigravity, request_needs_schema_sanitization, sanitize_request_schemas};
@@ -224,17 +222,17 @@ fn small_helpers_match_go() {
     let words: Vec<String> = list(&m["words"]).iter().filter_map(|w| w.as_str().map(String::from)).collect();
     let matcher = SensitiveWordMatcher::new(&words).expect("matcher");
     for (i, (input, want)) in list(&m["instructions"]).iter().zip(list(&m["obfuscated"])).enumerate() {
-        let got = cpa_json::parse(&obfuscate_sensitive_words_in_system_instruction(bytes(input), &matcher));
+        let got = cpa_json::parse(&obfuscate_sensitive_words_in_system_instruction(&bytes(input), Some(&matcher)));
         if got != want {
             diffs.push(format!("obfuscate {i}:\n  go:   {want}\n  rust: {got}"));
         }
     }
     for (i, input) in list(&m["boundary_in"]).iter().enumerate() {
-        let got = cpa_json::parse(&ensure_gemini_boundary_user_content(bytes(input), "request.contents"));
+        let got = cpa_json::parse(&ensure_gemini_boundary_user_content(&bytes(input), "request.contents"));
         if got != m["boundary_out"][i] {
             diffs.push(format!("boundary {i}:\n  go:   {}\n  rust: {got}", m["boundary_out"][i]));
         }
-        let got = cpa_json::parse(&ensure_gemini_leading_user_content(bytes(input), "request.contents"));
+        let got = cpa_json::parse(&ensure_gemini_leading_user_content(&bytes(input), "request.contents"));
         if got != m["leading_out"][i] {
             diffs.push(format!("leading {i}:\n  go:   {}\n  rust: {got}", m["leading_out"][i]));
         }

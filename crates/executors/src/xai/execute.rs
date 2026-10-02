@@ -315,7 +315,7 @@ pub(super) fn content_type(headers: &HeaderMap) -> String {
 /// Reads a whole upstream body, marking the first byte for TTFT.
 pub(super) async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
     use futures_util::StreamExt;
-    let mut stream = Box::pin(crate::openai_compat::translate::observe_body(reporter.clone(), resp.bytes_stream(), false));
+    let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
     let mut buf = Vec::new();
     while let Some(chunk) = stream.next().await {
         buf.extend_from_slice(&chunk.map_err(|e| transport_error(&e))?);

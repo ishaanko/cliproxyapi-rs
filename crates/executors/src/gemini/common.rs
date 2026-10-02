@@ -225,17 +225,7 @@ pub(crate) async fn read_body(resp: reqwest::Response) -> Result<Bytes, ExecErro
 /// Line reader over a streaming response body that marks the first response byte for TTFT (Go:
 /// the TTFT-tracking round tripper). Takes the reporter by value so the stream is `'static`.
 pub(crate) fn observed_lines(reporter: UsageReporter, resp: reqwest::Response) -> LineReader {
-    reporter.start_response_ttft();
-    let mut marked = false;
-    let stream = resp
-        .bytes_stream()
-        .inspect(move |item| {
-            if !marked && item.as_ref().is_ok_and(|b| !b.is_empty()) {
-                marked = true;
-                reporter.mark_first_response_byte();
-            }
-        })
-        .map(|item| item.map_err(|e| crate::helps::status::transport_message(&e)));
+    let stream = reporter.observe_body_stream(resp.bytes_stream(), false).map(|item| item.map_err(|e| crate::helps::status::transport_message(&e)));
     LineReader::from_stream(stream, STREAM_SCANNER_BUFFER)
 }
 

@@ -163,7 +163,7 @@ impl OpenAiCompatExecutor {
             model_name = base_model.to_string();
         }
         if from == Format::Claude
-            && let Some(id) = translate::claude_code_prompt_cache_id(&model_name, &req.payload, &opts.headers)
+            && let Some(id) = crate::helps::session::claude_code_prompt_cache_id(&model_name, &req.payload, &opts.headers)
         {
             return set(&translated, &id);
         }
@@ -183,7 +183,7 @@ impl OpenAiCompatExecutor {
             &session_id,
         ]
         .join("\x00");
-        set(&translated, &translate::uuid_sha1_oid(identity.as_bytes()))
+        set(&translated, &crate::helps::session::uuid_sha1_oid(identity.as_bytes()))
     }
 
     /// Request translation shared by `execute` and `execute_stream` (everything before the

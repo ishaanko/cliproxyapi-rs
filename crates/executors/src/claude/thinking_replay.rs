@@ -10,8 +10,8 @@
 //! `xaiReasoningReplayIsolateSessionKey`) and `ClaudeCodeExecutionScope` are small local copies
 //! below.
 
+use crate::helps::session::{CLAUDE_CODE_AGENT_HEADER, CLAUDE_CODE_SESSION_HEADER, claude_code_execution_scope, header_value_case_insensitive};
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
 use bytes::Bytes;
 use cpa_auth::Auth;
@@ -26,7 +26,6 @@ use cpa_json::{J, Value};
 use cpa_runtime::executor::{ExecError, Metadata, Options, Request, StreamResult, meta};
 use cpa_translator::Format;
 use http::HeaderMap;
-use regex::Regex;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
@@ -229,59 +228,22 @@ pub fn wrap_claude_thinking_replay_stream(result: StreamResult, scope: ClaudeThi
 // ---------------------------------------------------------------------------------------------
 // Session key (Go: codexReasoningReplaySessionKey for Claude sources + xaiReasoningReplayIsolateSessionKey)
 
-static SESSION_SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"_session_([a-f0-9-]+)$").expect("static regex"));
-
-/// First non-empty trimmed value of header `name` (Go: `headerValueCaseInsensitive`).
-fn header_value(headers: &HeaderMap, name: &str) -> String {
-    headers
-        .get_all(name)
-        .iter()
-        .map(|v| String::from_utf8_lossy(v.as_bytes()).trim().to_string())
-        .find(|v| !v.is_empty())
-        .unwrap_or_default()
-}
-
-/// Claude Code header from the options headers, else the incoming request headers (Go:
-/// `claudeCodeHeader`).
-fn claude_code_header(ctx: &ClaudeCtx, headers: &HeaderMap, name: &str) -> String {
-    let value = header_value(headers, name);
-    if !value.is_empty() {
-        return value;
+/// Go: `ClaudeCodeExecutionScope` over the options headers, falling back per header to the
+/// incoming request headers (Go: `claudeCodeHeader`); "" without a session id.
+fn claude_code_scope(ctx: &ClaudeCtx, payload: &[u8], headers: &HeaderMap) -> String {
+    let mut merged = headers.clone();
+    if let Some(incoming) = ctx.incoming_headers.as_ref() {
+        for name in [CLAUDE_CODE_SESSION_HEADER, CLAUDE_CODE_AGENT_HEADER] {
+            if header_value_case_insensitive(headers, name).is_empty() {
+                for value in incoming.get_all(name) {
+                    if let Ok(header) = http::HeaderName::from_bytes(name.as_bytes()) {
+                        merged.append(header, value.clone());
+                    }
+                }
+            }
+        }
     }
-    ctx.incoming_headers.as_ref().map(|h| header_value(h, name)).unwrap_or_default()
-}
-
-/// Go: `ExtractClaudeCodeSessionID`: the session header, else `metadata.user_id` of the payload.
-fn claude_code_session_id(ctx: &ClaudeCtx, payload: &[u8], headers: &HeaderMap) -> String {
-    let id = claude_code_header(ctx, headers, "X-Claude-Code-Session-Id");
-    if !id.is_empty() {
-        return id;
-    }
-    if payload.is_empty() {
-        return String::new();
-    }
-    let user_id = cpa_json::parse(payload).g("metadata.user_id").str();
-    if user_id.is_empty() {
-        return String::new();
-    }
-    if let Some(m) = SESSION_SUFFIX.captures(&user_id) {
-        return m[1].to_string();
-    }
-    if user_id.starts_with('{') {
-        return cpa_json::parse_str(&user_id).g("session_id").str().trim().to_string();
-    }
-    String::new()
-}
-
-/// Go: `ClaudeCodeExecutionScope` (session and agent identity), "" without a session id.
-fn claude_code_execution_scope(ctx: &ClaudeCtx, payload: &[u8], headers: &HeaderMap) -> String {
-    let session_id = claude_code_session_id(ctx, payload, headers);
-    if session_id.is_empty() {
-        return String::new();
-    }
-    let agent = claude_code_header(ctx, headers, "X-Claude-Code-Agent-Id");
-    let agent = if agent.is_empty() { "main".to_string() } else { agent };
-    format!("claude:{session_id}:agent:{agent}")
+    claude_code_execution_scope(payload, &merged).unwrap_or_default()
 }
 
 fn metadata_string(metadata: &Metadata, key: &str) -> String {
@@ -290,7 +252,7 @@ fn metadata_string(metadata: &Metadata, key: &str) -> String {
 
 /// Go: `codexReasoningReplaySessionKey(ctx, FormatClaude, req, opts, req.Payload)`.
 fn replay_session_key(ctx: &ClaudeCtx, req: &Request, opts: &Options) -> String {
-    let scope = claude_code_execution_scope(ctx, &req.payload, &opts.headers);
+    let scope = claude_code_scope(ctx, &req.payload, &opts.headers);
     if !scope.is_empty() {
         return scope;
     }
@@ -339,25 +301,25 @@ fn session_key_from_payload(payload: &[u8]) -> String {
 }
 
 fn session_key_from_headers(headers: &HeaderMap) -> String {
-    let turn_metadata = header_value(headers, "X-Codex-Turn-Metadata");
+    let turn_metadata = header_value_case_insensitive(headers, "X-Codex-Turn-Metadata");
     if !turn_metadata.is_empty() {
         let key = session_key_from_turn_metadata(&turn_metadata);
         if !key.is_empty() {
             return key;
         }
     }
-    let window_id = header_value(headers, "X-Codex-Window-Id");
+    let window_id = header_value_case_insensitive(headers, "X-Codex-Window-Id");
     if !window_id.is_empty() {
         return format!("window:{window_id}");
     }
     // Header names are case-insensitive, so the three Go spellings are one lookup.
     for name in ["Session_id", "Session-Id"] {
-        let value = header_value(headers, name);
+        let value = header_value_case_insensitive(headers, name);
         if !value.is_empty() {
             return format!("session-id:{value}");
         }
     }
-    let conversation_id = header_value(headers, "Conversation_id");
+    let conversation_id = header_value_case_insensitive(headers, "Conversation_id");
     if !conversation_id.is_empty() {
         return format!("conversation_id:{conversation_id}");
     }

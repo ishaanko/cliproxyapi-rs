@@ -38,7 +38,8 @@ use crate::helps::payload::{
 use crate::helps::session::derived_session_uuid;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 use crate::helps::translate::{RequestTranslation, translate_request};
-use crate::openai_compat::translate::{claude_code_prompt_cache_id, source_handler_type};
+use crate::helps::session::claude_code_prompt_cache_id;
+use crate::openai_compat::translate::source_handler_type;
 
 pub const IDENTIFIER: &str = "xai";
 pub const IMAGE_HANDLER_TYPE: &str = "openai-image";

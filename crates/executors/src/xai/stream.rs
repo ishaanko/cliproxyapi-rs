@@ -35,7 +35,6 @@ use crate::helps::text::trim_space;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::status::transport_message;
-use crate::openai_compat::translate::observe_body;
 
 impl XaiExecutor {
     /// Go: ExecuteStream.
@@ -338,7 +337,7 @@ fn spawn_stream(
     let (tx, rx) = mpsc::channel(16);
     let (usage_tx, usage_rx) = oneshot::channel();
     let lines = LineReader::new(
-        Box::pin(observe_body(reporter.clone(), resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
+        Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     tokio::spawn(async move {

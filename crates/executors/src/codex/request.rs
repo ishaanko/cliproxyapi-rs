@@ -17,7 +17,8 @@ use http::HeaderMap;
 use uuid::Uuid;
 
 use super::creds::{is_free_plan_auth, resolve_model_is_compat};
-use super::reasoning::{ReplayScope, apply_replay_cache, claude_code_execution_scope, prompt_cache_uuid_for_api_key};
+use super::reasoning::{ReplayScope, apply_replay_cache, prompt_cache_uuid_for_api_key};
+use crate::helps::session::claude_code_execution_scope;
 use super::terminal::status_error;
 use super::{input_ids, multi_agent_v2, tool_schema};
 use crate::helps::openai_responses_signature::sanitize_openai_responses_reasoning_encrypted_content_with_compat;
