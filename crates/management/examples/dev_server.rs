@@ -113,6 +113,7 @@ fn demo_usage(usage: &UsageTracker) {
                     ..Default::default()
                 }
             },
+            extra: Default::default(),
         });
     }
 }

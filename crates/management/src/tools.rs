@@ -321,6 +321,7 @@ fn build_client(proxy: &ProxySetting) -> reqwest::Client {
         .no_proxy()
         .brotli(false)
         .deflate(false)
+        .zstd(false)
         .user_agent("Go-http-client/1.1");
     if let ProxySetting::Proxy(p) = proxy
         && let Ok(proxy) = reqwest::Proxy::all(p)

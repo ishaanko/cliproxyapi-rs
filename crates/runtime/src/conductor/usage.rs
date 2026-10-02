@@ -16,13 +16,90 @@ use serde_json::Value;
 
 use super::cooldown::ExecResult;
 use crate::executor::{Metadata, meta};
-use crate::usage::{TokenUsage, UsageFailure, UsageRecord};
+use super::session::{bound_session_identity, normalize_to_canonical_uuid};
+use crate::usage::{TokenUsage, UsageExtra, UsageFailure, UsageRecord};
 
 /// Metadata key a client-facing layer may set with the downstream API key (sha-masked by the
 /// usage tracker, not here).
 pub const META_CLIENT_API_KEY: &str = "client_api_key";
-/// Metadata key carrying the request id for correlation.
+/// Metadata key carrying the inbound request id for correlation.
 pub const META_REQUEST_ID: &str = "request_id";
+
+/// Go executor type name (`reflect.Type.Name`) of the executor serving `provider`, as the usage
+/// queue reports it.
+pub fn go_executor_type(provider: &str) -> &'static str {
+    match provider.trim() {
+        "claude" => "ClaudeExecutor",
+        "codex" => "CodexAutoExecutor",
+        "xai" => "XAIAutoExecutor",
+        "gemini" | "gemini-interactions" => "GeminiExecutor",
+        "vertex" => "GeminiVertexExecutor",
+        "aistudio" => "AIStudioExecutor",
+        "antigravity" => "AntigravityExecutor",
+        "kimi" | "kimi-ai" => "KimiExecutor",
+        "devin" => "DevinExecutor",
+        "meta" => "MetaExecutor",
+        _ => "OpenAICompatExecutor",
+    }
+}
+
+/// `syncMetadataSessionToContext`: the session (canonical, LCP, execution or derived id) and
+/// parent session the conductor resolved for the request.
+fn session_from_metadata(md: &Metadata) -> (String, String) {
+    let trimmed = |key: &str| meta_str(md, key).trim().to_string();
+    let mut id = trimmed(meta::CANONICAL_SESSION_ID);
+    if id.is_empty() {
+        id = trimmed("lcp_affinity_session_id");
+    }
+    if id.is_empty() {
+        let exec = trimmed(meta::EXECUTION_SESSION_ID);
+        if !exec.is_empty() {
+            id = if exec.starts_with("execution:") { exec } else { format!("execution:{exec}") };
+        }
+    }
+    if id.is_empty() {
+        let derived = trimmed(meta::DERIVED_SESSION_ID);
+        if !derived.is_empty() {
+            id = if derived.starts_with("derived:") { derived } else { format!("derived:{derived}") };
+        }
+    }
+    if id.is_empty() {
+        return (String::new(), String::new());
+    }
+    (bound_session_identity(&id), trimmed(meta::PARENT_SESSION_ID))
+}
+
+/// Session and request context of a record (Go: `ClientRequestMetadata` plus the reporter's
+/// trace id). The session is the request's canonical session projected to a UUID.
+fn usage_extra(result: &ExecResult) -> UsageExtra {
+    let md = &result.options.metadata;
+    let request_id = meta_str(md, META_REQUEST_ID);
+    let trace_id = {
+        let t = meta_str(md, meta::TRACE_ID);
+        if t.trim().is_empty() { request_id.trim().to_string() } else { t.trim().to_string() }
+    };
+    let (session, parent) = session_from_metadata(md);
+    let session = normalize_to_canonical_uuid(&session);
+    let mut parent = normalize_to_canonical_uuid(&parent);
+    if session.is_empty() || session == parent {
+        parent.clear();
+    }
+    UsageExtra {
+        client_ip: meta_str(md, meta::CLIENT_IP).trim().to_string(),
+        resolved_client_ip: meta_str(md, meta::RESOLVED_CLIENT_IP).trim().to_string(),
+        x_forwarded_for: meta_str(md, meta::X_FORWARDED_FOR).trim().to_string(),
+        user_agent: meta_str(md, meta::USER_AGENT).trim().to_string(),
+        session_id: session,
+        parent_session_id: parent,
+        trace_id,
+        // Go's http.Header holds no Transfer-Encoding (the transport consumes it).
+        response_headers: {
+            let mut h = result.response_headers.clone();
+            h.remove(http::header::TRANSFER_ENCODING);
+            h
+        },
+    }
+}
 /// `Response.metadata` key under which an executor may report exact token counts.
 pub const META_USAGE: &str = "usage";
 
@@ -107,7 +184,7 @@ pub fn build_usage_record(
         auth_index,
         auth_type,
         provider: result.provider.clone(),
-        executor_type: result.provider.clone(),
+        executor_type: go_executor_type(&result.provider).to_string(),
         model: upstream.to_string(),
         alias,
         endpoint: if path.is_empty() {
@@ -121,6 +198,7 @@ pub fn build_usage_record(
         stream: facts.stream,
         fail: result.error.as_ref().map(failure_of).unwrap_or_default(),
         tokens: facts.tokens.clone(),
+        extra: usage_extra(result),
     }
 }
 

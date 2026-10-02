@@ -151,7 +151,24 @@ impl Pipeline {
         if let Some(session) = a.execution_session_id.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::EXECUTION_SESSION_ID.into(), json!(session));
         }
+        // Request facts the usage record reports (Go: ClientRequestMetadata, GetRequestID).
+        let remote_ip = self.info.remote.map(|a| a.ip().to_string()).unwrap_or_default();
+        let forwarded = self.info.headers.get_all("x-forwarded-for").iter().filter_map(|v| v.to_str().ok()).collect::<Vec<_>>().join(", ");
+        let user_agent = self.info.header("User-Agent");
+        for (key, value) in [
+            (meta::CLIENT_IP, remote_ip.as_str()),
+            (meta::RESOLVED_CLIENT_IP, self.info.client_ip.trim()),
+            (meta::X_FORWARDED_FOR, forwarded.trim()),
+            (meta::USER_AGENT, user_agent.trim()),
+            (cpa_runtime::conductor::usage::META_REQUEST_ID, self.info.request_id.trim()),
+            (meta::TRACE_ID, self.info.request_id.trim()),
+        ] {
+            if !value.is_empty() {
+                md.insert(key.into(), json!(value));
+            }
+        }
         if let Some(key) = &self.info.api_key {
+            md.insert(cpa_runtime::conductor::usage::META_CLIENT_API_KEY.into(), json!(key));
             let scope = caller_scope(key);
             if !scope.is_empty() {
                 md.insert(meta::CALLER_SCOPE.into(), json!(scope));

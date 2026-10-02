@@ -192,7 +192,7 @@ impl Manager {
                         result.error = Some(result_error_from_error(&err));
                         result.retry_after = err.retry_after;
                         result.credential_scope = err.credential_scoped;
-                        result.response_headers = err.headers.clone();
+                        result.response_headers = err.recorded_headers();
                         let scoped = result.credential_scope;
                         self.mark_result_inner(result, Some(facts));
                         if scoped {

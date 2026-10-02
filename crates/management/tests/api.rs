@@ -225,6 +225,7 @@ fn record(model: &str, failed: bool) -> UsageRecord {
         failed,
         stream: false,
         fail: UsageFailure::default(),
+        extra: Default::default(),
         tokens: TokenUsage {
             input_tokens: 1,
             output_tokens: 1,

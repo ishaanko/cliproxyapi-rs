@@ -40,6 +40,13 @@ pub mod meta {
     pub const CALLER_SCOPE: &str = "caller_scope";
     pub const SESSION_AFFINITY_PROVIDER: &str = "session_affinity_provider";
     pub const SESSION_AFFINITY_MODEL: &str = "session_affinity_model";
+    /// Inbound request facts the usage record reports (Go: `ClientRequestMetadata`).
+    pub const CLIENT_IP: &str = "client_ip";
+    pub const RESOLVED_CLIENT_IP: &str = "resolved_client_ip";
+    pub const X_FORWARDED_FOR: &str = "x_forwarded_for";
+    pub const USER_AGENT: &str = "user_agent";
+    /// Inbound request id (also the usage record's trace id).
+    pub const TRACE_ID: &str = "trace_id";
 }
 
 /// Free-form execution hints (Go: `map[string]any`).
@@ -160,6 +167,9 @@ pub struct ExecError {
     /// Upstream error body to relay to the client when present.
     pub body: Option<Bytes>,
     pub headers: HeaderMap,
+    /// Upstream response headers recorded for usage and quota observation only, for errors
+    /// whose Go type carries no `Headers()` (never relayed to the client; see [`Self::recorded_headers`]).
+    pub response_headers: HeaderMap,
     pub retry_after: Option<Duration>,
     pub code: Option<ErrorCode>,
     /// Credential is unusable until re-login (Go: IsTerminalAuth).
@@ -188,6 +198,7 @@ impl ExecError {
             message: message.into(),
             body: None,
             headers: HeaderMap::new(),
+            response_headers: HeaderMap::new(),
             retry_after: None,
             code: None,
             terminal_auth: false,
@@ -197,6 +208,12 @@ impl ExecError {
             upstream_attempted: true,
             cause_text: None,
         }
+    }
+
+    /// The upstream response headers of a failed attempt (Go: the response-headers context
+    /// holder): the relayable headers when set, else the recorded-only ones.
+    pub fn recorded_headers(&self) -> HeaderMap {
+        if self.headers.is_empty() { self.response_headers.clone() } else { self.headers.clone() }
     }
 
     pub fn with_body(mut self, body: impl Into<Bytes>) -> Self {
