@@ -1,0 +1,59 @@
+[package]
+name = "cpa-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# HTTP server: internal/api, sdk/api/handlers, sdk/access, internal/logging, cmd/server.
+# Library crate `cpa_server` plus the `cliproxy` binary.
+[lib]
+name = "cpa_server"
+
+[[bin]]
+name = "cliproxy"
+path = "src/main.rs"
+
+[dependencies]
+cpa-json.workspace = true
+cpa-core = { path = "../core" }
+cpa-config = { path = "../config" }
+cpa-auth = { path = "../auth" }
+cpa-runtime = { path = "../runtime" }
+cpa-translator = { path = "../translator" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+uuid = { workspace = true, features = ["v4", "v7"] }
+sha2.workspace = true
+hex.workspace = true
+chrono.workspace = true
+rand.workspace = true
+axum = { version = "0.8", features = ["ws", "http2", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["catch-panic"] }
+http = "1"
+http-body = "1"
+http-body-util = "0.1"
+futures-util = "0.3"
+tokio-stream = "0.1"
+tokio-util = "0.7"
+tracing-subscriber = { version = "0.3", features = ["fmt", "registry"] }
+zstd = "0.13"
+flate2 = "1"
+rust-embed = "8"
+mime_guess = "2"
+url = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"
+async-trait = "0.1"
