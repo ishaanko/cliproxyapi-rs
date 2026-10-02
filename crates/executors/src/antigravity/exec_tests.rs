@@ -338,8 +338,7 @@ async fn disabled_cooling_never_short_circuits_on_a_short_rate_limit() {
 
     // Global flag and per-auth override both skip recording and the precheck.
     for (id, global, override_) in [("auth-cool-global", true, None), ("auth-cool-override", false, Some(true))] {
-        let mut cfg = Config::default();
-        cfg.disable_cooling = global;
+        let cfg = Config { disable_cooling: global, ..Config::default() };
         let ex = executor(&fake, cfg);
         let mut auth = auth_with(id, Some(&fake.url), 60);
         if let Some(o) = override_ {

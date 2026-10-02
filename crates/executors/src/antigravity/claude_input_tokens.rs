@@ -48,7 +48,7 @@ impl ClaudeInputTokenState {
                 line_end -= 1;
             }
             let line = &chunk[line_start..line_end];
-            let trimmed_left = line.iter().position(|&b| b != b' ' && b != b'\t').map_or(line.len(), |i| i);
+            let trimmed_left = line.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(line.len());
             if line[trimmed_left..].starts_with(b"data:") {
                 let mut payload_offset = trimmed_left + 5;
                 while payload_offset < line.len() && (line[payload_offset] == b' ' || line[payload_offset] == b'\t') {

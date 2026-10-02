@@ -949,7 +949,7 @@ pub(crate) fn repair_unsigned_first_function_calls(v: &mut Value) -> bool {
 
 // ---------------------------------------------------------------- mutation primitives
 
-fn part_mut<'a>(doc: &'a mut Value, ci: usize, pi: usize) -> Option<&'a mut Value> {
+fn part_mut(doc: &mut Value, ci: usize, pi: usize) -> Option<&mut Value> {
     doc.get_mut("request")?.get_mut("contents")?.get_mut(ci)?.get_mut("parts")?.get_mut(pi)
 }
 

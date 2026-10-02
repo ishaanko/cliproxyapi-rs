@@ -212,10 +212,8 @@ impl AntigravityExecutor {
             }
         }
 
-        if finished {
-            if end_apply_patch(&mut param, &reporter, &out).await {
-                finished = false;
-            }
+        if finished && end_apply_patch(&mut param, &reporter, &out).await {
+            finished = false;
         }
         if finished {
             // Only a clean end of stream may produce a synthetic terminal event: translating

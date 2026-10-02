@@ -10,6 +10,9 @@
 //! hook yet), request-log capture (the executor has no handle to the per-request log) and the
 //! Codex multi-agent-v2 request rewrite (a Codex-client-only option).
 
+// ExecError is the runtime contract's error type; its size is not this module's to change.
+#![allow(clippy::result_large_err)]
+
 use async_trait::async_trait;
 use cpa_auth::Auth;
 use cpa_auth::antigravity::AntigravityEndpoints;
@@ -37,6 +40,8 @@ mod transport;
 
 #[cfg(test)]
 mod exec_tests;
+#[cfg(test)]
+mod grounding_tests;
 #[cfg(test)]
 mod misc_tests;
 #[cfg(test)]
