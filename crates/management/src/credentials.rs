@@ -19,8 +19,8 @@ use serde_json::{Map, Value, json};
 
 use crate::cooldown::{cooldown_snapshot, reconcile_cooldown_state};
 use crate::http::{
-    ApiError, ApiResult, content_type_is, json_response, ok_json, query_get, query_pairs,
-    query_trim, rfc3339,
+    ApiError, ApiResult, blocking, content_type_is, detached, json_response, ok_json, query_get,
+    query_pairs, query_trim, read_body, rfc3339,
 };
 use crate::state::{ManagementState, abs_path};
 
@@ -194,8 +194,30 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
     let index_filter = query_trim(req.uri(), "auth_index");
     let observed_at = Utc::now();
     let cooldowns_known = !st.cfg().home.enabled;
-    let mut auths = st.registry.list();
+    let auths = st.registry.list();
+    // Building entries stats credential files.
+    let body = blocking(move || {
+        Ok(list_blocking(
+            auths,
+            pagination,
+            name_filter,
+            index_filter,
+            observed_at,
+            cooldowns_known,
+        ))
+    })
+    .await?;
+    Ok(ok_json(&body))
+}
 
+fn list_blocking(
+    mut auths: Vec<Auth>,
+    pagination: Option<Pagination>,
+    name_filter: String,
+    index_filter: String,
+    observed_at: DateTime<Utc>,
+    cooldowns_known: bool,
+) -> Value {
     let entry = |auth: &mut Auth| -> Option<Value> {
         let mut entry = build_entry(auth, observed_at)?;
         let cooldowns = if cooldowns_known {
@@ -222,14 +244,14 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
         let total = matching.len();
         let (start, end) = p.bounds(total);
         let files: Vec<Value> = matching[start..end].iter_mut().filter_map(entry).collect();
-        return Ok(ok_json(&json!({
+        return json!({
             "observed_at": rfc3339(observed_at),
             "files": files,
             "total": total,
             "page": p.page,
             "page_size": p.page_size,
             "has_more": end < total,
-        })));
+        });
     }
 
     let mut files: Vec<Value> = auths
@@ -248,9 +270,7 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
             .unwrap_or("")
             .to_lowercase()
     });
-    Ok(ok_json(
-        &json!({"observed_at": rfc3339(observed_at), "files": files}),
-    ))
+    json!({"observed_at": rfc3339(observed_at), "files": files})
 }
 
 fn quota_observation(provider: &str, quota: &QuotaState) -> Value {
@@ -554,7 +574,7 @@ pub(crate) async fn download(State(st): State<ManagementState>, req: Request) ->
     let dir = st
         .auth_dir()
         .ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
-    let data = match std::fs::read(dir.join(&name)) {
+    let data = match tokio::fs::read(dir.join(&name)).await {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Err(ApiError::new(404, "file not found"));
@@ -609,15 +629,18 @@ pub(crate) async fn upload(State(st): State<ManagementState>, req: Request) -> A
             .await
             .map_err(|e| ApiError::bad_request(format!("invalid multipart form: {e}")))?
     } else {
-        let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        let body = read_body(req.into_body())
             .await
             .map_err(|_| ApiError::bad_request("failed to read body"));
-        return upload_raw(&st, &uri, body).await;
+        return detached(async move { upload_raw(&st, &uri, body).await }).await;
     };
+    detached(async move { upload_files(&st, files).await }).await
+}
 
+async fn upload_files(st: &ManagementState, files: Vec<UploadedFile>) -> ApiResult {
     match files.len() {
         0 => Err(ApiError::bad_request("no files uploaded")),
-        1 => match store_uploaded(&st, &files[0]).await {
+        1 => match store_uploaded(st, &files[0]).await {
             Ok(_) => Ok(ok_json(&json!({"status": "ok"}))),
             Err(UploadError::NotJson) => Err(ApiError::bad_request("file must be .json")),
             Err(UploadError::Other(msg)) => Err(ApiError::new(500, msg)),
@@ -626,7 +649,7 @@ pub(crate) async fn upload(State(st): State<ManagementState>, req: Request) -> A
             let mut uploaded = Vec::new();
             let mut failed = Vec::new();
             for file in &files {
-                match store_uploaded(&st, file).await {
+                match store_uploaded(st, file).await {
                     Ok(name) => uploaded.push(name),
                     Err(e) => {
                         let msg = match e {
@@ -702,10 +725,17 @@ async fn write_auth_file(st: &ManagementState, name: &str, data: &[u8]) -> Resul
     let dir = abs_path(&dir);
     let dst = dir.join(name);
     let metadata = parse_auth_metadata(data)?;
-    // Create the directory so a fresh install can take its first upload.
-    std::fs::create_dir_all(&dir).map_err(|e| format!("failed to write file: {e}"))?;
-    write_private_file(&dst, data).map_err(|e| format!("failed to write file: {e}"))?;
-    let auth = build_auth_from_file(st, &dst, &dir, metadata);
+    let (store, bytes) = (st.store.clone(), data.to_vec());
+    let (dir_w, dst_w) = (dir.clone(), dst.clone());
+    let read = tokio::task::spawn_blocking(move || -> Result<Option<Auth>, String> {
+        // Create the directory so a fresh install can take its first upload.
+        std::fs::create_dir_all(&dir_w).map_err(|e| format!("failed to write file: {e}"))?;
+        write_private_file(&dst_w, &bytes).map_err(|e| format!("failed to write file: {e}"))?;
+        Ok(store.read_auth_file(&dst_w, &dir_w).ok().flatten())
+    })
+    .await
+    .map_err(|e| format!("failed to write file: {e}"))??;
+    let auth = build_auth_from_file(st, &dst, &dir, read, metadata);
     upsert_auth(st, auth).await
 }
 
@@ -762,10 +792,16 @@ fn last_refresh_timestamp(meta: &Metadata) -> Option<DateTime<Utc>> {
 }
 
 /// `buildAuthFromFileData` for a file that was just written.
-fn build_auth_from_file(st: &ManagementState, path: &Path, dir: &Path, metadata: Metadata) -> Auth {
-    let mut auth = match st.store.read_auth_file(path, dir) {
-        Ok(Some(a)) => a,
-        _ => {
+fn build_auth_from_file(
+    st: &ManagementState,
+    path: &Path,
+    dir: &Path,
+    read: Option<Auth>,
+    metadata: Metadata,
+) -> Auth {
+    let mut auth = match read {
+        Some(a) => a,
+        None => {
             let provider = metadata
                 .get("type")
                 .and_then(Value::as_str)
@@ -871,27 +907,40 @@ fn unique_names(names: Vec<String>) -> Vec<String> {
 /// `DELETE /credentials`: `?all=true|1|*`, or one or more names.
 pub(crate) async fn delete(State(st): State<ManagementState>, req: Request) -> ApiResult {
     let uri = req.uri().clone();
-    let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+    let body = read_body(req.into_body())
         .await
         .map_err(|_| ApiError::bad_request("failed to read body"));
+    detached(delete_inner(st, uri, body)).await
+}
+
+async fn delete_inner(st: ManagementState, uri: Uri, body: ApiResult<Bytes>) -> ApiResult {
+    let st = &st;
     let dir = st
         .auth_dir()
         .ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
 
     if matches!(query_get(&uri, "all").as_deref(), Some("true" | "1" | "*")) {
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| ApiError::new(500, format!("failed to read auth dir: {e}")))?;
-        let mut deleted = 0;
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if entry.file_type().is_ok_and(|t| t.is_dir()) || !has_json_suffix(&name) {
-                continue;
+        let dir_scan = dir.clone();
+        let removed = blocking(move || {
+            let entries = std::fs::read_dir(&dir_scan)
+                .map_err(|e| ApiError::new(500, format!("failed to read auth dir: {e}")))?;
+            let mut removed = Vec::new();
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if entry.file_type().is_ok_and(|t| t.is_dir()) || !has_json_suffix(&name) {
+                    continue;
+                }
+                let full = abs_path(&dir_scan.join(&name));
+                if std::fs::remove_file(&full).is_ok() {
+                    removed.push(full);
+                }
             }
-            let full = abs_path(&dir.join(&name));
-            if std::fs::remove_file(&full).is_ok() {
-                deleted += 1;
-                remove_auth(&st, &full.to_string_lossy()).await;
-            }
+            Ok(removed)
+        })
+        .await?;
+        let deleted = removed.len();
+        for full in removed {
+            remove_auth(st, &full.to_string_lossy()).await;
         }
         return Ok(ok_json(&json!({"status": "ok", "deleted": deleted})));
     }
@@ -900,7 +949,7 @@ pub(crate) async fn delete(State(st): State<ManagementState>, req: Request) -> A
     let names = requested_delete_names(&uri, &body).map_err(ApiError::bad_request)?;
     match names.len() {
         0 => Err(ApiError::bad_request("invalid name")),
-        1 => match delete_by_name(&st, &dir, &names[0]).await {
+        1 => match delete_by_name(st, &dir, &names[0]).await {
             Ok(_) => Ok(ok_json(&json!({"status": "ok"}))),
             Err((status, msg)) => Err(ApiError::new(status, msg)),
         },
@@ -908,7 +957,7 @@ pub(crate) async fn delete(State(st): State<ManagementState>, req: Request) -> A
             let mut deleted = Vec::new();
             let mut failed = Vec::new();
             for name in &names {
-                match delete_by_name(&st, &dir, name).await {
+                match delete_by_name(st, &dir, name).await {
                     Ok(n) => deleted.push(n),
                     Err((_, msg)) => failed.push(json!({"name": name, "error": msg})),
                 }
@@ -1027,7 +1076,7 @@ async fn delete_by_name(
         }
     }
     let target = abs_path(&target);
-    if let Err(e) = std::fs::remove_file(&target) {
+    if let Err(e) = tokio::fs::remove_file(&target).await {
         return Err(if e.kind() == std::io::ErrorKind::NotFound {
             (404, ERR_NOT_FOUND.into())
         } else {

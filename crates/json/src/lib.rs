@@ -323,12 +323,170 @@ pub fn parse(bytes: &[u8]) -> Value {
     if nesting_depth(bytes) > MAX_DEPTH {
         return Value::Null;
     }
+    match parse_strict(bytes) {
+        Some(v) => v,
+        // gjson decodes unpaired surrogate escapes as U+FFFD; serde_json rejects them.
+        None => match replace_lone_surrogates(bytes) {
+            Some(fixed) => parse_strict(&fixed).unwrap_or(Value::Null),
+            None => Value::Null,
+        },
+    }
+}
+
+fn parse_strict(bytes: &[u8]) -> Option<Value> {
     let mut de = serde_json::Deserializer::from_slice(bytes);
     de.disable_recursion_limit();
     let v = serde::Deserialize::deserialize(serde_stacker::Deserializer::new(&mut de));
     match v {
-        Ok(v) if de.end().is_ok() => v,
-        _ => Value::Null,
+        Ok(v) if de.end().is_ok() => Some(v),
+        _ => None,
+    }
+}
+
+/// Rewrite `\uD800`-`\uDFFF` escapes that are not part of a valid surrogate pair to
+/// `\ufffd`. Returns `None` when nothing changed.
+fn replace_lone_surrogates(bytes: &[u8]) -> Option<Vec<u8>> {
+    fn hex4(b: &[u8]) -> Option<u16> {
+        std::str::from_utf8(b.get(..4)?).ok().and_then(|h| u16::from_str_radix(h, 16).ok())
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut changed = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            if bytes[i + 1] == b'u' {
+                if let Some(cp) = hex4(&bytes[i + 2..]) {
+                    let paired = (0xD800..0xDC00).contains(&cp)
+                        && bytes.get(i + 6) == Some(&b'\\')
+                        && bytes.get(i + 7) == Some(&b'u')
+                        && hex4(&bytes[(i + 8).min(bytes.len())..]).is_some_and(|lo| (0xDC00..0xE000).contains(&lo));
+                    if paired {
+                        out.extend_from_slice(&bytes[i..i + 12]);
+                        i += 12;
+                        continue;
+                    }
+                    if (0xD800..0xE000).contains(&cp) {
+                        out.extend_from_slice(b"\\ufffd");
+                        changed = true;
+                        i += 6;
+                        continue;
+                    }
+                }
+            }
+            out.extend_from_slice(&bytes[i..i + 2]);
+            i += 2;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    changed.then_some(out)
+}
+
+/// Original JSON text of the value at a plain dotted key/index `path` (first match for
+/// duplicate keys), scanning `src` as sent. Use where Go copies `gjson.Result.Raw` into
+/// output text and whitespace/duplicate keys must survive; [`Res::raw`] re-serializes.
+pub fn raw_at<'a>(src: &'a [u8], path: &str) -> Option<&'a str> {
+    let mut start = raw::skip_ws(src, 0);
+    for seg in set_keys(path) {
+        start = raw::child_start(src, start, &seg)?;
+    }
+    let end = raw::value_end(src, start)?;
+    std::str::from_utf8(&src[start..end]).ok()
+}
+
+mod raw {
+    pub(super) fn skip_ws(json: &[u8], mut i: usize) -> usize {
+        while json.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
+            i += 1;
+        }
+        i
+    }
+
+    fn string_end(json: &[u8], start: usize) -> Option<usize> {
+        let mut i = start + 1;
+        while let Some(&b) = json.get(i) {
+            match b {
+                b'\\' => i += 2,
+                b'"' => return Some(i + 1),
+                _ => i += 1,
+            }
+        }
+        None
+    }
+
+    pub(super) fn value_end(json: &[u8], start: usize) -> Option<usize> {
+        match *json.get(start)? {
+            b'"' => string_end(json, start),
+            b'{' | b'[' => {
+                let mut depth = 0usize;
+                let mut i = start;
+                while let Some(&b) = json.get(i) {
+                    match b {
+                        b'"' => {
+                            i = string_end(json, i)?;
+                            continue;
+                        }
+                        b'{' | b'[' => depth += 1,
+                        b'}' | b']' => {
+                            depth = depth.checked_sub(1)?;
+                            if depth == 0 {
+                                return Some(i + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                None
+            }
+            _ => {
+                let len = json[start..]
+                    .iter()
+                    .position(|b| matches!(b, b',' | b'}' | b']') || b.is_ascii_whitespace())
+                    .unwrap_or(json.len() - start);
+                Some(start + len)
+            }
+        }
+    }
+
+    /// Start of member `seg` of the object (or element `seg` of the array) at `start`.
+    pub(super) fn child_start(json: &[u8], start: usize, seg: &str) -> Option<usize> {
+        let is_object = match *json.get(start)? {
+            b'{' => true,
+            b'[' => false,
+            _ => return None,
+        };
+        let index: Option<usize> = if is_object { None } else { Some(seg.parse().ok()?) };
+        let mut i = skip_ws(json, start + 1);
+        let mut n = 0usize;
+        loop {
+            if matches!(*json.get(i)?, b'}' | b']') {
+                return None;
+            }
+            let matches = if is_object {
+                let key_end = string_end(json, i)?;
+                let key = &json[i..key_end];
+                let hit = serde_json::from_slice::<String>(key).is_ok_and(|k| k == seg);
+                i = skip_ws(json, key_end);
+                if *json.get(i)? != b':' {
+                    return None;
+                }
+                i = skip_ws(json, i + 1);
+                hit
+            } else {
+                index == Some(n)
+            };
+            if matches {
+                return Some(i);
+            }
+            i = skip_ws(json, value_end(json, i)?);
+            match *json.get(i)? {
+                b',' => i = skip_ws(json, i + 1),
+                _ => return None,
+            }
+            n += 1;
+        }
     }
 }
 

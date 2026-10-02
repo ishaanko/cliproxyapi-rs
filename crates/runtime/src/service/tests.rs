@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cpa_auth::Auth;
+use cpa_auth::{Auth, Store};
 use cpa_core::registry::{ModelRegistry, get_claude_models};
 use parking_lot::Mutex;
 
@@ -25,7 +25,8 @@ impl ManagerPort for FakePort {
     fn register_executor(&self, executor: DynExecutor) {
         self.executors.lock().push(executor.identifier().to_string());
     }
-    async fn update(&self, auth: Auth) -> Result<Auth, ExecError> {
+    async fn update(&self, auth: Auth, persist: bool) -> Result<Auth, ExecError> {
+        assert!(!persist, "the service never asks the manager to persist");
         self.auths.lock().insert(auth.id.clone(), auth.clone());
         Ok(auth)
     }
@@ -84,6 +85,10 @@ impl Env {
 
     fn write_config(&self, body: &str) {
         let yaml = format!("auth-dir: {}\n{body}", self.auth_dir().display());
+        std::fs::write(self.dir.path().join("config.yaml"), yaml).unwrap();
+    }
+
+    fn write_config_raw(&self, yaml: &str) {
         std::fs::write(self.dir.path().join("config.yaml"), yaml).unwrap();
     }
 
@@ -213,5 +218,44 @@ async fn config_reload_applies_the_reload_plan() {
     assert!(env.port.get(&key_auth).is_none());
     assert!(env.model_ids(&key_auth).is_empty());
     assert!(env.port.get("claude-a.json").is_some());
+    service.shutdown();
+}
+
+#[tokio::test]
+async fn auth_dir_change_rescans_and_rewatches_the_new_directory() {
+    let env = Env::new("");
+    env.write_auth("old.json", r#"{"type":"claude","email":"o@x"}"#);
+    let service = env.builder().build().unwrap();
+    service.start().await.unwrap();
+    assert!(env.port.get("old.json").is_some());
+
+    let other = env.dir.path().join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    std::fs::write(other.join("new.json"), r#"{"type":"claude","email":"n@x"}"#).unwrap();
+    env.write_config_raw(&format!("auth-dir: {}\n", other.display()));
+    assert!(service.reload_config().await);
+    assert!(env.port.get("old.json").is_none());
+    assert!(env.model_ids("old.json").is_empty());
+    assert!(env.port.get("new.json").is_some());
+    assert_eq!(service.store().base_dir().as_deref(), Some(other.as_path()));
+
+    // The new directory is watched, the old one no longer is.
+    std::fs::write(other.join("later.json"), r#"{"type":"claude","email":"l@x"}"#).unwrap();
+    wait_for("auth in the new dir", || env.port.get("later.json").is_some()).await;
+    env.write_auth("stale.json", r#"{"type":"claude"}"#);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(env.port.get("stale.json").is_none());
+    service.shutdown();
+}
+
+#[tokio::test]
+async fn rejected_config_reports_failure() {
+    let env = Env::new(CLAUDE_KEY);
+    let service = env.builder().build().unwrap();
+    service.start().await.unwrap();
+    // `load_config` already refuses an out-of-range weight, so the reload publishes nothing.
+    env.write_config("claude-api-key:\n  - api-key: sk-1\n    weight: 2000000\n");
+    assert!(!service.reload_config().await);
+    assert_eq!(service.config().claude_key[0].weight, None);
     service.shutdown();
 }

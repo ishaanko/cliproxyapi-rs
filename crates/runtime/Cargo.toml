@@ -24,8 +24,11 @@ chrono.workspace = true
 async-trait = "0.1"
 http = "1"
 futures-core = "0.3"
+regex.workspace = true
 sha2.workspace = true
 hex.workspace = true
+uuid.workspace = true
+rand.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]

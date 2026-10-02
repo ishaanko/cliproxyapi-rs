@@ -80,7 +80,12 @@ pub(crate) async fn authenticate(
     req: Request,
     next: Next,
 ) -> Response {
-    let ip = client_ip(&st, &req);
+    let Some(ip) = client_ip(&st, &req) else {
+        tracing::error!(
+            "management request without connection info; serve the router with into_make_service_with_connect_info::<SocketAddr>()"
+        );
+        return json_response(500, &json!({"error": "client address unavailable"}));
+    };
     let local = ip == "127.0.0.1" || ip == "::1";
     let provided = provided_key(req.headers());
     let denied = authenticate_key(&st, &ip, local, &provided).await;
@@ -108,27 +113,26 @@ fn set_cpa_headers(st: &ManagementState, h: &mut HeaderMap) {
 }
 
 /// `Authorization: Bearer <key>` (any other `Authorization` value is taken whole), else
-/// `X-Management-Key`.
-fn provided_key(headers: &HeaderMap) -> String {
-    let mut provided = String::new();
+/// `X-Management-Key`. Raw bytes, like Go: keys need not be ASCII.
+fn provided_key(headers: &HeaderMap) -> Vec<u8> {
+    let mut provided: &[u8] = b"";
     if let Some(ah) = headers
         .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
+        .map(HeaderValue::as_bytes)
         .filter(|v| !v.is_empty())
     {
-        provided = match ah.split_once(' ') {
-            Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => rest.to_string(),
-            _ => ah.to_string(),
+        provided = match ah.iter().position(|b| *b == b' ') {
+            Some(i) if ah[..i].eq_ignore_ascii_case(b"bearer") => &ah[i + 1..],
+            _ => ah,
         };
     }
     if provided.is_empty() {
         provided = headers
             .get("x-management-key")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .to_string();
+            .map(HeaderValue::as_bytes)
+            .unwrap_or(b"");
     }
-    provided
+    provided.to_vec()
 }
 
 /// Returns `Some((status, message))` when the request is refused.
@@ -136,7 +140,7 @@ async fn authenticate_key(
     st: &ManagementState,
     ip: &str,
     local: bool,
-    provided: &str,
+    provided: &[u8],
 ) -> Option<(u16, String)> {
     let cfg = st.cfg();
     let allow_remote = cfg.remote_management.allow_remote || st.env_secret.is_some();
@@ -174,7 +178,7 @@ async fn authenticate_key(
         return Some((401, "missing management key".into()));
     }
 
-    let ct_eq = |a: &str, b: &str| a.as_bytes().ct_eq(b.as_bytes()).unwrap_u8() == 1;
+    let ct_eq = |a: &[u8], b: &str| a.ct_eq(b.as_bytes()).unwrap_u8() == 1;
     let accepted = (local
         && st
             .local_password
@@ -196,15 +200,15 @@ async fn authenticate_key(
 /// Verifies `provided` against the bcrypt `hash`. bcrypt at cost 10 takes tens of milliseconds
 /// and the UI polls every few seconds, so the last key that verified is remembered (as a SHA-256
 /// digest next to the hash it matched) and compared in constant time. Failures always run bcrypt.
-async fn bcrypt_matches(st: &ManagementState, provided: &str, hash: &str) -> bool {
-    let digest: [u8; 32] = Sha256::digest(provided.as_bytes()).into();
+async fn bcrypt_matches(st: &ManagementState, provided: &[u8], hash: &str) -> bool {
+    let digest: [u8; 32] = Sha256::digest(provided).into();
     if let Some((known, known_hash)) = st.shared.verified.lock().as_ref()
         && known_hash == hash
         && known.ct_eq(&digest).unwrap_u8() == 1
     {
         return true;
     }
-    let (owned, hash_owned) = (provided.to_string(), hash.to_string());
+    let (owned, hash_owned) = (provided.to_vec(), hash.to_string());
     let ok = tokio::task::spawn_blocking(move || {
         bcrypt::non_truncating_verify(owned, &hash_owned).unwrap_or(false)
     })
@@ -270,15 +274,13 @@ fn go_duration(d: Duration) -> String {
 
 /// Client IP like gin's `ClientIP()` with `trusted-proxies`: the peer address, replaced by the
 /// forwarded address (`X-Forwarded-For`, then `X-Real-IP`) only when the peer is a trusted proxy.
-/// Requests without connection info (no `ConnectInfo<SocketAddr>` layer) have an unknown IP.
-fn client_ip(st: &ManagementState, req: &Request) -> String {
-    let Some(peer) = req
+/// `None` when the request carries no connection info (no `ConnectInfo<SocketAddr>` layer); the
+/// caller fails closed.
+fn client_ip(st: &ManagementState, req: &Request) -> Option<String> {
+    let peer = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip().to_canonical())
-    else {
-        return "unknown".into();
-    };
+        .map(|c| c.0.ip().to_canonical())?;
     let cfg = st.cfg();
     let proxies = parse_trusted(&cfg.trusted_proxies);
     if is_trusted(peer, &proxies) {
@@ -290,11 +292,11 @@ fn client_ip(st: &ManagementState, req: &Request) -> String {
                     .unwrap_or(""),
                 &proxies,
             ) {
-                return ip;
+                return Some(ip);
             }
         }
     }
-    peer.to_string()
+    Some(peer.to_string())
 }
 
 /// gin `validateHeader`: walks the list from the right until the first untrusted address.
