@@ -6,9 +6,13 @@
 //! It performs no registration itself; the service applies the updates to the manager and the
 //! model registry.
 //!
-//! Differences from Go: no revision stamping or queue coalescing (the service applies updates
-//! inline, in order), no runtime-only (aistudio websocket) auths, and the auth directory used by
-//! a reload scan is always the current config's, not the one captured at start.
+//! Differences from Go: no revision stamping or queue coalescing. Go stamps each update with a
+//! per-id revision so out-of-order delivery is detected; here the service computes updates and
+//! applies them under one lock (`apply_lock`), so updates reach the manager in the order the
+//! state changed. There are no runtime-only (aistudio websocket) auths, and the auth directory
+//! used by a reload scan is always the current config's, not the one captured at start.
+//!
+//! The methods that scan or read files are blocking: call them from `spawn_blocking`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -49,44 +53,6 @@ impl AuthUpdate {
     }
 }
 
-/// Number of configured API-key credentials per provider family (Go: `BuildAPIKeyClients`, the
-/// counts in the "full client load complete" log line).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ApiKeyClientCounts {
-    /// Gemini plus native Interactions keys.
-    pub gemini: usize,
-    pub vertex_compat: usize,
-    pub claude: usize,
-    pub codex: usize,
-    pub xai: usize,
-    pub meta: usize,
-    /// API-key entries of enabled OpenAI-compatibility providers.
-    pub openai_compat: usize,
-}
-
-impl ApiKeyClientCounts {
-    pub fn of(cfg: &Config) -> Self {
-        Self {
-            gemini: cfg.gemini_key.len() + cfg.interactions_key.len(),
-            vertex_compat: cfg.vertex_compat_api_key.len(),
-            claude: cfg.claude_key.len(),
-            codex: cfg.codex_key.len(),
-            xai: cfg.xai_key.len(),
-            meta: cfg.meta_key.len(),
-            openai_compat: cfg
-                .openai_compatibility
-                .iter()
-                .filter(|c| !c.disabled)
-                .map(|c| c.api_key_entries.len())
-                .sum(),
-        }
-    }
-
-    pub fn total(&self) -> usize {
-        self.gemini + self.vertex_compat + self.claude + self.codex + self.xai + self.meta + self.openai_compat
-    }
-}
-
 /// Go `authEqual`: structural equality ignoring volatile fields (timestamps, runtime state,
 /// quota recovery time), so a token refresh or cooldown tick never looks like a config change.
 pub fn auth_equal(a: &Auth, b: &Auth) -> bool {
@@ -113,9 +79,18 @@ fn auth_path_key(auth: &Auth) -> String {
     normalize_path(&path)
 }
 
+/// Go `normalizeAuthPath`: cleaned path, lowercased without the `\\?\` prefix on Windows.
 fn normalize_path(path: &str) -> String {
     let trimmed = path.trim();
-    if trimmed.is_empty() { String::new() } else { clean_path(trimmed) }
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let cleaned = clean_path(trimmed);
+    if cfg!(windows) {
+        cleaned.strip_prefix(r"\\?\").unwrap_or(&cleaned).to_lowercase()
+    } else {
+        cleaned
+    }
 }
 
 /// Tracks published auths and computes updates (Go: the `Watcher` state machine).
@@ -150,15 +125,6 @@ impl AuthSync {
         self.auth_dir = auth_dir.into();
     }
 
-    /// The auths as last published.
-    pub fn current(&self) -> impl Iterator<Item = &Auth> {
-        self.current.values()
-    }
-
-    pub fn get(&self, id: &str) -> Option<&Auth> {
-        self.current.get(id)
-    }
-
     fn context(&self) -> SynthesisContext<'_> {
         SynthesisContext { config: &self.config, auth_dir: &self.auth_dir, now: Utc::now() }
     }
@@ -168,7 +134,6 @@ impl AuthSync {
     /// bookkeeping, then diffs a full snapshot against what was published. `force` re-publishes
     /// every auth as a modify.
     pub fn reload_clients(&mut self, rescan_auth: bool, affected_providers: &[String], force: bool) -> Vec<AuthUpdate> {
-        tracing::debug!("loaded {} API key clients", ApiKeyClientCounts::of(&self.config).total());
         if !affected_providers.is_empty() {
             self.current.retain(|_, auth| {
                 let provider = auth.provider.trim().to_lowercase();

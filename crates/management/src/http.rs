@@ -122,3 +122,60 @@ pub(crate) fn content_type_is(headers: &axum::http::HeaderMap, essence: &str) ->
                 .eq_ignore_ascii_case(essence)
         })
 }
+
+/// Runs `fut` to completion even when the client disconnects (axum drops the handler future
+/// then). Mutating handlers use it so a write, its config reload and its registry update are
+/// never abandoned half way.
+pub(crate) async fn detached<F>(fut: F) -> ApiResult
+where
+    F: std::future::Future<Output = ApiResult> + Send + 'static,
+{
+    match tokio::spawn(fut).await {
+        Ok(result) => result,
+        Err(e) => {
+            tracing::error!("management task failed: {e}");
+            Err(ApiError::new(500, "internal error"))
+        }
+    }
+}
+
+/// Reads a request body up to [`crate::MAX_BODY_BYTES`].
+pub(crate) async fn read_body(body: axum::body::Body) -> Result<bytes::Bytes, ()> {
+    axum::body::to_bytes(body, crate::MAX_BODY_BYTES)
+        .await
+        .map_err(|_| ())
+}
+
+/// Runs blocking filesystem work off the async workers.
+pub(crate) async fn blocking<T, F>(f: F) -> ApiResult<T>
+where
+    F: FnOnce() -> ApiResult<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| ApiError::new(500, format!("task failed: {e}")))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn detached_work_finishes_after_the_caller_is_cancelled() {
+        let done = Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let handler = tokio::spawn(detached(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            flag.store(true, Ordering::SeqCst);
+            Ok(empty(200))
+        }));
+        tokio::task::yield_now().await; // the handler is running...
+        handler.abort(); // ...when the client disconnects
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(done.load(Ordering::SeqCst));
+    }
+}

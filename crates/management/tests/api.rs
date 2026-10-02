@@ -1273,3 +1273,27 @@ async fn oauth_status_cancel_and_callback_follow_the_session_registry() {
         400
     );
 }
+
+#[tokio::test]
+async fn non_ascii_keys_authenticate_and_missing_peer_info_fails_closed() {
+    let h = harness_with(BASE_CONFIG, Some("pässwörd"));
+    let mut req = Request::builder()
+        .uri("/v8/management/credentials")
+        .header(
+            "authorization",
+            axum::http::HeaderValue::from_bytes("Bearer pässwörd".as_bytes()).unwrap(),
+        )
+        .body(Body::empty())
+        .unwrap();
+    req.extensions_mut()
+        .insert(ConnectInfo("127.0.0.1:1".parse::<SocketAddr>().unwrap()));
+    assert_eq!(h.app.clone().oneshot(req).await.unwrap().status(), 200);
+
+    // Without connection info the ban list and the localhost rule cannot work: refuse.
+    let req = Request::builder()
+        .uri("/v8/management/credentials")
+        .header("authorization", "Bearer anything")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(h.app.clone().oneshot(req).await.unwrap().status(), 500);
+}

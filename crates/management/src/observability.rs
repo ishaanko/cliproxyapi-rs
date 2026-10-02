@@ -19,7 +19,11 @@ struct ApiKeyUsageEntry {
     recent_requests: Vec<RecentRequestBucket>,
 }
 
-fn merge_buckets(dst: &mut [RecentRequestBucket], src: &[RecentRequestBucket]) {
+fn merge_buckets(dst: &mut Vec<RecentRequestBucket>, src: &[RecentRequestBucket]) {
+    if dst.is_empty() {
+        dst.extend_from_slice(src);
+        return;
+    }
     for (d, s) in dst.iter_mut().zip(src) {
         d.success += s.success;
         d.failed += s.failed;
@@ -87,18 +91,13 @@ pub(crate) async fn usage_summary(State(st): State<ManagementState>) -> ApiResul
     Ok(no_store(ok_json(&st.usage.summary())))
 }
 
-/// `limit`: default 100, non-numeric values use the default; clamped by the tracker.
+/// `limit`: default 100, non-integer values use the default; integers are clamped to 1..=1000.
 fn parse_limit(raw: Option<String>) -> usize {
     const DEFAULT: usize = 100;
     let Some(raw) = raw else { return DEFAULT };
     let raw = raw.trim();
-    if let Ok(n) = raw.parse::<i64>() {
-        return n.clamp(1, 1000) as usize;
-    }
-    match raw.parse::<f64>() {
-        Ok(f) if f.is_finite() => f.trunc().clamp(1.0, 1000.0) as usize,
-        _ => DEFAULT,
-    }
+    raw.parse::<i64>()
+        .map_or(DEFAULT, |n| n.clamp(1, 1000) as usize)
 }
 
 /// `GET /observability/requests?limit=&after=`.
