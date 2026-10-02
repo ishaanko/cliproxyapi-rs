@@ -1,0 +1,15 @@
+{
+  "disabled": false,
+  "email": "sa@proj.iam",
+  "label": "proj (sa@proj.iam)",
+  "location": "us-central1",
+  "prefix": "team",
+  "project_id": "proj",
+  "service_account": {
+    "client_email": "sa@proj.iam",
+    "private_key": "placeholder\nnot-a-real-key\n",
+    "project_id": "proj",
+    "type": "service_account"
+  },
+  "type": "vertex"
+}

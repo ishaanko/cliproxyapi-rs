@@ -1,0 +1,30 @@
+[package]
+name = "cpa-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Port of internal/auth/**, sdk/auth and the Auth data model of sdk/cliproxy/auth:
+# credential file formats, file store + watcher, OAuth flows and token refresh per provider.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+rand.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "socks", "json"] }
+url = "2"
+notify = "8"
+pkcs1 = { version = "0.7", features = ["pem", "std"] }
+pkcs8 = { version = "0.10", features = ["pem", "std"] }
+
+[dev-dependencies]
+tempfile = "3"

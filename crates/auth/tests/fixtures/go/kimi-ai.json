@@ -1,0 +1,13 @@
+{
+  "access_token": "at",
+  "base_url": "https://api.kimi.ai/coding",
+  "device_id": "dev-1",
+  "disabled": false,
+  "domain": "kimi.ai",
+  "expired": "2026-10-01T13:00:00Z",
+  "refresh_token": "rt",
+  "scope": "kimi-code",
+  "timestamp": 1790000000000,
+  "token_type": "Bearer",
+  "type": "kimi-ai"
+}
