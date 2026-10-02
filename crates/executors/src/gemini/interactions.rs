@@ -12,7 +12,7 @@ use cpa_translator::{Ctx, Format, Param};
 use http::{HeaderMap, HeaderValue};
 
 use super::common::{
-    GL_API_VERSION, PumpSetup, StreamPump, observed_lines, apply_patch_gateway_error, post_json, read_body, set_model,
+    GL_API_VERSION, PumpSetup, StreamPump, observed_lines, apply_patch_gateway_error, error_body, post_json, read_body, set_model,
     thinking_error, translate_request, upstream_error, usage_metadata,
 };
 use super::executor::{GeminiExecutor, request_headers, resolve_base_url};
@@ -219,8 +219,7 @@ pub(super) async fn execute_stream(
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = read_body(resp).await?;
-            return Err(upstream_error(status, &data));
+            return Err(upstream_error(status, &error_body(resp).await));
         }
         let response_format = opts.response_format_or_source();
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {

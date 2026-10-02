@@ -17,7 +17,7 @@ use http::HeaderMap;
 use super::common::{
     GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, observed_lines, apply_custom_headers, apply_patch_gateway_error,
     cap_gemini_max_output_tokens, compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action,
-    json_headers, original_payload, post_json, read_body, set_header, set_model, thinking_error,
+    json_headers, original_payload, post_json, error_body, read_body, set_header, set_model, thinking_error,
     translate_request_pair, upstream_error, usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
@@ -284,11 +284,11 @@ impl GeminiExecutor {
         let resp = post_json(&client, &url, headers, built.body.clone()).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        if !(200..300).contains(&status) {
+            return Err(upstream_error(status, &error_body(resp).await));
+        }
         let data = read_body(resp).await?;
         reporter.mark_first_response_byte();
-        if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &data));
-        }
         reporter.observe_response_model(&data);
         let mut param = Param::default();
         let original = apply_patch_original_request(req, opts);
@@ -340,8 +340,7 @@ impl GeminiExecutor {
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = read_body(resp).await?;
-            return Err(upstream_error(status, &data));
+            return Err(upstream_error(status, &error_body(resp).await));
         }
 
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {

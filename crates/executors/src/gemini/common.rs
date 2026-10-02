@@ -23,7 +23,7 @@ use crate::helps::apply_patch::{
 };
 use crate::helps::codex_tool_integers::{is_codex_user_agent, normalize_codex_tool_integer_types};
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
-use crate::helps::status::{status_err, transport_error};
+use crate::helps::status::status_err;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter};
 
 /// Base URL of the Google Generative Language API.
@@ -91,6 +91,12 @@ pub(crate) fn translate_request(
     } else {
         payload.to_vec()
     };
+    // A native Gemini client may send malformed JSON. Go's sjson-based normalizer leaves such a
+    // body as unusable fragments that the later body edits discard, so nothing from the
+    // normalizer (default safety settings) survives; pass it through untouched.
+    if from == Format::Gemini && to == Format::Gemini && !cpa_json::valid(&payload) {
+        return payload;
+    }
     if is_compat {
         let compat = match (from, to) {
             (Format::Claude, Format::Gemini) => {
@@ -227,6 +233,34 @@ pub(crate) fn apply_custom_headers(headers: &mut HeaderMap, auth: &Auth, opts: &
     cpa_core::util::apply_custom_headers_from_attrs(headers, &attrs_map(auth), Some(&opts.headers), session_id);
 }
 
+/// A transport error and its sources as one line, the way Go renders `net/http` and `io` errors
+/// (`dial tcp ...: connection refused`). A body cut short reads `unexpected EOF`, which the
+/// conductor recognizes as a transient transport failure to retry.
+pub(crate) fn error_chain_text(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
+    while let Some(e) = current {
+        let text = e.to_string();
+        if parts.last() != Some(&text) {
+            parts.push(text);
+        }
+        current = e.source();
+    }
+    let text = parts.join(": ");
+    let lower = text.to_lowercase();
+    if ["unexpected end of file", "connection closed before message completed", "unexpected eof"]
+        .iter()
+        .any(|needle| lower.contains(needle))
+    {
+        return "unexpected EOF".into();
+    }
+    text
+}
+
+fn transport_failure(err: &reqwest::Error) -> ExecError {
+    ExecError::new(0, error_chain_text(err))
+}
+
 /// Sends a JSON POST; transport failures carry no status.
 pub(crate) async fn post_json(
     client: &reqwest::Client,
@@ -234,12 +268,12 @@ pub(crate) async fn post_json(
     headers: HeaderMap,
     body: Vec<u8>,
 ) -> Result<reqwest::Response, ExecError> {
-    client.post(url).headers(headers).body(body).send().await.map_err(|e| transport_error(&e))
+    client.post(url).headers(headers).body(body).send().await.map_err(|e| transport_failure(&e))
 }
 
 /// Reads a response body in full.
 pub(crate) async fn read_body(resp: reqwest::Response) -> Result<Bytes, ExecError> {
-    resp.bytes().await.map_err(|e| transport_error(&e))
+    resp.bytes().await.map_err(|e| transport_failure(&e))
 }
 
 /// Line reader over a streaming response body that marks the first response byte for TTFT (Go:
@@ -247,13 +281,22 @@ pub(crate) async fn read_body(resp: reqwest::Response) -> Result<Bytes, ExecErro
 pub(crate) fn observed_lines(reporter: UsageReporter, resp: reqwest::Response) -> LineReader {
     reporter.start_response_ttft();
     let mut marked = false;
-    let stream = resp.bytes_stream().inspect(move |item| {
-        if !marked && item.as_ref().is_ok_and(|b| !b.is_empty()) {
-            marked = true;
-            reporter.mark_first_response_byte();
-        }
-    });
+    let stream = resp
+        .bytes_stream()
+        .inspect(move |item| {
+            if !marked && item.as_ref().is_ok_and(|b| !b.is_empty()) {
+                marked = true;
+                reporter.mark_first_response_byte();
+            }
+        })
+        .map(|item| item.map_err(|e| error_chain_text(&e)));
     LineReader::from_stream(stream, STREAM_SCANNER_BUFFER)
+}
+
+/// Body of a non-2xx response; a read failure keeps whatever arrived (Go ignores the read error
+/// so the status error is still reported).
+pub(crate) async fn error_body(resp: reqwest::Response) -> Bytes {
+    resp.bytes().await.unwrap_or_default()
 }
 
 /// Joins a header-carrying `Response` metadata map with the usage object the conductor reads.

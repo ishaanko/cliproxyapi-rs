@@ -16,7 +16,7 @@ use serde_json::Map;
 use super::common::{
     PumpSetup, StreamPump, observed_lines, apply_custom_headers, apply_patch_gateway_error, compact_unsupported,
     fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, original_payload, post_json, pre_send,
-    read_body, set_header, set_model, thinking_error, translate_request, upstream_error, usage_metadata,
+    error_body, read_body, set_header, set_model, thinking_error, translate_request, upstream_error, usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
@@ -435,11 +435,11 @@ impl GeminiVertexExecutor {
         let resp = post_json(&client, &url, headers, body.clone()).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        if !(200..300).contains(&status) {
+            return Err(upstream_error(status, &error_body(resp).await));
+        }
         let data = read_body(resp).await?;
         reporter.mark_first_response_byte();
-        if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &data));
-        }
         reporter.observe_response_model(&data);
         let data = if imagen_sa { convert_imagen_to_gemini_response(&data, base_model) } else { data.to_vec() };
 
@@ -499,8 +499,7 @@ impl GeminiVertexExecutor {
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = read_body(resp).await?;
-            return Err(upstream_error(status, &data));
+            return Err(upstream_error(status, &error_body(resp).await));
         }
 
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {
