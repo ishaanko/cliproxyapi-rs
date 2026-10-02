@@ -19,7 +19,8 @@ pub fn register(r: &mut Registry) {
     );
 }
 
-/// Rewrites the request `model` to `model_name`; everything else is passed through untouched.
+/// Rewrites the request `model` to `model_name`. The body is re-serialized compactly (Go's sjson
+/// edit keeps the client's bytes) and returned as sent when the model already matches or cannot be set.
 pub fn convert_openai_request_to_openai(model_name: &str, input: &[u8], _stream: bool) -> Vec<u8> {
     let mut root = cpa_json::parse(input);
     let current = root.g("model");

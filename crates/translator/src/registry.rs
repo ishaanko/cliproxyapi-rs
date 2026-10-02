@@ -2,12 +2,12 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use cpa_core::format::Format;
 use cpa_core::registry::ModelInfo;
 use cpa_core::thinking;
 use cpa_json::{Value, J};
-use once_cell::sync::Lazy;
 
 /// Values Go reads from `context.Context` inside translators.
 #[derive(Debug, Clone, Default)]
@@ -203,7 +203,7 @@ impl Registry {
     }
 }
 
-static GLOBAL: Lazy<Registry> = Lazy::new(|| {
+static GLOBAL: LazyLock<Registry> = LazyLock::new(|| {
     let mut r = Registry::default();
     crate::antigravity::register(&mut r);
     crate::claude::register(&mut r);

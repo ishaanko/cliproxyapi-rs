@@ -4,7 +4,7 @@ use cpa_core::thinking::convert_level_to_budget;
 use cpa_core::util::{normalize_claude_tool_input_schema, sanitize_claude_function_name, sanitize_claude_tool_id};
 use cpa_json::{json, Res, Value};
 
-use crate::common::{set_raw_array_items, ClaudeMessageAccumulator};
+use crate::common::{join_raw_array, ClaudeMessageAccumulator};
 
 /// Converts an Interactions API request (steps based `input`) into a Claude Messages request.
 pub fn convert_interactions_request_to_claude(model_name: &str, raw_json: &[u8], stream: bool) -> Vec<u8> {
@@ -20,7 +20,9 @@ pub fn convert_interactions_request_to_claude(model_name: &str, raw_json: &[u8],
     let mut accumulator = ClaudeMessageAccumulator::new(root.g("input.#").int().max(0) as usize);
     append_input_to_messages(&mut accumulator, &root.g("input"));
     let messages = accumulator.messages();
-    let mut out = cpa_json::parse(&set_raw_array_items(&cpa_json::to_vec(&out), "messages", &messages));
+    if !messages.is_empty() {
+        cpa_json::set(&mut out, "messages", cpa_json::parse(&join_raw_array(&messages)));
+    }
     copy_tools(&mut out, &root);
     cpa_json::to_vec(&out)
 }
