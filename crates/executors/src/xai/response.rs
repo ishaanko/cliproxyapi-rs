@@ -676,3 +676,31 @@ pub fn normalize_codex_instructions(body: &mut Value) {
         cpa_json::set(body, "instructions", "");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Expectations mirror Go's xai_status_err_test.go.
+    #[test]
+    fn status_err_classification() {
+        let free = status_err_for_body(
+            429,
+            br#"{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage"}"#,
+        );
+        assert_eq!((free.status, free.retry_after), (429, Some(Duration::from_secs(86400))));
+        assert_eq!(status_err_for_body(429, br#"{"code":"rate_limit","error":"too many requests"}"#).retry_after, None);
+        assert_eq!(status_err_for_body(400, br#"{"error":"nope"}"#).status, 400);
+        for body in [
+            &br#"{"code":"unauthenticated:bad-credentials","error":"x"}"#[..],
+            br#"{"error":"The OAuth2 access token could not be validated."}"#,
+            br#"{"type":"error","status":403,"error":{"code":"unauthenticated:bad-credentials","message":"m"}}"#,
+        ] {
+            let err = status_err_for_body(403, body);
+            assert_eq!(err.status, 401);
+            assert_eq!(err.message.as_bytes(), body);
+        }
+        assert_eq!(status_err_for_body(403, br#"{"code":"permission_denied","error":"model access"}"#).status, 403);
+        assert_eq!(status_err_for_body(403, b"").status, 403);
+    }
+}

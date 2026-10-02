@@ -310,3 +310,20 @@ pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter:
     });
     StreamResult::new(headers, rx)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Shapes from Go's TestOpenAICompatExecutorResponsesStreamHandlesAdditionalErrorShapes.
+    #[test]
+    fn stream_error_payload_status() {
+        let err = |p: &str, ev: &str| stream_data_error(p.as_bytes(), ev).map(|e| e.status);
+        assert_eq!(err(r#"{"error":{"message":"x","status_code":429}}"#, ""), Some(429));
+        assert_eq!(err(r#"{"code":500,"message":"oops"}"#, ""), Some(502));
+        assert_eq!(err(r#"{"type":"response.failed","response":{"error":{"status":400}}}"#, ""), Some(400));
+        assert_eq!(err(r#"{"error":null,"choices":[]}"#, ""), None);
+        assert_eq!(err(r#"{"a":1}"#, "error"), Some(502));
+        assert_eq!(err(r#"{"status":200,"error":{"status":503}}"#, ""), Some(503));
+    }
+}

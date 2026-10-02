@@ -1135,3 +1135,30 @@ fn dispatcher_arguments_json(tool_name: &str, raw_args: &str) -> String {
     }
     format!(r#"{{"arguments":{},"name":{name}}}"#, cpa_core::util::go_json_string(raw_args))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Table of Go's TestXAISupportsNativeImageGeneration.
+    #[test]
+    fn native_image_generation_by_model() {
+        for (model, want) in [
+            ("", false), ("grok-4.5", false), ("grok-4.3", false), ("grok-4", false),
+            ("grok-4.20-0309-reasoning", false), ("grok-4.20-multi-agent-0309", false), ("grok-build-0.1", false),
+            ("grok-composer-2.5-fast", false), ("grok-3-mini", false), ("gpt-5.6", false),
+            ("grok-4.6", true), ("grok-4.6(high)", true), ("xai/grok-4.6", true), ("grok-4.7", true),
+            ("grok-5", true), ("grok-5.0", true),
+        ] {
+            assert_eq!(supports_native_image_generation(model), want, "{model}");
+        }
+    }
+
+    #[test]
+    fn namespace_names_are_qualified_once() {
+        assert_eq!(qualify_namespace_tool_name("ns", "tool"), "ns__tool");
+        assert_eq!(qualify_namespace_tool_name("ns__", "tool"), "ns__tool");
+        assert_eq!(qualify_namespace_tool_name("ns", "ns__tool"), "ns__tool");
+        assert_eq!(qualify_namespace_tool_name("ns", "mcp__x"), "mcp__x");
+    }
+}
