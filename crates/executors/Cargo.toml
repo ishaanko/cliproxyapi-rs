@@ -14,6 +14,7 @@ cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth" }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
+async-trait = "0.1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -30,7 +31,6 @@ rand.workspace = true
 once_cell.workspace = true
 http = "1"
 futures-util = "0.3"
-async-trait = "0.1"
 base64 = "0.22"
 ring = "0.17"
 httpdate = "1"

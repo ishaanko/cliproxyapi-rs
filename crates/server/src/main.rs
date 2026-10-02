@@ -156,13 +156,21 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     // The service owns config reload, the credential manager, the auth store and model
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
-    let service = match ServiceBuilder::new(&config_path).dotenv_dir(None).usage(usage.clone()).build() {
+    let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
+    let service = match ServiceBuilder::new(&config_path)
+        .dotenv_dir(None)
+        .usage(usage.clone())
+        .executor_factory(compat_factory)
+        .build()
+    {
         Ok(s) => Arc::new(s),
         Err(e) => {
             tracing::error!("failed to build proxy service: {e}");
             return 0;
         }
     };
+    // Per-entry openai-compatibility executors are built on demand and need the live config.
+    compat_slot.set(service.subscribe_config());
     if let Err(e) = service.start().await {
         tracing::error!("failed to build proxy service: {e}");
         return 0;
