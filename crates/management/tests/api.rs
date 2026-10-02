@@ -557,7 +557,7 @@ async fn config_yaml_reads_the_normalized_document_and_put_replaces_it() {
     let yaml = r.text();
     assert!(yaml.contains("config-version: 8") && yaml.contains("# client keys"));
 
-    let edited = yaml.replace("- k1", "- k1\n    - from-yaml");
+    let edited = yaml.replace("- k1", "- k1\n        - from-yaml");
     let r = send(
         app,
         Method::PUT,
