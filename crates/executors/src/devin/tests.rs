@@ -108,7 +108,16 @@ async fn spawn_mock(reply: Reply) -> Mock {
 
 fn executor(cfg: Config) -> (DevinExecutor, watch::Sender<Arc<Config>>) {
     let (tx, rx) = watch::channel(Arc::new(cfg));
-    (DevinExecutor::new(rx), tx)
+    let mut exec = DevinExecutor::new(rx);
+    exec.test_client = Some(
+        reqwest::Client::builder()
+            .no_gzip()
+            .no_brotli()
+            .no_deflate()
+            .build()
+            .unwrap(),
+    );
+    (exec, tx)
 }
 
 fn devin_auth(base_url: &str) -> Auth {

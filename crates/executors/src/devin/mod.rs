@@ -85,6 +85,9 @@ pub struct DevinExecutor {
     cfg: ConfigRx,
     /// Matcher compiled for the last seen word list, keyed by the joined words.
     matcher: Mutex<Option<(String, Option<Arc<SensitiveWordMatcher>>)>>,
+    /// Tests send through their own client so they do not populate the shared client cache.
+    #[cfg(test)]
+    test_client: Option<reqwest::Client>,
 }
 
 /// Credential fields the executor reads from an auth.
@@ -232,7 +235,24 @@ impl DevinExecutor {
         Self {
             cfg,
             matcher: Mutex::new(None),
+            #[cfg(test)]
+            test_client: None,
         }
+    }
+
+    /// Cached HTTP client for the proxy settings of this call (no response decompression).
+    fn http_client(
+        &self,
+        opts_proxy: &str,
+        auth: &Auth,
+        timeout: Option<Duration>,
+    ) -> reqwest::Client {
+        #[cfg(test)]
+        if let Some(client) = &self.test_client {
+            return client.clone();
+        }
+        let cfg = self.cfg.borrow().clone();
+        new_devin_http_client(opts_proxy, Some(&cfg), Some(auth), timeout)
     }
 
     /// Matcher for the configured sensitive words, rebuilt only when the list changes.
@@ -341,8 +361,7 @@ impl DevinExecutor {
         opts: &Options,
         prepared: Prepared,
     ) -> Result<reqwest::Response, ExecError> {
-        let cfg = self.cfg.borrow().clone();
-        let client = new_devin_http_client(&opts.proxy_url, Some(&cfg), Some(auth), None);
+        let client = self.http_client(&opts.proxy_url, auth, None);
         let mut headers = prepared.headers;
         if headers
             .get(http::header::USER_AGENT)
@@ -431,9 +450,7 @@ impl Executor for DevinExecutor {
         if creds.api_key.is_empty() {
             return Ok(auth.clone());
         }
-        let cfg = self.cfg.borrow().clone();
-        let client =
-            new_devin_http_client("", Some(&cfg), Some(auth), Some(Duration::from_secs(30)));
+        let client = self.http_client("", auth, Some(Duration::from_secs(30)));
         let mut service = DevinAuthService::with_client(client);
         service.set_server_base_url(&creds.base_url);
         let status = match service

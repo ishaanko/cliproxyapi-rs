@@ -28,6 +28,11 @@ fn reader(
     ConnectFrameReader::new(futures_util::stream::iter(vec![Ok(Bytes::from(bytes))]))
 }
 
+/// Client requests of a scenario: its own override or the shared ones.
+fn scenario_requests(case: &Value) -> &Value {
+    case.get("requests").unwrap_or(&golden()["requests"])
+}
+
 fn render_err(err: &ExecError) -> String {
     if err.status == 0 {
         format!("ERR: {}", err.message)
@@ -63,9 +68,9 @@ async fn run_stream(bytes: Vec<u8>, format: Format, request: &str) -> Vec<String
 
 #[tokio::test]
 async fn streams_match_go_for_every_client_format() {
-    let requests = &golden()["requests"];
     for case in golden()["streams"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
+        let requests = scenario_requests(case);
         let bytes = scenario_bytes(&case["frames"]);
         for fmt in case["formats"].as_array().unwrap() {
             let format_name = fmt["format"].as_str().unwrap();
@@ -90,13 +95,14 @@ async fn streams_match_go_for_every_client_format() {
 
 #[tokio::test]
 async fn consumed_responses_match_go() {
-    let requests = &golden()["requests"];
     for case in golden()["streams"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
+        let requests = scenario_requests(case);
+        let original = requests["interactions"].as_str().unwrap().as_bytes();
         let result = consume_frames_to_interactions(
             reader(scenario_bytes(&case["frames"])),
             "devin/swe-2",
-            b"",
+            original,
         )
         .await;
         let want_err = case["consume_err"].as_str().unwrap();
