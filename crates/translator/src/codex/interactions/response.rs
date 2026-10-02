@@ -2,10 +2,8 @@
 
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::util::{
-    mime_type_from_output_format, rfc3339_utc, unix_nano_now, unix_now, values,
-};
-use crate::common::sse_event_data;
+use crate::codex::util::{mime_type_from_output_format, rfc3339_utc, values};
+use crate::common::{sse_event_data, unix_nano_now, unix_now};
 use crate::registry::{Ctx, Param};
 
 /// Per-stream state (Go: codexToInteractionsStreamState).

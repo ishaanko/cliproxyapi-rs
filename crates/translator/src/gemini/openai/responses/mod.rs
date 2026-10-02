@@ -18,7 +18,8 @@ use cpa_core::format::Format;
 use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_openai_responses_request_to_gemini;
-pub use response::{convert_gemini_response_to_openai_responses, finalize_tool_input, GeminiToResponsesState};
+pub use response::convert_gemini_response_to_openai_responses;
+pub(crate) use response::finalize_tool_input;
 pub use response_nonstream::convert_gemini_response_to_openai_responses_non_stream;
 pub use web_search::{
     allows_responses_web_search_tool_choice, build_responses_url_citations, build_responses_url_citations_for_messages,
@@ -37,6 +38,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_gemini_response_to_openai_responses),
             non_stream: Some(convert_gemini_response_to_openai_responses_non_stream),
             token_count: None,
+            finalize: Some(finalize_tool_input),
         },
     );
 }

@@ -1,5 +1,6 @@
 //! Antigravity response -> Gemini response (Go: antigravity_gemini_response.go).
 
+use crate::antigravity::function_names::restore_response_function_names;
 use cpa_core::util;
 use cpa_json::{json, J, Value};
 
@@ -182,31 +183,10 @@ pub fn convert_antigravity_response_to_gemini_non_stream(
     Some(cpa_json::to_vec(&chunk))
 }
 
-/// Restores the client's tool names in functionCall/functionResponse parts of every candidate.
+/// Restores original function names in `chunk` (both camelCase and snake_case part fields).
 fn restore_function_names(mut chunk: Value, original_request_raw_json: &[u8]) -> Value {
     let name_map = util::disambiguated_tool_name_map(original_request_raw_json);
-    if name_map.is_empty() {
-        return chunk;
-    }
-    let candidates = chunk.g("candidates").array().len();
-    for candidate_index in 0..candidates {
-        let parts = chunk.g(&format!("candidates.{candidate_index}.content.parts")).array().len();
-        for part_index in 0..parts {
-            for field in ["functionCall", "functionResponse", "function_call", "function_response"] {
-                let path = format!("candidates.{candidate_index}.content.parts.{part_index}.{field}.name");
-                let name_result = chunk.g(&path);
-                let name = name_result.str();
-                if name.is_empty() {
-                    continue;
-                }
-                let restored = util::restore_sanitized_tool_name(&name_map, &name);
-                if name_result.is_string() && restored == name {
-                    continue;
-                }
-                cpa_json::set(&mut chunk, &path, restored);
-            }
-        }
-    }
+    restore_response_function_names(&mut chunk, &name_map, &["functionCall", "functionResponse", "function_call", "function_response"]);
     chunk
 }
 

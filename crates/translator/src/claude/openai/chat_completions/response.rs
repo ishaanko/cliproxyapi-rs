@@ -1,6 +1,7 @@
 //! Claude Messages responses to OpenAI Chat Completions responses
 //! (Go: claude/openai/chat-completions/claude_openai_response.go).
 
+use crate::common::unix_now;
 use std::collections::BTreeMap;
 
 use cpa_json::{J, Res, Value};
@@ -79,10 +80,6 @@ impl ClaudeUsageTokens {
     }
 }
 
-fn now_unix() -> i64 {
-    chrono::Utc::now().timestamp()
-}
-
 fn one(v: &Value) -> Vec<Vec<u8>> {
     vec![cpa_json::to_vec(v)]
 }
@@ -125,7 +122,7 @@ pub fn convert_claude_response_to_openai(
             let message = root.g("message");
             if message.exists() {
                 state.response_id = message.g("id").str();
-                state.created_at = now_unix();
+                state.created_at = unix_now();
 
                 cpa_json::set(&mut template, "id", state.response_id.as_str());
                 cpa_json::set(&mut template, "model", model_name);
@@ -308,7 +305,7 @@ pub fn convert_claude_response_to_openai_non_stream(
                 if message.exists() {
                     message_id = message.g("id").str();
                     model = message.g("model").str();
-                    created_at = now_unix();
+                    created_at = unix_now();
                     usage_tokens.merge(&message.g("usage"));
                 }
             }

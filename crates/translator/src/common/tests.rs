@@ -129,10 +129,6 @@ fn run_case(fn_name: &str, i: &Value) -> Value {
             append_sse_event_bytes(&mut out, s(&i["event"]), s(&i["payload"]).as_bytes(), i["n"].as_u64().unwrap() as usize);
             json!(text(&out))
         }
-        "setStringNoEscape" => json!({
-            "value": text(&set_string_without_html_escape(s(&i["data"]).as_bytes(), s(&i["path"]), s(&i["value"]))),
-            "err": null,
-        }),
         "requestModelName" => json!(request_model_name(s(&i["a"]).as_bytes(), s(&i["b"]).as_bytes())),
         "agTool" => json!({
             "up": antigravity_tool_name_to_upstream(s(i)),
@@ -171,7 +167,7 @@ fn run_case(fn_name: &str, i: &Value) -> Value {
         }
         "structuredOutput" => {
             let format = if s(i).is_empty() { Res::NONE } else { res_owned(s(i)) };
-            json!(build_claude_structured_output_instruction(&format))
+            json!(build_claude_structured_output_instruction(&format, None))
         }
         "attachCacheControl" => {
             json!(text(&attach_cache_control(s(&i["dst"]).as_bytes(), &res_owned(s(&i["src"])))))
@@ -246,14 +242,6 @@ fn run_case(fn_name: &str, i: &Value) -> Value {
             json!({"value": value, "err": err_val(&r)})
         }
         "bridge" => run_bridge(i),
-        "checkIdentity" => {
-            let mut b = ApplyPatchResponsesBridge::new(s(&i["req"]).as_bytes());
-            let events = i["events"].as_array().unwrap();
-            json!({
-                "first": b.check_identity(s(&events[0]).as_bytes()).err(),
-                "second": b.check_identity(s(&events[1]).as_bytes()).err(),
-            })
-        }
         "bridgeFail" => {
             let mut b = ApplyPatchResponsesBridge::new(br#"{"tools":[{"type":"custom","name":"apply_patch"}]}"#);
             let (out, err) = b.fail("boom");
@@ -287,11 +275,10 @@ fn normalize(v: &Value) -> Value {
             if (t.starts_with('{') || t.starts_with('[')) && cpa_json::valid(st.as_bytes()) {
                 return Value::String(cpa_json::to_string(&parse_res(st)));
             }
-            if st.starts_with("decode apply_patch") {
-                if let Some(colon) = st.find(':') {
+            if st.starts_with("decode apply_patch")
+                && let Some(colon) = st.find(':') {
                     return Value::String(st[..=colon].to_string());
                 }
-            }
             v.clone()
         }
         Value::Array(a) => Value::Array(a.iter().map(normalize).collect()),
@@ -323,12 +310,18 @@ fn loosen_base_layer_errors(want: &Value, got: &mut Value) {
     }
 }
 
+/// Go helpers the translators never call from Rust (the golden corpus still records them).
+const RETIRED_FNS: [&str; 2] = ["setStringNoEscape", "checkIdentity"];
+
 #[test]
 fn matches_go_golden_corpus() {
     let cases = golden();
     let (mut checked, mut mismatches) = (0usize, Vec::new());
     for case in &cases {
         let fn_name = s(&case["fn"]);
+        if RETIRED_FNS.contains(&fn_name) {
+            continue;
+        }
         let mut want = case["out"].clone();
         if want.is_null() && LIST_FNS.contains(&fn_name) {
             want = json!([]);
@@ -385,7 +378,6 @@ fn raw_array_helpers_edge_cases() {
     assert_eq!(join_raw_array(&[&b"1"[..], b"{}"]), b"[1,{}]");
     assert_eq!(set_raw_array_items(br#"{"a":[]}"#, "a", &[b"1".to_vec()]), br#"{"a":[1]}"#);
     assert_eq!(set_raw_array_items(br#"{"a":[]}"#, "a", &[] as &[Vec<u8>]), br#"{"a":[]}"#);
-    assert_eq!(new_raw_array_items(-3).len(), 0);
     assert_eq!(sse_event_data("e", b"p"), b"event: e\ndata: p\n\n");
 }
 

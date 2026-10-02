@@ -47,14 +47,17 @@ pub async fn responses_websocket(
     info: ReqInfo,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
-    // gorilla's failed upgrade: plain `Bad Request` (or `Upgrade Required` for a bad version).
+    // gorilla's failed upgrade: 400 `Bad Request` with `Sec-Websocket-Version: 13`.
     let Ok(ws) = ws else {
         return upgrade_failed();
     };
     let turn_state = info.header("x-codex-turn-state");
+    // A failed handshake would otherwise leave the deferred request log waiting forever.
+    let api_log = info.api_log.clone();
     let mut resp = ws
         .max_message_size(1 << 30)
         .max_frame_size(1 << 30)
+        .on_failed_upgrade(move |_| api_log.ws_finished())
         .on_upgrade(move |socket| session(socket, st, info));
     // The sticky turn state is echoed so reconnects keep their affinity.
     if !turn_state.is_empty()
@@ -348,7 +351,7 @@ fn error_message_from_payload(payload: &[u8]) -> ErrorMessage {
     if status <= 0 {
         status = root.g("status_code").int();
     }
-    if status <= 0 {
+    if !(100..=599).contains(&status) {
         status = 500;
     }
     let text = String::from_utf8_lossy(payload.trim_ascii()).into_owned();
@@ -688,13 +691,9 @@ async fn run_session(
             } else {
                 requests::normalize_prewarm_followup(&payload, &state.last_request)
             }
-        } else if is_prewarm && previous_response_id.is_empty() {
-            if input_not_array {
-                Err(ErrorMessage::new(400, "websocket request requires array field: input"))
-            } else {
-                requests::normalize_create(&requests::transcript_replacement(&payload, &state.last_request))
-            }
-        } else if !state.pending_prewarm_id.is_empty() && root.g("type").str() == WS_REQUEST_TYPE_CREATE {
+        } else if (is_prewarm && previous_response_id.is_empty())
+            || (!state.pending_prewarm_id.is_empty() && root.g("type").str() == WS_REQUEST_TYPE_CREATE)
+        {
             if input_not_array {
                 Err(ErrorMessage::new(400, "websocket request requires array field: input"))
             } else {

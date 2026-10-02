@@ -1,8 +1,5 @@
 //! HTTP-level behavior of the proxy handlers against a real `Manager` with a scripted fake
 //! executor. Expected bytes come from the Go server (observed with a mock upstream).
-//!
-//! These need the conductor port: on bases where `Manager` is still a stub they are ignored.
-//! Run them with `cargo test -p cpa-server --test pipeline -- --include-ignored`.
 
 mod common;
 
@@ -17,7 +14,6 @@ use tower::ServiceExt;
 const DONE: &str = "data: [DONE]\n\n";
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn chat_non_stream_is_passed_through_with_json_headers() {
     let h = harness("chat-ns", |_| {}).await;
     let (status, headers, body) = h.call("POST", "/v1/chat/completions", &[], &h.chat("hi")).await;
@@ -31,7 +27,6 @@ async fn chat_non_stream_is_passed_through_with_json_headers() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn chat_stream_frames_chunks_and_ends_with_done() {
     let h = harness("chat-s", |_| {}).await;
     h.script("hello", Script::Stream(vec![Ok(r#"{"id":"1","n":1}"#), Ok(r#"{"id":"1","n":2}"#)]));
@@ -44,7 +39,6 @@ async fn chat_stream_frames_chunks_and_ends_with_done() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn chat_stream_error_after_first_chunk_is_a_data_frame_without_done() {
     let h = harness("chat-se", |_| {}).await;
     h.script("boom", Script::Stream(vec![Ok(r#"{"n":1}"#), Err(ExecError::new(502, "upstream broke"))]));
@@ -57,7 +51,6 @@ async fn chat_stream_error_after_first_chunk_is_a_data_frame_without_done() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn upstream_errors_keep_their_status_and_shape() {
     let h = harness("chat-err", |_| {}).await;
     h.script("err400", Script::Fail(ExecError::new(400, r#"{"error": {"message": "bad thing", "type": "invalid_request_error", "code": "bad"}}"#)));
@@ -78,7 +71,6 @@ async fn upstream_errors_keep_their_status_and_shape() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn unknown_model_and_api_key_errors() {
     let h = harness("access", |_| {}).await;
     let (status, _, body) = h
@@ -112,7 +104,6 @@ async fn unknown_model_and_api_key_errors() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn legacy_completions_convert_request_and_response() {
     let h = harness("compl", |_| {}).await;
     h.script("Complete this:", Script::Body(r#"{"id":"c1","created":5,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}"#));
@@ -140,7 +131,6 @@ async fn legacy_completions_convert_request_and_response() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn claude_messages_stream_is_raw_and_errors_use_event_error() {
     let h = harness("claude", |_| {}).await;
     h.script("M-OK", Script::Stream(vec![Ok("event: message_start\ndata: {\"type\":\"message_start\"}\n\n"), Ok("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")]));
@@ -167,7 +157,6 @@ async fn claude_messages_stream_is_raw_and_errors_use_event_error() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn claude_cloaked_model_ids_are_decoded_before_routing() {
     let h = harness("claude-dd", |_| {}).await;
     let cloaked = format!("claude-fable-5-dd-{}", h.model.chars().rev().collect::<String>());
@@ -184,7 +173,6 @@ async fn claude_cloaked_model_ids_are_decoded_before_routing() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn gemini_actions_and_alt_framing() {
     let h = harness("gemini", |_| {}).await;
     h.script("stream", Script::Stream(vec![Ok(r#"{"candidates":[1]}"#), Ok(r#"{"candidates":[2]}"#)]));
@@ -214,7 +202,6 @@ async fn gemini_actions_and_alt_framing() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn responses_stream_is_reframed_and_unterminated_streams_get_an_error_event() {
     let h = harness("resp", |_| {}).await;
     h.script("complete", Script::Stream(vec![
@@ -242,7 +229,6 @@ async fn responses_stream_is_reframed_and_unterminated_streams_get_an_error_even
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn responses_compact_and_validation() {
     let h = harness("compact", |_| {}).await;
     let (status, _, out) = h.call("POST", "/v1/responses/compact", &[], &format!(r#"{{"model":"{}","stream":true}}"#, h.model)).await;
@@ -255,7 +241,6 @@ async fn responses_compact_and_validation() {
 }
 
 #[tokio::test(start_paused = true)]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn slow_non_stream_requests_get_leading_newlines() {
     let h = harness("keepalive", |c| c.nonstream_keepalive_interval = 1).await;
     h.script("slow", Script::Slow(Duration::from_millis(2500), r#"{"ok":true}"#));
@@ -269,7 +254,6 @@ async fn slow_non_stream_requests_get_leading_newlines() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn zstd_request_bodies_are_decoded_for_openai_endpoints() {
     let h = harness("zstd", |_| {}).await;
     let payload = h.chat("zstd-me");
@@ -284,4 +268,20 @@ async fn zstd_request_bodies_are_decoded_for_openai_endpoints() {
     let resp = h.router.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), 200);
     assert!(h.exec.seen.lock()[0].1.contains("zstd-me"));
+}
+
+/// `X-CPA-TRACE-ID` is stamped once a credential was picked, including on streams and on
+/// upstream error replies; requests that fail before selection carry none.
+#[tokio::test]
+async fn trace_id_header_follows_credential_selection() {
+    let h = harness("trace", |_| {}).await;
+    h.script("err400", Script::Fail(ExecError::new(400, "nope")));
+    let (_, headers, _) = h.call("POST", "/v1/chat/completions", &[], &h.chat_stream("hi")).await;
+    assert!(headers.contains_key("x-cpa-trace-id"));
+    let (status, headers, _) = h.call("POST", "/v1/chat/completions", &[], &h.chat("err400")).await;
+    assert_eq!(status, 400);
+    assert!(headers.contains_key("x-cpa-trace-id"));
+    let (status, headers, _) = h.call("POST", "/v1/chat/completions", &[], r#"{"model":"nope","messages":[]}"#).await;
+    assert_eq!(status, 400);
+    assert!(!headers.contains_key("x-cpa-trace-id"));
 }
