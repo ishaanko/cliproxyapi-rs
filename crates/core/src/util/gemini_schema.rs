@@ -145,29 +145,76 @@ pub fn clean_json_schema_for_gemini_json_schema(json_str: &str) -> String {
     )
 }
 
+/// Stack size for documents nested deeply enough to endanger a 2 MiB worker stack.
+const DEEP_STACK_BYTES: usize = 64 << 20;
+
+/// Whether `text` nests more than 32 brackets (cheap scan that may over-count malformed text).
+fn is_deeply_nested(text: &str) -> bool {
+    let (mut depth, mut in_str, mut esc) = (0usize, false, false);
+    for &b in text.as_bytes() {
+        if in_str {
+            match (esc, b) {
+                (true, _) => esc = false,
+                (false, b'\\') => esc = true,
+                (false, b'"') => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > 32 {
+                    return true;
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Runs `f` on a large temporary stack segment when `text` is deeply nested: the cleaners recurse
+/// once per nesting level and Go's growable stacks have no such limit.
+fn with_stack_for<R>(text: &str, f: impl FnOnce() -> R) -> R {
+    if is_deeply_nested(text) {
+        stacker::grow(DEEP_STACK_BYTES, f)
+    } else {
+        f()
+    }
+}
+
 fn clean_json_schema(json_str: &str, options: CleanOptions) -> String {
+    with_stack_for(json_str, || clean_json_schema_inner(json_str, options))
+}
+
+fn clean_json_schema_inner(json_str: &str, options: CleanOptions) -> String {
     // Phase 0: normalize malformed schemas (bare property maps, boolean `required` from MCP tools).
     let mut text = normalize_malformed_schema_objects(json_str, options.add_missing_array_items);
 
     // Phase 1: convert and add hints.
     if options.antigravity_semantics {
-        text = inline_local_refs(&text);
+        text = inline_local_refs_inner(&text);
     }
-    let Ok(mut doc) = serde_json::from_str::<Value>(&text) else {
+    if !cpa_json::valid(text.as_bytes()) {
         return text;
-    };
+    }
+    let mut doc = cpa_json::parse(text.as_bytes());
+    let raw_source = RawSource::new(&text);
     convert_refs_to_hints(&mut doc, options.antigravity_semantics);
     convert_const_to_enum(&mut doc);
-    convert_enum_values_to_strings(&mut doc, options.force_enum_string_type, &text);
-    add_enum_hints(&mut doc, &text);
-    drop_ignored_enums_to_hints(&mut doc, options, &text);
+    convert_enum_values_to_strings(&mut doc, options.force_enum_string_type, &raw_source);
+    add_enum_hints(&mut doc, &raw_source);
+    drop_ignored_enums_to_hints(&mut doc, options, &raw_source);
     if !options.preserve_additional_properties_false && !options.preserve_all_additional_properties
     {
         add_additional_properties_hints(&mut doc);
     }
-    move_constraints_to_description(&mut doc, options, &text);
+    move_constraints_to_description(&mut doc, options, &raw_source);
     if options.antigravity_semantics {
-        move_not_to_description(&mut doc, &text);
+        move_not_to_description(&mut doc, &raw_source);
     }
 
     // Phase 2: flatten complex structures.
@@ -307,10 +354,7 @@ fn normalize_malformed_schema_objects(json_str: &str, add_missing_array_items: b
         return json_str.to_string();
     }
     // Go decodes the first JSON value and ignores trailing data.
-    let Some(Ok(root)) = serde_json::Deserializer::from_str(json_str)
-        .into_iter::<Value>()
-        .next()
-    else {
+    let Some(root) = parse_first_value(json_str) else {
         return json_str.to_string();
     };
     if root == Value::Bool(true) {
@@ -697,13 +741,14 @@ fn promote_required(clone: &mut Map<String, Value>, promoted: &[String]) {
 /// document is re-emitted compactly with sorted keys; documents without a `"$ref"` key (or that are
 /// not valid JSON) are returned unchanged.
 pub fn inline_local_refs(json_str: &str) -> String {
+    with_stack_for(json_str, || inline_local_refs_inner(json_str))
+}
+
+fn inline_local_refs_inner(json_str: &str) -> String {
     if !json_str.contains("\"$ref\"") {
         return json_str.to_string();
     }
-    let Some(Ok(root)) = serde_json::Deserializer::from_str(json_str)
-        .into_iter::<Value>()
-        .next()
-    else {
+    let Some(root) = parse_first_value(json_str) else {
         return json_str.to_string();
     };
     let resolved = resolve_local_refs(&root, &root, &mut HashMap::new());
@@ -860,7 +905,7 @@ fn convert_const_to_enum(doc: &mut Value) {
 
 /// Rewrites every enum array to strings (Gemini's proto schema requires it). With
 /// `force_string_type` the sibling `type` becomes `string`; Antigravity keeps the declared type.
-fn convert_enum_values_to_strings(doc: &mut Value, force_string_type: bool, source: &str) {
+fn convert_enum_values_to_strings(doc: &mut Value, force_string_type: bool, source: &RawSource) {
     for p in find_paths(doc, "enum") {
         let Some(Value::Array(items)) = doc.g(&p).v().cloned() else {
             continue;
@@ -879,7 +924,7 @@ fn convert_enum_values_to_strings(doc: &mut Value, force_string_type: bool, sour
 }
 
 /// Appends `Allowed: a, b, c` to the description of nodes with 2..=10 enum members.
-fn add_enum_hints(doc: &mut Value, source: &str) {
+fn add_enum_hints(doc: &mut Value, source: &RawSource) {
     for p in find_paths(doc, "enum") {
         let Some(Value::Array(items)) = doc.g(&p).v().cloned() else {
             continue;
@@ -902,7 +947,7 @@ fn add_enum_hints(doc: &mut Value, source: &str) {
 
 /// Antigravity does not enforce enum on function arguments and ignores boolean response enums:
 /// keep a single value as a hint and drop the unenforced constraint.
-fn drop_ignored_enums_to_hints(doc: &mut Value, options: CleanOptions, source: &str) {
+fn drop_ignored_enums_to_hints(doc: &mut Value, options: CleanOptions, source: &RawSource) {
     for path in find_paths(doc, "enum") {
         let parent_path = trim_suffix(&path, ".enum");
         let should_drop = options.drop_all_enums
@@ -965,7 +1010,7 @@ fn constraint_keywords(options: CleanOptions) -> Vec<&'static str> {
 /// Records unsupported constraints as `key: value` description hints (they are removed later by
 /// [`remove_unsupported_keywords`]). Object and array values are quoted as written in `source`
 /// (gjson's `Raw`), falling back to compact JSON when the node changed since.
-fn move_constraints_to_description(doc: &mut Value, options: CleanOptions, source: &str) {
+fn move_constraints_to_description(doc: &mut Value, options: CleanOptions, source: &RawSource) {
     let constraints = constraint_keywords(options);
     if constraints.is_empty() {
         return;
@@ -989,7 +1034,7 @@ fn move_constraints_to_description(doc: &mut Value, options: CleanOptions, sourc
     }
 }
 
-fn move_not_to_description(doc: &mut Value, source: &str) {
+fn move_not_to_description(doc: &mut Value, source: &RawSource) {
     for path in find_paths(doc, "not") {
         let Some(value) = doc.g(&path).v().cloned() else {
             continue;
@@ -1008,7 +1053,7 @@ fn move_not_to_description(doc: &mut Value, source: &str) {
 
 /// gjson `String()` of array element `index` of the array at `array_path`: scalars as text,
 /// objects and arrays as their raw JSON in `source`.
-fn element_string(source: &str, array_path: &str, index: usize, item: &Value) -> String {
+fn element_string(source: &RawSource, array_path: &str, index: usize, item: &Value) -> String {
     match item {
         Value::Object(_) | Value::Array(_) => {
             raw_json_at(source, &format!("{array_path}.{index}"), item)
@@ -1020,30 +1065,71 @@ fn element_string(source: &str, array_path: &str, index: usize, item: &Value) ->
 /// The raw JSON text of the node at `path` in `source` (original whitespace and escapes), as gjson's
 /// `Result.Raw` would give. Falls back to the compact serialization of `current` when the path does
 /// not resolve or the node differs from `current` (it was edited by an earlier phase).
-fn raw_json_at(source: &str, path: &str, current: &Value) -> String {
-    raw_json_lookup(source, path)
+fn raw_json_at(source: &RawSource, path: &str, current: &Value) -> String {
+    source
+        .get(path)
         .filter(|raw| serde_json::from_str::<Value>(raw).is_ok_and(|parsed| parsed == *current))
         .map(str::to_string)
         .unwrap_or_else(|| current.to_string())
 }
 
-fn raw_json_lookup<'a>(source: &'a str, path: &str) -> Option<&'a str> {
-    use serde_json::value::RawValue;
-    let mut cur: &'a RawValue = serde_json::from_str(source).ok()?;
-    for part in split_gjson_path(path) {
-        let key = unescape_gjson_path_key(&part);
-        let text = cur.get();
-        cur = match text.trim_start().as_bytes().first()? {
-            b'{' => *serde_json::from_str::<HashMap<std::borrow::Cow<'a, str>, &'a RawValue>>(text)
-                .ok()?
-                .get(key.as_str())?,
-            b'[' => *serde_json::from_str::<Vec<&'a RawValue>>(text)
-                .ok()?
-                .get(key.parse::<usize>().ok()?)?,
-            _ => return None,
-        };
+/// The schema text as parsed, indexed once (lazily, on the first hint that needs raw text) from
+/// gjson-style path to the raw text of every object/array node. Nodes deeper than serde's raw
+/// value recursion limit are not indexed and fall back to compact JSON.
+struct RawSource<'a> {
+    text: &'a str,
+    index: std::cell::OnceCell<HashMap<String, &'a str>>,
+}
+
+impl<'a> RawSource<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            index: std::cell::OnceCell::new(),
+        }
     }
-    Some(cur.get())
+
+    fn get(&self, path: &str) -> Option<&'a str> {
+        let index = self.index.get_or_init(|| {
+            let mut map = HashMap::new();
+            index_raw_children(self.text, "", &mut map);
+            map
+        });
+        index.get(path).copied()
+    }
+}
+
+/// Records the raw text of every object/array descendant of `raw` under its path.
+fn index_raw_children<'a>(raw: &'a str, path: &str, map: &mut HashMap<String, &'a str>) {
+    use serde_json::value::RawValue;
+    let children: Vec<(String, &'a RawValue)> = match raw.trim_start().as_bytes().first() {
+        Some(b'{') => {
+            match serde_json::from_str::<HashMap<std::borrow::Cow<'a, str>, &'a RawValue>>(raw) {
+                Ok(m) => m
+                    .into_iter()
+                    .map(|(k, v)| (escape_gjson_path_key(&k), v))
+                    .collect(),
+                Err(_) => return,
+            }
+        }
+        Some(b'[') => match serde_json::from_str::<Vec<&'a RawValue>>(raw) {
+            Ok(v) => v
+                .into_iter()
+                .enumerate()
+                .map(|(i, v)| (i.to_string(), v))
+                .collect(),
+            Err(_) => return,
+        },
+        _ => return,
+    };
+    for (key, child) in children {
+        let text = child.get();
+        if matches!(text.trim_start().as_bytes().first(), Some(b'{' | b'[')) {
+            let child_path = join_path(path, &key);
+            map.insert(child_path.clone(), text);
+            index_raw_children(text, &child_path, map);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- phase 2: flattening
@@ -1765,4 +1851,37 @@ fn split_gjson_path(path: &str) -> Vec<String> {
     }
     parts.push(cur);
     parts
+}
+
+/// Parses the first JSON value of `text`, ignoring trailing data (Go's `Decoder.Decode`). Unlike
+/// plain serde_json this accepts documents nested up to `cpa_json::MAX_DEPTH`.
+fn parse_first_value(text: &str) -> Option<Value> {
+    use serde::Deserialize;
+    let (mut depth, mut max, mut in_str, mut esc) = (0usize, 0usize, false, false);
+    for &b in text.as_bytes() {
+        if in_str {
+            match (esc, b) {
+                (true, _) => esc = false,
+                (false, b'\\') => esc = true,
+                (false, b'"') => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' | b'[' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    if max > cpa_json::MAX_DEPTH {
+        return None;
+    }
+    let mut de = serde_json::Deserializer::from_str(text);
+    de.disable_recursion_limit();
+    Value::deserialize(serde_stacker::Deserializer::new(&mut de)).ok()
 }

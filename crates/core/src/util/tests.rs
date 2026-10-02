@@ -441,3 +441,39 @@ fn white_image_is_a_png_of_the_right_size() {
     assert_eq!(u32::from_be_bytes(bytes[16..20].try_into().unwrap()), 1344);
     assert_eq!(u32::from_be_bytes(bytes[20..24].try_into().unwrap()), 768);
 }
+
+#[test]
+fn cleaner_handles_deeply_nested_schemas() {
+    // serde_json's default recursion limit (128) must not make the cleaner pass these through.
+    let depth = 450;
+    let mut schema = String::from(r#"{"type":"string","minLength":2}"#);
+    for _ in 0..depth {
+        schema = format!(r#"{{"type":"object","properties":{{"n":{schema}}}}}"#);
+    }
+    let out = clean_json_schema_for_gemini(&schema);
+    assert!(
+        !out.contains("minLength\":"),
+        "constraint should have become a hint"
+    );
+    assert!(out.contains("minLength: 2"));
+    assert!(clean_json_schema_for_antigravity(&schema).contains("minLength: 2"));
+}
+
+#[test]
+fn raw_hint_text_is_indexed_once_for_large_enums() {
+    // 20k object members: per-element raw lookups over the whole text used to take tens of seconds.
+    let items: Vec<String> = (0..20_000).map(|i| format!(r#"{{ "k": {i} }}"#)).collect();
+    let schema = format!(
+        r#"{{"type":"object","properties":{{"e":{{"enum":[{}]}}}}}}"#,
+        items.join(",")
+    );
+    let start = std::time::Instant::now();
+    let out = clean_json_schema_for_gemini(&schema);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(10),
+        "took {:?}",
+        start.elapsed()
+    );
+    // Object members are stringified from their raw text, whitespace included.
+    assert!(out.contains(r#"{ \"k\": 0 }"#));
+}
