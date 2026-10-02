@@ -85,7 +85,7 @@ pub fn openai_compat_status_error(status: u16, headers: &HeaderMap, body: &[u8])
 
 /// A transport failure before or while reading a response (Go returns the raw `error`): no status.
 pub fn transport_error(err: &reqwest::Error) -> ExecError {
-    ExecError::new(0, err.to_string())
+    ExecError::new(0, crate::openai_compat::errors::transport_message(err))
 }
 
 impl From<ScanError> for ExecError {

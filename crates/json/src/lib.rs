@@ -334,16 +334,17 @@ pub fn parse(bytes: &[u8]) -> Value {
 }
 
 /// gjson-style leniency for malformed documents (mismatched closers, truncation, duplicate
-/// keys keep the first value). Only reached when strict parsing fails; gjson reads such input
-/// rather than rejecting it, and Go translators rely on that. Non-container input -> Null.
+/// keys keep the first value, leading non-JSON text skipped up to the first `{` or `[` the way
+/// gjson's `Get` scans, e.g. a vertex `data: {...}` line). Only reached when strict parsing
+/// fails; gjson reads such input rather than rejecting it, and Go translators rely on that.
+/// Input without a container -> Null.
 fn parse_tolerant(bytes: &[u8]) -> Value {
     let text = String::from_utf8_lossy(bytes);
-    let mut p = tolerant::Tolerant { b: text.as_bytes(), i: 0 };
-    p.skip_ws();
-    match p.b.get(p.i) {
-        Some(b'{') | Some(b'[') => p.value().unwrap_or(Value::Null),
-        _ => Value::Null,
-    }
+    let Some(start) = text.bytes().position(|b| b == b'{' || b == b'[') else {
+        return Value::Null;
+    };
+    let mut p = tolerant::Tolerant { b: text.as_bytes(), i: start };
+    p.value().unwrap_or(Value::Null)
 }
 
 mod tolerant {

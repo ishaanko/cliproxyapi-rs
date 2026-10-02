@@ -170,7 +170,7 @@ fn build_client(
         .tcp_keepalive(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(90));
     // Go's transport requests and decodes gzip only (unless compression is disabled).
-    builder = builder.no_brotli().no_deflate();
+    builder = builder.no_brotli().no_deflate().no_zstd();
     if no_compression {
         builder = builder.no_gzip();
     }

@@ -305,20 +305,6 @@ pub(crate) fn usage_metadata(detail: &crate::helps::usage::Detail) -> HashMap<St
     HashMap::from([("usage".to_string(), UsageReporter::usage_metadata(detail))])
 }
 
-/// The translator input for a raw SSE line or chunk. gjson (Go) reads from the first `{` or `[`
-/// and ignores what precedes it, so translators there parse `data: {...}` directly; ours need the
-/// bare document. Clients that speak Gemini keep the raw text because that translator passes it
-/// through unchanged.
-pub(crate) fn translator_input(response: Format, raw: &[u8]) -> &[u8] {
-    if response == Format::Gemini {
-        return raw;
-    }
-    match raw.iter().position(|b| *b == b'{' || *b == b'[') {
-        Some(start) if start > 0 && raw[start..].trim_ascii() != b"[DONE]" => &raw[start..],
-        _ => raw,
-    }
-}
-
 // ---------------------------------------------------------------- streaming pump
 
 /// Per-stream state: feeds upstream frames through the response translator and the apply_patch

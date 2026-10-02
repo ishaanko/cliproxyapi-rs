@@ -19,7 +19,7 @@ use http::{HeaderMap, HeaderValue};
 use super::common::{
     GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error,
     compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
-    translate_request, translator_input, upstream_error, usage_metadata,
+    translate_request, upstream_error, usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::wsrelay::{
@@ -478,8 +478,7 @@ async fn process_event(pump: &mut StreamPump, reporter: &UsageReporter, event: S
             if let Some(detail) = parse_gemini_stream_usage(&filtered) {
                 pump.usage.observe(detail, true);
             }
-            let input = translator_input(pump.response, &filtered).to_vec();
-            if feed_spaced(pump, &input).await { Flow::Continue } else { Flow::Stop }
+            if feed_spaced(pump, &filtered).await { Flow::Continue } else { Flow::Stop }
         }
         MESSAGE_TYPE_STREAM_END => {
             if pump.end_apply_patch().await {
