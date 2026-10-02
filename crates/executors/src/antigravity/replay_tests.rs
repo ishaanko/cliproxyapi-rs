@@ -10,12 +10,7 @@ use super::replay::{
 };
 use super::signature::normalize_function_response_roles;
 
-fn gunzip(bytes: &[u8]) -> Vec<u8> {
-    use std::io::Read;
-    let mut out = Vec::new();
-    flate2::read::GzDecoder::new(bytes).read_to_end(&mut out).expect("gunzip fixture");
-    out
-}
+use super::tests::gunzip;
 
 fn list(v: &Value) -> Vec<Value> {
     v.as_array().cloned().unwrap_or_default()

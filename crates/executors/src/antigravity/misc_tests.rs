@@ -28,12 +28,7 @@ use super::request::{gemini_to_antigravity, request_needs_schema_sanitization, s
 use super::tests::SERIAL;
 
 fn fixture() -> Value {
-    use std::io::Read;
-    let mut raw = Vec::new();
-    flate2::read::GzDecoder::new(&include_bytes!("testdata/misc.json.gz")[..])
-        .read_to_end(&mut raw)
-        .expect("gunzip fixture");
-    serde_json::from_slice(&raw).expect("misc fixture")
+    serde_json::from_slice(&super::tests::gunzip(include_bytes!("testdata/misc.json.gz"))).expect("misc fixture")
 }
 
 fn list(v: &Value) -> Vec<Value> {

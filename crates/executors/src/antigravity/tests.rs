@@ -27,7 +27,15 @@ use tokio::sync::watch;
 
 use super::AntigravityExecutor;
 
-const ORACLE: &str = include_str!("testdata/oracle.json");
+const ORACLE: &[u8] = include_bytes!("testdata/oracle.json.gz");
+
+/// Gunzips an embedded fixture.
+pub(crate) fn gunzip(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(bytes).read_to_end(&mut out).expect("gunzip fixture");
+    out
+}
 
 /// Tests that touch the process-wide replay ledger or cooldown state run one at a time.
 pub(crate) static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -112,7 +120,9 @@ fn map_of(v: Option<&Value>) -> Metadata {
 // ---------------------------------------------------------------- normalization
 
 fn is_volatile_id(s: &str) -> bool {
-    let timestamped = regex::Regex::new(r"^.+-\d{10,}-\d+$").expect("static regex");
+    static TIMESTAMPED: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"^.+-\d{10,}-\d+$").expect("static regex"));
+    let timestamped = &*TIMESTAMPED;
     (["chatcmpl-", "resp_", "msg_", "agent-", "image_gen/", "toolu_", "call_", "cmp_", "fc_call_", "interaction_"].iter().any(|p| s.starts_with(p))
         && s.len() > 12)
         || timestamped.is_match(s)
@@ -167,8 +177,9 @@ fn has_user_text(body: &Value) -> bool {
 }
 
 fn mask_duration(s: &str) -> String {
-    let re = regex::Regex::new(r"[0-9.]+(ms|s|m)? remaining").expect("static regex");
-    re.replace_all(s, "<d> remaining").into_owned()
+    static REMAINING: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"[0-9.]+(ms|s|m)? remaining").expect("static regex"));
+    REMAINING.replace_all(s, "<d> remaining").into_owned()
 }
 
 fn json_or_string(bytes: &[u8]) -> Value {
@@ -231,12 +242,16 @@ async fn run_case(case: &Value) -> (Option<Captured>, Outcome) {
     if case.get("credits_requested").and_then(Value::as_bool).unwrap_or(false) {
         opts.metadata.insert(ANTIGRAVITY_CREDITS_METADATA_KEY.into(), json!(true));
     }
+    // Capsules are sealed with a random nonce, so each run seals its own and swaps it in.
+    let capsule = super::compaction::seal_compaction("capsule summary text", "gemini-3.7-flash").expect("seal");
+    let with_capsule = |v: &Value| serde_json::to_vec(v).unwrap_or_default();
+    let swap = |bytes: Vec<u8>| String::from_utf8_lossy(&bytes).replace("__CAPSULE__", &capsule).into_bytes();
     if let Some(orig) = case.get("original_payload") {
-        opts.original_request = serde_json::to_vec(orig).unwrap_or_default().into();
+        opts.original_request = swap(with_capsule(orig)).into();
     }
     let req = Request {
         model: case["model"].as_str().unwrap_or("").to_string(),
-        payload: serde_json::to_vec(&case["payload"]).unwrap_or_default().into(),
+        payload: swap(with_capsule(&case["payload"])).into(),
         format: source,
         metadata: map_of(case.get("req_metadata")),
     };
@@ -362,7 +377,7 @@ fn compare_case(case: &Value, captured: Option<Captured>, out: Outcome) -> Vec<S
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn oracle_cases_match_go() {
     let _guard = SERIAL.lock().await;
-    let cases: Vec<Value> = serde_json::from_str(ORACLE).expect("oracle fixture");
+    let cases: Vec<Value> = serde_json::from_slice(&gunzip(ORACLE)).expect("oracle fixture");
     cpa_core::cache::clear_antigravity_reasoning_replay_cache();
     let filter = std::env::var("ORACLE_FILTER").unwrap_or_default();
     let mut all_diffs = Vec::new();
