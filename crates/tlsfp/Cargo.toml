@@ -1,0 +1,10 @@
+[package]
+name = "cpa-tlsfp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+rama-boring = "0.6"
+rama-boring-tokio = "0.6"
+tokio.workspace = true
