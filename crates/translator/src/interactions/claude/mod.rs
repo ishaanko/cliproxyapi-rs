@@ -20,6 +20,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_interactions_response_to_claude),
             non_stream: Some(convert_interactions_response_to_claude_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

@@ -1,18 +1,9 @@
 //! Helpers shared by the interactions <-> Gemini converters (Go: interactions_gemini_common.go).
 
+pub(super) use crate::common::{first_non_blank, first_trimmed};
 use cpa_json::{json, Value, J};
 
 use crate::common::normalize_openai_file_data;
-
-/// First non-blank value, trimmed (Go: firstNonEmptyString).
-pub(super) fn first_non_empty_string(values: &[&str]) -> String {
-    values.iter().map(|v| v.trim()).find(|v| !v.is_empty()).unwrap_or_default().to_string()
-}
-
-/// First value that is not blank, returned as-is (Go: firstNonEmptyInteractionString).
-pub(super) fn first_non_empty_interaction_string(values: &[&str]) -> String {
-    values.iter().find(|v| !v.trim().is_empty()).map(|v| v.to_string()).unwrap_or_default()
-}
 
 /// A Gemini content turn.
 pub(super) fn gemini_content(role: &str, parts: Vec<Value>) -> Value {

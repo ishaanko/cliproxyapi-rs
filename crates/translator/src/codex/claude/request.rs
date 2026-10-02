@@ -15,8 +15,8 @@ use cpa_json::{J, Res, Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::codex::util::{build_short_name_map, shorten_name_if_needed, truncate_bytes};
-use crate::common::{align_claude_tool_results, claude_message_system_reminder_text};
-use cpa_json::raw_at;
+use crate::common::{align_claude_tool_results, claude_message_system_reminder_text, raw_in};
+use cpa_json::raw_children;
 
 const DEFAULT_PARAMETERS: &str = r#"{"type":"object","properties":{}}"#;
 
@@ -76,6 +76,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
     if messages.is_array() {
         let mut pending_tool_use_ids: Vec<String> = Vec::new();
         let mut pending_system_reminders: Vec<Value> = Vec::new();
+        let message_raws = raw_children(raw_json, "messages");
 
         for (i, message) in messages.array().iter().enumerate() {
             let message_role = message.g("role").str();
@@ -103,8 +104,9 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
             let mut content_items: Vec<Value> = Vec::new();
 
             if contents.is_array() {
+                let content_raws = message_raws.get(i).map(|m| raw_children(m.as_bytes(), "content")).unwrap_or_default();
                 for (j, content) in contents.array().iter().enumerate() {
-                    let content_path = format!("messages.{i}.content.{}", source_index[j]);
+                    let content_raw = content_raws.get(source_index[j]);
                     match content.g("type").str().as_str() {
                         "text" => {
                             input_items.append(&mut pending_system_reminders);
@@ -169,7 +171,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
                                 .unwrap_or_else(|| shorten_name_if_needed(&name));
                             let input = content.g("input");
                             let arguments = if input.exists() {
-                                raw_at(raw_json, &format!("{content_path}.input"))
+                                raw_in(content_raw, "input")
                                     .map_or_else(|| input.raw(), str::to_string)
                             } else {
                                 String::new()
@@ -190,7 +192,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
                             let result_content = content.g("content");
                             let fallback_output = || {
                                 if result_content.is_array() || result_content.is_object() {
-                                    raw_at(raw_json, &format!("{content_path}.content"))
+                                    raw_in(content_raw, "content")
                                         .map_or_else(|| result_content.str(), str::to_string)
                                 } else {
                                     result_content.str()

@@ -819,15 +819,12 @@ dependencies = [
  "cpa-json",
  "flate2",
  "hex",
- "once_cell",
- "parking_lot",
  "rand 0.9.5",
  "regex",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tracing",
- "uuid",
 ]
 
 [[package]]

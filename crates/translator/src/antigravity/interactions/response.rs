@@ -1,7 +1,8 @@
 //! Antigravity response -> Interactions response (Go: interactions_antigravity_response.go).
 
+use crate::antigravity::function_names::restore_response_function_names;
+use crate::common::unix_nano_now;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
@@ -25,10 +26,6 @@ struct StreamState {
     tool_name_map: HashMap<String, String>,
 }
 
-fn unix_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
 /// Go: `ConvertAntigravityResponseToInteractions`. One raw line yields zero or more SSE frames.
 pub fn convert_antigravity_response_to_interactions(
     _ctx: &Ctx,
@@ -39,7 +36,7 @@ pub fn convert_antigravity_response_to_interactions(
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
     let st = param.state(|| StreamState {
-        id: format!("interaction_{}", unix_nanos()),
+        id: format!("interaction_{}", unix_nano_now()),
         tool_name_map: util::disambiguated_tool_name_map(original_request_raw_json),
         ..Default::default()
     });
@@ -64,9 +61,10 @@ pub fn convert_antigravity_response_to_interactions(
             append_status_update(&mut out, st);
             st.started = true;
         }
+        let part_raws = cpa_json::raw_children(&payload, &format!("{raw_prefix}candidates.0.content.parts"));
         root.g("candidates.0.content.parts").for_each(|index, part| {
             // Go copies `args.Raw` into the delta: keep the upstream text as sent.
-            let raw_args = cpa_json::raw_at(&payload, &format!("{raw_prefix}candidates.0.content.parts.{}.functionCall.args", index.int()));
+            let raw_args = crate::common::raw_in(usize::try_from(index.int()).ok().and_then(|i| part_raws.get(i)), "functionCall.args");
             append_part_to_stream(&mut out, st, &part, raw_args);
             true
         });
@@ -99,7 +97,7 @@ pub fn convert_antigravity_response_to_interactions_non_stream(
     let mut out = json!({"id": "", "object": "interaction", "status": "completed", "model": "", "steps": []});
     let mut id = root.g("responseId").str();
     if id.is_empty() {
-        id = format!("interaction_{}", unix_nanos());
+        id = format!("interaction_{}", unix_nano_now());
     }
     cpa_json::set(&mut out, "id", id);
     cpa_json::set(&mut out, "model", model);
@@ -125,18 +123,25 @@ fn stream_payloads(raw_json: &[u8]) -> Vec<Vec<u8>> {
     // Go quirk: gjson parses a bare `[DONE]` line as an array holding one garbage number, so the
     // line becomes a single unparseable payload and never reaches the `[DONE]` branch. Only a
     // `data: [DONE]` line does.
-    if trimmed.starts_with(b"[") && !cpa_json::valid(trimmed) {
+    if trimmed == b"[DONE]" {
         return vec![vec![]];
     }
     let root = cpa_json::parse(trimmed);
     if let Value::Array(items) = &root {
-        let payloads: Vec<Vec<u8>> = items
-            .iter()
-            .map(|item| match item.g("response").v() {
-                Some(response) => cpa_json::to_vec(response),
-                None => cpa_json::to_vec(item),
-            })
-            .collect();
+        // Items keep their source text like gjson's `Raw`; a malformed array (no clean split)
+        // falls back to the re-serialized items.
+        let raws = cpa_json::raw_children(trimmed, "");
+        let payloads: Vec<Vec<u8>> = if raws.len() == items.len() {
+            raws.iter().map(|raw| cpa_json::raw_at(raw.as_bytes(), "response").unwrap_or(raw).as_bytes().to_vec()).collect()
+        } else {
+            items
+                .iter()
+                .map(|item| match item.g("response").v() {
+                    Some(response) => cpa_json::to_vec(response),
+                    None => cpa_json::to_vec(item),
+                })
+                .collect()
+        };
         if !payloads.is_empty() {
             return payloads;
         }
@@ -154,29 +159,9 @@ fn unwrap_response(root: Value) -> Value {
     restore_usage_metadata(root)
 }
 
+/// Restores original function names in `root` from the sanitized -> original `name_map`.
 fn restore_function_names(mut root: Value, name_map: &HashMap<String, String>) -> Value {
-    if name_map.is_empty() {
-        return root;
-    }
-    let candidates = root.g("candidates").array().len();
-    for candidate_index in 0..candidates {
-        let parts = root.g(&format!("candidates.{candidate_index}.content.parts")).array().len();
-        for part_index in 0..parts {
-            for field in ["functionCall", "functionResponse"] {
-                let path = format!("candidates.{candidate_index}.content.parts.{part_index}.{field}.name");
-                let name_result = root.g(&path);
-                let name = name_result.str();
-                if name.is_empty() {
-                    continue;
-                }
-                let restored = util::restore_sanitized_tool_name(name_map, &name);
-                if name_result.is_string() && restored == name {
-                    continue;
-                }
-                cpa_json::set(&mut root, &path, restored);
-            }
-        }
-    }
+    restore_response_function_names(&mut root, name_map, &["functionCall", "functionResponse"]);
     root
 }
 
@@ -210,7 +195,7 @@ fn append_status_update(out: &mut Vec<Vec<u8>>, st: &StreamState) {
 }
 
 fn append_completed(out: &mut Vec<Vec<u8>>, st: &mut StreamState, model: &str, root: Option<&Value>) {
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::common::utc_now_rfc3339();
     let mut completed = json!({
         "interaction": {
             "id": "", "status": "completed", "usage": {}, "created": "", "updated": "",
@@ -238,7 +223,7 @@ fn append_done(out: &mut Vec<Vec<u8>>, st: &mut StreamState) {
 }
 
 fn append_step_start(out: &mut Vec<Vec<u8>>, st: &mut StreamState, step_type: &str, part: &Res<'_>) {
-    st.step_id = format!("step_{}", unix_nanos());
+    st.step_id = format!("step_{}", unix_nano_now());
     st.active_step_index = st.step_index;
     st.step_index += 1;
     st.active_step_type = step_type.to_string();
@@ -398,15 +383,14 @@ fn part_to_steps(part: &Res<'_>) -> Vec<Value> {
     }
     for key in ["inlineData", "inline_data"] {
         let inline = part.g(key);
-        if inline.exists() {
-            if let Some(step) = inline_data_to_step(&inline) {
+        if inline.exists()
+            && let Some(step) = inline_data_to_step(&inline) {
                 let mut steps = vec![step];
                 if !sig.is_empty() {
                     steps.push(thought_step(&sig, ""));
                 }
                 return steps;
             }
-        }
     }
     if !sig.is_empty() {
         return vec![thought_step(&sig, "")];

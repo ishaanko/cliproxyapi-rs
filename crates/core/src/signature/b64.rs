@@ -152,6 +152,11 @@ pub fn raw_url(input: impl AsRef<[u8]>) -> Result<Vec<u8>, DecodeError> {
     decode(RAW_URL, input.as_ref())
 }
 
+/// `base64.RawStdEncoding.EncodeToString`.
+pub fn encode_raw_std(input: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(input)
+}
+
 /// `base64.StdEncoding.EncodeToString`.
 pub fn encode_std(input: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(input)

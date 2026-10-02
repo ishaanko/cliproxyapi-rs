@@ -15,6 +15,8 @@ struct State {
     model: String,
     created_at: i64,
     tool_name_map: Option<HashMap<String, String>>,
+    /// Whether the original request streams (parsed from it once, on the first non-[DONE] line).
+    request_streams: Option<bool>,
     /// True once a tool_use content_block_start has been emitted on the wire. Raw upstream
     /// tool_calls presence can produce stop_reason=tool_use with zero announced tool blocks.
     saw_tool_call: bool,
@@ -48,6 +50,7 @@ impl Default for State {
             model: String::new(),
             created_at: 0,
             tool_name_map: None,
+            request_streams: None,
             saw_tool_call: false,
             content_accumulator: String::new(),
             tool_calls_accumulator: BTreeMap::new(),
@@ -94,10 +97,6 @@ struct ToolCallAccumulator {
 
 type Results = Vec<Vec<u8>>;
 
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
 /// One `event: <name>\ndata: <json>\n\n` frame.
 fn frame(event: &str, payload: &Value) -> Vec<u8> {
     let mut out = Vec::new();
@@ -129,8 +128,11 @@ pub fn convert_openai_response_to_claude(
         return convert_openai_done_to_anthropic(state);
     }
 
-    let stream_result = cpa_json::parse(original).g("stream").v().cloned();
-    if !matches!(stream_result, Some(ref v) if !matches!(v, Value::Bool(false))) {
+    let streams = *state.request_streams.get_or_insert_with(|| {
+        let root = cpa_json::parse(original);
+        matches!(root.g("stream").v(), Some(v) if !matches!(v, Value::Bool(false)))
+    });
+    if !streams {
         return convert_openai_non_streaming_to_anthropic(raw);
     }
     convert_openai_streaming_chunk_to_anthropic(raw, state)
@@ -193,7 +195,7 @@ fn convert_openai_streaming_chunk_to_anthropic(raw: &[u8], state: &mut State) ->
     let delta = root.g("choices.0.delta");
     if delta.exists() {
         if !state.message_started {
-            let mut start = tpl(
+            let mut start = cpa_json::parse_str(
                 r#"{"type":"message_start","message":{"id":"","type":"message","role":"assistant","model":"","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}"#,
             );
             cpa_json::set(&mut start, "message.id", state.message_id.clone());
@@ -220,13 +222,13 @@ fn convert_openai_streaming_chunk_to_anthropic(raw: &[u8], state: &mut State) ->
                         state.thinking_content_block_index = state.next_content_block_index;
                         state.next_content_block_index += 1;
                     }
-                    let mut start = tpl(r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#);
+                    let mut start = cpa_json::parse_str(r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#);
                     cpa_json::set(&mut start, "index", state.thinking_content_block_index);
                     results.push(frame("content_block_start", &start));
                     state.thinking_content_block_started = true;
                 }
 
-                let mut d = tpl(r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}"#);
+                let mut d = cpa_json::parse_str(r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}"#);
                 cpa_json::set(&mut d, "index", state.thinking_content_block_index);
                 cpa_json::set(&mut d, "delta.thinking", reasoning_text);
                 results.push(frame("content_block_delta", &d));
@@ -252,13 +254,13 @@ fn convert_openai_streaming_chunk_to_anthropic(raw: &[u8], state: &mut State) ->
                         state.text_content_block_index = state.next_content_block_index;
                         state.next_content_block_index += 1;
                     }
-                    let mut start = tpl(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#);
+                    let mut start = cpa_json::parse_str(r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#);
                     cpa_json::set(&mut start, "index", state.text_content_block_index);
                     results.push(frame("content_block_start", &start));
                     state.text_content_block_started = true;
                 }
 
-                let mut d = tpl(r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}"#);
+                let mut d = cpa_json::parse_str(r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}"#);
                 cpa_json::set(&mut d, "index", state.text_content_block_index);
                 cpa_json::set(&mut d, "delta.text", text.clone());
                 results.push(frame("content_block_delta", &d));
@@ -375,7 +377,7 @@ fn convert_openai_done_to_anthropic(state: &mut State) -> Results {
 fn convert_openai_non_streaming_to_anthropic(raw: &[u8]) -> Results {
     let root = cpa_json::parse(raw);
 
-    let mut out = tpl(
+    let mut out = cpa_json::parse_str(
         r#"{"id":"","type":"message","role":"assistant","model":"","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}"#,
     );
     cpa_json::set(&mut out, "id", root.g("id").str());
@@ -390,14 +392,14 @@ fn convert_openai_non_streaming_to_anthropic(raw: &[u8]) -> Results {
             if reasoning_text.is_empty() {
                 continue;
             }
-            let mut block = tpl(r#"{"type":"thinking","thinking":""}"#);
+            let mut block = cpa_json::parse_str(r#"{"type":"thinking","thinking":""}"#);
             cpa_json::set(&mut block, "thinking", reasoning_text);
             content_blocks.push(block);
         }
 
         let content = choice.g("message.content");
         if content.exists() && !content.str().is_empty() {
-            let mut block = tpl(r#"{"type":"text","text":""}"#);
+            let mut block = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
             cpa_json::set(&mut block, "text", content.str());
             content_blocks.push(block);
         }
@@ -405,7 +407,7 @@ fn convert_openai_non_streaming_to_anthropic(raw: &[u8]) -> Results {
         let tool_calls = choice.g("message.tool_calls");
         if tool_calls.is_array() {
             for tool_call in tool_calls.array() {
-                let mut block = tpl(r#"{"type":"tool_use","id":"","name":"","input":{}}"#);
+                let mut block = cpa_json::parse_str(r#"{"type":"tool_use","id":"","name":"","input":{}}"#);
                 cpa_json::set(&mut block, "id", util::sanitize_claude_tool_id(&tool_call.g("id").str()));
                 cpa_json::set(&mut block, "name", tool_call.g("function.name").str());
                 set_tool_input(&mut block, &tool_call.g("function.arguments").str());
@@ -441,7 +443,7 @@ fn set_tool_input(block: &mut Value, arguments: &str) {
             return;
         }
     }
-    cpa_json::set(block, "input", tpl("{}"));
+    cpa_json::set(block, "input", cpa_json::parse_str("{}"));
 }
 
 /// Writes the extracted OpenAI usage under `prefix` (`usage` or similar) like Go's usage blocks.
@@ -520,7 +522,7 @@ fn stop_thinking_content_block(state: &mut State, results: &mut Results) {
     if !state.thinking_content_block_started {
         return;
     }
-    let mut stop = tpl(r#"{"type":"content_block_stop","index":0}"#);
+    let mut stop = cpa_json::parse_str(r#"{"type":"content_block_stop","index":0}"#);
     cpa_json::set(&mut stop, "index", state.thinking_content_block_index);
     results.push(frame("content_block_stop", &stop));
     state.thinking_content_block_started = false;
@@ -531,7 +533,7 @@ fn stop_text_content_block(state: &mut State, results: &mut Results) {
     if !state.text_content_block_started {
         return;
     }
-    let mut stop = tpl(r#"{"type":"content_block_stop","index":0}"#);
+    let mut stop = cpa_json::parse_str(r#"{"type":"content_block_stop","index":0}"#);
     cpa_json::set(&mut stop, "index", state.text_content_block_index);
     results.push(frame("content_block_stop", &stop));
     state.text_content_block_started = false;
@@ -542,7 +544,7 @@ fn emit_message_stop_if_needed(state: &mut State, results: &mut Results) {
     if state.message_stop_sent {
         return;
     }
-    results.push(frame("message_stop", &tpl(r#"{"type":"message_stop"}"#)));
+    results.push(frame("message_stop", &cpa_json::parse_str(r#"{"type":"message_stop"}"#)));
     state.message_stop_sent = true;
 }
 
@@ -552,7 +554,7 @@ fn emit_tool_use_start(state: &mut State, openai_tool_index: i64, results: &mut 
 
     let block_index = tool_content_block_index(state, openai_tool_index);
     let Some(acc) = state.tool_calls_accumulator.get_mut(&openai_tool_index) else { return };
-    let mut start = tpl(r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"","name":"","input":{}}}"#);
+    let mut start = cpa_json::parse_str(r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"","name":"","input":{}}}"#);
     cpa_json::set(&mut start, "index", block_index);
     cpa_json::set(&mut start, "content_block.id", util::sanitize_claude_tool_id(&acc.id));
     cpa_json::set(&mut start, "content_block.name", acc.name.clone());
@@ -592,13 +594,13 @@ fn finalize_single_tool_call(state: &mut State, openai_tool_index: i64, results:
     if let Some(acc) = state.tool_calls_accumulator.get(&openai_tool_index)
         && !acc.arguments.is_empty()
     {
-        let mut d = tpl(r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}"#);
+        let mut d = cpa_json::parse_str(r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}"#);
         cpa_json::set(&mut d, "index", block_index);
         cpa_json::set(&mut d, "delta.partial_json", fix_json(&acc.arguments));
         results.push(frame("content_block_delta", &d));
     }
 
-    let mut stop = tpl(r#"{"type":"content_block_stop","index":0}"#);
+    let mut stop = cpa_json::parse_str(r#"{"type":"content_block_stop","index":0}"#);
     cpa_json::set(&mut stop, "index", block_index);
     results.push(frame("content_block_stop", &stop));
     state.tool_call_block_indexes.remove(&openai_tool_index);
@@ -628,16 +630,16 @@ fn emit_buffered_interleaved_content(state: &mut State, results: &mut Results) {
                 "delta.text",
             ),
         };
-        let mut start = tpl(start_tpl);
+        let mut start = cpa_json::parse_str(start_tpl);
         cpa_json::set(&mut start, "index", idx);
         results.push(frame("content_block_start", &start));
 
-        let mut d = tpl(delta_tpl);
+        let mut d = cpa_json::parse_str(delta_tpl);
         cpa_json::set(&mut d, "index", idx);
         cpa_json::set(&mut d, delta_path, chunk.text);
         results.push(frame("content_block_delta", &d));
 
-        let mut stop = tpl(r#"{"type":"content_block_stop","index":0}"#);
+        let mut stop = cpa_json::parse_str(r#"{"type":"content_block_stop","index":0}"#);
         cpa_json::set(&mut stop, "index", idx);
         results.push(frame("content_block_stop", &stop));
     }
@@ -669,7 +671,7 @@ fn emit_anthropic_message_delta(state: &mut State, results: &mut Results) {
     if state.message_delta_sent {
         return;
     }
-    let mut d = tpl(
+    let mut d = cpa_json::parse_str(
         r#"{"type":"message_delta","delta":{"stop_reason":"","stop_sequence":null},"usage":{"input_tokens":0,"output_tokens":0}}"#,
     );
     cpa_json::set(&mut d, "delta.stop_reason", map_openai_finish_reason_to_anthropic(&terminal_openai_finish_reason(state)));
@@ -696,7 +698,7 @@ pub fn convert_openai_response_to_claude_non_stream(
 ) -> Option<Vec<u8>> {
     let root = cpa_json::parse(raw);
     let tool_name_map = util::tool_name_map_from_claude_request(original);
-    let mut out = tpl(
+    let mut out = cpa_json::parse_str(
         r#"{"id":"","type":"message","role":"assistant","model":"","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}"#,
     );
     cpa_json::set(&mut out, "id", root.g("id").str());
@@ -707,19 +709,19 @@ pub fn convert_openai_response_to_claude_non_stream(
     let mut blocks: Vec<Value> = Vec::new();
 
     let tool_use_block = |tool_call: &Res<'_>| {
-        let mut block = tpl(r#"{"type":"tool_use","id":"","name":"","input":{}}"#);
+        let mut block = cpa_json::parse_str(r#"{"type":"tool_use","id":"","name":"","input":{}}"#);
         cpa_json::set(&mut block, "id", util::sanitize_claude_tool_id(&tool_call.g("id").str()));
         cpa_json::set(&mut block, "name", util::map_tool_name(&tool_name_map, &tool_call.g("function.name").str()));
         set_tool_input(&mut block, &tool_call.g("function.arguments").str());
         block
     };
     let text_block = |text: &str| {
-        let mut block = tpl(r#"{"type":"text","text":""}"#);
+        let mut block = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
         cpa_json::set(&mut block, "text", text);
         block
     };
     let thinking_block = |text: &str| {
-        let mut block = tpl(r#"{"type":"thinking","thinking":""}"#);
+        let mut block = cpa_json::parse_str(r#"{"type":"thinking","thinking":""}"#);
         cpa_json::set(&mut block, "thinking", text);
         block
     };

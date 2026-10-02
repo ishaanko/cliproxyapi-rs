@@ -6,10 +6,9 @@ use std::collections::HashSet;
 
 use cpa_json::{Res, Value, J};
 
-use super::raw_text::parse_lenient;
 use super::request::{responses_content_part_to_interactions, responses_function_call_to_interactions};
 use super::{
-    first_non_empty, is_antigravity_model, json_string_value, response_model, set_items, sse_payload, tmpl, unix_nanos,
+    first_non_blank, is_antigravity_model, json_string_value, response_model, set_items, sse_payload, unix_nano_now,
 };
 use crate::common;
 use crate::registry::{Ctx, Param};
@@ -60,7 +59,7 @@ impl StreamState {
 
 /// `{"type":"text","text":<text>}` Interactions content part.
 fn interactions_text_content_part(text: &str) -> Value {
-    let mut part = tmpl(r#"{"type":"text","text":""}"#);
+    let mut part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
     cpa_json::set(&mut part, "text", text);
     part
 }
@@ -89,8 +88,8 @@ pub(super) fn convert_openai_responses_response_to_interactions_non_stream(
     raw: &[u8],
     _param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let root = parse_lenient(raw);
-    let mut out = tmpl(r#"{"id":"","object":"interaction","status":"completed","model":"","steps":[]}"#);
+    let root = cpa_json::parse(raw);
+    let mut out = cpa_json::parse_str(r#"{"id":"","object":"interaction","status":"completed","model":"","steps":[]}"#);
     let status = root.g("status").str();
     if !status.is_empty() {
         cpa_json::set(&mut out, "status", status);
@@ -118,7 +117,7 @@ fn convert_event(model_name: &str, raw: &[u8], st: &mut StreamState) -> Events {
         append_done(&mut out, st);
         return out;
     }
-    let root = parse_lenient(&payload);
+    let root = cpa_json::parse(&payload);
     match root.g("type").str().as_str() {
         "response.created" => {
             let mut out = Vec::new();
@@ -157,7 +156,7 @@ fn convert_event(model_name: &str, raw: &[u8], st: &mut StreamState) -> Events {
 fn output_item_to_interactions_step(item: &Res<'_>, for_antigravity: bool) -> Option<Value> {
     match item.g("type").str().as_str() {
         "message" => {
-            let mut step = tmpl(r#"{"type":"model_output","content":[]}"#);
+            let mut step = cpa_json::parse_str(r#"{"type":"model_output","content":[]}"#);
             item.g("content").for_each(|_, part| {
                 if let Some(converted) = responses_content_part_to_interactions(&part) {
                     cpa_json::set(&mut step, "content.-1", converted);
@@ -168,7 +167,7 @@ fn output_item_to_interactions_step(item: &Res<'_>, for_antigravity: bool) -> Op
         }
         "function_call" => Some(responses_function_call_to_interactions(item, for_antigravity)),
         "reasoning" => {
-            let mut step = tmpl(r#"{"type":"thought","content":[]}"#);
+            let mut step = cpa_json::parse_str(r#"{"type":"thought","content":[]}"#);
             item.g("summary").for_each(|_, summary| {
                 let text = summary.g("text").str();
                 if !text.is_empty() {
@@ -189,13 +188,13 @@ fn output_item_added(model_name: &str, root: &Value, st: &mut StreamState) -> Ev
         "function_call" => {
             ensure_created(&mut out, st, model_name);
             append_step_stop(&mut out, st);
-            let mut step = tmpl(r#"{"type":"function_call","name":"","arguments":{}}"#);
+            let mut step = cpa_json::parse_str(r#"{"type":"function_call","name":"","arguments":{}}"#);
             let mut name = item.g("name").str();
             if is_antigravity_model(model_name) {
                 name = common::antigravity_tool_name_to_upstream(&name);
             }
             cpa_json::set(&mut step, "name", name);
-            let call_id = first_non_empty(&[&item.g("call_id").str(), &item.g("id").str()]);
+            let call_id = first_non_blank(&[&item.g("call_id").str(), &item.g("id").str()]);
             if !call_id.is_empty() {
                 cpa_json::set(&mut step, "id", call_id.as_str());
                 cpa_json::set(&mut step, "call_id", call_id);
@@ -241,7 +240,7 @@ fn completed(model_name: &str, response: &Res<'_>, st: &mut StreamState) -> Even
     let mut out = Vec::new();
     response.g("output").for_each(|output_index, item| {
         if item.g("type").str() == "message" {
-            let mut index_root = tmpl(r#"{"output_index":0}"#);
+            let mut index_root = cpa_json::parse_str(r#"{"output_index":0}"#);
             cpa_json::set(&mut index_root, "output_index", output_index.int());
             let id = item.g("id").str();
             if !id.is_empty() {
@@ -294,8 +293,8 @@ fn append_created(out: &mut Events, st: &mut StreamState, model_name: &str, resp
     if st.created {
         return;
     }
-    st.id = first_non_empty(&[&response.g("id").str(), &st.id, &format!("interaction_{}", unix_nanos())]);
-    let mut created = tmpl(
+    st.id = first_non_blank(&[&response.g("id").str(), &st.id, &format!("interaction_{}", unix_nano_now())]);
+    let mut created = cpa_json::parse_str(
         r#"{"interaction":{"id":"","status":"in_progress","object":"interaction","model":""},"event_type":"interaction.created"}"#,
     );
     cpa_json::set(&mut created, "interaction.id", st.id.as_str());
@@ -311,7 +310,7 @@ fn append_status_update(out: &mut Events, st: &mut StreamState) {
     if st.status_updated {
         return;
     }
-    let mut status_update = tmpl(r#"{"interaction_id":"","status":"in_progress","event_type":"interaction.status_update"}"#);
+    let mut status_update = cpa_json::parse_str(r#"{"interaction_id":"","status":"in_progress","event_type":"interaction.status_update"}"#);
     cpa_json::set(&mut status_update, "interaction_id", st.id.as_str());
     out.push(emit("interaction.status_update", &status_update));
     st.status_updated = true;
@@ -337,31 +336,31 @@ fn append_step_start(out: &mut Events, st: &mut StreamState, step_type: &str, st
     st.active_step_index = index;
     st.active_step_type = step_type.to_string();
     st.active_step_open = true;
-    let mut payload = tmpl(r#"{"index":0,"step":{"type":""},"event_type":"step.start"}"#);
+    let mut payload = cpa_json::parse_str(r#"{"index":0,"step":{"type":""},"event_type":"step.start"}"#);
     cpa_json::set(&mut payload, "index", index);
     cpa_json::set(&mut payload, "step.type", step_type);
     if step_type == "function_call" {
-        let id = first_non_empty(&[&step.g("call_id").str(), &step.g("id").str()]);
+        let id = first_non_blank(&[&step.g("call_id").str(), &step.g("id").str()]);
         if !id.is_empty() {
             cpa_json::set(&mut payload, "step.id", id.as_str());
             cpa_json::set(&mut payload, "step.call_id", id);
         }
         cpa_json::set(&mut payload, "step.name", step.g("name").str());
-        cpa_json::set(&mut payload, "step.arguments", tmpl("{}"));
+        cpa_json::set(&mut payload, "step.arguments", cpa_json::parse_str("{}"));
     }
     out.push(emit("step.start", &payload));
 }
 
 fn append_text_delta(out: &mut Events, st: &StreamState, text: &str, thought: bool) {
     let payload = if thought {
-        let mut p = tmpl(
+        let mut p = cpa_json::parse_str(
             r#"{"index":0,"delta":{"content":{"text":"","type":"text"},"type":"thought_summary"},"event_type":"step.delta"}"#,
         );
         cpa_json::set(&mut p, "index", st.active_step_index);
         cpa_json::set(&mut p, "delta.content.text", text);
         p
     } else {
-        let mut p = tmpl(r#"{"index":0,"delta":{"text":"","type":"text"},"event_type":"step.delta"}"#);
+        let mut p = cpa_json::parse_str(r#"{"index":0,"delta":{"text":"","type":"text"},"event_type":"step.delta"}"#);
         cpa_json::set(&mut p, "index", st.active_step_index);
         cpa_json::set(&mut p, "delta.text", text);
         p
@@ -370,7 +369,7 @@ fn append_text_delta(out: &mut Events, st: &StreamState, text: &str, thought: bo
 }
 
 fn append_arguments_delta(out: &mut Events, st: &StreamState, arguments: &str) {
-    let mut payload = tmpl(r#"{"index":0,"delta":{"arguments":"","type":"arguments_delta"},"event_type":"step.delta"}"#);
+    let mut payload = cpa_json::parse_str(r#"{"index":0,"delta":{"arguments":"","type":"arguments_delta"},"event_type":"step.delta"}"#);
     cpa_json::set(&mut payload, "index", st.active_step_index);
     cpa_json::set(&mut payload, "delta.arguments", arguments);
     out.push(emit("step.delta", &payload));
@@ -380,7 +379,7 @@ fn append_step_stop(out: &mut Events, st: &mut StreamState) {
     if !st.active_step_open {
         return;
     }
-    let mut payload = tmpl(r#"{"index":0,"event_type":"step.stop"}"#);
+    let mut payload = cpa_json::parse_str(r#"{"index":0,"event_type":"step.stop"}"#);
     cpa_json::set(&mut payload, "index", st.active_step_index);
     out.push(emit("step.stop", &payload));
     st.active_step_open = false;
@@ -391,8 +390,8 @@ fn append_completed(out: &mut Events, st: &mut StreamState, model_name: &str, re
     if st.completed {
         return;
     }
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let mut payload = tmpl(
+    let now = crate::common::utc_now_rfc3339();
+    let mut payload = cpa_json::parse_str(
         r#"{"interaction":{"id":"","status":"completed","usage":{},"created":"","updated":"","service_tier":"standard","object":"interaction","model":""},"event_type":"interaction.completed"}"#,
     );
     cpa_json::set(&mut payload, "interaction.id", st.id.as_str());
@@ -425,13 +424,13 @@ fn ensure_function_call_step(out: &mut Events, st: &mut StreamState, model_name:
     if !item.exists() {
         item = Res::of(root);
     }
-    let mut step = tmpl(r#"{"type":"function_call","name":"","arguments":{}}"#);
+    let mut step = cpa_json::parse_str(r#"{"type":"function_call","name":"","arguments":{}}"#);
     let mut name = item.g("name").str();
     if is_antigravity_model(model_name) {
         name = common::antigravity_tool_name_to_upstream(&name);
     }
     cpa_json::set(&mut step, "name", name);
-    let call_id = first_non_empty(&[
+    let call_id = first_non_blank(&[
         &item.g("call_id").str(),
         &item.g("id").str(),
         &root.g("call_id").str(),

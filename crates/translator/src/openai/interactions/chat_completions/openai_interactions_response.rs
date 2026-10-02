@@ -5,9 +5,8 @@ use std::collections::HashMap;
 
 use cpa_json::{Res, Value, J};
 
-use super::{first_non_empty, is_antigravity_model, json_string_value, set_items, sse_payload, tmpl, unix_nanos};
+use super::{first_non_blank, is_antigravity_model, json_string_value, set_items, sse_payload, unix_nano_now};
 use crate::common;
-use crate::openai::interactions::responses::raw_text::parse_lenient;
 use crate::openai::interactions::responses::raw_text::restore_step_arguments;
 use crate::registry::{Ctx, Param};
 
@@ -36,7 +35,7 @@ pub(super) fn convert_interactions_response_to_openai(
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
     let st = param.state(|| StreamState { model: model_name.to_string(), ..Default::default() });
-    st.model = first_non_empty(&[&st.model, model_name]);
+    st.model = first_non_blank(&[&st.model, model_name]);
     convert_event(model_name, raw, st).into_iter().map(|c| cpa_json::to_vec(&c)).collect()
 }
 
@@ -48,18 +47,18 @@ pub(super) fn convert_interactions_response_to_openai_non_stream(
     raw: &[u8],
     _param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let mut root = parse_lenient(raw);
+    let mut root = cpa_json::parse(raw);
     restore_step_arguments(raw, &mut root);
     let nested = root.g("interaction");
     let interaction = if nested.exists() { nested } else { Res::of(&root) };
-    let mut out = tmpl(
+    let mut out = cpa_json::parse_str(
         r#"{"id":"","object":"chat.completion","created":0,"model":"","choices":[{"index":0,"message":{"role":"assistant","content":""},"finish_reason":"stop"}]}"#,
     );
-    let id = first_non_empty(&[&interaction.g("id").str(), &root.g("id").str(), &format!("chatcmpl_{}", unix_nanos())]);
+    let id = first_non_blank(&[&interaction.g("id").str(), &root.g("id").str(), &format!("chatcmpl_{}", unix_nano_now())]);
     cpa_json::set(&mut out, "id", id);
-    cpa_json::set(&mut out, "created", chrono::Utc::now().timestamp());
+    cpa_json::set(&mut out, "created", crate::common::unix_now());
     let interaction_model = interaction.g("model").str();
-    cpa_json::set(&mut out, "model", first_non_empty(&[&interaction_model, model_name]));
+    cpa_json::set(&mut out, "model", first_non_blank(&[&interaction_model, model_name]));
     let mut steps = interaction.g("steps");
     if !steps.exists() {
         steps = root.g("steps");
@@ -74,7 +73,7 @@ pub(super) fn convert_interactions_response_to_openai_non_stream(
             "thought" => content_texts(&step.g("content")).iter().for_each(|t| reasoning.push_str(t)),
             "function_call" => {
                 saw_tool_call = true;
-                let for_antigravity = is_antigravity_model(&first_non_empty(&[&interaction_model, model_name]));
+                let for_antigravity = is_antigravity_model(&first_non_blank(&[&interaction_model, model_name]));
                 tool_calls.push(tool_call_from_interactions(&step, &Res::NONE, for_antigravity));
             }
             _ => {}
@@ -92,14 +91,14 @@ pub(super) fn convert_interactions_response_to_openai_non_stream(
         cpa_json::set(&mut out, "choices.0.message.content", Value::Null);
         cpa_json::set(&mut out, "choices.0.finish_reason", "tool_calls");
     }
-    let status = first_non_empty(&[&interaction.g("status").str(), &root.g("status").str()]);
-    let finish_reason = first_non_empty(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
+    let status = first_non_blank(&[&interaction.g("status").str(), &root.g("status").str()]);
+    let finish_reason = first_non_blank(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
     if finish_reason == "content_filter" {
         cpa_json::set(&mut out, "choices.0.finish_reason", "content_filter");
     } else if status == "incomplete" || finish_reason == "length" || finish_reason == "max_tokens" {
         cpa_json::set(&mut out, "choices.0.finish_reason", "length");
     }
-    let env_id = first_non_empty(&[
+    let env_id = first_non_blank(&[
         &interaction.g("environment_id").str(),
         &root.g("environment_id").str(),
         &interaction.g("environment.id").str(),
@@ -115,7 +114,7 @@ pub(super) fn convert_interactions_response_to_openai_non_stream(
 
 fn environment_id_of(root: &Value) -> String {
     let interaction = root.g("interaction");
-    first_non_empty(&[
+    first_non_blank(&[
         &interaction.g("environment_id").str(),
         &root.g("environment_id").str(),
         &interaction.g("environment.id").str(),
@@ -128,12 +127,12 @@ fn convert_event(model_name: &str, raw: &[u8], st: &mut StreamState) -> Vec<Valu
     if payload.is_empty() || payload.trim_ascii() == b"[DONE]" {
         return vec![];
     }
-    let root = parse_lenient(&payload);
+    let root = cpa_json::parse(&payload);
     match root.g("event_type").str().as_str() {
         "interaction.created" => {
             let interaction = root.g("interaction");
-            st.id = first_non_empty(&[&interaction.g("id").str(), &st.id]);
-            st.model = first_non_empty(&[&interaction.g("model").str(), &st.model, model_name]);
+            st.id = first_non_blank(&[&interaction.g("id").str(), &st.id]);
+            st.model = first_non_blank(&[&interaction.g("model").str(), &st.model, model_name]);
             let env_id = environment_id_of(&root);
             if !env_id.is_empty() {
                 st.environment_id = env_id;
@@ -173,7 +172,7 @@ fn step_start(model_name: &str, root: &Value, st: &mut StreamState) -> Vec<Value
     };
     st.tool_ids.insert(
         index,
-        first_non_empty(&[&step.g("call_id").str(), &step.g("id").str(), &format!("call_{tool_call_index}")]),
+        first_non_blank(&[&step.g("call_id").str(), &step.g("id").str(), &format!("call_{tool_call_index}")]),
     );
     let mut name = step.g("name").str();
     if is_antigravity_model(model_name) || is_antigravity_model(&st.model) {
@@ -190,7 +189,7 @@ fn step_delta(root: &Value, st: &mut StreamState) -> Vec<Value> {
     let mut out = ensure_started(vec![], st);
     match delta.g("type").str().as_str() {
         "thought_summary" => {
-            let text = first_non_empty(&[&delta.g("content.text").str(), &delta.g("text").str()]);
+            let text = first_non_blank(&[&delta.g("content.text").str(), &delta.g("text").str()]);
             if !text.is_empty() {
                 out.push(delta_chunk(st, "reasoning_content", &text));
             }
@@ -228,8 +227,8 @@ fn append_completed(out: Vec<Value>, root: &Value, st: &mut StreamState) -> Vec<
     let mut chunk = base_chunk(st);
     let mut finish_reason = if st.saw_tool_call { "tool_calls" } else { "stop" };
     let interaction = root.g("interaction");
-    let status = first_non_empty(&[&interaction.g("status").str(), &root.g("status").str()]);
-    let interaction_finish = first_non_empty(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
+    let status = first_non_blank(&[&interaction.g("status").str(), &root.g("status").str()]);
+    let interaction_finish = first_non_blank(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
     if interaction_finish == "content_filter" {
         finish_reason = "content_filter";
     } else if status == "incomplete" || interaction_finish == "length" || interaction_finish == "max_tokens" {
@@ -256,7 +255,7 @@ fn failed(root: &Value) -> Vec<Value> {
     if err_type.is_empty() {
         err_type = "server_error".to_string();
     }
-    let mut error_json = tmpl(r#"{"error":{"message":"","type":"","code":""}}"#);
+    let mut error_json = cpa_json::parse_str(r#"{"error":{"message":"","type":"","code":""}}"#);
     cpa_json::set(&mut error_json, "error.message", msg);
     cpa_json::set(&mut error_json, "error.type", err_type);
     if code.is_empty() {
@@ -268,12 +267,12 @@ fn failed(root: &Value) -> Vec<Value> {
 }
 
 fn base_chunk(st: &mut StreamState) -> Value {
-    let mut chunk = tmpl(
+    let mut chunk = cpa_json::parse_str(
         r#"{"id":"","object":"chat.completion.chunk","created":0,"model":"","choices":[{"index":0,"delta":{},"finish_reason":null}]}"#,
     );
-    cpa_json::set(&mut chunk, "id", first_non_empty(&[&st.id, &format!("chatcmpl_{}", unix_nanos())]));
+    cpa_json::set(&mut chunk, "id", first_non_blank(&[&st.id, &format!("chatcmpl_{}", unix_nano_now())]));
     if st.created == 0 {
-        st.created = chrono::Utc::now().timestamp();
+        st.created = crate::common::unix_now();
     }
     cpa_json::set(&mut chunk, "created", st.created);
     cpa_json::set(&mut chunk, "model", st.model.as_str());
@@ -297,10 +296,10 @@ fn tool_call_index(st: &StreamState, index: i64) -> i64 {
 fn tool_call_start_chunk(st: &mut StreamState, index: i64) -> Value {
     let mut chunk = base_chunk(st);
     let tool_call_index = tool_call_index(st, index);
-    let mut tool_call = tmpl(r#"{"index":0,"id":"","type":"function","function":{"name":"","arguments":""}}"#);
+    let mut tool_call = cpa_json::parse_str(r#"{"index":0,"id":"","type":"function","function":{"name":"","arguments":""}}"#);
     cpa_json::set(&mut tool_call, "index", tool_call_index);
     let id = st.tool_ids.get(&index).cloned().unwrap_or_default();
-    cpa_json::set(&mut tool_call, "id", first_non_empty(&[&id, &format!("call_{tool_call_index}")]));
+    cpa_json::set(&mut tool_call, "id", first_non_blank(&[&id, &format!("call_{tool_call_index}")]));
     cpa_json::set(&mut tool_call, "function.name", st.tool_names.get(&index).cloned().unwrap_or_default());
     cpa_json::set(&mut chunk, "choices.0.delta.tool_calls.-1", tool_call);
     chunk
@@ -308,7 +307,7 @@ fn tool_call_start_chunk(st: &mut StreamState, index: i64) -> Value {
 
 fn tool_call_arguments_chunk(st: &mut StreamState, index: i64, arguments: &str) -> Value {
     let mut chunk = base_chunk(st);
-    let mut tool_call = tmpl(r#"{"index":0,"function":{"arguments":""}}"#);
+    let mut tool_call = cpa_json::parse_str(r#"{"index":0,"function":{"arguments":""}}"#);
     cpa_json::set(&mut tool_call, "index", tool_call_index(st, index));
     cpa_json::set(&mut tool_call, "function.arguments", arguments);
     cpa_json::set(&mut chunk, "choices.0.delta.tool_calls.-1", tool_call);
@@ -318,8 +317,8 @@ fn tool_call_arguments_chunk(st: &mut StreamState, index: i64, arguments: &str) 
 /// An OpenAI `tool_calls` entry from a `function_call` step; `fallback_args` is used when the step
 /// has no `arguments`.
 pub(super) fn tool_call_from_interactions(step: &Res<'_>, fallback_args: &Res<'_>, for_antigravity: bool) -> Value {
-    let mut tool_call = tmpl(r#"{"id":"","type":"function","function":{"name":"","arguments":"{}"}}"#);
-    let call_id = first_non_empty(&[&step.g("call_id").str(), &step.g("id").str(), "call_0"]);
+    let mut tool_call = cpa_json::parse_str(r#"{"id":"","type":"function","function":{"name":"","arguments":"{}"}}"#);
+    let call_id = first_non_blank(&[&step.g("call_id").str(), &step.g("id").str(), "call_0"]);
     cpa_json::set(&mut tool_call, "id", call_id);
     let mut name = step.g("name").str();
     if for_antigravity {
@@ -364,7 +363,7 @@ fn content_texts(content: &Res<'_>) -> Vec<String> {
     }
     let mut out = Vec::new();
     content.for_each(|_, part| {
-        let text = first_non_empty(&[&part.g("text").str(), &part.g("content.text").str()]);
+        let text = first_non_blank(&[&part.g("text").str(), &part.g("content.text").str()]);
         if !text.is_empty() {
             out.push(text);
         }
