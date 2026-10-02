@@ -421,4 +421,98 @@ mod tests {
         apply_routing_hint(&mut api, &api_key_auth(), "gpt-5", b"{}", &HeaderMap::new(), None);
         assert!(api.is_empty());
     }
+
+    fn ws_headers(auth: &Auth, token: &str, cfg: &Config, native: bool, client: &HeaderMap, initial: HeaderMap) -> HeaderMap {
+        let mut headers = initial;
+        apply_websocket_headers(&mut headers, auth, token, cfg, native, client, None);
+        headers
+    }
+
+    fn client(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            set_header(&mut h, k, v);
+        }
+        h
+    }
+
+    #[test]
+    fn websocket_cloaking_overrides_custom_existing_and_client_identity() {
+        let mut cfg = Config::default();
+        cfg.codex_header_defaults.user_agent = "config-ua".into();
+        for mut auth in [oauth_auth(), api_key_auth()] {
+            auth.attributes.insert("header:User-Agent".into(), "custom-ua".into());
+            auth.attributes.insert("header:Originator".into(), "custom-origin".into());
+            let initial = client(&[("User-Agent", "existing-ua"), ("Originator", "existing-origin")]);
+            let headers = ws_headers(&auth, "tok", &cfg, false, &client(&[("User-Agent", "client-ua")]), initial);
+            assert_eq!(header_value(&headers, "user-agent"), USER_AGENT);
+            assert_eq!(header_value(&headers, "originator"), ORIGINATOR);
+        }
+    }
+
+    #[test]
+    fn websocket_native_requests_forward_client_session_headers_when_cloaking_is_disabled() {
+        let mut cfg = Config::default();
+        cfg.codex.disable_codex_cloaking = true;
+        let c = client(&[
+            ("Originator", "Codex Desktop"),
+            ("User-Agent", "codex_cli_rs/0.1.0"),
+            ("session-id", "legacy-session"),
+            ("Thread-Id", "thread-1"),
+            ("X-Codex-Routing-Hint", "route-1"),
+            ("X-Codex-Window-Id", "window-1"),
+        ]);
+        let headers = ws_headers(&oauth_auth(), "", &cfg, true, &c, websocket_cache_headers("cache-key"));
+        assert_eq!(header_value(&headers, "originator"), "Codex Desktop");
+        assert_eq!(header_value(&headers, "user-agent"), "codex_cli_rs/0.1.0");
+        assert!(headers.get("session_id").is_none() && headers.get("conversation_id").is_none());
+        for (key, want) in [("session-id", "legacy-session"), ("thread-id", "thread-1"), ("x-codex-routing-hint", "route-1"), ("x-codex-window-id", "window-1")] {
+            assert_eq!(header_value(&headers, key), want, "{key}");
+        }
+        // Without client session headers nothing is synthesized from the cache aliases.
+        let headers = ws_headers(&oauth_auth(), "", &cfg, true, &HeaderMap::new(), websocket_cache_headers("cache-key"));
+        assert!(headers.get("session_id").is_none() && headers.get("session-id").is_none());
+    }
+
+    #[test]
+    fn websocket_user_agent_precedence_and_api_key_scope() {
+        let mut cfg = Config::default();
+        cfg.codex.disable_codex_cloaking = true;
+        cfg.codex_header_defaults.user_agent = "config-ua".into();
+        cfg.codex_header_defaults.beta_features = "config-beta".into();
+        let c = client(&[("User-Agent", "client-ua"), ("X-Codex-Beta-Features", "client-beta")]);
+        // Config user agent beats the client; the client beta beats the config default.
+        let headers = ws_headers(&oauth_auth(), "", &cfg, false, &c, HeaderMap::new());
+        assert_eq!(header_value(&headers, "user-agent"), "config-ua");
+        assert_eq!(header_value(&headers, "x-codex-beta-features"), "client-beta");
+        // Existing headers beat both.
+        let existing = client(&[("User-Agent", "existing-ua"), ("X-Codex-Beta-Features", "existing-beta")]);
+        let headers = ws_headers(&oauth_auth(), "", &cfg, false, &c, existing);
+        assert_eq!((header_value(&headers, "user-agent").as_str(), header_value(&headers, "x-codex-beta-features").as_str()), ("existing-ua", "existing-beta"));
+        // API-key credentials ignore the config defaults and get no Originator of their own.
+        let headers = ws_headers(&api_key_auth(), "sk-1", &cfg, false, &HeaderMap::new(), HeaderMap::new());
+        assert!(headers.get("user-agent").is_none() && headers.get("x-codex-beta-features").is_none() && headers.get("originator").is_none());
+        let explicit = client(&[("User-Agent", "api-key-client/1.0"), ("Originator", "explicit-origin")]);
+        let headers = ws_headers(&api_key_auth(), "sk-1", &cfg, false, &explicit, HeaderMap::new());
+        assert_eq!((header_value(&headers, "user-agent").as_str(), header_value(&headers, "originator").as_str()), ("api-key-client/1.0", "explicit-origin"));
+    }
+
+    #[test]
+    fn websocket_legacy_underscore_session_header_is_canonicalized() {
+        let mut cfg = Config::default();
+        cfg.codex.disable_codex_cloaking = true;
+        let headers = ws_headers(&oauth_auth(), "", &cfg, false, &client(&[("Session_id", "legacy-underscore-session")]), HeaderMap::new());
+        assert_eq!(header_value(&headers, "session_id"), "legacy-underscore-session");
+        assert!(headers.get("session-id").is_none());
+    }
+
+    #[test]
+    fn empty_token_omits_authorization_and_api_key_requests_carry_no_oauth_headers() {
+        let cfg = Config::default();
+        let mut headers = HeaderMap::new();
+        apply_codex_headers(&mut headers, &api_key_auth(), "  ", true, &cfg, &HeaderMap::new(), None);
+        assert!(headers.get("authorization").is_none() && headers.get("chatgpt-account-id").is_none());
+        let headers = ws_headers(&api_key_auth(), "", &cfg, false, &HeaderMap::new(), HeaderMap::new());
+        assert!(headers.get("authorization").is_none() && headers.get("chatgpt-account-id").is_none());
+    }
 }

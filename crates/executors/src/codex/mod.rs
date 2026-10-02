@@ -27,6 +27,9 @@ mod terminal;
 mod tool_schema;
 mod ws;
 
+#[cfg(test)]
+mod tests;
+
 use std::sync::Arc;
 
 use async_trait::async_trait;
