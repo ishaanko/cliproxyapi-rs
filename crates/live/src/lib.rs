@@ -13,7 +13,7 @@ mod call;
 mod capabilities;
 mod client_secret;
 mod go_json;
-pub mod http;
+pub mod endpoints;
 mod log;
 mod media;
 mod multipart;
