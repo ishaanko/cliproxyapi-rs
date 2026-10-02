@@ -16,12 +16,12 @@ use tokio::sync::oneshot;
 
 use super::claude_tokens::ClaudeInputTokenState;
 use super::wire::{
-    ConnectFrameReader, FrameError, FrameResult, ToolCallDelta, Usage, Utf8SplitBuffer, go_lossy, parse_frame,
-    parse_response_dimension_groups, parse_trailer_error, CONNECT_FLAG_END_STREAM,
+    CONNECT_FLAG_END_STREAM, ConnectFrameReader, FrameError, FrameResult, ToolCallDelta, Usage,
+    Utf8SplitBuffer, go_lossy, parse_frame, parse_response_dimension_groups, parse_trailer_error,
 };
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream, initialize_apply_patch_stream,
-    is_apply_patch_upstream_tool, record_apply_patch_stream_failure,
+    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream,
+    initialize_apply_patch_stream, is_apply_patch_upstream_tool, record_apply_patch_stream_failure,
 };
 use crate::helps::status::status_err;
 use crate::helps::usage::{UsageReporter, parse_interactions_stream_usage};
@@ -111,17 +111,41 @@ fn merge_dimension_groups(final_usage: &mut Option<Usage>, groups: &[Vec<u8>]) {
 fn set_usage(target: &mut Value, prefix: &str, usage: &Usage) {
     let total_input = usage.prompt_tokens + usage.cached_tokens;
     let total_output = usage.completion_tokens;
-    cpa_json::set(target, &format!("{prefix}usage.total_input_tokens"), total_input);
-    cpa_json::set(target, &format!("{prefix}usage.total_output_tokens"), total_output);
-    cpa_json::set(target, &format!("{prefix}usage.total_cached_tokens"), usage.cached_tokens);
+    cpa_json::set(
+        target,
+        &format!("{prefix}usage.total_input_tokens"),
+        total_input,
+    );
+    cpa_json::set(
+        target,
+        &format!("{prefix}usage.total_output_tokens"),
+        total_output,
+    );
+    cpa_json::set(
+        target,
+        &format!("{prefix}usage.total_cached_tokens"),
+        usage.cached_tokens,
+    );
     if usage.cache_write_tokens > 0 {
-        cpa_json::set(target, &format!("{prefix}usage.cache_write_tokens"), usage.cache_write_tokens);
+        cpa_json::set(
+            target,
+            &format!("{prefix}usage.cache_write_tokens"),
+            usage.cache_write_tokens,
+        );
     }
-    cpa_json::set(target, &format!("{prefix}usage.total_tokens"), total_input + total_output);
+    cpa_json::set(
+        target,
+        &format!("{prefix}usage.total_tokens"),
+        total_input + total_output,
+    );
 }
 
 fn arguments_chunk(tc: &ToolCallDelta) -> &str {
-    if tc.arguments.is_empty() { &tc.invalid_json_str } else { &tc.arguments }
+    if tc.arguments.is_empty() {
+        &tc.invalid_json_str
+    } else {
+        &tc.arguments
+    }
 }
 
 // ------------------------------------------------------------------ streaming
@@ -222,7 +246,11 @@ impl StreamState {
             return self.send_chunk(frame).await;
         }
         let lines = self.translate(&raw);
-        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &apply_patch_gateway_error());
+        record_apply_patch_stream_failure(
+            &self.param,
+            &self.p.reporter,
+            &apply_patch_gateway_error(),
+        );
         for line in lines {
             if !self.send_chunk(line).await {
                 return false;
@@ -240,7 +268,11 @@ impl StreamState {
     /// `end_apply_patch_stream`, which cannot run on a spawned task (its future borrows the translator state across an await).
     async fn end_apply_patch(&mut self) -> bool {
         let chunks = finalize_apply_patch_stream(&mut self.param);
-        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &apply_patch_gateway_error());
+        record_apply_patch_stream_failure(
+            &self.param,
+            &self.p.reporter,
+            &apply_patch_gateway_error(),
+        );
         for chunk in chunks {
             if !self.send_chunk(chunk).await {
                 return true;
@@ -278,12 +310,16 @@ impl StreamState {
     }
 
     async fn stop_step(&mut self, index: i64) -> bool {
-        self.emit(json!({"event_type": "step.stop", "index": index})).await
+        self.emit(json!({"event_type": "step.stop", "index": index}))
+            .await
     }
 
     async fn start_model_output(&mut self) -> bool {
         let idx = self.step_index;
-        self.emit(json!({"event_type": "step.start", "index": idx, "step": {"type": "model_output"}})).await
+        self.emit(
+            json!({"event_type": "step.start", "index": idx, "step": {"type": "model_output"}}),
+        )
+        .await
     }
 
     async fn text_delta(&mut self, text: &str) -> bool {
@@ -297,7 +333,9 @@ impl StreamState {
     async fn start_thought(&mut self) -> bool {
         self.thought_step_index = self.step_index;
         let idx = self.step_index;
-        let ok = self.emit(json!({"event_type": "step.start", "index": idx, "step": {"type": "thought"}})).await;
+        let ok = self
+            .emit(json!({"event_type": "step.start", "index": idx, "step": {"type": "thought"}}))
+            .await;
         self.thought_started = true;
         ok
     }
@@ -327,7 +365,11 @@ impl StreamState {
 
     async fn emit_content_chunk(&mut self, chunk: &str) -> bool {
         if self.thought_started {
-            let stop_idx = if self.thought_step_index < 0 { self.step_index } else { self.thought_step_index };
+            let stop_idx = if self.thought_step_index < 0 {
+                self.step_index
+            } else {
+                self.thought_step_index
+            };
             if !self.stop_step(stop_idx).await {
                 return false;
             }
@@ -374,23 +416,38 @@ impl StreamState {
         }
 
         let args_chunk = arguments_chunk(&tc).to_string();
-        let found = if !tc.id.is_empty() { self.active_call_by_id.get(&tc.id).copied() } else { self.active_call_slot };
+        let found = if !tc.id.is_empty() {
+            self.active_call_by_id.get(&tc.id).copied()
+        } else {
+            self.active_call_slot
+        };
 
         let slot_index = match found {
             None => {
                 if self.tool_call_count >= MAX_TOOL_CALLS {
-                    tracing::warn!("devin executor: total tool calls exceeded max {MAX_TOOL_CALLS}, dropping");
+                    tracing::warn!(
+                        "devin executor: total tool calls exceeded max {MAX_TOOL_CALLS}, dropping"
+                    );
                     return true;
                 }
                 self.tool_call_count += 1;
                 let s_idx = self.step_index;
                 self.step_index += 1;
-                self.active_tool_slots.insert(s_idx, ToolSlot { id: tc.id.clone(), name: tc.name.clone() });
+                self.active_tool_slots.insert(
+                    s_idx,
+                    ToolSlot {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                    },
+                );
                 if !tc.id.is_empty() {
                     self.active_call_by_id.insert(tc.id.clone(), s_idx);
                 }
                 self.active_call_slot = Some(s_idx);
-                if !self.emit(Self::tool_start_event(s_idx, &tc.name, &tc.id)).await {
+                if !self
+                    .emit(Self::tool_start_event(s_idx, &tc.name, &tc.id))
+                    .await
+                {
                     return false;
                 }
                 s_idx
@@ -486,8 +543,12 @@ pub async fn stream_frames<S, E>(
     E: std::fmt::Display,
 {
     p.reporter.set_upstream_model(&p.chat_model_uid);
-    let claude_tokens =
-        ClaudeInputTokenState::new(p.source_format, Format::Interactions, p.response_format, &p.client_original);
+    let claude_tokens = ClaudeInputTokenState::new(
+        p.source_format,
+        Format::Interactions,
+        p.response_format,
+        &p.client_original,
+    );
     let mut param = Param::default();
     initialize_apply_patch_stream(
         Format::Interactions,
@@ -547,8 +608,13 @@ pub async fn stream_frames<S, E>(
                 }
                 let err = status_err(trailer.status, trailer.message.clone());
                 st.p.reporter.publish_failure(&err);
-                tracing::warn!("devin executor: trailer error ({}): {}", trailer.status, trailer.message);
-                st.send_failed_event(&trailer.message, &trailer.status.to_string()).await;
+                tracing::warn!(
+                    "devin executor: trailer error ({}): {}",
+                    trailer.status,
+                    trailer.message
+                );
+                st.send_failed_event(&trailer.message, &trailer.status.to_string())
+                    .await;
                 st.emit_stream_error(err).await;
                 return;
             }
@@ -556,7 +622,9 @@ pub async fn stream_frames<S, E>(
             break;
         }
 
-        let Ok(res) = parse_frame(&frame.payload) else { continue };
+        let Ok(res) = parse_frame(&frame.payload) else {
+            continue;
+        };
         if res.stop_reason != 0 {
             last_stop_reason = res.stop_reason;
         }
@@ -573,9 +641,7 @@ pub async fn stream_frames<S, E>(
         }
     }
 
-    if (!saw_eos || stream_err.is_some())
-        && st.end_apply_patch().await
-    {
+    if (!saw_eos || stream_err.is_some()) && st.end_apply_patch().await {
         return;
     }
     // 2. Close open steps.
@@ -691,7 +757,11 @@ async fn handle_frame(
             "delta": {"type": "thought_signature", "signature": go_lossy(&res.delta_signature)},
         });
         if !res.delta_signature_type.is_empty() {
-            cpa_json::set(&mut sig, "delta.signature_type", res.delta_signature_type.as_str());
+            cpa_json::set(
+                &mut sig,
+                "delta.signature_type",
+                res.delta_signature_type.as_str(),
+            );
         }
         if !st.emit(sig).await {
             return false;
@@ -778,7 +848,9 @@ where
             saw_eos = true;
             break;
         }
-        let Ok(res) = parse_frame(&frame.payload) else { continue };
+        let Ok(res) = parse_frame(&frame.payload) else {
+            continue;
+        };
         if res.stop_reason != 0 {
             last_stop_reason = res.stop_reason;
         }
@@ -793,11 +865,17 @@ where
         }
         for tc in &res.tool_call_deltas {
             let chunk = arguments_chunk(tc);
-            let found = if !tc.id.is_empty() { call_id_to_builder.get(&tc.id).copied() } else { last_builder };
+            let found = if !tc.id.is_empty() {
+                call_id_to_builder.get(&tc.id).copied()
+            } else {
+                last_builder
+            };
             let idx = match found {
                 None => {
                     if builders.len() >= MAX_TOOL_CALLS {
-                        tracing::warn!("devin executor: total tool calls exceeded max {MAX_TOOL_CALLS}, dropping");
+                        tracing::warn!(
+                            "devin executor: total tool calls exceeded max {MAX_TOOL_CALLS}, dropping"
+                        );
                         continue;
                     }
                     let idx = builders.len();
@@ -849,7 +927,9 @@ where
         }
     }
     if !saw_eos {
-        return Err(plain_error("devin upstream stream terminated prematurely before EOS trailer"));
+        return Err(plain_error(
+            "devin upstream stream terminated prematurely before EOS trailer",
+        ));
     }
 
     let (status, finish_reason) = completion_status(last_stop_reason);
@@ -881,7 +961,10 @@ where
     if have_pre {
         steps.push(json!({"type": "model_output", "content": [{"type": "text", "text": go_lossy(&pre_tool_text)}]}));
     }
-    for b in builders.iter().filter(|b| !(b.id.is_empty() && b.name.is_empty() && b.args.is_empty())) {
+    for b in builders
+        .iter()
+        .filter(|b| !(b.id.is_empty() && b.name.is_empty() && b.args.is_empty()))
+    {
         let mut step = json!({"type": "function_call", "name": b.name, "id": b.id, "call_id": b.id, "arguments": {}});
         if !b.args.is_empty() {
             // Valid JSON arguments are embedded as JSON, anything else stays a string.
@@ -905,11 +988,16 @@ where
     if let Some(u) = &final_usage {
         set_usage(&mut out, "", u);
     }
-    Ok(Consumed { interactions: out, usage: final_usage })
+    Ok(Consumed {
+        interactions: out,
+        usage: final_usage,
+    })
 }
 
 /// Collects a whole byte slice as a single-chunk body (tests and small mock bodies).
-pub fn single_chunk_body(bytes: Vec<u8>) -> impl Stream<Item = Result<Bytes, std::convert::Infallible>> + Unpin {
+pub fn single_chunk_body(
+    bytes: Vec<u8>,
+) -> impl Stream<Item = Result<Bytes, std::convert::Infallible>> + Unpin {
     futures_util::stream::iter(vec![Ok(Bytes::from(bytes))])
 }
 

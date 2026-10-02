@@ -29,7 +29,11 @@ impl SensitiveWordMatcher {
         valid.sort_by_key(|w| std::cmp::Reverse(w.len()));
         let pattern = format!(
             "(?i){}",
-            valid.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|")
+            valid
+                .iter()
+                .map(|w| regex::escape(w))
+                .collect::<Vec<_>>()
+                .join("|")
         );
         Regex::new(&pattern).ok().map(|regex| Self { regex })
     }

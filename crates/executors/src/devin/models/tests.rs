@@ -29,9 +29,18 @@ fn catalog_thinking_models_resolve_to_effort_variants() {
             let resolved = resolve_chat_model_uid(&format!("devin/{base}"), effort, 0);
             assert!(!resolved.is_empty(), "{base} {effort}");
             let has_levels = m.thinking.as_ref().is_some_and(|t| !t.levels.is_empty());
-            let exempt = ["swe-1-7", "glm-5-2", "glm-5-2-1m", "swe-1-6-slow", "model_claude_4_5_opus"];
+            let exempt = [
+                "swe-1-7",
+                "glm-5-2",
+                "glm-5-2-1m",
+                "swe-1-6-slow",
+                "model_claude_4_5_opus",
+            ];
             if has_levels && !exempt.contains(&base) {
-                assert!(has_effort_suffix(&resolved), "{base} with {effort:?} resolved to bare {resolved}");
+                assert!(
+                    has_effort_suffix(&resolved),
+                    "{base} with {effort:?} resolved to bare {resolved}"
+                );
             }
         }
     }
@@ -39,8 +48,21 @@ fn catalog_thinking_models_resolve_to_effort_variants() {
 
 #[test]
 fn budget_maps_to_effort_buckets() {
-    for (budget, want) in [(1, "low"), (4096, "low"), (4097, "medium"), (16384, "medium"), (16385, "high"), (32768, "high"), (32769, "max"), (0, "")] {
-        assert_eq!(normalize_thinking_level("", budget), want, "budget {budget}");
+    for (budget, want) in [
+        (1, "low"),
+        (4096, "low"),
+        (4097, "medium"),
+        (16384, "medium"),
+        (16385, "high"),
+        (32768, "high"),
+        (32769, "max"),
+        (0, ""),
+    ] {
+        assert_eq!(
+            normalize_thinking_level("", budget),
+            want,
+            "budget {budget}"
+        );
     }
     assert_eq!(normalize_thinking_level(" Adaptive ", 0), "high");
     assert_eq!(normalize_thinking_level("OFF", 100), "none");

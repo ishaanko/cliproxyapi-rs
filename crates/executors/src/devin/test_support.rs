@@ -12,8 +12,9 @@ use serde_json::Value;
 
 use super::wire::{Image, Prompt, Tool, ToolCall};
 
-static GOLDEN: LazyLock<Value> =
-    LazyLock::new(|| serde_json::from_str(include_str!("testdata/golden.json")).expect("golden.json parses"));
+static GOLDEN: LazyLock<Value> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("testdata/golden.json")).expect("golden.json parses")
+});
 
 pub fn golden() -> &'static Value {
     &GOLDEN
@@ -33,14 +34,23 @@ pub fn prompt_from_json(p: &Value) -> Prompt {
         images: p["images"]
             .as_array()
             .map(|a| {
-                a.iter().map(|i| Image { base64_data: s(&i["base64_data"]), mime_type: s(&i["mime_type"]) }).collect()
+                a.iter()
+                    .map(|i| Image {
+                        base64_data: s(&i["base64_data"]),
+                        mime_type: s(&i["mime_type"]),
+                    })
+                    .collect()
             })
             .unwrap_or_default(),
         tool_calls: p["tool_calls"]
             .as_array()
             .map(|a| {
                 a.iter()
-                    .map(|t| ToolCall { id: s(&t["id"]), name: s(&t["name"]), arguments: s(&t["arguments"]) })
+                    .map(|t| ToolCall {
+                        id: s(&t["id"]),
+                        name: s(&t["name"]),
+                        arguments: s(&t["arguments"]),
+                    })
                     .collect()
             })
             .unwrap_or_default(),
@@ -48,13 +58,19 @@ pub fn prompt_from_json(p: &Value) -> Prompt {
         original_tool_call_id: s(&p["original_tool_call_id"]),
         is_orphaned_tool: p["is_orphaned_tool"].as_bool().unwrap_or(false),
         thinking: s(&p["thinking"]),
-        signature: base64::engine::general_purpose::STANDARD.decode(s(&p["signature_b64"])).unwrap_or_default(),
+        signature: base64::engine::general_purpose::STANDARD
+            .decode(s(&p["signature_b64"]))
+            .unwrap_or_default(),
         signature_type: s(&p["signature_type"]),
     }
 }
 
 pub fn tool_from_json(t: &Value) -> Tool {
-    Tool { name: s(&t["name"]), description: s(&t["description"]), parameters: s(&t["parameters"]).into_bytes() }
+    Tool {
+        name: s(&t["name"]),
+        description: s(&t["description"]),
+        parameters: s(&t["parameters"]).into_bytes(),
+    }
 }
 
 /// Masks per-run random values of Go and Rust outputs (interaction ids, timestamps) and the
@@ -63,8 +79,10 @@ pub fn tool_from_json(t: &Value) -> Tool {
 /// character (the JSON values are identical).
 pub fn normalize(text: &str) -> String {
     use regex::Regex;
-    static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"interaction_[0-9a-f]{8}-[0-9a-f]{3}").expect("regex"));
-    static CREATED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""created":\d+"#).expect("regex"));
+    static ID: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"interaction_[0-9a-f]{8}-[0-9a-f]{3}").expect("regex"));
+    static CREATED: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#""created":\d+"#).expect("regex"));
     static GZIP: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"(decompress gzip connect frame:)[^\n]*").expect("regex"));
     let text = GZIP.replace_all(text, "$1");

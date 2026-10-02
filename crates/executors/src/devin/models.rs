@@ -116,7 +116,12 @@ pub fn resolve_chat_model_uid(raw_model: &str, thinking_level: &str, budget_toke
         return (*alias).into();
     }
     if canonical == "claude-sonnet-4-5" || canonical.contains("sonnet-4-5") {
-        return if !effort.is_empty() && effort != "none" { "MODEL_PRIVATE_3" } else { "MODEL_PRIVATE_2" }.into();
+        return if !effort.is_empty() && effort != "none" {
+            "MODEL_PRIVATE_3"
+        } else {
+            "MODEL_PRIVATE_2"
+        }
+        .into();
     }
     if canonical == "gemini-3-flash" {
         canonical = "gemini-3-8-flash".into();
@@ -155,8 +160,22 @@ pub fn resolve_chat_model_uid(raw_model: &str, thinking_level: &str, budget_toke
     // 7. Base models that stay bare unless a specific variant is requested.
     let thinking_on = !effort.is_empty() && effort != "none";
     match canonical.as_str() {
-        "swe-1-7" => return if effort == "medium" { "swe-1-7-medium" } else { "swe-1-7" }.into(),
-        "swe-1-6" => return if effort == "fast" { "swe-1-6-fast" } else { "swe-1-6" }.into(),
+        "swe-1-7" => {
+            return if effort == "medium" {
+                "swe-1-7-medium"
+            } else {
+                "swe-1-7"
+            }
+            .into();
+        }
+        "swe-1-6" => {
+            return if effort == "fast" {
+                "swe-1-6-fast"
+            } else {
+                "swe-1-6"
+            }
+            .into();
+        }
         "glm-5-2" => {
             return match effort.as_str() {
                 "none" => "glm-5-2-none",
@@ -174,13 +193,25 @@ pub fn resolve_chat_model_uid(raw_model: &str, thinking_level: &str, budget_toke
             .into();
         }
         "claude-opus-4-6" | "claude-sonnet-4-6" => {
-            return if thinking_on { format!("{canonical}-thinking") } else { canonical };
+            return if thinking_on {
+                format!("{canonical}-thinking")
+            } else {
+                canonical
+            };
         }
         "claude-opus-4-6-1m" => {
-            return if thinking_on { "claude-opus-4-6-thinking-1m".into() } else { canonical };
+            return if thinking_on {
+                "claude-opus-4-6-thinking-1m".into()
+            } else {
+                canonical
+            };
         }
         "claude-sonnet-4-6-1m" => {
-            return if thinking_on { "claude-sonnet-4-6-thinking-1m".into() } else { canonical };
+            return if thinking_on {
+                "claude-sonnet-4-6-thinking-1m".into()
+            } else {
+                canonical
+            };
         }
         _ => {}
     }
@@ -230,12 +261,15 @@ fn level_index(level: &str) -> Option<usize> {
 
 /// The supported level closest to `requested` (ties prefer the higher effort); `default` when
 /// nothing was requested or the request is unrecognized.
-fn clamp_effort<'a>(requested: &str, allowed: &[&'a str], default: &str) -> String {
+fn clamp_effort(requested: &str, allowed: &[&str], default: &str) -> String {
     if requested.is_empty() {
         return default.to_string();
     }
     let req_lower = requested.trim().to_lowercase();
-    if let Some(a) = allowed.iter().find(|a| a.trim().to_lowercase() == req_lower) {
+    if let Some(a) = allowed
+        .iter()
+        .find(|a| a.trim().to_lowercase() == req_lower)
+    {
         return (*a).to_string();
     }
     if req_lower == "none" {
@@ -248,7 +282,9 @@ fn clamp_effort<'a>(requested: &str, allowed: &[&'a str], default: &str) -> Stri
     let mut best_dist = 999usize;
     let mut best_idx: Option<usize> = None;
     for a in allowed {
-        let Some(a_idx) = level_index(a) else { continue };
+        let Some(a_idx) = level_index(a) else {
+            continue;
+        };
         let dist = req_idx.abs_diff(a_idx);
         if dist < best_dist {
             best_dist = dist;

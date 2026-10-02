@@ -133,7 +133,10 @@ mod tests {
         }
         // Eleven continuation bytes and a 10th byte above 1 both overflow.
         assert_eq!(get_varint(&[0xff; 11]), None);
-        assert_eq!(get_varint(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02]), None);
+        assert_eq!(
+            get_varint(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x02]),
+            None
+        );
         assert_eq!(get_varint(&[0x80]), None);
     }
 

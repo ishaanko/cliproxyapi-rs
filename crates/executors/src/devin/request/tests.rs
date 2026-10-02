@@ -38,13 +38,22 @@ fn parsed_json(p: &ParsedPayload) -> Value {
 fn interactions_payload_parsing_matches_go() {
     for case in golden()["parse"].as_array().unwrap() {
         let name = case["name"].as_str().unwrap();
-        let parsed =
-            parse_interactions_payload(case["payload"].as_str().unwrap().as_bytes(), case["original"].as_str().unwrap().as_bytes());
+        let parsed = parse_interactions_payload(
+            case["payload"].as_str().unwrap().as_bytes(),
+            case["original"].as_str().unwrap().as_bytes(),
+        );
         // Message ids are random in both implementations: the golden blanks them, so must we, but
         // each prompt must have received one.
-        assert!(parsed.prompts.iter().all(|p| !p.message_id.is_empty()), "case {name}");
+        assert!(
+            parsed.prompts.iter().all(|p| !p.message_id.is_empty()),
+            "case {name}"
+        );
         // Temperatures compare numerically (Go prints 0, serde keeps 0.0 for a float zero).
-        assert_eq!(parsed.temperature, case["out"]["temperature"].as_f64(), "case {name}");
+        assert_eq!(
+            parsed.temperature,
+            case["out"]["temperature"].as_f64(),
+            "case {name}"
+        );
         let mut want = case["out"].clone();
         want.as_object_mut().unwrap().remove("temperature");
         assert_eq!(parsed_json(&parsed), want, "case {name}");
@@ -56,9 +65,19 @@ fn signature_classification_matches_go() {
     for case in golden()["sigs"].as_array().unwrap() {
         let input = case["in"].as_str().unwrap();
         let (bytes, ty) = parse_signature_bytes(input);
-        let want_bytes = base64::engine::general_purpose::STANDARD.decode(case["bytes_b64"].as_str().unwrap()).unwrap();
-        assert_eq!((bytes, ty.as_str()), (want_bytes, case["type"].as_str().unwrap()), "signature {input:?}");
-        assert_eq!(detect_signature_type(input), case["detect"].as_str().unwrap(), "signature {input:?}");
+        let want_bytes = base64::engine::general_purpose::STANDARD
+            .decode(case["bytes_b64"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            (bytes, ty.as_str()),
+            (want_bytes, case["type"].as_str().unwrap()),
+            "signature {input:?}"
+        );
+        assert_eq!(
+            detect_signature_type(input),
+            case["detect"].as_str().unwrap(),
+            "signature {input:?}"
+        );
     }
 }
 
@@ -66,7 +85,11 @@ fn signature_classification_matches_go() {
 fn session_ids_normalize_like_go() {
     for case in golden()["uuids"].as_array().unwrap() {
         let input = case["in"].as_str().unwrap();
-        assert_eq!(normalize_uuid(input), case["out"].as_str().unwrap(), "input {input:?}");
+        assert_eq!(
+            normalize_uuid(input),
+            case["out"].as_str().unwrap(),
+            "input {input:?}"
+        );
     }
     // Blank input gets a fresh random UUID.
     assert!(Uuid::parse_str(&normalize_uuid("  ")).is_ok());
@@ -75,7 +98,8 @@ fn session_ids_normalize_like_go() {
 #[test]
 fn session_resolution_prefers_payload_then_context_then_canonical() {
     let canonical = || "canonical-session".to_string();
-    let (s, c) = resolve_session_and_cascade_ids("payload-session", "payload-session", "ctx", canonical);
+    let (s, c) =
+        resolve_session_and_cascade_ids("payload-session", "payload-session", "ctx", canonical);
     assert_eq!((s.clone(), c), (normalize_uuid("payload-session"), s));
     let (s, _) = resolve_session_and_cascade_ids("", "", " ctx-session ", canonical);
     assert_eq!(s, normalize_uuid("ctx-session"));

@@ -10,7 +10,9 @@ use std::sync::LazyLock;
 
 use bytes::{Buf, Bytes, BytesMut};
 use cpa_core::util::is_claude_code_attribution_system_text;
-use cpa_translator::common::{is_devin_codex_app_automation_update, sanitize_devin_tool_description};
+use cpa_translator::common::{
+    is_devin_codex_app_automation_update, sanitize_devin_tool_description,
+};
 use futures_util::{Stream, StreamExt};
 use rand::RngCore;
 
@@ -145,7 +147,8 @@ pub fn generate_sentry_trace() -> String {
 
 type TurnCounters = BoundedLru<String, std::sync::Arc<std::sync::atomic::AtomicU64>>;
 
-static SESSION_TURNS: LazyLock<TurnCounters> = LazyLock::new(|| BoundedLru::new(MAX_SESSION_TURN_COUNTERS));
+static SESSION_TURNS: LazyLock<TurnCounters> =
+    LazyLock::new(|| BoundedLru::new(MAX_SESSION_TURN_COUNTERS));
 
 /// Next 0-based request ordinal of a session (field 15.2): 0 on the first request (omitted on the
 /// wire), then 1, 2, ... Blank session ids always yield 0.
@@ -215,7 +218,11 @@ where
     E: std::fmt::Display,
 {
     pub fn new(stream: S) -> Self {
-        Self { stream, buf: BytesMut::new(), eof: false }
+        Self {
+            stream,
+            buf: BytesMut::new(),
+            eof: false,
+        }
     }
 
     /// Pulls from the stream until `buf` holds `want` bytes. `Ok(false)` on end of body.
@@ -236,7 +243,11 @@ where
     /// Reads the next frame. A clean end of body is [`FrameError::Eof`].
     pub async fn read_frame(&mut self) -> Result<ConnectFrame, FrameError> {
         if !self.fill(5).await? {
-            return Err(if self.buf.is_empty() { FrameError::Eof } else { FrameError::UnexpectedEof });
+            return Err(if self.buf.is_empty() {
+                FrameError::Eof
+            } else {
+                FrameError::UnexpectedEof
+            });
         }
         let flag = self.buf[0];
         if !matches!(
@@ -246,9 +257,12 @@ where
                 | CONNECT_FLAG_END_STREAM
                 | CONNECT_FLAG_COMPRESSED_END_STREAM
         ) {
-            return Err(FrameError::Invalid(format!("invalid connect frame flag: 0x{flag:02x}")));
+            return Err(FrameError::Invalid(format!(
+                "invalid connect frame flag: 0x{flag:02x}"
+            )));
         }
-        let length = u32::from_be_bytes([self.buf[1], self.buf[2], self.buf[3], self.buf[4]]) as usize;
+        let length =
+            u32::from_be_bytes([self.buf[1], self.buf[2], self.buf[3], self.buf[4]]) as usize;
         if length > MAX_CONNECT_FRAME_SIZE {
             return Err(FrameError::Invalid(format!(
                 "connect frame length {length} exceeds maximum limit ({MAX_CONNECT_FRAME_SIZE})"
@@ -257,13 +271,20 @@ where
         self.buf.advance(5);
         if length > 0 && !self.fill(length).await? {
             // io.ReadFull: EOF only when nothing of the payload was read.
-            return Err(if self.buf.is_empty() { FrameError::Eof } else { FrameError::UnexpectedEof });
+            return Err(if self.buf.is_empty() {
+                FrameError::Eof
+            } else {
+                FrameError::UnexpectedEof
+            });
         }
         let payload = self.buf.split_to(length).to_vec();
         if flag & CONNECT_FLAG_COMPRESSED == 0 {
             return Ok(ConnectFrame { flag, payload });
         }
-        Ok(ConnectFrame { flag, payload: gunzip_limited(&payload)? })
+        Ok(ConnectFrame {
+            flag,
+            payload: gunzip_limited(&payload)?,
+        })
     }
 }
 
@@ -275,9 +296,15 @@ fn gunzip_limited(payload: &[u8]) -> Result<Vec<u8>, FrameError> {
         Ok(_) => {}
         // GzDecoder reads the header lazily; Go reports that as the "decompress" failure.
         Err(e) if out.is_empty() => {
-            return Err(FrameError::Invalid(format!("decompress gzip connect frame: {e}")));
+            return Err(FrameError::Invalid(format!(
+                "decompress gzip connect frame: {e}"
+            )));
         }
-        Err(e) => return Err(FrameError::Invalid(format!("read decompressed connect frame: {e}"))),
+        Err(e) => {
+            return Err(FrameError::Invalid(format!(
+                "read decompressed connect frame: {e}"
+            )));
+        }
     }
     if out.len() > MAX_DECOMPRESSED_FRAME_SIZE {
         return Err(FrameError::Invalid(format!(
@@ -298,7 +325,11 @@ fn go_os() -> &'static str {
 }
 
 /// Serialized field 1 (ClientMetadata). An empty `os_name` means the host OS.
-pub fn build_client_metadata_bytes(session_token: &str, device_seed: &str, os_name: &str) -> Vec<u8> {
+pub fn build_client_metadata_bytes(
+    session_token: &str,
+    device_seed: &str,
+    os_name: &str,
+) -> Vec<u8> {
     let os_name = if os_name.is_empty() { go_os() } else { os_name };
     let mut b = Vec::new();
     pb::put_str(&mut b, 1, DEFAULT_CLIENT_NAME);
@@ -347,12 +378,29 @@ fn prepare_tool_description(name: &str, description: &str) -> String {
 
 /// Encodes a whole `GetChatMessageRequest` protobuf payload (no Connect envelope).
 pub fn build_get_chat_message_request(req: &ChatRequest<'_>) -> Vec<u8> {
-    let max_tokens = if req.max_tokens <= 0 { DEFAULT_MAX_TOKENS } else { req.max_tokens };
-    let session_id = if req.session_id.is_empty() { new_uuid() } else { req.session_id.to_string() };
-    let cascade_id = if req.cascade_id.is_empty() { session_id.as_str() } else { req.cascade_id };
+    let max_tokens = if req.max_tokens <= 0 {
+        DEFAULT_MAX_TOKENS
+    } else {
+        req.max_tokens
+    };
+    let session_id = if req.session_id.is_empty() {
+        new_uuid()
+    } else {
+        req.session_id.to_string()
+    };
+    let cascade_id = if req.cascade_id.is_empty() {
+        session_id.as_str()
+    } else {
+        req.cascade_id
+    };
 
     let mut out = Vec::with_capacity(
-        4096 + req.system_prompt.len() + req.prompts.iter().map(|p| 256 + p.content.len()).sum::<usize>(),
+        4096 + req.system_prompt.len()
+            + req
+                .prompts
+                .iter()
+                .map(|p| 256 + p.content.len())
+                .sum::<usize>(),
     );
 
     // 1. ClientMetadata
@@ -373,7 +421,11 @@ pub fn build_get_chat_message_request(req: &ChatRequest<'_>) -> Vec<u8> {
     // 3. History prompts
     for p in req.prompts {
         let mut pb_bytes = Vec::new();
-        let msg_id = if p.message_id.is_empty() { new_uuid() } else { p.message_id.clone() };
+        let msg_id = if p.message_id.is_empty() {
+            new_uuid()
+        } else {
+            p.message_id.clone()
+        };
         pb::put_str(&mut pb_bytes, 1, &msg_id);
         let source = if p.source <= 0 { 1 } else { p.source };
         pb::put_varint_field(&mut pb_bytes, 2, source as u64);
@@ -403,7 +455,11 @@ pub fn build_get_chat_message_request(req: &ChatRequest<'_>) -> Vec<u8> {
             let mut img_bytes = Vec::new();
             pb::put_str(&mut img_bytes, 1, data);
             let mime = img.mime_type.trim();
-            pb::put_str(&mut img_bytes, 2, if mime.is_empty() { "image/png" } else { mime });
+            pb::put_str(
+                &mut img_bytes,
+                2,
+                if mime.is_empty() { "image/png" } else { mime },
+            );
             pb::put_bytes(&mut pb_bytes, 10, &img_bytes);
         }
         if !p.thinking.is_empty() {
@@ -459,7 +515,9 @@ pub fn build_get_chat_message_request(req: &ChatRequest<'_>) -> Vec<u8> {
     pb::put_varint_field(&mut f15, 3, 4);
     if let Some(last) = req.prompts.last()
         && last.source == 1
-        && (turn_index == 0 || req.prompts.len() < 2 || req.prompts[req.prompts.len() - 2].source != 1)
+        && (turn_index == 0
+            || req.prompts.len() < 2
+            || req.prompts[req.prompts.len() - 2].source != 1)
     {
         pb::put_varint_field(&mut f15, 4, 14);
     }
@@ -584,7 +642,11 @@ pub fn parse_frame(payload: &[u8]) -> Result<FrameResult, WireError> {
                     _ => res.unknown_field_numbers.push(num as i32),
                 }
             }
-            other => return Err(WireError(format!("unsupported wire type {other} at offset {pos}"))),
+            other => {
+                return Err(WireError(format!(
+                    "unsupported wire type {other} at offset {pos}"
+                )));
+            }
         }
     }
     Ok(res)
@@ -628,12 +690,16 @@ fn parse_timestamp(data: &[u8]) -> u64 {
     let mut pos = 0;
     let mut secs = 0;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         if typ != pb::VARINT {
             break;
         }
-        let Some((v, vn)) = pb::get_varint(&data[pos..]) else { break };
+        let Some((v, vn)) = pb::get_varint(&data[pos..]) else {
+            break;
+        };
         pos += vn;
         if num == 1 {
             secs = v;
@@ -647,10 +713,14 @@ fn parse_header_field(data: &[u8]) -> (String, String) {
     let (mut key, mut val) = (String::new(), String::new());
     let mut pos = 0;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         if typ == pb::BYTES {
-            let Some((b, bn)) = pb::get_bytes(&data[pos..]) else { return (key, val) };
+            let Some((b, bn)) = pb::get_bytes(&data[pos..]) else {
+                return (key, val);
+            };
             pos += bn;
             match num {
                 1 => key = lossy(b),
@@ -658,7 +728,9 @@ fn parse_header_field(data: &[u8]) -> (String, String) {
                 _ => {}
             }
         } else {
-            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else { return (key, val) };
+            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else {
+                return (key, val);
+            };
             pos += skip;
         }
     }
@@ -674,11 +746,15 @@ pub fn parse_usage_field(data: &[u8]) -> Usage {
     let mut u = Usage::default();
     let mut pos = 0;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         match typ {
             pb::VARINT => {
-                let Some((v, vn)) = pb::get_varint(&data[pos..]) else { return u };
+                let Some((v, vn)) = pb::get_varint(&data[pos..]) else {
+                    return u;
+                };
                 pos += vn;
                 match num {
                     2 => u.prompt_tokens = u.prompt_tokens.wrapping_add(v as i64),
@@ -690,19 +766,25 @@ pub fn parse_usage_field(data: &[u8]) -> Usage {
                 }
             }
             pb::BYTES => {
-                let Some((val, bn)) = pb::get_bytes(&data[pos..]) else { return u };
+                let Some((val, bn)) = pb::get_bytes(&data[pos..]) else {
+                    return u;
+                };
                 pos += bn;
                 match num {
                     8 => {
                         let (k, v) = parse_header_field(val);
                         if !k.is_empty() {
-                            if (k.eq_ignore_ascii_case("x-request-id") || k.eq_ignore_ascii_case("request-id"))
+                            if (k.eq_ignore_ascii_case("x-request-id")
+                                || k.eq_ignore_ascii_case("request-id"))
                                 && !v.is_empty()
                             {
                                 u.request_id = v.clone();
                             }
                             u.headers.insert(k, v);
-                        } else if !val.is_empty() && is_printable_ascii(val) && u.request_id.is_empty() {
+                        } else if !val.is_empty()
+                            && is_printable_ascii(val)
+                            && u.request_id.is_empty()
+                        {
                             u.request_id = lossy(val);
                         }
                     }
@@ -711,7 +793,9 @@ pub fn parse_usage_field(data: &[u8]) -> Usage {
                 }
             }
             other => {
-                let Some(skip) = pb::skip_field(num, other, &data[pos..]) else { return u };
+                let Some(skip) = pb::skip_field(num, other, &data[pos..]) else {
+                    return u;
+                };
                 pos += skip;
             }
         }
@@ -768,14 +852,20 @@ fn parse_dimension_group(data: &[u8]) -> (String, Vec<(String, f32)>) {
     let mut metrics = Vec::new();
     let mut pos = 0;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         if typ != pb::BYTES {
-            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else { break };
+            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else {
+                break;
+            };
             pos += skip;
             continue;
         }
-        let Some((gb, gbn)) = pb::get_bytes(&data[pos..]) else { break };
+        let Some((gb, gbn)) = pb::get_bytes(&data[pos..]) else {
+            break;
+        };
         pos += gbn;
         match num {
             1 => title = lossy(gb),
@@ -795,14 +885,20 @@ fn parse_dimension_metric(data: &[u8]) -> (String, f32) {
     let (mut key, mut val) = (String::new(), 0f32);
     let mut pos = 0;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         if typ != pb::BYTES {
-            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else { break };
+            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else {
+                break;
+            };
             pos += skip;
             continue;
         }
-        let Some((mb, mbn)) = pb::get_bytes(&data[pos..]) else { break };
+        let Some((mb, mbn)) = pb::get_bytes(&data[pos..]) else {
+            break;
+        };
         pos += mbn;
         match num {
             5 => key = lossy(mb),
@@ -818,16 +914,22 @@ fn parse_dimension_value(data: &[u8]) -> Option<f32> {
     let mut pos = 0;
     let mut val = None;
     while pos < data.len() {
-        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else { break };
+        let Some((num, typ, n)) = pb::get_tag(&data[pos..]) else {
+            break;
+        };
         pos += n;
         if typ == pb::FIXED32 {
-            let Some(v) = pb::get_fixed32(&data[pos..]) else { break };
+            let Some(v) = pb::get_fixed32(&data[pos..]) else {
+                break;
+            };
             pos += 4;
             if num == 2 {
                 val = Some(f32::from_bits(v));
             }
         } else {
-            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else { break };
+            let Some(skip) = pb::skip_field(num, typ, &data[pos..]) else {
+                break;
+            };
             pos += skip;
         }
     }
@@ -845,12 +947,22 @@ pub struct TrailerError {
 }
 
 /// Case-insensitive object key lookup (encoding/json field matching).
-fn json_field<'a>(obj: &'a serde_json::Map<String, serde_json::Value>, name: &str) -> Option<&'a serde_json::Value> {
-    obj.get(name).or_else(|| obj.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v))
+fn json_field<'a>(
+    obj: &'a serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    obj.get(name).or_else(|| {
+        obj.iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v)
+    })
 }
 
 /// A JSON string field; `Err(())` for a non-string, non-null value (json.Unmarshal type error).
-fn json_string_field(obj: &serde_json::Map<String, serde_json::Value>, name: &str) -> Result<String, ()> {
+fn json_string_field(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    name: &str,
+) -> Result<String, ()> {
     match json_field(obj, name) {
         None | Some(serde_json::Value::Null) => Ok(String::new()),
         Some(serde_json::Value::String(s)) => Ok(s.clone()),
@@ -884,14 +996,19 @@ pub fn parse_trailer_error(payload: &[u8]) -> Option<TrailerError> {
         "canceled" => 499,
         "deadline_exceeded" => 504,
         "failed_precondition"
-            if ["quota", "credit", "acu", "exhausted", "limit"].iter().any(|w| msg_lower.contains(w)) =>
+            if ["quota", "credit", "acu", "exhausted", "limit"]
+                .iter()
+                .any(|w| msg_lower.contains(w)) =>
         {
             429
         }
         "failed_precondition" => 400,
         _ => 502,
     };
-    Some(TrailerError { status, message: format!("devin upstream error ({code}): {message}") })
+    Some(TrailerError {
+        status,
+        message: format!("devin upstream error ({code}): {message}"),
+    })
 }
 
 // ------------------------------------------------------------------ UTF-8 handling

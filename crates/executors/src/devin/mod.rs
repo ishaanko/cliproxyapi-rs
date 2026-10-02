@@ -14,6 +14,9 @@
 //! - [`request`]: interactions payload to prompts/tools/session ids.
 //! - [`stream`]: response frames to interactions events (stream and non-stream).
 
+// ExecError is a large shared error type; every executor returns it by value.
+#![allow(clippy::result_large_err)]
+
 mod claude_tokens;
 pub mod models;
 mod pb;
@@ -38,7 +41,9 @@ use cpa_auth::util::format_rfc3339_utc;
 use cpa_core::registry::lookup_model_info;
 use cpa_core::thinking::parse_suffix;
 use cpa_runtime::conductor::session::canonical_session_id;
-use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
+use cpa_runtime::executor::{
+    DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult,
+};
 use cpa_translator::Format;
 use futures_util::StreamExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
@@ -147,11 +152,23 @@ pub fn prepare_headers(
     {
         headers.insert(http::header::AUTHORIZATION, v);
     }
-    headers.insert(http::header::CONTENT_TYPE, HeaderValue::from_static("application/connect+proto"));
-    headers.insert(HeaderName::from_static("connect-protocol-version"), HeaderValue::from_static("1"));
+    headers.insert(
+        http::header::CONTENT_TYPE,
+        HeaderValue::from_static("application/connect+proto"),
+    );
+    headers.insert(
+        HeaderName::from_static("connect-protocol-version"),
+        HeaderValue::from_static("1"),
+    );
     headers.insert(http::header::ACCEPT, HeaderValue::from_static("*/*"));
     // Sentry-Trace is only attached to chat streaming, never to unary status/catalog calls.
-    let is_unary = ["GetUserStatus", "GetCliModelConfigs", "SeatManagementService"].iter().any(|m| path.contains(m));
+    let is_unary = [
+        "GetUserStatus",
+        "GetCliModelConfigs",
+        "SeatManagementService",
+    ]
+    .iter()
+    .any(|m| path.contains(m));
     if !is_unary
         && !headers.contains_key("sentry-trace")
         && let Ok(v) = HeaderValue::from_str(&generate_sentry_trace())
@@ -161,8 +178,17 @@ pub fn prepare_headers(
     headers.insert(http::header::USER_AGENT, HeaderValue::from_static(""));
 
     if let Some(auth) = auth {
-        let attrs: HashMap<String, String> = auth.attributes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        cpa_core::util::apply_custom_headers_from_attrs(&mut headers, &attrs, client_headers, session_id);
+        let attrs: HashMap<String, String> = auth
+            .attributes
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        cpa_core::util::apply_custom_headers_from_attrs(
+            &mut headers,
+            &attrs,
+            client_headers,
+            session_id,
+        );
     }
     headers
 }
@@ -172,7 +198,9 @@ pub fn prepare_headers(
 pub fn new_status_error(status: u16, headers: &HeaderMap, body: &[u8]) -> ExecError {
     let mut err = status_err(status, String::from_utf8_lossy(body).into_owned());
     if status == 429
-        && let Some(raw) = headers.get(http::header::RETRY_AFTER).and_then(|v| v.to_str().ok())
+        && let Some(raw) = headers
+            .get(http::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
     {
         let raw = raw.trim();
         if !raw.is_empty() {
@@ -201,7 +229,10 @@ struct Prepared {
 
 impl DevinExecutor {
     pub fn new(cfg: ConfigRx) -> Self {
-        Self { cfg, matcher: Mutex::new(None) }
+        Self {
+            cfg,
+            matcher: Mutex::new(None),
+        }
     }
 
     /// Matcher for the configured sensitive words, rebuilt only when the list changes.
@@ -223,10 +254,18 @@ impl DevinExecutor {
 
     /// Builds the framed chat request: payload translation to interactions, prompt extraction,
     /// model uid resolution, protobuf encoding and headers.
-    fn prepare_request(&self, auth: &Auth, req: &Request, opts: &Options) -> Result<Prepared, ExecError> {
+    fn prepare_request(
+        &self,
+        auth: &Auth,
+        req: &Request,
+        opts: &Options,
+    ) -> Result<Prepared, ExecError> {
         let creds = credentials(Some(auth));
         if creds.api_key.is_empty() {
-            let mut err = ExecError::new(0, "devin credentials missing: api_key or session_token required");
+            let mut err = ExecError::new(
+                0,
+                "devin credentials missing: api_key or session_token required",
+            );
             err.upstream_attempted = false;
             return Err(err);
         }
@@ -258,7 +297,11 @@ impl DevinExecutor {
         {
             parsed.max_tokens = info.max_completion_tokens;
         }
-        let chat_model_uid = models::resolve_chat_model_uid(&req.model, &parsed.thinking_level, parsed.budget_tokens);
+        let chat_model_uid = models::resolve_chat_model_uid(
+            &req.model,
+            &parsed.thinking_level,
+            parsed.budget_tokens,
+        );
 
         let matcher = self.sensitive_word_matcher(&cfg.devin.sensitive_words);
         let proto = build_get_chat_message_request(&ChatRequest {
@@ -276,17 +319,35 @@ impl DevinExecutor {
         });
 
         let url = format!("{}{CHAT_PATH}", creds.base_url.trim_end_matches('/'));
-        let headers = prepare_headers(Some(auth), CHAT_PATH, Some(&opts.headers), session.as_deref());
-        Ok(Prepared { url, headers, body: wrap_connect_envelope(&proto), chat_model_uid })
+        let headers = prepare_headers(
+            Some(auth),
+            CHAT_PATH,
+            Some(&opts.headers),
+            session.as_deref(),
+        );
+        Ok(Prepared {
+            url,
+            headers,
+            body: wrap_connect_envelope(&proto),
+            chat_model_uid,
+        })
     }
 
     /// Sends the prepared chat request. An empty `User-Agent` is removed first: net/http (and the
     /// native client) send no User-Agent at all rather than an empty one.
-    async fn send(&self, auth: &Auth, opts: &Options, prepared: Prepared) -> Result<reqwest::Response, ExecError> {
+    async fn send(
+        &self,
+        auth: &Auth,
+        opts: &Options,
+        prepared: Prepared,
+    ) -> Result<reqwest::Response, ExecError> {
         let cfg = self.cfg.borrow().clone();
         let client = new_devin_http_client(&opts.proxy_url, Some(&cfg), Some(auth), None);
         let mut headers = prepared.headers;
-        if headers.get(http::header::USER_AGENT).is_some_and(|v| v.is_empty()) {
+        if headers
+            .get(http::header::USER_AGENT)
+            .is_some_and(|v| v.is_empty())
+        {
             headers.remove(http::header::USER_AGENT);
         }
         let resp = client
@@ -326,17 +387,39 @@ impl Executor for DevinExecutor {
         PROVIDER
     }
 
-    async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+    async fn execute(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError> {
         let target_model = parse_suffix(&req.model).model_name;
-        let reporter = UsageReporter::new(PROVIDER, EXECUTOR_TYPE, &target_model, Some(auth), Some(&opts));
+        let reporter = UsageReporter::new(
+            PROVIDER,
+            EXECUTOR_TYPE,
+            &target_model,
+            Some(auth),
+            Some(&opts),
+        );
         let result = self.execute_inner(auth, req, opts, &reporter).await;
         reporter.track_failure(&result);
         result
     }
 
-    async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+    async fn execute_stream(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<StreamResult, ExecError> {
         let target_model = parse_suffix(&req.model).model_name;
-        let reporter = UsageReporter::new(PROVIDER, EXECUTOR_TYPE, &target_model, Some(auth), Some(&opts));
+        let reporter = UsageReporter::new(
+            PROVIDER,
+            EXECUTOR_TYPE,
+            &target_model,
+            Some(auth),
+            Some(&opts),
+        );
         let result = self.execute_stream_inner(auth, req, opts, &reporter).await;
         reporter.track_failure(&result);
         result
@@ -349,13 +432,20 @@ impl Executor for DevinExecutor {
             return Ok(auth.clone());
         }
         let cfg = self.cfg.borrow().clone();
-        let client = new_devin_http_client("", Some(&cfg), Some(auth), Some(Duration::from_secs(30)));
+        let client =
+            new_devin_http_client("", Some(&cfg), Some(auth), Some(Duration::from_secs(30)));
         let mut service = DevinAuthService::with_client(client);
         service.set_server_base_url(&creds.base_url);
-        let status = match service.fetch_user_status(&creds.api_key, &creds.device_seed).await {
+        let status = match service
+            .fetch_user_status(&creds.api_key, &creds.device_seed)
+            .await
+        {
             Ok(s) => s,
             Err(err) => {
-                tracing::warn!("devin executor: failed to refresh user status for {}: {err}", auth.id);
+                tracing::warn!(
+                    "devin executor: failed to refresh user status for {}: {err}",
+                    auth.id
+                );
                 return Err(ExecError::new(0, err.to_string()));
             }
         };
@@ -371,7 +461,9 @@ impl Executor for DevinExecutor {
             ("org_name", &status.org_name),
         ] {
             if !value.is_empty() {
-                updated.metadata.insert(key.to_string(), value.clone().into());
+                updated
+                    .metadata
+                    .insert(key.to_string(), value.clone().into());
                 updated.attributes.insert(key.to_string(), value.clone());
             }
         }
@@ -381,8 +473,14 @@ impl Executor for DevinExecutor {
         if !status.plan.is_empty() {
             signals.insert("plan".into(), status.plan.clone());
         }
-        signals.insert("daily_quota_remaining_percent".into(), format!("{}%", status.daily_quota_remaining_percent));
-        signals.insert("weekly_quota_remaining_percent".into(), format!("{}%", status.weekly_quota_remaining_percent));
+        signals.insert(
+            "daily_quota_remaining_percent".into(),
+            format!("{}%", status.daily_quota_remaining_percent),
+        );
+        signals.insert(
+            "weekly_quota_remaining_percent".into(),
+            format!("{}%", status.weekly_quota_remaining_percent),
+        );
         for (key, t) in [
             ("daily_quota_reset_at", status.daily_quota_reset_at),
             ("weekly_quota_reset_at", status.weekly_quota_reset_at),
@@ -400,10 +498,17 @@ impl Executor for DevinExecutor {
     }
 
     /// No upstream count endpoint exists; estimates `len(payload) / 4`.
-    async fn count_tokens(&self, _auth: &Auth, req: Request, _opts: Options) -> Result<Response, ExecError> {
+    async fn count_tokens(
+        &self,
+        _auth: &Auth,
+        req: Request,
+        _opts: Options,
+    ) -> Result<Response, ExecError> {
         let prompt_tokens = req.payload.len() / 4;
         Ok(Response {
-            payload: Bytes::from(format!(r#"{{"total_tokens":{prompt_tokens},"input_tokens":{prompt_tokens}}}"#)),
+            payload: Bytes::from(format!(
+                r#"{{"total_tokens":{prompt_tokens},"input_tokens":{prompt_tokens}}}"#
+            )),
             ..Default::default()
         })
     }
@@ -437,7 +542,12 @@ impl DevinExecutor {
             }
             Err(err) => return Err(err),
         };
-        if let Some(model) = consumed.usage.as_ref().map(|u| u.model_name.as_str()).filter(|m| !m.is_empty()) {
+        if let Some(model) = consumed
+            .usage
+            .as_ref()
+            .map(|u| u.model_name.as_str())
+            .filter(|m| !m.is_empty())
+        {
             reporter.set_response_model(model);
         }
 
@@ -461,9 +571,17 @@ impl DevinExecutor {
         let detail = parse_interactions_usage(&interactions);
         let usage = UsageReporter::usage_metadata(&detail);
         reporter.publish(detail);
-        let out = if target_format == Format::OpenAIResponse { ensure_responses_usage_details(&out) } else { out };
+        let out = if target_format == Format::OpenAIResponse {
+            ensure_responses_usage_details(&out)
+        } else {
+            out
+        };
 
-        let mut response = Response { payload: Bytes::from(out), headers, ..Default::default() };
+        let mut response = Response {
+            payload: Bytes::from(out),
+            headers,
+            ..Default::default()
+        };
         response.metadata.insert("usage".into(), usage);
         Ok(response)
     }

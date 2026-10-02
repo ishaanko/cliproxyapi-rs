@@ -18,9 +18,18 @@ pub struct ClaudeInputTokenState {
 
 impl ClaudeInputTokenState {
     /// Only active for Claude clients on a non-Claude upstream answered in Claude format.
-    pub fn new(source: Format, upstream: Format, response: Format, original_request: &[u8]) -> Self {
-        let enabled = source == Format::Claude && upstream != Format::Claude && response == Format::Claude;
-        Self { original_request: original_request.to_vec(), handled: !enabled }
+    pub fn new(
+        source: Format,
+        upstream: Format,
+        response: Format,
+        original_request: &[u8],
+    ) -> Self {
+        let enabled =
+            source == Format::Claude && upstream != Format::Claude && response == Format::Claude;
+        Self {
+            original_request: original_request.to_vec(),
+            handled: !enabled,
+        }
     }
 
     /// Translates one upstream stream event like `translate_stream`, normalizing Responses usage
@@ -36,8 +45,16 @@ impl ClaudeInputTokenState {
         raw: &[u8],
         param: &mut Param,
     ) -> Vec<Vec<u8>> {
-        let mut chunks =
-            cpa_translator::translate_stream(&Ctx::default(), upstream, response, model, original, request, raw, param);
+        let mut chunks = cpa_translator::translate_stream(
+            &Ctx::default(),
+            upstream,
+            response,
+            model,
+            original,
+            request,
+            raw,
+            param,
+        );
         if param.tool_input_error.is_some() {
             return chunks;
         }
@@ -70,20 +87,27 @@ impl ClaudeInputTokenState {
     fn apply_chunk(&self, chunk: &[u8]) -> Option<Option<Vec<u8>>> {
         let mut line_start = 0;
         while line_start < chunk.len() {
-            let line_end = chunk[line_start..].iter().position(|b| *b == b'\n').map_or(chunk.len(), |p| p + line_start);
+            let line_end = chunk[line_start..]
+                .iter()
+                .position(|b| *b == b'\n')
+                .map_or(chunk.len(), |p| p + line_start);
             let mut content_end = line_end;
             if content_end > line_start && chunk[content_end - 1] == b'\r' {
                 content_end -= 1;
             }
             let line = &chunk[line_start..content_end];
-            let lead = line.iter().take_while(|b| **b == b' ' || **b == b'\t').count();
+            let lead = line
+                .iter()
+                .take_while(|b| **b == b' ' || **b == b'\t')
+                .count();
             if line[lead..].starts_with(b"data:") {
                 let mut payload_offset = lead + "data:".len();
                 while payload_offset < line.len() && matches!(line[payload_offset], b' ' | b'\t') {
                     payload_offset += 1;
                 }
                 let mut payload_end = line.len();
-                while payload_end > payload_offset && matches!(line[payload_end - 1], b' ' | b'\t') {
+                while payload_end > payload_offset && matches!(line[payload_end - 1], b' ' | b'\t')
+                {
                     payload_end -= 1;
                 }
                 let payload = &line[payload_offset..payload_end];
@@ -121,7 +145,9 @@ impl ClaudeInputTokenState {
         let enc = match tokenizer_for_model("gpt-5") {
             Ok(enc) => enc,
             Err(err) => {
-                tracing::warn!("failed to estimate Claude input tokens: initialize O200kBase tokenizer: {err}");
+                tracing::warn!(
+                    "failed to estimate Claude input tokens: initialize O200kBase tokenizer: {err}"
+                );
                 return None;
             }
         };
@@ -136,7 +162,10 @@ impl ClaudeInputTokenState {
 }
 
 /// Estimated tokens of a Claude request (system, messages, tools, tool choice).
-pub fn count_claude_input_tokens(enc: &crate::helps::token_count::Tokenizer, payload: &[u8]) -> Result<i64, String> {
+pub fn count_claude_input_tokens(
+    enc: &crate::helps::token_count::Tokenizer,
+    payload: &[u8],
+) -> Result<i64, String> {
     if payload.trim_ascii().is_empty() {
         return Ok(0);
     }
@@ -254,7 +283,9 @@ fn collect_content(content: &Res<'_>, segments: &mut Vec<String>) {
             add(segments, &get("retrieved_at"));
             collect_content(&content.g("content"), segments);
         }
-        "code_execution_result" | "bash_code_execution_result" | "text_editor_code_execution_result" => {
+        "code_execution_result"
+        | "bash_code_execution_result"
+        | "text_editor_code_execution_result" => {
             add(segments, &get("stdout"));
             add(segments, &get("stderr"));
             add(segments, &get("return_code"));

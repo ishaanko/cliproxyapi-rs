@@ -11,7 +11,9 @@ use base64::alphabet;
 use base64::engine::{GeneralPurpose, GeneralPurposeConfig};
 use cpa_core::signature::{SignatureProvider, detect_signature_provider};
 use cpa_json::{J, Res, Value};
-use cpa_translator::common::{is_devin_codex_app_automation_update, sanitize_devin_tool_description};
+use cpa_translator::common::{
+    is_devin_codex_app_automation_update, sanitize_devin_tool_description,
+};
 use uuid::Uuid;
 
 use super::wire::{DEFAULT_MAX_TOKENS, Image, Prompt, Tool, ToolCall};
@@ -38,20 +40,26 @@ fn new_message_id() -> String {
 
 /// First value that is not blank after trimming (returned untrimmed).
 fn first_non_empty<I: IntoIterator<Item = String>>(values: I) -> String {
-    values.into_iter().find(|v| !v.trim().is_empty()).unwrap_or_default()
+    values
+        .into_iter()
+        .find(|v| !v.trim().is_empty())
+        .unwrap_or_default()
 }
 
 /// Parses an interactions payload (or an OpenAI-style `messages` payload as a fallback).
 pub fn parse_interactions_payload(payload: &[u8], original_request: &[u8]) -> ParsedPayload {
     let root = cpa_json::parse(payload);
     let original = (!original_request.is_empty()).then(|| cpa_json::parse(original_request));
-    let mut out = ParsedPayload::default();
 
     // 1. System prompt
-    out.system_prompt = root.g("system_instruction").str().trim().to_string();
-    if out.system_prompt.is_empty() {
-        out.system_prompt = root.g("systemInstruction").str().trim().to_string();
+    let mut system_prompt = root.g("system_instruction").str().trim().to_string();
+    if system_prompt.is_empty() {
+        system_prompt = root.g("systemInstruction").str().trim().to_string();
     }
+    let mut out = ParsedPayload {
+        system_prompt,
+        ..Default::default()
+    };
 
     // 2. Generation config
     let mut gen_cfg = root.g("generation_config");
@@ -69,7 +77,10 @@ pub fn parse_interactions_payload(payload: &[u8], original_request: &[u8]) -> Pa
     }
     if out.temperature.is_none() {
         // The original client temperature wins over the translated one.
-        let orig_t = original.as_ref().map(|o| o.g("temperature")).filter(|t| t.exists());
+        let orig_t = original
+            .as_ref()
+            .map(|o| o.g("temperature"))
+            .filter(|t| t.exists());
         if let Some(t) = orig_t {
             out.temperature = Some(t.float());
         } else if root.g("temperature").exists() {
@@ -82,12 +93,21 @@ pub fn parse_interactions_payload(payload: &[u8], original_request: &[u8]) -> Pa
 
     // 3. Session and cascade id: stable identifiers first (keeps upstream prompt caching),
     //    previous_interaction_id only as the last resort.
-    let session_keys = ["session_id", "sessionId", "conversation_id", "previous_interaction_id"];
-    out.session_id = first_non_empty(session_keys.iter().map(|k| root.g(k).str())).trim().to_string();
+    let session_keys = [
+        "session_id",
+        "sessionId",
+        "conversation_id",
+        "previous_interaction_id",
+    ];
+    out.session_id = first_non_empty(session_keys.iter().map(|k| root.g(k).str()))
+        .trim()
+        .to_string();
     if out.session_id.is_empty()
         && let Some(orig) = &original
     {
-        out.session_id = first_non_empty(session_keys.iter().map(|k| orig.g(k).str())).trim().to_string();
+        out.session_id = first_non_empty(session_keys.iter().map(|k| orig.g(k).str()))
+            .trim()
+            .to_string();
     }
     out.cascade_id = out.session_id.clone();
 
@@ -119,7 +139,13 @@ fn parse_input_step(step: &Res<'_>, prompts: &mut Vec<Prompt>, pending: &mut Vec
     match step_type.as_str() {
         "user_input" => {
             let (text, images) = extract_step_content(step);
-            prompts.push(Prompt { message_id: new_message_id(), source: 1, content: text, images, ..Default::default() });
+            prompts.push(Prompt {
+                message_id: new_message_id(),
+                source: 1,
+                content: text,
+                images,
+                ..Default::default()
+            });
         }
         "model_output" => {
             let text = extract_step_text(step);
@@ -189,7 +215,11 @@ fn parse_input_step(step: &Res<'_>, prompts: &mut Vec<Prompt>, pending: &mut Vec
             } else {
                 String::new()
             };
-            let tc = ToolCall { id: id.clone(), name: step.g("name").str(), arguments };
+            let tc = ToolCall {
+                id: id.clone(),
+                name: step.g("name").str(),
+                arguments,
+            };
             match prompts.last_mut().filter(|p| p.source == 2) {
                 Some(last) => last.tool_calls.push(tc),
                 None => prompts.push(Prompt {
@@ -240,9 +270,17 @@ fn push_tool_result(
 
 /// Removes and returns the pending call id matching `id` (the oldest one when `id` is empty).
 fn match_pending_tool_call(pending: &mut Vec<String>, id: &str) -> Option<String> {
-    let idx = if id.is_empty() { (!pending.is_empty()).then_some(0) } else { pending.iter().position(|p| p == id) }?;
+    let idx = if id.is_empty() {
+        (!pending.is_empty()).then_some(0)
+    } else {
+        pending.iter().position(|p| p == id)
+    }?;
     let matched = pending.remove(idx);
-    Some(if id.is_empty() { matched } else { id.to_string() })
+    Some(if id.is_empty() {
+        matched
+    } else {
+        id.to_string()
+    })
 }
 
 /// Direct OpenAI chat `messages` payloads that were not translated.
@@ -288,7 +326,11 @@ fn parse_messages_fallback(root: &Value, out: &mut ParsedPayload, pending: &mut 
                             String::new()
                         };
                         pending.push(id.clone());
-                        tool_calls.push(ToolCall { id, name, arguments });
+                        tool_calls.push(ToolCall {
+                            id,
+                            name,
+                            arguments,
+                        });
                     }
                 }
                 out.prompts.push(Prompt {
@@ -300,8 +342,17 @@ fn parse_messages_fallback(root: &Value, out: &mut ParsedPayload, pending: &mut 
                 });
             }
             "tool" => {
-                let id = first_non_empty([m.g("tool_call_id").str(), m.g("id").str(), m.g("call_id").str()]);
-                push_tool_result(&mut out.prompts, pending, &id, extract_function_result_content(&m));
+                let id = first_non_empty([
+                    m.g("tool_call_id").str(),
+                    m.g("id").str(),
+                    m.g("call_id").str(),
+                ]);
+                push_tool_result(
+                    &mut out.prompts,
+                    pending,
+                    &id,
+                    extract_function_result_content(&m),
+                );
             }
             _ => {}
         }
@@ -326,17 +377,30 @@ fn parse_tools(root: &Value) -> Vec<Tool> {
         if params.is_empty() {
             params = t.g("parametersJsonSchema").raw();
         }
-        tools.push(Tool { name, description: desc, parameters: params.into_bytes() });
+        tools.push(Tool {
+            name,
+            description: desc,
+            parameters: params.into_bytes(),
+        });
     };
     for t in tools_res.array() {
-        if t.g("type").str() == "namespace" && t.g("name").str().trim().eq_ignore_ascii_case("mcp__codex_app") {
+        if t.g("type").str() == "namespace"
+            && t.g("name")
+                .str()
+                .trim()
+                .eq_ignore_ascii_case("mcp__codex_app")
+        {
             let mut children = t.g("tools");
             if !children.is_array() {
                 children = t.g("children");
             }
             if children.is_array() {
                 for c in children.array() {
-                    if c.g("name").str().trim().eq_ignore_ascii_case("automation_update") {
+                    if c.g("name")
+                        .str()
+                        .trim()
+                        .eq_ignore_ascii_case("automation_update")
+                    {
                         continue;
                     }
                     append(&c);
@@ -369,7 +433,10 @@ pub fn parse_data_url(raw: &str) -> Option<(String, String)> {
     let header = &rest[..comma];
     let data = &rest[comma + 1..];
     let mime = header.split(';').next().unwrap_or("").trim();
-    Some((if mime.is_empty() { "image/png" } else { mime }.to_string(), data.to_string()))
+    Some((
+        if mime.is_empty() { "image/png" } else { mime }.to_string(),
+        data.to_string(),
+    ))
 }
 
 fn mime_extension(mime: &str) -> &'static str {
@@ -397,7 +464,11 @@ fn extract_image(part: &Res<'_>) -> Option<Image> {
         }
     }
     if data.is_empty() {
-        let url = first_non_empty([part.g("image_url.url").str(), part.g("image_url").str(), part.g("url").str()]);
+        let url = first_non_empty([
+            part.g("image_url.url").str(),
+            part.g("image_url").str(),
+            part.g("url").str(),
+        ]);
         if let Some((m, d)) = parse_data_url(&url) {
             data = d;
             if mime.is_empty() {
@@ -417,7 +488,10 @@ fn extract_image(part: &Res<'_>) -> Option<Image> {
     if mime.is_empty() {
         mime = "image/png".into();
     }
-    Some(Image { base64_data: data, mime_type: mime })
+    Some(Image {
+        base64_data: data,
+        mime_type: mime,
+    })
 }
 
 /// Whether `obj` is a protocol envelope around `wrapper_key` (a Claude `tool_result` block, or an
@@ -427,17 +501,29 @@ fn is_protocol_wrapper_object(obj: &Res<'_>, wrapper_key: &str) -> bool {
         return false;
     }
     let entries = obj.entries();
-    if obj.g("type").str().trim().eq_ignore_ascii_case("tool_result") {
+    if obj
+        .g("type")
+        .str()
+        .trim()
+        .eq_ignore_ascii_case("tool_result")
+    {
         return entries.iter().all(|(k, _)| {
-            matches!(*k, "type" | "tool_use_id" | "id" | "is_error" | "cache_control") || *k == wrapper_key
+            matches!(
+                *k,
+                "type" | "tool_use_id" | "id" | "is_error" | "cache_control"
+            ) || *k == wrapper_key
         });
     }
-    entries.iter().all(|(k, _)| *k == wrapper_key || *k == "cache_control")
+    entries
+        .iter()
+        .all(|(k, _)| *k == wrapper_key || *k == "cache_control")
 }
 
 /// A `{"type":"text","text":...}` part carrying nothing else but `cache_control`.
 fn is_pure_text_part(obj: &Res<'_>) -> bool {
-    obj.entries().iter().all(|(k, _)| matches!(*k, "type" | "text" | "cache_control"))
+    obj.entries()
+        .iter()
+        .all(|(k, _)| matches!(*k, "type" | "text" | "cache_control"))
 }
 
 fn trimmed_raw(item: &Res<'_>) -> String {
@@ -477,7 +563,9 @@ fn extract_function_result_target(target: &Res<'_>) -> (String, Vec<Image>) {
                 continue;
             }
             if item.is_object() {
-                let wrapper = ["content", "output", "result"].into_iter().find(|k| is_protocol_wrapper_object(&item, k));
+                let wrapper = ["content", "output", "result"]
+                    .into_iter()
+                    .find(|k| is_protocol_wrapper_object(&item, k));
                 if let Some(key) = wrapper {
                     has_structured = true;
                     let (txt, imgs) = extract_function_result_target(&item.g(key));
@@ -522,7 +610,14 @@ fn image_headers(images: &[Image]) -> String {
     images
         .iter()
         .enumerate()
-        .map(|(i, img)| format!("[Image {}: pasted_image_{}.{}]", i + 1, i + 1, mime_extension(&img.mime_type)))
+        .map(|(i, img)| {
+            format!(
+                "[Image {}: pasted_image_{}.{}]",
+                i + 1,
+                i + 1,
+                mime_extension(&img.mime_type)
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -533,7 +628,11 @@ fn with_image_headers(text: String, images: &[Image]) -> String {
         return text;
     }
     let header = image_headers(images);
-    if text.is_empty() { header } else { format!("{header}\n\n{text}") }
+    if text.is_empty() {
+        header
+    } else {
+        format!("{header}\n\n{text}")
+    }
 }
 
 /// Text and images of a tool result step/message; `{}` when empty.
@@ -675,7 +774,8 @@ fn supplement_images_from_original(original: &Value, prompts: &mut [Prompt]) {
         return;
     }
     let mut user_images: Vec<Vec<Image>> = Vec::new();
-    let mut tool_images: std::collections::HashMap<String, Vec<Image>> = std::collections::HashMap::new();
+    let mut tool_images: std::collections::HashMap<String, Vec<Image>> =
+        std::collections::HashMap::new();
 
     for m in messages.array() {
         match m.g("role").str().trim().to_lowercase().as_str() {
@@ -684,8 +784,14 @@ fn supplement_images_from_original(original: &Value, prompts: &mut [Prompt]) {
                 let content = m.g("content");
                 if content.is_array() {
                     for part in content.array() {
-                        if part.g("type").str().trim().eq_ignore_ascii_case("tool_result") {
-                            let id = first_non_empty([part.g("tool_use_id").str(), part.g("id").str()]);
+                        if part
+                            .g("type")
+                            .str()
+                            .trim()
+                            .eq_ignore_ascii_case("tool_result")
+                        {
+                            let id =
+                                first_non_empty([part.g("tool_use_id").str(), part.g("id").str()]);
                             let tool_content = part.g("content");
                             let found = images_of_content(&tool_content, &part);
                             if !found.is_empty() && !id.is_empty() {
@@ -716,7 +822,9 @@ fn supplement_images_from_original(original: &Value, prompts: &mut [Prompt]) {
                 // Downgraded tool results never consume images of user messages.
                 if p.images.is_empty()
                     && !p.original_tool_call_id.is_empty()
-                    && let Some(imgs) = tool_images.get(&p.original_tool_call_id).filter(|i| !i.is_empty())
+                    && let Some(imgs) = tool_images
+                        .get(&p.original_tool_call_id)
+                        .filter(|i| !i.is_empty())
                 {
                     p.images = imgs.clone();
                     p.content = with_image_headers(std::mem::take(&mut p.content), &p.images);
@@ -743,7 +851,10 @@ fn supplement_images_from_original(original: &Value, prompts: &mut [Prompt]) {
 // ------------------------------------------------------------------ signatures
 
 fn base64_std() -> GeneralPurpose {
-    GeneralPurpose::new(&alphabet::STANDARD, GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true))
+    GeneralPurpose::new(
+        &alphabet::STANDARD,
+        GeneralPurposeConfig::new().with_decode_allow_trailing_bits(true),
+    )
 }
 
 /// Signature bytes plus the upstream signature type (`sealed`, `anthropic`, `openai`, `gemini`).
@@ -867,7 +978,11 @@ pub fn resolve_session_and_cascade_ids(
         }
     }
     let session = normalize_uuid(&session);
-    let cascade = if cascade_id.is_empty() { session.clone() } else { normalize_uuid(cascade_id) };
+    let cascade = if cascade_id.is_empty() {
+        session.clone()
+    } else {
+        normalize_uuid(cascade_id)
+    };
     (session, cascade)
 }
 
