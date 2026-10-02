@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::{CLIENT_KEY, MGMT_SECRET};
+use crate::resp::{RespConn, Reply as RespReply};
 
 // ---------------------------------------------------------------- request model
 
@@ -117,10 +118,30 @@ impl WsReq {
     }
 }
 
+/// One action of a Redis-protocol session.
+#[derive(Clone, Debug)]
+pub enum RespAct {
+    /// Sends a command and reads one reply.
+    Cmd(Vec<String>),
+    /// Sends raw bytes and reads one reply.
+    Raw(String),
+    /// Reads one more reply (a pub/sub message) without sending anything.
+    Read,
+    /// Runs an HTTP request against the same server while the connection stays open.
+    Http(HttpReq),
+}
+
+/// A Redis-protocol session against the server port (HTTP and RESP share it).
+#[derive(Clone, Debug)]
+pub struct RespReq {
+    pub acts: Vec<RespAct>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Step {
     Http(HttpReq),
     Ws(WsReq),
+    Resp(RespReq),
     /// Sleep this many ms (lets async config reloads settle); produces no capture.
     Pause(u64),
 }
@@ -128,6 +149,12 @@ pub enum Step {
 impl From<HttpReq> for Step {
     fn from(r: HttpReq) -> Self {
         Step::Http(r)
+    }
+}
+
+impl From<RespReq> for Step {
+    fn from(r: RespReq) -> Self {
+        Step::Resp(r)
     }
 }
 
@@ -206,8 +233,46 @@ impl Client {
         match step {
             Step::Http(r) => self.http_step(r).await,
             Step::Ws(r) => self.ws_step(r).await,
+            Step::Resp(r) => self.resp_step(r).await,
             Step::Pause(_) => unreachable!("pauses are handled by the runner"),
         }
+    }
+
+    /// Runs the session; every act contributes one entry to the captured JSON array. A timeout
+    /// or a closed connection ends the session with a marker entry.
+    async fn resp_step(&self, r: &RespReq) -> Result<Observed> {
+        let mut conn = RespConn::connect(&self.base).await?;
+        let mut entries: Vec<Value> = vec![];
+        for act in &r.acts {
+            let sent = match act {
+                RespAct::Cmd(args) => {
+                    conn.send_command(args).await?;
+                    json!(args)
+                }
+                RespAct::Raw(text) => {
+                    conn.send(text.as_bytes()).await?;
+                    json!({"raw": text})
+                }
+                RespAct::Read => Value::Null,
+                RespAct::Http(req) => {
+                    let o = self.http_step(req).await?;
+                    entries.push(json!({"http": req.path, "status": o.status}));
+                    continue;
+                }
+            };
+            match conn.read().await {
+                RespReply::Value(v) => entries.push(json!({"sent": sent, "reply": v})),
+                RespReply::Closed => {
+                    entries.push(json!({"sent": sent, "closed": true}));
+                    break;
+                }
+                RespReply::Timeout => {
+                    entries.push(json!({"sent": sent, "timeout": true}));
+                    break;
+                }
+            }
+        }
+        Ok(Observed { status: 0, headers: BTreeMap::new(), body: ObsBody::Json { value: Value::Array(entries), lead_newlines: 0 } })
     }
 
     async fn http_step(&self, r: &HttpReq) -> Result<Observed> {

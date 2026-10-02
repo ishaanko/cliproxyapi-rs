@@ -6,6 +6,7 @@
 //! with whatever the process-wide registry and `Manager` contain.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cpa_auth::OAuthSessions;
@@ -14,6 +15,7 @@ use cpa_runtime::service::ServiceBuilder;
 use cpa_runtime::usage::UsageTracker;
 use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
+use cpa_server::redis_protocol::RedisProtocol;
 use cpa_server::reqlog::RequestLogger;
 use cpa_management::ManagementState;
 use cpa_server::{AppState, BuildInfo, KeepAlive, build_router_with_management, safemode, serve};
@@ -156,6 +158,10 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     // The service owns config reload, the credential manager, the auth store and model
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
+    // Usage records and error events also feed the Redis-protocol output (Go: redisqueue plugin).
+    cpa_runtime::usage_queue::install(&usage);
+    cpa_home::queue::set_usage_statistics_enabled(cfg.usage_statistics_enabled);
+    cpa_home::queue::set_retention_seconds(cfg.redis_usage_queue_retention_seconds);
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
     let service = match ServiceBuilder::new(&config_path)
         .dotenv_dir(None)
@@ -180,6 +186,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         service.register_executor(executor);
     }
     let manager = service.manager();
+    manager.set_error_event_sink(Some(Arc::new(|payload: Vec<u8>| cpa_home::queue::enqueue_error(&payload))));
     let store = service.store();
     let sessions = Arc::new(OAuthSessions::default());
 
@@ -223,6 +230,35 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         management = management.with_local_password(cli.password.clone());
     }
 
+    // The usage queue runs while management is available (or Home owns usage) and follows
+    // config reloads like Go's `managementRoutesEnabled` bookkeeping.
+    let has_secret = !cfg.remote_management.secret_key.is_empty() || management.has_env_secret() || management.has_local_password();
+    let routes_enabled = Arc::new(AtomicBool::new(has_secret));
+    cpa_home::queue::set_enabled(has_secret || cfg.home.enabled);
+    {
+        let mut rx = config_rx.clone();
+        let routes_enabled = routes_enabled.clone();
+        let env_secret = management.has_env_secret();
+        let mut last = (cfg.usage_statistics_enabled, cfg.redis_usage_queue_retention_seconds);
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let next = rx.borrow().clone();
+                let key = (next.usage_statistics_enabled, next.redis_usage_queue_retention_seconds);
+                if key.0 != last.0 {
+                    cpa_home::queue::set_usage_statistics_enabled(key.0);
+                }
+                if key.1 != last.1 {
+                    cpa_home::queue::set_retention_seconds(key.1);
+                }
+                last = key;
+                let enabled = env_secret || !next.remote_management.secret_key.is_empty();
+                routes_enabled.store(enabled, Ordering::SeqCst);
+                cpa_home::queue::set_enabled(enabled || next.home.enabled);
+            }
+        });
+    }
+    let redis = Arc::new(RedisProtocol { config: config_rx.clone(), management: management.clone(), routes_enabled });
+
     // Log level / destination follow config reloads.
     {
         let mut rx = config_rx.clone();
@@ -244,7 +280,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
 
     // The provider redirect routes (`/anthropic/callback`, ...) live in the proxy router.
     let app = build_router_with_management(state, cpa_management::router(management));
-    let server = serve::serve(&cfg, app);
+    let server = serve::serve_with_redis(&cfg, app, Some(redis));
     let idle = async move {
         match idle_shutdown.as_mut() {
             None => std::future::pending::<()>().await,

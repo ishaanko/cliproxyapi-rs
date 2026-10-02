@@ -98,6 +98,7 @@ fn usage_extra(result: &ExecResult) -> UsageExtra {
             h.remove(http::header::TRANSFER_ENCODING);
             h
         },
+        queue_source: String::new(),
     }
 }
 /// `Response.metadata` key under which an executor may report exact token counts.
@@ -173,6 +174,7 @@ pub fn build_usage_record(
         }
         None => (String::new(), String::new(), String::new()),
     };
+    let queue_source = auth.map(|a| a.account_info().1).unwrap_or_default();
     let path = meta_str(&result.options.metadata, meta::REQUEST_PATH);
     UsageRecord {
         timestamp: now - chrono::Duration::milliseconds(latency_ms),
@@ -198,7 +200,7 @@ pub fn build_usage_record(
         stream: facts.stream,
         fail: result.error.as_ref().map(failure_of).unwrap_or_default(),
         tokens: facts.tokens.clone(),
-        extra: usage_extra(result),
+        extra: UsageExtra { queue_source, ..usage_extra(result) },
     }
 }
 

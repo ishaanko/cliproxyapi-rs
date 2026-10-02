@@ -65,6 +65,9 @@ pub struct UsageExtra {
     pub parent_session_id: String,
     pub trace_id: String,
     pub response_headers: http::HeaderMap,
+    /// Account the usage queue reports as the record's `source` (API key or e-mail); empty
+    /// falls back to `UsageRecord::source`.
+    pub queue_source: String,
 }
 
 /// One usage event (field names match the Go usage-queue record).
@@ -215,9 +218,13 @@ struct State {
     hourly: BTreeMap<i64, UsageAgg>,
 }
 
+/// Observer of every recorded event (the usage queue).
+pub type UsageSink = std::sync::Arc<dyn Fn(&UsageRecord) + Send + Sync>;
+
 /// Process-wide usage store: counters plus a ring buffer of recent events.
 pub struct UsageTracker {
     enabled: AtomicBool,
+    sink: Mutex<Option<UsageSink>>,
     started_at: DateTime<Utc>,
     state: Mutex<State>,
 }
@@ -260,6 +267,7 @@ impl UsageTracker {
     pub fn new() -> Self {
         Self {
             enabled: AtomicBool::new(true),
+            sink: Mutex::new(None),
             started_at: Utc::now(),
             state: Mutex::new(State::default()),
         }
@@ -279,10 +287,19 @@ impl UsageTracker {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
 
+    /// Installs (or clears) the sink that sees every recorded event.
+    pub fn set_sink(&self, sink: Option<UsageSink>) {
+        *self.sink.lock() = sink;
+    }
+
     /// Records one usage event: aggregates it and appends it to the ring buffer.
     pub fn record(&self, mut record: UsageRecord) {
         if !self.enabled.load(Ordering::Relaxed) {
             return;
+        }
+        let sink = self.sink.lock().clone();
+        if let Some(sink) = sink {
+            sink(&record);
         }
         truncate_utf8(&mut record.fail.body, FAIL_BODY_MAX_BYTES);
         let hour = record.timestamp.timestamp().div_euclid(HOUR_SECS) * HOUR_SECS;

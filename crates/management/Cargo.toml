@@ -10,6 +10,7 @@ license.workspace = true
 cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth" }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 cpa-core = { path = "../core" }
 axum = { version = "0.8", features = ["multipart"] }
 serde.workspace = true

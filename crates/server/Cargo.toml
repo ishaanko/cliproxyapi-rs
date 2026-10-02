@@ -19,6 +19,7 @@ cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth" }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-executors = { path = "../executors" }

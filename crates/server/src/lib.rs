@@ -26,6 +26,8 @@ pub mod headers;
 pub mod logging;
 pub mod middleware;
 pub mod models;
+pub mod mux;
+pub mod redis_protocol;
 pub mod reply;
 pub mod req;
 pub mod reqlog;
