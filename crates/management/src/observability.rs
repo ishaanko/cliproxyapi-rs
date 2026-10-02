@@ -9,7 +9,7 @@ use cpa_auth::types::RecentRequestBucket;
 use serde::Serialize;
 use serde_json::json;
 
-use crate::http::{ApiError, ApiResult, no_store, ok_json, query_get};
+use crate::http::{ApiError, ApiResult, no_store, ok_json, ok_struct, query_get};
 use crate::state::ManagementState;
 
 #[derive(Serialize)]
@@ -88,7 +88,7 @@ fn require_usage_statistics(st: &ManagementState) -> ApiResult<()> {
 /// `GET /observability/usage/summary`.
 pub(crate) async fn usage_summary(State(st): State<ManagementState>) -> ApiResult {
     require_usage_statistics(&st)?;
-    Ok(no_store(ok_json(&st.usage.summary())))
+    Ok(no_store(ok_struct(&st.usage.summary())))
 }
 
 /// `limit`: default 100, non-integer values use the default; integers are clamped to 1..=1000.
@@ -111,7 +111,7 @@ pub(crate) async fn usage_requests(State(st): State<ManagementState>, req: Reque
         ),
     };
     let limit = parse_limit(query_get(req.uri(), "limit"));
-    Ok(no_store(ok_json(&st.usage.requests(limit, after))))
+    Ok(no_store(ok_struct(&st.usage.requests(limit, after))))
 }
 
 /// `GET /observability/usage/queue` pops events from the Redis usage queue, which this server

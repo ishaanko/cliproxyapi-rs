@@ -110,7 +110,7 @@ pub(crate) async fn get_config(
 ) -> ApiResult {
     let id = plugin_id(&id)?;
     match st.cfg().plugins.configs.get(&id) {
-        Some(item) => Ok(ok_json(&instance_json(item))),
+        Some(item) => Ok(ok_json(&cpa_auth::util::sort_json(&instance_json(item)))),
         None => Err(plugin_not_found()),
     }
 }

@@ -23,6 +23,8 @@ mod cooldown;
 mod credential_edit;
 mod credentials;
 mod gate;
+mod gin_routes;
+mod go_json;
 mod http;
 mod key_lists;
 mod logs;
@@ -48,6 +50,7 @@ use bytes::Bytes;
 
 use config_v8::{ConfigRequest, split_path};
 
+pub use gin_routes::GIN_ROUTES;
 pub use oauth::oauth_redirect_router;
 pub use state::{AuthRegistry, BuildInfo, ManagementState, ReloadHook};
 
@@ -103,10 +106,7 @@ pub fn router(state: ManagementState) -> Router {
     let v8 = Router::new()
         .route(
             "/config",
-            get(config_root)
-                .put(config_root)
-                .patch(config_root)
-                .delete(config_root),
+            get(config_root).put(config_root).patch(config_root),
         )
         .route("/config.yaml", get(config_yaml).put(config_yaml))
         .route(

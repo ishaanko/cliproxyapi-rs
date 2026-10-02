@@ -7,7 +7,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use serde_json::{Value, json};
 
-use crate::http::{ApiError, ApiResult, blocking, detached, ok_json};
+use crate::http::{ApiError, ApiResult, blocking, detached, ok_json, ok_struct};
 use crate::state::ManagementState;
 use crate::v0_util::{
     bool_value_body, int_value_body, nil_empty, persist, string_value_body, yaml_snapshot,
@@ -20,7 +20,7 @@ pub(crate) async fn get_config(State(st): State<ManagementState>) -> ApiResult {
         .to_json_value()
         .map_err(|e| ApiError::new(500, e.to_string()))?;
     nil_empty(&mut value, yaml_snapshot(&st).await.as_ref());
-    Ok(ok_json(&value))
+    Ok(ok_struct(&value))
 }
 
 /// `GET /config.yaml`: the file bytes as they are on disk.

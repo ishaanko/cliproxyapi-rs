@@ -87,57 +87,10 @@ const ROUTE_TABLE: &[(&str, &str)] = &[
     ("POST", "/v1beta/interactions"),
     ("GET", "/v1beta/models/*action"),
     ("POST", "/v1beta/models/*action"),
-    // Management routes (`cpa_management::router`), mirrored so their trailing-slash redirects match gin.
-    ("GET", "/v8/management/config"),
-    ("PUT", "/v8/management/config"),
-    ("PATCH", "/v8/management/config"),
-    ("DELETE", "/v8/management/config"),
-    ("GET", "/v8/management/config.yaml"),
-    ("PUT", "/v8/management/config.yaml"),
-    ("GET", "/v8/management/config/"),
-    ("PUT", "/v8/management/config/"),
-    ("PATCH", "/v8/management/config/"),
-    ("DELETE", "/v8/management/config/"),
-    ("GET", "/v8/management/config/*path"),
-    ("PUT", "/v8/management/config/*path"),
-    ("PATCH", "/v8/management/config/*path"),
-    ("DELETE", "/v8/management/config/*path"),
-    ("GET", "/v8/management/server/latest-version"),
-    ("POST", "/v8/management/requests/api-call"),
-    ("POST", "/v8/management/routing/cooldown/reset"),
-    ("GET", "/v8/management/routing/model-definitions/:channel"),
-    ("GET", "/v8/management/observability/logs"),
-    ("DELETE", "/v8/management/observability/logs"),
-    ("GET", "/v8/management/observability/logs/errors"),
-    ("GET", "/v8/management/observability/logs/errors/:name"),
-    ("GET", "/v8/management/observability/logs/requests/:id"),
-    ("GET", "/v8/management/observability/usage/api-keys"),
-    ("GET", "/v8/management/observability/usage/queue"),
+    // Management routes come from `cpa_management::GIN_ROUTES` (the Go registration). The
+    // observability feeds below are extensions of this server that Go does not have.
     ("GET", "/v8/management/observability/usage/summary"),
     ("GET", "/v8/management/observability/requests"),
-    ("GET", "/v8/management/credentials"),
-    ("POST", "/v8/management/credentials"),
-    ("DELETE", "/v8/management/credentials"),
-    ("GET", "/v8/management/credentials/models"),
-    ("GET", "/v8/management/credentials/download"),
-    ("PATCH", "/v8/management/credentials/status"),
-    ("PATCH", "/v8/management/credentials/fields"),
-    ("POST", "/v8/management/credentials/refresh"),
-    ("POST", "/v8/management/oauth/import"),
-    ("GET", "/v8/management/oauth/auth-url"),
-    ("GET", "/v8/management/oauth/status"),
-    ("DELETE", "/v8/management/oauth/session"),
-    ("GET", "/v8/management/plugins"),
-    ("DELETE", "/v8/management/plugins/:id"),
-    ("GET", "/v8/management/plugins/store"),
-    ("POST", "/v8/management/plugins/store/:id/install"),
-    ("GET", "/v8/management/plugins/:id/quota"),
-    ("POST", "/v8/management/plugins/:id/quota"),
-    ("DELETE", "/v8/management/plugins/:id/quota"),
-    ("GET", "/v8/management/oauth/callback"),
-    ("POST", "/v8/management/oauth/callback"),
-    ("GET", "/v0/management/oauth-callback"),
-    ("POST", "/v0/management/oauth-callback"),
 ];
 
 fn pattern_matches(pattern: &str, path: &str) -> bool {
@@ -158,7 +111,10 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
 }
 
 fn route_exists(method: &str, path: &str) -> bool {
-    ROUTE_TABLE.iter().any(|(m, pattern)| *m == method && pattern_matches(pattern, path))
+    ROUTE_TABLE
+        .iter()
+        .chain(cpa_management::GIN_ROUTES)
+        .any(|(m, pattern)| *m == method && pattern_matches(pattern, path))
 }
 
 /// gin registers `HEAD` only for `/healthz`; every other `HEAD` is an unrouted 404 (axum would

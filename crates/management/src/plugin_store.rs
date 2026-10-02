@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::http::{ApiError, ApiResult, ok_json};
+use crate::http::{ApiError, ApiResult, ok_struct};
 use crate::state::ManagementState;
 
 const DEFAULT_REGISTRY_URL: &str =
@@ -343,7 +343,7 @@ pub(crate) async fn list(st: &ManagementState) -> ApiResult {
         );
     }
     body.insert("plugins".into(), Value::Array(plugins));
-    Ok(ok_json(&Value::Object(body)))
+    Ok(ok_struct(&Value::Object(body)))
 }
 
 /// `POST /plugin-store/:id/install`: installing needs a plugin host.
