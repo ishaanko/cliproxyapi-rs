@@ -760,6 +760,7 @@ async fn run_session(
         let model = cpa_json::parse(&request_json).g("model").str();
         let mut args = ExecArgs::new(Format::OpenAIResponse, &model, Bytes::from(request_json), "");
         args.execution_session_id = Some(session_id);
+        args.downstream_websocket = true;
         let mut stream = pipeline.execute_stream(args).await;
 
         match forward_turn(
