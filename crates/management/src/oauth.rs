@@ -165,7 +165,7 @@ pub(crate) async fn callback(State(st): State<ManagementState>, req: Request) ->
         }
     };
     let dir = st.auth_dir();
-    let (code, body) = st.oauth.handle_oauth_callback(dir.as_deref(), &cb);
+    let (code, body) = st.oauth.handle_oauth_callback(dir.as_deref(), &cb).await;
     json_response(code, &body)
 }
 
@@ -261,7 +261,8 @@ async fn provider_redirect(st: ManagementState, provider: &'static str, uri: Uri
         // A redirect for an unknown or finished session is swallowed; the page is the same.
         let _ = st
             .oauth
-            .submit_callback(st.auth_dir().as_deref(), provider, &state, &code, &error);
+            .submit_callback(st.auth_dir().as_deref(), provider, &state, &code, &error)
+            .await;
     }
     html_ok()
 }
@@ -291,6 +292,7 @@ async fn devin_redirect(State(st): State<ManagementState>, uri: Uri) -> Response
     } else if st
         .oauth
         .submit_callback(st.auth_dir().as_deref(), "devin", &state, &code, &error)
+        .await
         .is_err()
     {
         json_response(400, &json!({"error": "invalid or expired OAuth callback"}))
