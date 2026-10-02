@@ -4,18 +4,15 @@
 use std::collections::HashMap;
 
 use cpa_core::thinking;
-use cpa_json::{raw_at, Res, Value, J};
+use crate::common::{input_audio_format_from_mime, raw_in};
+use cpa_json::{raw_children, Res, Value, J};
 use sha2::{Digest, Sha256};
 
 use crate::common;
 
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
 /// Converts a Gemini request into an OpenAI Chat Completions request.
 pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: bool) -> Vec<u8> {
-    let mut out = tpl(r#"{"model":"","messages":[]}"#);
+    let mut out = cpa_json::parse_str(r#"{"model":"","messages":[]}"#);
     let root = cpa_json::parse(input);
 
     cpa_json::set(&mut out, "model", model_name);
@@ -123,7 +120,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                 }
                 let text = part.g("text");
                 if text.exists() {
-                    let mut content_part = tpl(r#"{"type":"text","text":""}"#);
+                    let mut content_part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
                     cpa_json::set(&mut content_part, "text", text.str());
                     content_items.push(content_part);
                 }
@@ -136,7 +133,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
             }
         }
         if !content_items.is_empty() {
-            let mut msg = tpl(r#"{"role":"system","content":[]}"#);
+            let mut msg = cpa_json::parse_str(r#"{"role":"system","content":[]}"#);
             cpa_json::set(&mut msg, "content", Value::Array(content_items));
             message_items.push(msg);
         }
@@ -144,6 +141,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
 
     let contents = root.g("contents");
     if contents.is_array() {
+        let content_raws = raw_children(input, "contents");
         for (msg_idx, content) in contents.array().into_iter().enumerate() {
             let mut role = content.g("role").str();
             let parts = content.g("parts");
@@ -152,7 +150,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                 role = "assistant".into();
             }
 
-            let mut msg = tpl(r#"{"role":"","content":""}"#);
+            let mut msg = cpa_json::parse_str(r#"{"role":"","content":""}"#);
             cpa_json::set(&mut msg, "role", role);
 
             let mut text_builder = String::new();
@@ -162,6 +160,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
             let mut dropped_thought = false;
 
             if parts.is_array() {
+                let part_raws = content_raws.get(msg_idx).map(|c| raw_children(c.as_bytes(), "parts")).unwrap_or_default();
                 for (part_idx, part) in parts.array().into_iter().enumerate() {
                     if common::is_gemini_thought_part(&part) {
                         dropped_thought = true;
@@ -172,7 +171,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                     if text.exists() {
                         let formatted = text.str();
                         text_builder.push_str(&formatted);
-                        let mut content_part = tpl(r#"{"type":"text","text":""}"#);
+                        let mut content_part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
                         cpa_json::set(&mut content_part, "text", formatted);
                         content_items.push(content_part);
                     }
@@ -188,7 +187,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
 
                     // Verbatim `Raw` of a sub-value of this part (client whitespace included).
                     let part_raw = |sub: &str, fallback: &Res<'_>| -> String {
-                        raw_at(input, &format!("contents.{msg_idx}.parts.{part_idx}.{sub}")).map_or_else(|| fallback.raw(), str::to_string)
+                        raw_in(part_raws.get(part_idx), sub).map_or_else(|| fallback.raw(), str::to_string)
                     };
 
                     let function_call = part.g("functionCall");
@@ -202,7 +201,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                         }
                         tool_call_ids_by_name.entry(func_name.clone()).or_default().push(tool_call_id.clone());
 
-                        let mut tool_call = tpl(r#"{"id":"","type":"function","function":{"name":"","arguments":""}}"#);
+                        let mut tool_call = cpa_json::parse_str(r#"{"id":"","type":"function","function":{"name":"","arguments":""}}"#);
                         cpa_json::set(&mut tool_call, "id", tool_call_id);
                         cpa_json::set(&mut tool_call, "function.name", func_name);
                         if args_raw.is_empty() {
@@ -216,7 +215,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                     let function_response = part.g("functionResponse");
                     if function_response.exists() {
                         let func_name = function_response.g("name").str();
-                        let mut tool_msg = tpl(r#"{"role":"tool","tool_call_id":"","content":""}"#);
+                        let mut tool_msg = cpa_json::parse_str(r#"{"role":"tool","tool_call_id":"","content":""}"#);
 
                         let mut response_raw = String::new();
                         let response = function_response.g("response");
@@ -284,7 +283,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                 continue;
             }
             for func_decl in function_declarations.array() {
-                let mut openai_tool = tpl(r#"{"type":"function","function":{"name":"","description":""}}"#);
+                let mut openai_tool = cpa_json::parse_str(r#"{"type":"function","function":{"name":"","description":""}}"#);
                 cpa_json::set(&mut openai_tool, "function.name", func_decl.g("name").str());
                 cpa_json::set(&mut openai_tool, "function.description", func_decl.g("description").str());
 
@@ -322,7 +321,7 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                 "ANY" => {
                     let items = allowed_names.array();
                     if allowed_names.is_array() && items.len() == 1 {
-                        let mut choice = tpl(r#"{"type":"function","function":{"name":""}}"#);
+                        let mut choice = cpa_json::parse_str(r#"{"type":"function","function":{"name":""}}"#);
                         cpa_json::set(&mut choice, "function.name", items[0].str());
                         cpa_json::set(&mut out, "tool_choice", choice);
                     } else {
@@ -376,20 +375,20 @@ fn openai_content_part_from_gemini_inline_data(part: &Res<'_>) -> Option<Value> 
     let data_url = format!("data:{mime_type};base64,{data}");
     let lower = mime_type.to_lowercase();
     Some(if lower.starts_with("image/") {
-        let mut content_part = tpl(r#"{"type":"image_url","image_url":{"url":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"image_url","image_url":{"url":""}}"#);
         cpa_json::set(&mut content_part, "image_url.url", data_url);
         content_part
     } else if lower.starts_with("audio/") {
-        let mut content_part = tpl(r#"{"type":"input_audio","input_audio":{"data":"","format":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"input_audio","input_audio":{"data":"","format":""}}"#);
         cpa_json::set(&mut content_part, "input_audio.data", data);
-        cpa_json::set(&mut content_part, "input_audio.format", openai_input_audio_format_from_mime(&mime_type));
+        cpa_json::set(&mut content_part, "input_audio.format", input_audio_format_from_mime(&mime_type));
         content_part
     } else if lower.starts_with("video/") {
-        let mut content_part = tpl(r#"{"type":"video_url","video_url":{"url":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"video_url","video_url":{"url":""}}"#);
         cpa_json::set(&mut content_part, "video_url.url", data_url);
         content_part
     } else {
-        let mut content_part = tpl(r#"{"type":"file","file":{"filename":"","file_data":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"file","file":{"filename":"","file_data":""}}"#);
         cpa_json::set(&mut content_part, "file.filename", openai_file_name_from_mime(&mime_type));
         cpa_json::set(&mut content_part, "file.file_data", data);
         content_part
@@ -417,17 +416,17 @@ fn openai_content_part_from_gemini_file_data(part: &Res<'_>) -> Option<Value> {
     }
     let lower = mime_type.to_lowercase();
     if lower.starts_with("image/") {
-        let mut content_part = tpl(r#"{"type":"image_url","image_url":{"url":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"image_url","image_url":{"url":""}}"#);
         cpa_json::set(&mut content_part, "image_url.url", file_uri);
         return Some(content_part);
     }
     if lower.starts_with("video/") {
-        let mut content_part = tpl(r#"{"type":"video_url","video_url":{"url":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"video_url","video_url":{"url":""}}"#);
         cpa_json::set(&mut content_part, "video_url.url", file_uri);
         return Some(content_part);
     }
     if lower.starts_with("application/") || lower.starts_with("text/") {
-        let mut content_part = tpl(r#"{"type":"file","file":{"filename":"","file_url":""}}"#);
+        let mut content_part = cpa_json::parse_str(r#"{"type":"file","file":{"filename":"","file_url":""}}"#);
         cpa_json::set(&mut content_part, "file.filename", openai_file_name_from_mime(&mime_type));
         cpa_json::set(&mut content_part, "file.file_url", file_uri);
         return Some(content_part);
@@ -436,19 +435,9 @@ fn openai_content_part_from_gemini_file_data(part: &Res<'_>) -> Option<Value> {
     if !mime_type.is_empty() {
         file_info.push_str(&format!(" (Type: {mime_type})"));
     }
-    let mut content_part = tpl(r#"{"type":"text","text":""}"#);
+    let mut content_part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
     cpa_json::set(&mut content_part, "text", file_info);
     Some(content_part)
-}
-
-fn openai_input_audio_format_from_mime(mime_type: &str) -> &'static str {
-    match mime_type.trim().to_lowercase().as_str() {
-        "audio/wav" | "audio/wave" | "audio/x-wav" => "wav",
-        "audio/flac" => "flac",
-        "audio/opus" | "audio/ogg" => "opus",
-        "audio/pcm" | "audio/l16" => "pcm16",
-        _ => "mp3",
-    }
 }
 
 fn openai_file_name_from_mime(mime_type: &str) -> &'static str {

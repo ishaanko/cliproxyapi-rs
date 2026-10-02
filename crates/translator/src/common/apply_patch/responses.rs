@@ -300,6 +300,20 @@ pub struct ApplyPatchResponsesBridge {
 pub type BridgeOutput = (Vec<Vec<u8>>, Option<String>);
 
 impl ApplyPatchResponsesBridge {
+    /// Retains every supplied key before a folded dispatcher reveals its child. Names are
+    /// deliberately withheld: a dispatcher name is not the selected child name.
+    pub fn check_identity(&mut self, event: &[u8]) -> Result<(), String> {
+        let root = cpa_json::parse(event);
+        let mut item = root.g("item").value();
+        let has_item = root.g("item").exists();
+        if has_item {
+            cpa_json::delete(&mut item, "name");
+            cpa_json::delete(&mut item, "namespace");
+        }
+        let item_res = if has_item { Res::owned(item) } else { Res::NONE };
+        self.resolve(&Res::of(&root), &item_res).map(|_| ())
+    }
+
     /// Resolves the original declarations before any normalization.
     pub fn new(original_request: &[u8]) -> Self {
         let tools = collect_responses_tool_winners(&cpa_json::parse(original_request));
@@ -488,20 +502,6 @@ impl ApplyPatchResponsesBridge {
             return Err(evidence.clone());
         }
         Ok(r)
-    }
-
-    /// Retains every supplied key before a folded dispatcher reveals its child. Names are
-    /// deliberately withheld: a dispatcher name is not the selected child name.
-    pub fn check_identity(&mut self, event: &[u8]) -> Result<(), String> {
-        let root = cpa_json::parse(event);
-        let mut item = root.g("item").value();
-        let has_item = root.g("item").exists();
-        if has_item {
-            cpa_json::delete(&mut item, "name");
-            cpa_json::delete(&mut item, "namespace");
-        }
-        let item_res = if has_item { Res::owned(item) } else { Res::NONE };
-        self.resolve(&Res::of(&root), &item_res).map(|_| ())
     }
 
     fn restore_item(&self, item: &[u8], r: usize, input: &str, added: bool) -> Vec<u8> {

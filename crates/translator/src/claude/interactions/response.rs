@@ -1,9 +1,8 @@
 //! Claude Messages response -> Interactions response (Go: interactions_claude_response.go).
 
+use crate::common::{first_non_empty, trim_space, unix_nano_now};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use chrono::Utc;
 use cpa_json::{json, Res, Value};
 
 use crate::common::sse_event_data;
@@ -66,24 +65,8 @@ pub fn convert_claude_response_to_interactions_non_stream(
     Some(convert_sse_non_stream(model_name, raw_json))
 }
 
-fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
 fn generated_interaction_id() -> String {
-    format!("interaction_{}", now_nanos())
-}
-
-/// Go `bytes.TrimSpace`.
-fn trim_space(b: &[u8]) -> &[u8] {
-    match std::str::from_utf8(b) {
-        Ok(s) => s.trim().as_bytes(),
-        Err(_) => b.trim_ascii(),
-    }
-}
-
-fn first_non_empty(values: &[&str]) -> String {
-    values.iter().find(|v| !v.is_empty()).map(|v| v.to_string()).unwrap_or_default()
+    format!("interaction_{}", unix_nano_now())
 }
 
 fn convert_message(model_name: &str, root: &Res<'_>) -> Vec<u8> {
@@ -514,7 +497,7 @@ fn append_completed(out: &mut Chunks, st: &mut StreamState, model_name: &str, ro
         return;
     }
     append_created(out, st, model_name);
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::common::utc_now_rfc3339();
     let mut completed = json!({
         "interaction": {
             "id": "",

@@ -8,7 +8,8 @@ use cpa_json::{J, Res, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::request::{build_short_name_map_for, collect_request_tool_names};
-use crate::codex::util::{mime_type_from_output_format, reverse_map, unix_now};
+use crate::codex::util::{mime_type_from_output_format, reverse_map};
+use crate::common::unix_now;
 use crate::registry::{Ctx, Param};
 
 /// Streaming state of one tool call.

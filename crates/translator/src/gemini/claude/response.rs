@@ -1,5 +1,6 @@
 //! Gemini response to Claude response (Go: gemini/claude/gemini_claude_response.go).
 
+use crate::common::args_raw;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -49,13 +50,6 @@ fn start_event(index: i64, block: Value) -> Value {
 fn part_signature<'a>(part: &'a Res<'_>) -> Res<'a> {
     let sig = part.g("thoughtSignature");
     if sig.exists() { sig } else { part.g("thought_signature") }
-}
-
-/// Source text of a part's `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(src: &[u8], part_index: usize, args: &Res<'_>) -> String {
-    cpa_json::raw_at(src, &format!("candidates.0.content.parts.{part_index}.functionCall.args"))
-        .map(str::to_string)
-        .unwrap_or_else(|| args.raw())
 }
 
 /// Translates one Gemini streaming chunk into Claude SSE events (one output buffer per call).
@@ -120,6 +114,7 @@ pub fn convert_gemini_response_to_claude(
     // Each part can contain text content, thinking content, or function calls.
     let parts = root.g("candidates.0.content.parts");
     if parts.is_array() {
+        let part_raws = cpa_json::raw_children(raw, "candidates.0.content.parts");
         for (part_index, part) in parts.array().into_iter().enumerate() {
             let part_text = part.g("text");
             let function_call = part.g("functionCall");
@@ -193,7 +188,7 @@ pub fn convert_gemini_response_to_claude(
                     if args.exists() {
                         let data = delta_event(
                             p.response_index,
-                            json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
+                            json!({ "type": "input_json_delta", "partial_json": args_raw(part_raws.get(part_index), &args) }),
                         );
                         event(&mut output, "content_block_delta", &data);
                     }
@@ -229,7 +224,7 @@ pub fn convert_gemini_response_to_claude(
                 if args.exists() {
                     let data = delta_event(
                         p.response_index,
-                        json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
+                        json!({ "type": "input_json_delta", "partial_json": args_raw(part_raws.get(part_index), &args) }),
                     );
                     event(&mut output, "content_block_delta", &data);
                 }

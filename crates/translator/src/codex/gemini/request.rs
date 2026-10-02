@@ -7,10 +7,10 @@ use cpa_core::util::walk;
 use cpa_json::{J, Res, Value, json};
 
 use crate::codex::util::{
-    build_short_name_map, file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
+    build_short_name_map, file_name_from_mime, shorten_name_if_needed,
 };
-use crate::common::is_gemini_thought_part;
-use cpa_json::raw_at;
+use crate::common::{input_audio_format_from_mime, is_gemini_thought_part, raw_in};
+use cpa_json::raw_children;
 
 /// Go: ConvertGeminiRequestToCodex. Maps system instruction, contents (text, media, function
 /// calls and responses paired through a FIFO of call ids), tools, tool config and thinking
@@ -27,7 +27,7 @@ pub fn convert_gemini_request_to_codex(
     let short_map = short_name_map_from_tools(&root);
 
     // Gemini pairs functionResponses with calls in order, so keep a FIFO of generated call ids.
-    let mut pending_call_ids: Vec<String> = Vec::new();
+    let mut pending_call_ids: std::collections::VecDeque<String> = Default::default();
     let mut call_counter = 0u32;
 
     out_set(&mut out, "model", model_name);
@@ -60,6 +60,7 @@ pub fn convert_gemini_request_to_codex(
     // Contents -> messages and function calls/results.
     let contents = root.g("contents");
     if contents.is_array() {
+        let content_raws = raw_children(raw_json, "contents");
         for (ci, item) in contents.array().iter().enumerate() {
             let mut role = item.g("role").str();
             if role == "model" {
@@ -69,12 +70,13 @@ pub fn convert_gemini_request_to_codex(
             if !parts.is_array() {
                 continue;
             }
+            // Source text of each part, for values Go copies verbatim into strings.
+            let part_raws = content_raws.get(ci).map(|c| raw_children(c.as_bytes(), "parts")).unwrap_or_default();
             for (pj, p) in parts.array().iter().enumerate() {
                 if is_gemini_thought_part(p) {
                     continue;
                 }
-                // Source text of this part, for values Go copies verbatim into strings.
-                let part_path = format!("contents.{ci}.parts.{pj}");
+                let part_raw = part_raws.get(pj);
 
                 let t = p.g("text");
                 if t.exists() {
@@ -113,7 +115,7 @@ pub fn convert_gemini_request_to_codex(
                     }
                     let args = fc.g("args");
                     if args.exists() {
-                        let raw_args = raw_at(raw_json, &format!("{part_path}.functionCall.args"))
+                        let raw_args = raw_in(part_raw, "functionCall.args")
                             .map_or_else(|| args.raw(), str::to_string);
                         cpa_json::set(&mut f, "arguments", raw_args);
                     }
@@ -124,7 +126,7 @@ pub fn convert_gemini_request_to_codex(
                         id = format!("call_gemini_{call_counter:016}");
                     }
                     cpa_json::set(&mut f, "call_id", id.clone());
-                    pending_call_ids.push(id);
+                    pending_call_ids.push_back(id);
                     input_items.push(f);
                     continue;
                 }
@@ -140,7 +142,7 @@ pub fn convert_gemini_request_to_codex(
                         cpa_json::set(&mut fno, "output", res.str());
                     } else if resp.exists() {
                         let raw_resp =
-                            raw_at(raw_json, &format!("{part_path}.functionResponse.response"))
+                            raw_in(part_raw, "functionResponse.response")
                                 .map_or_else(|| resp.raw(), str::to_string);
                         cpa_json::set(&mut fno, "output", raw_resp);
                     }
@@ -151,8 +153,8 @@ pub fn convert_gemini_request_to_codex(
                             pending_call_ids.remove(idx);
                         }
                         custom_id
-                    } else if !pending_call_ids.is_empty() {
-                        pending_call_ids.remove(0)
+                    } else if let Some(front) = pending_call_ids.pop_front() {
+                        front
                     } else {
                         call_counter += 1;
                         format!("call_gemini_{call_counter:016}")

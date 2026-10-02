@@ -31,6 +31,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_interactions_response_passthrough),
             non_stream: Some(convert_interactions_response_passthrough_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
     r.register(
@@ -41,6 +42,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_gemini_response_to_interactions),
             non_stream: Some(convert_gemini_response_to_interactions_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
     r.register(
@@ -51,6 +53,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_interactions_response_to_gemini),
             non_stream: Some(convert_interactions_response_to_gemini_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

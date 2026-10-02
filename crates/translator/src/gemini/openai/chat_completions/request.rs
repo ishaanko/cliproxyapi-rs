@@ -1,6 +1,7 @@
 //! OpenAI Chat Completions request to Gemini request
 //! (Go: gemini/openai/chat-completions/gemini_openai_request.go).
 
+use crate::common::text_part;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::signature::{gemini_replay_signature_or_bypass, SignatureBlockKind};
@@ -106,6 +107,7 @@ pub fn convert_openai_request_to_gemini(model_name: &str, raw: &[u8], _stream: b
     let messages = root.g("messages");
     if messages.is_array() {
         let arr = messages.array();
+        let message_raws = cpa_json::raw_children(raw, "messages");
         let mut system_parts: Vec<Value> = Vec::with_capacity(2);
         let mut content_items: Vec<Value> = Vec::with_capacity(arr.len());
 
@@ -242,7 +244,7 @@ pub fn convert_openai_request_to_gemini(model_name: &str, raw: &[u8], _stream: b
                             let call_id = next.g("tool_call_id").str();
                             if !call_id.is_empty() {
                                 // Go stores the content's source text (Raw) as a string.
-                                let content_raw = cpa_json::raw_at(raw, &format!("messages.{next_index}.content"))
+                                let content_raw = crate::common::raw_in(message_raws.get(next_index), "content")
                                     .map(str::to_string)
                                     .unwrap_or_else(|| next.g("content").raw());
                                 turn_tool_responses.insert(call_id, content_raw);
@@ -474,10 +476,6 @@ pub fn convert_openai_request_to_gemini(model_name: &str, raw: &[u8], _stream: b
     }
 
     attach_default_safety_settings(&cpa_json::to_vec(&out), "safetySettings")
-}
-
-fn text_part(text: &str) -> Value {
-    json!({ "text": text })
 }
 
 fn inline_data_part(mime_type: &str, data: &str) -> Value {

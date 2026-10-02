@@ -23,6 +23,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_codex_response_to_openai_responses),
             non_stream: Some(convert_codex_response_to_openai_responses_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

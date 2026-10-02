@@ -4,11 +4,8 @@
 //! A carrier is `cpa-gemini-responses-carrier-v1:<direction>:<target>:<base64rawstd(signature)>`.
 //! Direction says which neighbour the signature binds to, target which kind of neighbour.
 
-use base64::alphabet::STANDARD;
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use base64::Engine;
 use cpa_core::signature::{
-    compatible_signature_for_provider_block, is_gemini_thought_signature_bypass,
+    b64, compatible_signature_for_provider_block, is_gemini_thought_signature_bypass,
     signature_payload_without_provider_prefix, SignatureBlockKind, SignatureProvider,
     MAX_GEMINI_THOUGHT_SIGNATURE_LEN,
 };
@@ -29,22 +26,13 @@ pub(super) const CARRIER_TARGET_FIELD: &str = "_cpa_reasoning_target";
 pub(super) const CARRIER_SIGNATURE_FIELD: &str = "_cpa_reasoning_signature";
 pub(super) const CARRIER_SUMMARY_FIELD: &str = "_cpa_reasoning_summary";
 
-/// Go `base64.RawStdEncoding`: no padding accepted, non-zero trailing bits tolerated.
-const RAW_STD: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new()
-        .with_encode_padding(false)
-        .with_decode_padding_mode(DecodePaddingMode::RequireNone)
-        .with_decode_allow_trailing_bits(true),
-);
-
 /// Encodes a raw signature into a carrier string; empty for a blank signature.
 pub(super) fn encode_gemini_responses_carrier(raw_signature: &str, direction: &str, target_kind: &str) -> String {
     let raw_signature = raw_signature.trim();
     if raw_signature.is_empty() {
         return String::new();
     }
-    format!("{CARRIER_PREFIX}{direction}:{target_kind}:{}", RAW_STD.encode(raw_signature.as_bytes()))
+    format!("{CARRIER_PREFIX}{direction}:{target_kind}:{}", b64::encode_raw_std(raw_signature.as_bytes()))
 }
 
 pub(super) struct DecodedCarrier {
@@ -78,9 +66,7 @@ pub(super) fn decode_gemini_responses_carrier(raw_signature: &str) -> DecodedCar
     if !matches!(target_kind, CARRIER_TEXT | CARRIER_FUNCTION | CARRIER_ANY) {
         return invalid();
     }
-    // Go's decoder skips CR/LF anywhere in the input.
-    let payload: String = fields[2].chars().filter(|c| *c != '\r' && *c != '\n').collect();
-    let Ok(decoded) = RAW_STD.decode(payload.as_bytes()) else {
+    let Ok(decoded) = b64::raw_std(fields[2]) else {
         return invalid();
     };
     if decoded.is_empty() || decoded.starts_with(CARRIER_PREFIX.as_bytes()) {
@@ -162,12 +148,11 @@ pub(super) fn normalize_gemini_responses_carriers<'a>(items: &[Res<'a>]) -> (Vec
     for (item_index, original_item) in items.iter().enumerate() {
         let mut item = original_item.clone();
         let mut item_json: Option<Value> = None;
-        if has_internal_carrier_fields(original_item) {
-            if let Some(stripped) = strip_gemini_responses_carrier_metadata(original_item) {
+        if has_internal_carrier_fields(original_item)
+            && let Some(stripped) = strip_gemini_responses_carrier_metadata(original_item) {
                 item = Res::owned(stripped.clone());
                 item_json = Some(stripped);
             }
-        }
         if item.g("type").str() != "reasoning" {
             normalized.push(item);
             continue;

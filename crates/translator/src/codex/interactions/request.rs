@@ -3,16 +3,18 @@
 use cpa_core::thinking;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::util::{
-    file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
-};
-use cpa_json::raw_at;
+use crate::codex::util::{file_name_from_mime, shorten_name_if_needed};
+use crate::common::input_audio_format_from_mime;
 
-/// Source bytes plus the output item list being built. `path` arguments below are gjson-style
-/// paths into `src`, used to copy client values verbatim where Go uses `Raw` in a string.
-struct Ctx<'a> {
-    src: &'a [u8],
+/// The output item list being built. `raw` arguments below are the source text of the value
+/// being converted, used to copy client values verbatim where Go uses `Raw` in a string.
+struct Ctx {
     items: Vec<Value>,
+}
+
+/// Source text of each child of the array (or `steps` array) in `raw`.
+fn child_raws<'a>(raw: Option<&'a str>, path: &str) -> Vec<&'a str> {
+    raw.map(|r| cpa_json::raw_children(r.as_bytes(), path)).unwrap_or_default()
 }
 
 /// Go: ConvertInteractionsRequestToCodex.
@@ -29,11 +31,8 @@ pub fn convert_interactions_request_to_codex(
     }
     copy_system(&mut out, &root);
     copy_generation_config(&mut out, &root);
-    let mut cx = Ctx {
-        src: input_raw_json,
-        items: Vec::new(),
-    };
-    append_input(&mut cx, &root.g("input"), "input");
+    let mut cx = Ctx { items: Vec::new() };
+    append_input(&mut cx, &root.g("input"), cpa_json::raw_at(input_raw_json, "input"));
     if !cx.items.is_empty() {
         cpa_json::set(&mut out, "input", Value::Array(cx.items));
     }
@@ -197,7 +196,7 @@ fn reasoning_summary(cfg: &Res<'_>) -> Option<&'static str> {
     None
 }
 
-fn append_input(cx: &mut Ctx<'_>, input: &Res<'_>, path: &str) {
+fn append_input(cx: &mut Ctx, input: &Res<'_>, raw: Option<&str>) {
     if !input.exists() {
         return;
     }
@@ -206,23 +205,25 @@ fn append_input(cx: &mut Ctx<'_>, input: &Res<'_>, path: &str) {
         return;
     }
     if input.is_array() {
+        let raws = child_raws(raw, "");
         for (i, step) in input.array().iter().enumerate() {
-            append_step(cx, step, "user", &format!("{path}.{i}"));
+            append_step(cx, step, "user", raws.get(i).copied());
         }
         return;
     }
     let steps = input.g("steps");
     if steps.exists() && steps.is_array() {
         let default_role = default_role(&input.g("role").str(), "user");
+        let raws = child_raws(raw, "steps");
         for (i, step) in steps.array().iter().enumerate() {
-            append_step(cx, step, default_role, &format!("{path}.steps.{i}"));
+            append_step(cx, step, default_role, raws.get(i).copied());
         }
         return;
     }
-    append_step(cx, input, "user", path);
+    append_step(cx, input, "user", raw);
 }
 
-fn append_step(cx: &mut Ctx<'_>, step: &Res<'_>, default_role_name: &str, path: &str) {
+fn append_step(cx: &mut Ctx, step: &Res<'_>, default_role_name: &str, raw: Option<&str>) {
     if step.is_string() {
         append_text(cx, default_role_name, &step.str());
         return;
@@ -230,15 +231,16 @@ fn append_step(cx: &mut Ctx<'_>, step: &Res<'_>, default_role_name: &str, path: 
     let steps = step.g("steps");
     if steps.exists() && steps.is_array() {
         let role = default_role(&step.g("role").str(), default_role_name);
+        let raws = child_raws(raw, "steps");
         for (i, nested) in steps.array().iter().enumerate() {
-            append_step(cx, nested, role, &format!("{path}.steps.{i}"));
+            append_step(cx, nested, role, raws.get(i).copied());
         }
         return;
     }
     let step_type = step.g("type").str().trim().to_lowercase();
     match step_type.as_str() {
-        "function_call" => append_function_call(cx, step, path),
-        "function_result" | "function_call_output" => append_function_result(cx, step, path),
+        "function_call" => append_function_call(cx, step, raw),
+        "function_result" | "function_call_output" => append_function_result(cx, step, raw),
         "model_output" | "assistant" => append_content_item(cx, &step.g("content"), "assistant"),
         "thought" | "reasoning" => append_thought(cx, step),
         // "user_input", "message", "" and unknown types share the message handling.
@@ -257,7 +259,7 @@ fn append_step(cx: &mut Ctx<'_>, step: &Res<'_>, default_role_name: &str, path: 
     }
 }
 
-fn append_content_item(cx: &mut Ctx<'_>, content: &Res<'_>, role: &str) {
+fn append_content_item(cx: &mut Ctx, content: &Res<'_>, role: &str) {
     if !content.exists() {
         return;
     }
@@ -280,7 +282,7 @@ fn append_content_item(cx: &mut Ctx<'_>, content: &Res<'_>, role: &str) {
     }
 }
 
-fn append_function_call(cx: &mut Ctx<'_>, step: &Res<'_>, path: &str) {
+fn append_function_call(cx: &mut Ctx, step: &Res<'_>, raw: Option<&str>) {
     let mut item = json!({"type": "function_call"});
     let name = step.g("name");
     if name.exists() {
@@ -292,19 +294,19 @@ fn append_function_call(cx: &mut Ctx<'_>, step: &Res<'_>, path: &str) {
     }
     let args = step.g("arguments");
     if args.exists() {
-        let s = json_string(cx.src, &args, &format!("{path}.arguments"));
+        let s = json_string(&args, raw_in_opt(raw, "arguments"));
         cpa_json::set(&mut item, "arguments", s);
     } else {
         let args = step.g("args");
         if args.exists() {
-            let s = json_string(cx.src, &args, &format!("{path}.args"));
+            let s = json_string(&args, raw_in_opt(raw, "args"));
             cpa_json::set(&mut item, "arguments", s);
         }
     }
     cx.items.push(item);
 }
 
-fn append_function_result(cx: &mut Ctx<'_>, step: &Res<'_>, path: &str) {
+fn append_function_result(cx: &mut Ctx, step: &Res<'_>, raw: Option<&str>) {
     let mut item = json!({"type": "function_call_output"});
     let call_id = call_id(step);
     if !call_id.is_empty() {
@@ -312,12 +314,12 @@ fn append_function_result(cx: &mut Ctx<'_>, step: &Res<'_>, path: &str) {
     }
     let result = step.g("result");
     if result.exists() {
-        let s = output_string(cx.src, &result, &format!("{path}.result"));
+        let s = output_string(&result, raw_in_opt(raw, "result"));
         cpa_json::set(&mut item, "output", s);
     } else {
         let output = step.g("output");
         if output.exists() {
-            let s = output_string(cx.src, &output, &format!("{path}.output"));
+            let s = output_string(&output, raw_in_opt(raw, "output"));
             cpa_json::set(&mut item, "output", s);
         }
     }
@@ -393,7 +395,7 @@ fn set_if_different(out: &mut Value, path: &str, value: &Res<'_>) {
     cpa_json::set(out, path, value.value());
 }
 
-fn append_thought(cx: &mut Ctx<'_>, step: &Res<'_>) {
+fn append_thought(cx: &mut Ctx, step: &Res<'_>) {
     let mut text = content_text(&step.g("content"));
     if text.is_empty() {
         text = step.g("text").str();
@@ -409,7 +411,7 @@ fn append_thought(cx: &mut Ctx<'_>, step: &Res<'_>) {
     cx.items.push(item);
 }
 
-fn append_text(cx: &mut Ctx<'_>, role: &str, text: &str) {
+fn append_text(cx: &mut Ctx, role: &str, text: &str) {
     let part_type = if role == "assistant" {
         "output_text"
     } else {
@@ -418,7 +420,7 @@ fn append_text(cx: &mut Ctx<'_>, role: &str, text: &str) {
     append_message_part(cx, role, json!({"type": part_type, "text": text}));
 }
 
-fn append_message_part(cx: &mut Ctx<'_>, role: &str, part: Value) {
+fn append_message_part(cx: &mut Ctx, role: &str, part: Value) {
     cx.items
         .push(json!({"type": "message", "role": role, "content": [part]}));
 }
@@ -630,23 +632,28 @@ fn call_id(step: &Res<'_>) -> String {
     step.g("id").str().trim().to_string()
 }
 
+/// `raw_at` inside an optional raw slice.
+fn raw_in_opt<'a>(raw: Option<&'a str>, path: &str) -> Option<&'a str> {
+    cpa_json::raw_at(raw?.as_bytes(), path)
+}
+
 /// A string value verbatim, otherwise the source text of the value (`{}` when absent).
-fn json_string(src: &[u8], value: &Res<'_>, path: &str) -> String {
+fn json_string(value: &Res<'_>, raw: Option<&str>) -> String {
     if value.is_string() {
         return value.str();
     }
     if value.exists() {
-        return raw_at(src, path).map_or_else(|| value.raw(), str::to_string);
+        return raw.map_or_else(|| value.raw(), str::to_string);
     }
     "{}".into()
 }
 
-fn output_string(src: &[u8], value: &Res<'_>, path: &str) -> String {
+fn output_string(value: &Res<'_>, raw: Option<&str>) -> String {
     if value.is_string() {
         return value.str();
     }
     if value.exists() {
-        return raw_at(src, path).map_or_else(|| value.raw(), str::to_string);
+        return raw.map_or_else(|| value.raw(), str::to_string);
     }
     String::new()
 }
