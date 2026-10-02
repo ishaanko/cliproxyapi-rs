@@ -65,6 +65,11 @@ pub struct ExecArgs<'a> {
     pub pinned_auth_id: Option<&'a str>,
     /// The client is connected over a Responses websocket (lets the Codex executor use its upstream websocket).
     pub downstream_websocket: bool,
+    /// The request continues a response and is valid only on the session's live upstream
+    /// websocket (Go: `WithRequiredUpstreamWebsocket`).
+    pub required_upstream_websocket: bool,
+    /// Called with the auth id of every credential pick (Go: `WithSelectedAuthIDCallback`).
+    pub on_selected_auth: Option<Arc<dyn Fn(&str) + Send + Sync>>,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -81,6 +86,8 @@ impl<'a> ExecArgs<'a> {
             execution_session_id: None,
             pinned_auth_id: None,
             downstream_websocket: false,
+            required_upstream_websocket: false,
+            on_selected_auth: None,
         }
     }
 }
@@ -153,6 +160,9 @@ impl Pipeline {
         if a.downstream_websocket {
             md.insert(cpa_executors::codex::META_DOWNSTREAM_WEBSOCKET.into(), json!(true));
         }
+        if a.required_upstream_websocket {
+            md.insert(cpa_executors::codex::META_REQUIRED_UPSTREAM_WEBSOCKET.into(), json!(true));
+        }
         md.insert(meta::REQUESTED_MODEL.into(), json!(a.model));
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::AUTH_SELECTION_MODEL.into(), json!(sel));
@@ -186,7 +196,13 @@ impl Pipeline {
         opts.metadata = metadata;
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
-        opts.selected_auth = Some(SelectedAuthCallback(Arc::new(move |_auth_id, index| trace.record(index, &request_id))));
+        let on_selected = a.on_selected_auth.clone();
+        opts.selected_auth = Some(SelectedAuthCallback(Arc::new(move |auth_id, index| {
+            trace.record(index, &request_id);
+            if let Some(cb) = &on_selected {
+                cb(auth_id);
+            }
+        })));
         (req, opts)
     }
 

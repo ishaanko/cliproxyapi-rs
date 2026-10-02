@@ -32,14 +32,18 @@ fn apply_cors(headers: &mut axum::http::HeaderMap) {
     headers.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static(CORS_EXPOSED));
 }
 
-/// `corsMiddleware`: CORS headers on every response; `OPTIONS` answers 204 without reaching auth.
+/// `corsMiddleware`: CORS headers on every response except websocket 101s; `OPTIONS` answers 204 without reaching auth.
 pub async fn cors(req: Request, next: Next) -> Response {
     let mut resp = if req.method() == Method::OPTIONS {
         Reply::new(204).into_response()
     } else {
         next.run(req).await
     };
-    apply_cors(resp.headers_mut());
+    // A websocket handshake is written by gorilla straight on the hijacked connection, so the
+    // gin-level CORS headers never reach a 101.
+    if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        apply_cors(resp.headers_mut());
+    }
     // axum's 405 handling adds `Allow`; gin answers 404 without it.
     resp.headers_mut().remove(header::ALLOW);
     resp

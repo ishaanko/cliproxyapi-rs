@@ -1,14 +1,15 @@
 //! Client-facing Responses websocket: `GET /v1/responses` and `GET /backend-api/codex/responses`
 //! (Go: openai_responses_websocket*.go).
 //!
-//! Every turn is executed through the HTTP streaming path (`upstreamMode == http` in Go): frames
-//! are normalized into full Responses requests ([`requests`]), executed, and each upstream SSE
-//! event is written back as one JSON text frame. Native upstream-websocket passthrough (Codex /
-//! xAI credentials with `websockets: true`, duplex steering, pinned credentials across turns) is
-//! not implemented: the executor contract has no per-turn selected-credential feedback.
+//! Turns are executed through the auth manager. While the pinned credential speaks the upstream
+//! websocket (Codex / xAI with `websockets: true`) frames pass through unchanged and continuations
+//! must reuse that credential's live socket ([`upstream`]); otherwise frames are normalized into
+//! full Responses requests ([`requests`]) and each upstream SSE event is written back as one JSON
+//! text frame. Duplex steering (`codex-response-steering`) is not implemented.
 
 pub mod requests;
 pub mod toolcache;
+pub mod upstream;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -59,6 +60,8 @@ pub async fn responses_websocket(
         .max_frame_size(1 << 30)
         .on_failed_upgrade(move |_| api_log.ws_finished())
         .on_upgrade(move |socket| session(socket, st, info));
+    // gorilla writes `Connection: Upgrade` (axum lowercases the token).
+    resp.headers_mut().insert(axum::http::header::CONNECTION, HeaderValue::from_static("Upgrade"));
     // The sticky turn state is echoed so reconnects keep their affinity.
     if !turn_state.is_empty()
         && let Ok(v) = HeaderValue::from_str(&turn_state)
@@ -98,6 +101,9 @@ fn truncate_close_reason(reason: &str, max_bytes: usize) -> String {
 
 /// `websocketClosePayloadForUpstreamError`: `message_too_big` becomes close code 1009.
 fn close_frame_for_upstream_error(err: &ErrorMessage) -> Option<CloseFrame> {
+    if let Some(frame) = upstream::replay_required_close_frame(err) {
+        return Some(frame);
+    }
     let status = err.status_or_500();
     if status != 413 {
         return None;
@@ -467,6 +473,8 @@ enum TurnEnd {
     Completed(TurnOutcome),
     /// The socket is finished (closed with or without a frame, write failure, client gone).
     Terminate(String),
+    /// The upstream error was withheld from the client (`suppressError`); the caller decides.
+    Failed(ErrorMessage),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -479,6 +487,7 @@ async fn forward_turn(
     tool_turn: &mut Option<ToolCacheTurn>,
     session_key: &str,
     session_id: &str,
+    suppress: &(dyn Fn(&ErrorMessage) -> bool + Sync),
 ) -> TurnEnd {
     let mut completed = false;
     let mut completed_output: Vec<u8> = b"[]".to_vec();
@@ -522,6 +531,9 @@ async fn forward_turn(
                     Ok(chunk) => chunk,
                     Err(err) => {
                         api_log.record_error(err.status, &err.text);
+                        if suppress(&err) {
+                            return TurnEnd::Failed(err);
+                        }
                         api_log.mark_response_timestamp();
                         return end_with_error(socket, &api_log, timeline, &err, None).await;
                     }
@@ -560,6 +572,11 @@ async fn forward_turn(
                         completed = true;
                         completed_output = collector.completed_output(&payload);
                         completed_response_id = payload.g("response.id").str().trim().to_string();
+                    }
+                    if let Some(err) = &payload_err
+                        && suppress(err)
+                    {
+                        return TurnEnd::Failed(err.clone());
                     }
                     api_log.mark_response_timestamp();
                     if let Some(err) = payload_err {
@@ -612,13 +629,27 @@ async fn end_with_error(
     TurnEnd::Terminate(err.text.clone())
 }
 
-#[derive(Default)]
 struct SessionState {
     last_request: Vec<u8>,
     last_response_output: Vec<u8>,
     last_response_id: String,
     pending_tool_call_ids: Vec<String>,
     pending_prewarm_id: String,
+    pinned: upstream::PinnedAuths,
+    passthrough_model: String,
+    mode: upstream::UpstreamMode,
+    upstream_ws_auth_id: String,
+    observed_compaction: upstream::ObservedCompaction,
+}
+
+/// What the credential-selection callback saw during one turn (Go: the variables captured by
+/// `WithSelectedAuthIDCallback`).
+#[derive(Default)]
+struct SelectionObserved {
+    last_attempted: String,
+    mode: upstream::UpstreamMode,
+    observed: bool,
+    pinned_attempted: bool,
 }
 
 async fn session(mut socket: WebSocket, st: AppState, info: ReqInfo) {
@@ -640,6 +671,15 @@ async fn session(mut socket: WebSocket, st: AppState, info: ReqInfo) {
     drop(socket);
 }
 
+/// Closes the socket with the replay-required frame (the client reconnects and resends the turn).
+async fn close_for_replay(socket: &mut WebSocket) -> Option<String> {
+    let err = upstream::replay_required_error();
+    if let Some(frame) = upstream::replay_required_close_frame(&err) {
+        let _ = socket.send(Message::Close(Some(frame))).await;
+    }
+    Some(err.text)
+}
+
 /// The read loop; returns why the session ended (`None` for a clean client close).
 async fn run_session(
     socket: &mut WebSocket,
@@ -648,9 +688,18 @@ async fn run_session(
     session_id: &str,
     session_key: &str,
 ) -> Option<String> {
+    use upstream::UpstreamMode;
     let mut state = SessionState {
+        last_request: Vec::new(),
         last_response_output: b"[]".to_vec(),
-        ..Default::default()
+        last_response_id: String::new(),
+        pending_tool_call_ids: Vec::new(),
+        pending_prewarm_id: String::new(),
+        pinned: upstream::PinnedAuths::default(),
+        passthrough_model: String::new(),
+        mode: UpstreamMode::Unknown,
+        upstream_ws_auth_id: String::new(),
+        observed_compaction: upstream::ObservedCompaction::default(),
     };
     loop {
         let payload: Vec<u8> = match socket.recv().await {
@@ -672,14 +721,67 @@ async fn run_session(
 
         let root = cpa_json::parse(&payload);
         let explicit_model = root.g("model").str().trim().to_string();
-        let mut request_model = explicit_model;
+        let mut request_model = explicit_model.clone();
+        if request_model.is_empty() {
+            request_model = state.passthrough_model.clone();
+        }
         if request_model.is_empty() {
             request_model = cpa_json::parse(&state.last_request).g("model").str().trim().to_string();
         }
-        let allow_compaction_bypass = supports_compaction_replay_for_model(&st.manager, &request_model);
+
+        // Credential affinity: keep the pinned credential only while it still serves the model.
+        state.pinned.refresh(&st.manager, &request_model);
+        let mut use_upstream_ws = upstream::uses_upstream_websocket_passthrough(&st.manager, &request_model);
+        if !state.pinned.current.is_empty()
+            && let Some(pinned_auth) = st.manager.get(&state.pinned.current)
+            && upstream::supports_incremental_input(&pinned_auth)
+        {
+            let provider = pinned_auth.provider.trim().to_lowercase();
+            use_upstream_ws = provider == "codex" || provider == "xai";
+        }
+        let native = upstream::native_passthrough_allowed(state.mode, use_upstream_ws, &state.pinned.current, &state.upstream_ws_auth_id);
+        let requires_current_upstream = upstream::request_requires_current_upstream(&payload);
+        if state.mode == UpstreamMode::Ws && !native && requires_current_upstream {
+            return close_for_replay(socket).await;
+        }
+        if !explicit_model.is_empty() && !use_upstream_ws {
+            state.passthrough_model.clear();
+        }
+
+        // A completed compaction response is evidence the credential that produced it supports
+        // compaction replay.
+        let mut observed_replay_auth_id = String::new();
+        let mut observed_supported = false;
+        let observed = &state.observed_compaction;
+        if !observed.model_name.is_empty()
+            && resolved_model_name(&observed.model_name) == resolved_model_name(&request_model)
+            && !observed.auth_id.is_empty()
+        {
+            if !state.pinned.current.is_empty() {
+                if state.pinned.current == observed.auth_id {
+                    observed_supported = true;
+                    observed_replay_auth_id = observed.auth_id.clone();
+                }
+            } else if let Some(auth) = st.manager.get(&observed.auth_id)
+                && upstream::pinned_auth_matches_model(&auth, &request_model)
+            {
+                observed_supported = true;
+                observed_replay_auth_id = observed.auth_id.clone();
+            }
+        }
+        let mut allow_compaction_bypass = observed_supported;
+        if !native {
+            if !state.pinned.current.is_empty() {
+                if let Some(auth) = st.manager.get(&state.pinned.current) {
+                    allow_compaction_bypass |= auth.provider.trim().eq_ignore_ascii_case("codex");
+                }
+            } else {
+                allow_compaction_bypass |= supports_compaction_replay_for_model(&st.manager, &request_model);
+            }
+        }
 
         let previous_response_id = root.g("previous_response_id").str().trim().to_string();
-        let is_prewarm = requests::should_handle_prewarm_locally(&payload);
+        let is_prewarm = !use_upstream_ws && requests::should_handle_prewarm_locally(&payload);
         let input_not_array = {
             let input = root.g("input");
             input.exists() && !input.is_array()
@@ -699,6 +801,8 @@ async fn run_session(
             } else {
                 requests::normalize_create(&requests::transcript_replacement(&payload, &state.last_request))
             }
+        } else if native {
+            upstream::normalize_passthrough_request(&payload, &request_model).map(|r| (r, Vec::new()))
         } else if state.last_request.is_empty() && !previous_response_id.is_empty() {
             Err(requests::previous_response_not_found_error())
         } else {
@@ -739,6 +843,7 @@ async fn run_session(
             }
             state.last_request = updated_last_request;
             state.last_response_output = b"[]".to_vec();
+            state.observed_compaction = upstream::ObservedCompaction::default();
             state.last_response_id.clear();
             state.pending_tool_call_ids.clear();
             let (payloads, prewarm_id) = requests::synthetic_prewarm_payloads(&request_json);
@@ -753,16 +858,70 @@ async fn run_session(
             continue;
         }
 
-        let (request_json, mut tool_turn) = toolcache::prepare_fallback_turn(session_key, &request_json);
-        let next_last_request = request_json.clone();
+        let mut tool_turn = None;
+        let mut next_last_request = state.last_request.clone();
+        if native {
+            let model = cpa_json::parse(&request_json).g("model").str().trim().to_string();
+            if !model.is_empty() {
+                state.passthrough_model = model;
+            }
+        } else {
+            let (prepared, turn) = toolcache::prepare_fallback_turn(session_key, &request_json);
+            request_json = prepared;
+            tool_turn = turn;
+            next_last_request = request_json.clone();
+        }
 
         let model = cpa_json::parse(&request_json).g("model").str();
+        let observed_selection = std::sync::Arc::new(std::sync::Mutex::new(SelectionObserved {
+            last_attempted: state.pinned.current.clone(),
+            ..Default::default()
+        }));
+        let on_selected: std::sync::Arc<dyn Fn(&str) + Send + Sync> = {
+            let observed_selection = observed_selection.clone();
+            let manager = st.manager.clone();
+            let pinned = state.pinned.current.clone();
+            std::sync::Arc::new(move |auth_id: &str| {
+                let id = auth_id.trim();
+                if id.is_empty() {
+                    return;
+                }
+                let Ok(mut seen) = observed_selection.lock() else { return };
+                seen.last_attempted = id.to_string();
+                seen.observed = true;
+                seen.pinned_attempted |= !pinned.is_empty() && id == pinned;
+                if let Some(auth) = manager.get(id) {
+                    let provider = auth.provider.trim().to_lowercase();
+                    seen.mode = if upstream::supports_incremental_input(&auth) && (provider == "codex" || provider == "xai") {
+                        UpstreamMode::Ws
+                    } else {
+                        UpstreamMode::Http
+                    };
+                }
+            })
+        };
+        let execution_auth_id = if state.pinned.current.is_empty() { observed_replay_auth_id } else { state.pinned.current.clone() };
+
         let mut args = ExecArgs::new(Format::OpenAIResponse, &model, Bytes::from(request_json), "");
         args.execution_session_id = Some(session_id);
         args.downstream_websocket = true;
+        args.required_upstream_websocket = native && requires_current_upstream;
+        args.on_selected_auth = Some(on_selected);
+        if !execution_auth_id.is_empty() {
+            args.pinned_auth_id = Some(&execution_auth_id);
+        }
         let mut stream = pipeline.execute_stream(args).await;
 
-        match forward_turn(
+        // A connection-scoped continuation cannot rotate credentials in place: credential errors
+        // are withheld and the client replays the full turn on a new socket.
+        let replay_pinned_failure = |err: &ErrorMessage| {
+            native
+                && requires_current_upstream
+                && observed_selection.lock().map(|s| s.pinned_attempted).unwrap_or(false)
+                && upstream::should_replay_pinned_auth_failure(err)
+        };
+
+        let end = forward_turn(
             socket,
             info,
             pipeline.settings.stream_keepalive,
@@ -771,19 +930,58 @@ async fn run_session(
             &mut tool_turn,
             session_key,
             session_id,
+            &replay_pinned_failure,
         )
-        .await
-        {
+        .await;
+        let (selected_last, selected_mode, selected_seen, pinned_attempted) = match observed_selection.lock() {
+            Ok(g) => (g.last_attempted.clone(), g.mode, g.observed, g.pinned_attempted),
+            Err(_) => (String::new(), UpstreamMode::Unknown, false, false),
+        };
+        match end {
             TurnEnd::Terminate(reason) => return Some(reason),
+            TurnEnd::Failed(err) => {
+                if pinned_attempted && upstream::should_release_pinned_auth(&err) {
+                    state.pinned.forget();
+                }
+                return close_for_replay(socket).await;
+            }
             TurnEnd::Completed(outcome) => {
                 if let Some(turn) = &tool_turn {
                     turn.commit();
                 }
                 state.pending_prewarm_id.clear();
-                state.last_request = next_last_request;
-                state.last_response_output = outcome.output;
-                state.last_response_id = outcome.response_id.trim().to_string();
-                state.pending_tool_call_ids = outcome.pending_tool_call_ids;
+                // Plugin/alternate routes bypass selection and count as HTTP.
+                let attempted_mode = if selected_seen { selected_mode } else { UpstreamMode::Http };
+                state.mode = attempted_mode;
+                if attempted_mode == UpstreamMode::Ws {
+                    state.upstream_ws_auth_id = selected_last.clone();
+                    if !selected_last.is_empty() {
+                        state.pinned.remember(&st.manager, &selected_last, &model);
+                    }
+                    state.passthrough_model = model;
+                    state.last_request.clear();
+                    state.last_response_output = b"[]".to_vec();
+                    state.observed_compaction = upstream::ObservedCompaction::default();
+                    state.last_response_id.clear();
+                    state.pending_tool_call_ids.clear();
+                } else {
+                    state.upstream_ws_auth_id.clear();
+                    state.last_request = next_last_request;
+                    let full_transcript = requests::input_contains_full_transcript(&cpa_json::parse(&outcome.output));
+                    if full_transcript {
+                        state.observed_compaction = upstream::ObservedCompaction { model_name: model.clone(), auth_id: selected_last.clone() };
+                    } else if !state.observed_compaction.model_name.is_empty() {
+                        let observed = &state.observed_compaction;
+                        let mismatch = resolved_model_name(&observed.model_name) != resolved_model_name(&model)
+                            || (!observed.auth_id.is_empty() && !selected_last.is_empty() && observed.auth_id != selected_last);
+                        if mismatch {
+                            state.observed_compaction = upstream::ObservedCompaction::default();
+                        }
+                    }
+                    state.last_response_output = outcome.output;
+                    state.last_response_id = outcome.response_id.trim().to_string();
+                    state.pending_tool_call_ids = outcome.pending_tool_call_ids;
+                }
             }
         }
     }
