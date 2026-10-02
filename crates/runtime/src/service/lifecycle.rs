@@ -48,8 +48,7 @@ pub enum ServiceError {
 }
 
 /// The conductor operations the service drives. [`Manager`] implements it by delegation; the
-/// hooks with default bodies are the places where Go calls conductor methods the Rust `Manager`
-/// does not expose yet (see the TODO notes on each).
+/// hooks with default bodies exist so tests can stub them.
 #[async_trait]
 pub trait ManagerPort: Send + Sync {
     fn register_executor(&self, executor: DynExecutor);
@@ -62,16 +61,15 @@ pub trait ManagerPort: Send + Sync {
     fn list(&self) -> Vec<Auth>;
     fn get(&self, id: &str) -> Option<Auth>;
 
-    /// A new config snapshot was committed. TODO(conductor): Go calls `SetConfig`,
-    /// `SetOAuthModelAlias`, `SetRetryConfig`, rebuilds the selector when `routing` changed and
-    /// refreshes cooldown storage here (`applyManagerConfig`, `applyRetryConfig`).
+    /// A new config snapshot was committed (Go: `SetConfig`, `SetOAuthModelAlias`,
+    /// `SetRetryConfig`, selector rebuild when `routing` changed).
     fn config_changed(&self, _config: &Arc<Config>) {}
 
-    /// Models of `auth_id` were (re)registered. TODO(conductor): Go calls
-    /// `ReconcileRegistryModelStates(id)` and `RefreshSchedulerEntry(id)`.
+    /// Models of `auth_id` were (re)registered (Go: `ReconcileRegistryModelStates`; there is no
+    /// scheduler index to refresh).
     async fn models_registered(&self, _auth_id: &str) {}
 
-    /// A batch of auth updates finished. TODO(conductor): Go calls `RefreshAPIKeyModelAlias()`.
+    /// A batch of auth updates finished (Go: `RefreshAPIKeyModelAlias`).
     fn auth_batch_applied(&self) {}
 
     /// An auth was removed. TODO(executor): Go closes the Codex / xAI websocket sessions of
@@ -84,10 +82,8 @@ impl ManagerPort for Manager {
     fn register_executor(&self, executor: DynExecutor) {
         Manager::register_executor(self, executor);
     }
-    async fn update(&self, auth: Auth, _persist: bool) -> Result<Auth, ExecError> {
-        // TODO(conductor): `Manager::update` has no skip-persist switch yet; pass `_persist`
-        // through once it persists.
-        Manager::update(self, auth).await
+    async fn update(&self, auth: Auth, persist: bool) -> Result<Auth, ExecError> {
+        Manager::update_with(self, auth, crate::conductor::UpdateOptions { skip_persist: !persist }).await
     }
     async fn remove(&self, id: &str) {
         Manager::remove(self, id).await;
@@ -97,6 +93,18 @@ impl ManagerPort for Manager {
     }
     fn get(&self, id: &str) -> Option<Auth> {
         Manager::get(self, id)
+    }
+    fn config_changed(&self, config: &Arc<Config>) {
+        Manager::set_config(self, config.clone());
+    }
+    async fn models_registered(&self, auth_id: &str) {
+        Manager::reconcile_registry_model_states(self, auth_id);
+    }
+    fn auth_batch_applied(&self) {
+        Manager::refresh_api_key_model_alias(self);
+    }
+    async fn auth_removed(&self, auth_id: &str, provider: &str) {
+        Manager::auth_removed(self, auth_id, provider).await;
     }
 }
 
