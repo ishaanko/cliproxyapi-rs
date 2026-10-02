@@ -32,6 +32,10 @@ pub mod request;
 mod request_tests;
 #[cfg(test)]
 mod beta_matrix_tests;
+#[cfg(test)]
+mod cloaking_tests;
+#[cfg(test)]
+mod exec_tests;
 pub mod signing;
 pub mod stream;
 pub mod thinking_replay;

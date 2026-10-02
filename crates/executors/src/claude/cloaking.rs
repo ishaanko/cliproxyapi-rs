@@ -263,7 +263,7 @@ pub fn claude_cch_fallback_billing_header(
         }
     }
     let incoming = ctx.incoming_headers.clone().unwrap_or_default();
-    let is_subagent = is_claude_subagent_request(Some(&incoming), payload);
+    let is_subagent = is_claude_subagent_request(&incoming, payload);
     generate_billing_header(
         true,
         &default_claude_version(Some(cfg)),
@@ -1065,7 +1065,7 @@ pub fn apply_cloaking_internal(
     let mut incoming_headers = HeaderMap::new();
     if !is_probe_or_helper {
         incoming_headers = ctx.incoming_headers.clone().unwrap_or_default();
-        is_subagent = is_claude_subagent_request(Some(&incoming_headers), &payload);
+        is_subagent = is_claude_subagent_request(&incoming_headers, &payload);
         let (existing_prev_req, existing_prompt_id) = extract_claude_billing_tags(&payload);
         if let Some(tags) = resolve_claude_continuity_tags(
             ctx,
@@ -1122,7 +1122,7 @@ pub fn apply_cloaking_internal(
     }
 
     // Probes never use 1h cache in native Claude Code; subagents keep a caller-requested 1h ttl.
-    if is_probe_or_helper || (is_subagent && !claude_subagent_requests_1h(Some(&incoming_headers), &payload)) {
+    if is_probe_or_helper || (is_subagent && !claude_subagent_requests_1h(&incoming_headers, &payload)) {
         payload = strip_claude_cache_control_ttl(&payload);
     }
 

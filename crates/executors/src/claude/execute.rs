@@ -373,8 +373,8 @@ impl ClaudeExecutor {
         // Native selects the 1h cache pool for OAuth credentials and pairs it with
         // extended-cache-ttl, which the beta assembly emits on the same condition. Upgrade only
         // while CPA owns placement; subagents default to 5m unless 1h is requested, probes omit both.
-        let is_subagent = is_claude_subagent_request(Some(&incoming_headers), &body);
-        let subagent_1h = is_subagent && claude_subagent_requests_1h(Some(&incoming_headers), &body);
+        let is_subagent = is_claude_subagent_request(&incoming_headers, &body);
+        let subagent_1h = is_subagent && claude_subagent_requests_1h(&incoming_headers, &body);
         if cpa_owns_cache_control && fp.profile_claude_code_cli && (!is_subagent || subagent_1h) && !is_probe_or_helper {
             body = upgrade_claude_cache_control_ttl(&body, CLAUDE_CACHE_CONTROL_TTL_1H);
         } else if is_probe_or_helper || (is_subagent && !subagent_1h) {
@@ -656,10 +656,12 @@ pub fn apply_claude_cli_identity(
     } else {
         api_key.to_string()
     };
-    let identity_auth = prepare_claude_cli_fingerprint_auth(auth, &identity_seed, synthesize)
-        .map_err(|e| ExecError::new(0, format!("ensure Claude CLI fingerprint identity: {e}")))?;
-    let (updated, _) = apply_claude_credential_metadata(body, &identity_auth, session_id)
-        .map_err(|e| ExecError::new(e.status, format!("apply Claude credential metadata: {}", e.message)))?;
+    let mut identity_auth = prepare_claude_cli_fingerprint_auth(auth, &identity_seed, synthesize).into_owned();
+    let (updated, _) = apply_claude_credential_metadata(body, &mut identity_auth, session_id).map_err(|e| {
+        let mut err = e.into_exec_error();
+        err.message = format!("apply Claude credential metadata: {}", err.message);
+        err
+    })?;
     Ok(updated)
 }
 

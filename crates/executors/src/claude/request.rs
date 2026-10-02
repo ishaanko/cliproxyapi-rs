@@ -17,10 +17,14 @@ use http::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value;
 use url::Url;
 
-use super::helps::client_detection::*;
-use super::helps::device_profile::*;
-use super::helps::diagnostics::*;
-use super::helps::ratelimit::*;
+use super::helps::device_profile::{
+    apply_claude_default_device_profile_headers, apply_claude_device_profile_headers, apply_claude_legacy_device_headers,
+    claude_device_profile_stabilization_enabled, resolve_claude_device_profile_required,
+};
+use super::helps::diagnostics::{
+    claude_payload_has_1h_ttl, claude_subagent_requests_1h, is_claude_probe_or_helper_request, is_claude_subagent_request,
+};
+use super::helps::ratelimit::{claude_headers_indicate_unified_rate_limit_rejection, parse_claude_rate_limit_reset};
 use super::helps::upstream::is_anthropic_upstream_url;
 use super::policy::{resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
 use crate::helps::status::status_err;
@@ -173,7 +177,7 @@ pub fn claude_code_cli_betas(body: &[u8], requested_set: &RequestedBetas, oauth_
     if requested(requested_set, CLAUDE_DANGEROUS_TOOL_USE_BETA) || root.g("safeguards").exists() {
         betas.push(CLAUDE_DANGEROUS_TOOL_USE_BETA);
     }
-    if claude_request_supports_effort_value(&root, body.is_empty(), requested_set) {
+    if claude_request_supports_effort(body) {
         betas.push(CLAUDE_EFFORT_BETA);
     }
     let is_probe_or_helper = is_claude_probe_or_helper_request(body);
@@ -219,7 +223,7 @@ pub fn claude_code_cli_betas(body: &[u8], requested_set: &RequestedBetas, oauth_
         betas.push(CLAUDE_AFK_MODE_BETA);
     }
     if !is_probe_or_helper {
-        let include_extended = (oauth_token && !is_claude_subagent_request(None, body))
+        let include_extended = (oauth_token && !is_claude_subagent_request(&HeaderMap::new(), body))
             || requested(requested_set, CLAUDE_EXTENDED_CACHE_TTL_BETA)
             || claude_payload_has_1h_ttl(body);
         if include_extended {
@@ -366,29 +370,21 @@ fn claude_include_mid_conv_clear_at(root: &Value, requested_set: &RequestedBetas
     root.g("messages").array().iter().any(|msg| msg.g("clear_at").exists())
 }
 
-/// Whether the effort beta applies (Go: claudeRequestSupportsEffort); `requested` never turns it off.
+/// Whether the effort beta applies (Go: claudeRequestSupportsEffort); a caller-requested effort
+/// beta never turns it back on for probes, Haiku or disabled thinking.
 pub fn claude_request_supports_effort(body: &[u8]) -> bool {
     if body.is_empty() {
         return true;
     }
-    claude_request_supports_effort_value(&cpa_json::parse(body), false, &RequestedBetas::new())
-}
-
-fn claude_request_supports_effort_value(root: &Value, body_empty: bool, _requested: &RequestedBetas) -> bool {
-    if !body_empty {
-        let body = cpa_json::to_vec(root);
-        if is_claude_probe_or_helper_request(&body) {
-            return false;
-        }
-        let model = root.g("model").str().trim().to_lowercase();
-        if is_claude_haiku_model(&model) {
-            return false;
-        }
-        if root.g("thinking.type").str().trim().to_lowercase() == "disabled" {
-            return false;
-        }
+    if is_claude_probe_or_helper_request(body) {
+        return false;
     }
-    true
+    let root = cpa_json::parse(body);
+    let model = root.g("model").str().trim().to_lowercase();
+    if is_claude_haiku_model(&model) {
+        return false;
+    }
+    root.g("thinking.type").str().trim().to_lowercase() != "disabled"
 }
 
 fn claude_thinking_display_updates(root: &Value) -> bool {
@@ -743,8 +739,8 @@ fn apply_beta_header(headers: &mut HeaderMap, base_betas: &mut String, ctx: &Bet
     if root.g("thinking.type").str() == "disabled" {
         *base_betas = without_claude_beta(base_betas, CLAUDE_THINKING_DISPLAY_UPDATES_BETA);
     }
-    if is_claude_subagent_request(Some(ctx.incoming_headers), body)
-        && !claude_subagent_requests_1h(Some(ctx.incoming_headers), body)
+    if is_claude_subagent_request(ctx.incoming_headers, body)
+        && !claude_subagent_requests_1h(ctx.incoming_headers, body)
     {
         *base_betas = without_claude_beta(base_betas, CLAUDE_EXTENDED_CACHE_TTL_BETA);
     }
@@ -833,7 +829,7 @@ pub fn apply_claude_headers_with_native_profile(
     let stabilize_device_profile = claude_device_profile_stabilization_enabled(Some(cfg));
     let mut device_profile = None;
     if stabilize_device_profile && confirmed {
-        device_profile = Some(resolve_claude_device_profile_required(Some(auth), api_key, Some(incoming_headers), Some(cfg))?);
+        device_profile = Some(resolve_claude_device_profile_required(Some(auth), api_key, incoming_headers, Some(cfg)));
     }
 
     let incoming_betas = header_values_joined(incoming_headers, "anthropic-beta");
@@ -862,9 +858,9 @@ pub fn apply_claude_headers_with_native_profile(
             if count_tokens {
                 base_betas = with_claude_count_tokens_oauth_beta(&base_betas);
             } else {
-                let is_subagent = is_claude_subagent_request(Some(incoming_headers), body);
+                let is_subagent = is_claude_subagent_request(incoming_headers, body);
                 let is_probe = is_claude_probe_or_helper_request(body);
-                let subagent_1h = is_subagent && claude_subagent_requests_1h(Some(incoming_headers), body);
+                let subagent_1h = is_subagent && claude_subagent_requests_1h(incoming_headers, body);
                 let include_extended = (!is_subagent || subagent_1h) && !is_probe;
                 base_betas = with_claude_oauth_credential_betas(&base_betas, include_extended);
             }
@@ -1063,7 +1059,7 @@ pub fn apply_claude_headers_with_native_profile(
             _ => apply_claude_default_device_profile_headers(headers, Some(cfg)),
         }
     } else {
-        apply_claude_legacy_device_headers(headers, Some(incoming_headers), Some(cfg), confirmed);
+        apply_claude_legacy_device_headers(headers, incoming_headers, Some(cfg), confirmed);
     }
     apply_custom_headers(headers, input);
     // Custom credential headers are an escape hatch for third-party gateways. On first-party they
