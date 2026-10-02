@@ -1,0 +1,167 @@
+{
+  "id": "err.responses.compat.stream_cut_clean",
+  "desc": "responses client -> compat upstream: stream_cut_clean",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "input": "What is the weather in Paris?",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "response.created",
+              "data": {
+                "type": "response.created",
+                "sequence_number": 1,
+                "response": {
+                  "id": "chatcmpl-mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "background": false,
+                  "error": null,
+                  "output": [],
+                  "model": "compat-gpt-4o"
+                }
+              }
+            },
+            {
+              "event": "response.in_progress",
+              "data": {
+                "type": "response.in_progress",
+                "sequence_number": 2,
+                "response": {
+                  "id": "chatcmpl-mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "output": [],
+                  "model": "compat-gpt-4o"
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 3,
+                "output_index": 0,
+                "item": {
+                  "id": "msg_<id:1>-mock01_0",
+                  "type": "message",
+                  "status": "in_progress",
+                  "content": [],
+                  "role": "assistant"
+                }
+              }
+            },
+            {
+              "event": "response.content_part.added",
+              "data": {
+                "type": "response.content_part.added",
+                "sequence_number": 4,
+                "item_id": "msg_<id:1>-mock01_0",
+                "output_index": 0,
+                "content_index": 0,
+                "part": {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 5,
+                "item_id": "msg_<id:1>-mock01_0",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "Hello from ",
+                "logprobs": []
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 6,
+                "item_id": "msg_<id:1>-mock01_0",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "mock",
+                "logprobs": []
+              }
+            },
+            {
+              "event": "error",
+              "data": {
+                "type": "error",
+                "error": {
+                  "code": "internal_server_error",
+                  "message": "upstream stream closed before [DONE]",
+                  "param": null,
+                  "type": "server_error"
+                },
+                "sequence_number": 6
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-compat-2",
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "user",
+            "content": "What is the weather in Paris?"
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      }
+    }
+  ]
+}

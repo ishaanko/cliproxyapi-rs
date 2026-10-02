@@ -251,8 +251,8 @@ pub fn json_response(family: Family, ctx: &ReqCtx, content: Content) -> Value {
     match family {
         Family::Anthropic => anthropic_message(ctx, content),
         Family::Compat => openai_completion(ctx, content),
-        Family::Codex => responses_object(ctx, content, "completed"),
-        Family::Gemini => gemini_response(ctx, content, true),
+        Family::Codex => responses_object(ctx, content, final_status(content)),
+        Family::Gemini => gemini_response(ctx, content),
     }
 }
 
@@ -265,47 +265,104 @@ pub fn stream_events(family: Family, ctx: &ReqCtx, content: Content) -> Vec<Ev> 
     }
 }
 
-// ---------------------------------------------------------------- Anthropic
+// ------------------------------------------------------------ content model
 
-fn tool_args() -> Value {
-    json!({"city": "Paris"})
+/// One piece of assistant output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Item {
+    Think,
+    Text,
+    /// Tool call number 1 or 2 (different ids and arguments).
+    Tool(u8),
 }
 
-fn anthropic_content(ctx: &ReqCtx, content: Content) -> (Vec<Value>, &'static str) {
-    match content {
-        Content::Text => (vec![json!({"type":"text","text":format!("{TEXT_A}{TEXT_B}")})], "end_turn"),
-        Content::Thinking => (
-            vec![
-                json!({"type":"thinking","thinking":format!("{THINK_A}{THINK_B}"),"signature":"c2lnbmF0dXJlLW1vY2s="}),
-                json!({"type":"text","text":format!("{TEXT_A}{TEXT_B}")}),
-            ],
-            "end_turn",
-        ),
-        Content::ToolCall => (
-            vec![json!({"type":"tool_use","id":"toolu_mock01","name":ctx.tool,"input":tool_args()})],
-            "tool_use",
-        ),
+fn items(c: Content) -> Vec<Item> {
+    match c {
+        Content::Text | Content::Length | Content::Cached => vec![Item::Text],
+        Content::Thinking => vec![Item::Think, Item::Text],
+        Content::ToolCall => vec![Item::Tool(1)],
+        Content::Parallel => vec![Item::Tool(1), Item::Tool(2)],
+        Content::Mixed => vec![Item::Text, Item::Tool(1)],
     }
 }
 
-fn anthropic_message(ctx: &ReqCtx, content: Content) -> Value {
-    let (blocks, stop) = anthropic_content(ctx, content);
+fn has_tool(c: Content) -> bool {
+    items(c).iter().any(|i| matches!(i, Item::Tool(_)))
+}
+
+fn truncated(c: Content) -> bool {
+    c == Content::Length
+}
+
+fn cached(c: Content) -> bool {
+    c == Content::Cached
+}
+
+fn tool_id(prefix: &str, n: u8) -> String {
+    format!("{prefix}_mock{n:02}")
+}
+
+fn tool_input(n: u8) -> Value {
+    if n == 1 { json!({"city": "Paris"}) } else { json!({"city": "Rome"}) }
+}
+
+/// A JSON string cut in two, to stream as partial argument deltas.
+fn halves(s: &str) -> (String, String) {
+    let mid = s.len() / 2;
+    (s[..mid].to_string(), s[mid..].to_string())
+}
+
+// ---------------------------------------------------------------- Anthropic
+
+fn anthropic_usage(c: Content) -> Value {
+    let mut u = json!({"input_tokens":USAGE_IN,"output_tokens":USAGE_OUT});
+    if cached(c) {
+        u["cache_read_input_tokens"] = json!(5);
+        u["cache_creation_input_tokens"] = json!(3);
+    }
+    u
+}
+
+fn anthropic_stop(c: Content) -> &'static str {
+    if truncated(c) {
+        "max_tokens"
+    } else if has_tool(c) {
+        "tool_use"
+    } else {
+        "end_turn"
+    }
+}
+
+fn anthropic_blocks(ctx: &ReqCtx, c: Content) -> Vec<Value> {
+    items(c)
+        .into_iter()
+        .map(|i| match i {
+            Item::Think => json!({"type":"thinking","thinking":format!("{THINK_A}{THINK_B}"),"signature":"c2lnbmF0dXJlLW1vY2s="}),
+            Item::Text => json!({"type":"text","text":format!("{TEXT_A}{TEXT_B}")}),
+            Item::Tool(n) => json!({"type":"tool_use","id":tool_id("toolu", n),"name":ctx.tool,"input":tool_input(n)}),
+        })
+        .collect()
+}
+
+fn anthropic_message(ctx: &ReqCtx, c: Content) -> Value {
     json!({
         "id":"msg_mock01","type":"message","role":"assistant","model":ctx.model,
-        "content":blocks,"stop_reason":stop,"stop_sequence":null,
-        "usage":{"input_tokens":USAGE_IN,"output_tokens":USAGE_OUT}
+        "content":anthropic_blocks(ctx, c),"stop_reason":anthropic_stop(c),"stop_sequence":null,
+        "usage":anthropic_usage(c)
     })
 }
 
-fn anthropic_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
-    let (blocks, stop) = anthropic_content(ctx, content);
-    let mut evs = vec![Ev::named(
-        "message_start",
-        json!({"type":"message_start","message":{
-            "id":"msg_mock01","type":"message","role":"assistant","model":ctx.model,"content":[],
-            "stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":USAGE_IN,"output_tokens":1}}}),
-    )];
-    for (i, block) in blocks.iter().enumerate() {
+fn anthropic_events(ctx: &ReqCtx, c: Content) -> Vec<Ev> {
+    let mut evs = vec![
+        Ev::named(
+            "message_start",
+            json!({"type":"message_start","message":{
+                "id":"msg_mock01","type":"message","role":"assistant","model":ctx.model,"content":[],
+                "stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":USAGE_IN,"output_tokens":1}}}),
+        ),
+        Ev::named("ping", json!({"type":"ping"})),
+    ];
+    for (i, block) in anthropic_blocks(ctx, c).iter().enumerate() {
         let (start, deltas): (Value, Vec<Value>) = match block["type"].as_str().unwrap_or_default() {
             "thinking" => (
                 json!({"type":"thinking","thinking":""}),
@@ -315,13 +372,13 @@ fn anthropic_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
                     json!({"type":"signature_delta","signature":block["signature"]}),
                 ],
             ),
-            "tool_use" => (
-                json!({"type":"tool_use","id":block["id"],"name":block["name"],"input":{}}),
-                vec![
-                    json!({"type":"input_json_delta","partial_json":"{\"city\":"}),
-                    json!({"type":"input_json_delta","partial_json":"\"Paris\"}"}),
-                ],
-            ),
+            "tool_use" => {
+                let (a, b) = halves(&block["input"].to_string());
+                (
+                    json!({"type":"tool_use","id":block["id"],"name":block["name"],"input":{}}),
+                    vec![json!({"type":"input_json_delta","partial_json":a}), json!({"type":"input_json_delta","partial_json":b})],
+                )
+            }
             _ => (
                 json!({"type":"text","text":""}),
                 vec![json!({"type":"text_delta","text":TEXT_A}), json!({"type":"text_delta","text":TEXT_B})],
@@ -335,7 +392,7 @@ fn anthropic_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
     }
     evs.push(Ev::named(
         "message_delta",
-        json!({"type":"message_delta","delta":{"stop_reason":stop,"stop_sequence":null},"usage":{"input_tokens":USAGE_IN,"output_tokens":USAGE_OUT}}),
+        json!({"type":"message_delta","delta":{"stop_reason":anthropic_stop(c),"stop_sequence":null},"usage":anthropic_usage(c)}),
     ));
     evs.push(Ev::named("message_stop", json!({"type":"message_stop"})));
     evs
@@ -343,26 +400,47 @@ fn anthropic_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
 
 // ------------------------------------------------------------ OpenAI chat
 
-fn openai_completion(ctx: &ReqCtx, content: Content) -> Value {
-    let (message, finish) = match content {
-        Content::Text => (json!({"role":"assistant","content":format!("{TEXT_A}{TEXT_B}")}), "stop"),
-        Content::Thinking => (
-            json!({"role":"assistant","content":format!("{TEXT_A}{TEXT_B}"),"reasoning_content":format!("{THINK_A}{THINK_B}")}),
-            "stop",
-        ),
-        Content::ToolCall => (
-            json!({"role":"assistant","content":null,"tool_calls":[{
-                "id":"call_mock01","type":"function","function":{"name":ctx.tool,"arguments":tool_args().to_string()}}]}),
-            "tool_calls",
-        ),
-    };
+fn openai_usage(c: Content) -> Value {
     let mut usage = json!({"prompt_tokens":USAGE_IN,"completion_tokens":USAGE_OUT,"total_tokens":USAGE_IN + USAGE_OUT});
-    if content == Content::Thinking {
+    if c == Content::Thinking {
         usage["completion_tokens_details"] = json!({"reasoning_tokens":USAGE_REASONING});
+    }
+    if cached(c) {
+        usage["prompt_tokens_details"] = json!({"cached_tokens":5});
+    }
+    usage
+}
+
+fn openai_finish(c: Content) -> &'static str {
+    if truncated(c) {
+        "length"
+    } else if has_tool(c) {
+        "tool_calls"
+    } else {
+        "stop"
+    }
+}
+
+fn openai_completion(ctx: &ReqCtx, c: Content) -> Value {
+    let its = items(c);
+    let text = its.contains(&Item::Text).then(|| format!("{TEXT_A}{TEXT_B}"));
+    let mut message = json!({"role":"assistant","content":text});
+    if its.contains(&Item::Think) {
+        message["reasoning_content"] = json!(format!("{THINK_A}{THINK_B}"));
+    }
+    let calls: Vec<Value> = its
+        .iter()
+        .filter_map(|i| match i {
+            Item::Tool(n) => Some(json!({"id":tool_id("call", *n),"type":"function","function":{"name":ctx.tool,"arguments":tool_input(*n).to_string()}})),
+            _ => None,
+        })
+        .collect();
+    if !calls.is_empty() {
+        message["tool_calls"] = Value::Array(calls);
     }
     json!({
         "id":"chatcmpl-mock01","object":"chat.completion","created":CREATED,"model":ctx.model,
-        "choices":[{"index":0,"message":message,"finish_reason":finish}],"usage":usage
+        "choices":[{"index":0,"message":message,"finish_reason":openai_finish(c)}],"usage":openai_usage(c)
     })
 }
 
@@ -373,34 +451,39 @@ fn openai_chunk(ctx: &ReqCtx, delta: Value, finish: Value) -> Ev {
     }))
 }
 
-fn openai_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
+fn openai_events(ctx: &ReqCtx, c: Content) -> Vec<Ev> {
     let mut evs = vec![openai_chunk(ctx, json!({"role":"assistant","content":""}), Value::Null)];
-    let finish = match content {
-        Content::Text | Content::Thinking => {
-            if content == Content::Thinking {
-                evs.push(openai_chunk(ctx, json!({"reasoning_content":THINK_A}), Value::Null));
-                evs.push(openai_chunk(ctx, json!({"reasoning_content":THINK_B}), Value::Null));
+    let mut tool_index = 0;
+    for item in items(c) {
+        match item {
+            Item::Think => {
+                for d in [THINK_A, THINK_B] {
+                    evs.push(openai_chunk(ctx, json!({"reasoning_content":d}), Value::Null));
+                }
             }
-            evs.push(openai_chunk(ctx, json!({"content":TEXT_A}), Value::Null));
-            evs.push(openai_chunk(ctx, json!({"content":TEXT_B}), Value::Null));
-            "stop"
-        }
-        Content::ToolCall => {
-            evs.push(openai_chunk(
-                ctx,
-                json!({"tool_calls":[{"index":0,"id":"call_mock01","type":"function","function":{"name":ctx.tool,"arguments":""}}]}),
-                Value::Null,
-            ));
-            for part in ["{\"city\":", "\"Paris\"}"] {
-                evs.push(openai_chunk(ctx, json!({"tool_calls":[{"index":0,"function":{"arguments":part}}]}), Value::Null));
+            Item::Text => {
+                for d in [TEXT_A, TEXT_B] {
+                    evs.push(openai_chunk(ctx, json!({"content":d}), Value::Null));
+                }
             }
-            "tool_calls"
+            Item::Tool(n) => {
+                evs.push(openai_chunk(
+                    ctx,
+                    json!({"tool_calls":[{"index":tool_index,"id":tool_id("call", n),"type":"function","function":{"name":ctx.tool,"arguments":""}}]}),
+                    Value::Null,
+                ));
+                let (a, b) = halves(&tool_input(n).to_string());
+                for part in [a, b] {
+                    evs.push(openai_chunk(ctx, json!({"tool_calls":[{"index":tool_index,"function":{"arguments":part}}]}), Value::Null));
+                }
+                tool_index += 1;
+            }
         }
-    };
-    evs.push(openai_chunk(ctx, json!({}), json!(finish)));
+    }
+    evs.push(openai_chunk(ctx, json!({}), json!(openai_finish(c))));
     evs.push(Ev::data(json!({
         "id":"chatcmpl-mock01","object":"chat.completion.chunk","created":CREATED,"model":ctx.model,"choices":[],
-        "usage":{"prompt_tokens":USAGE_IN,"completion_tokens":USAGE_OUT,"total_tokens":USAGE_IN + USAGE_OUT}
+        "usage":openai_usage(c)
     })));
     evs.push(Ev::done());
     evs
@@ -408,53 +491,60 @@ fn openai_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
 
 // -------------------------------------------------------------- Responses
 
-fn responses_usage(content: Content) -> Value {
-    let reasoning = if content == Content::Thinking { USAGE_REASONING } else { 0 };
+fn responses_usage(c: Content) -> Value {
+    let reasoning = if c == Content::Thinking { USAGE_REASONING } else { 0 };
+    let cached_tokens = if cached(c) { 5 } else { 0 };
     json!({
-        "input_tokens":USAGE_IN,"input_tokens_details":{"cached_tokens":0},
+        "input_tokens":USAGE_IN,"input_tokens_details":{"cached_tokens":cached_tokens},
         "output_tokens":USAGE_OUT,"output_tokens_details":{"reasoning_tokens":reasoning},
         "total_tokens":USAGE_IN + USAGE_OUT
     })
 }
 
-fn responses_items(ctx: &ReqCtx, content: Content) -> Vec<Value> {
-    let message = json!({"id":"msg_mock01","type":"message","status":"completed","role":"assistant",
-        "content":[{"type":"output_text","annotations":[],"text":format!("{TEXT_A}{TEXT_B}")}]});
-    match content {
-        Content::Text => vec![message],
-        Content::Thinking => vec![
-            json!({"id":"rs_mock01","type":"reasoning","summary":[{"type":"summary_text","text":format!("{THINK_A}{THINK_B}")}]}),
-            message,
-        ],
-        Content::ToolCall => vec![json!({"id":"fc_mock01","type":"function_call","status":"completed",
-            "call_id":"call_mock01","name":ctx.tool,"arguments":tool_args().to_string()})],
-    }
+fn responses_items(ctx: &ReqCtx, c: Content) -> Vec<Value> {
+    items(c)
+        .into_iter()
+        .map(|i| match i {
+            Item::Think => json!({"id":"rs_mock01","type":"reasoning","summary":[{"type":"summary_text","text":format!("{THINK_A}{THINK_B}")}]}),
+            Item::Text => json!({"id":"msg_mock01","type":"message","status":"completed","role":"assistant",
+                "content":[{"type":"output_text","annotations":[],"text":format!("{TEXT_A}{TEXT_B}")}]}),
+            Item::Tool(n) => json!({"id":tool_id("fc", n),"type":"function_call","status":"completed",
+                "call_id":tool_id("call", n),"name":ctx.tool,"arguments":tool_input(n).to_string()}),
+        })
+        .collect()
 }
 
-fn responses_object(ctx: &ReqCtx, content: Content, status: &str) -> Value {
-    let output = if status == "completed" { responses_items(ctx, content) } else { vec![] };
+fn responses_object(ctx: &ReqCtx, c: Content, status: &str) -> Value {
+    let done = status != "in_progress";
+    let output = if done { responses_items(ctx, c) } else { vec![] };
     let mut obj = json!({
         "id":"resp_mock01","object":"response","created_at":CREATED,"status":status,"model":ctx.model,
         "output":output,"parallel_tool_calls":true,"store":false
     });
-    if status == "completed" {
-        obj["usage"] = responses_usage(content);
+    if done {
+        obj["usage"] = responses_usage(c);
+    }
+    if status == "incomplete" {
+        obj["incomplete_details"] = json!({"reason":"max_output_tokens"});
     }
     obj
 }
 
-fn responses_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
+fn final_status(c: Content) -> &'static str {
+    if truncated(c) { "incomplete" } else { "completed" }
+}
+
+fn responses_events(ctx: &ReqCtx, c: Content) -> Vec<Ev> {
     let mut seq = 0u64;
     let mut next = || {
         seq += 1;
         seq - 1
     };
     let mut evs = vec![
-        Ev::named("response.created", json!({"type":"response.created","sequence_number":next(),"response":responses_object(ctx, content, "in_progress")})),
-        Ev::named("response.in_progress", json!({"type":"response.in_progress","sequence_number":next(),"response":responses_object(ctx, content, "in_progress")})),
+        Ev::named("response.created", json!({"type":"response.created","sequence_number":next(),"response":responses_object(ctx, c, "in_progress")})),
+        Ev::named("response.in_progress", json!({"type":"response.in_progress","sequence_number":next(),"response":responses_object(ctx, c, "in_progress")})),
     ];
-    let items = responses_items(ctx, content);
-    for (i, item) in items.iter().enumerate() {
+    for (i, item) in responses_items(ctx, c).iter().enumerate() {
         let kind = item["type"].as_str().unwrap_or_default();
         let id = item["id"].clone();
         match kind {
@@ -469,7 +559,8 @@ fn responses_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
             }
             "function_call" => {
                 evs.push(Ev::named("response.output_item.added", json!({"type":"response.output_item.added","sequence_number":next(),"output_index":i,"item":{"id":id,"type":"function_call","status":"in_progress","call_id":item["call_id"],"name":item["name"],"arguments":""}})));
-                for d in ["{\"city\":", "\"Paris\"}"] {
+                let (a, b) = halves(item["arguments"].as_str().unwrap_or_default());
+                for d in [a, b] {
                     evs.push(Ev::named("response.function_call_arguments.delta", json!({"type":"response.function_call_arguments.delta","sequence_number":next(),"item_id":id,"output_index":i,"delta":d})));
                 }
                 evs.push(Ev::named("response.function_call_arguments.done", json!({"type":"response.function_call_arguments.done","sequence_number":next(),"item_id":id,"output_index":i,"arguments":item["arguments"]})));
@@ -486,7 +577,11 @@ fn responses_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
         }
         evs.push(Ev::named("response.output_item.done", json!({"type":"response.output_item.done","sequence_number":next(),"output_index":i,"item":item})));
     }
-    evs.push(Ev::named("response.completed", json!({"type":"response.completed","sequence_number":next(),"response":responses_object(ctx, content, "completed")})));
+    let terminal = if truncated(c) { "response.incomplete" } else { "response.completed" };
+    evs.push(Ev::named(
+        terminal,
+        json!({"type":terminal,"sequence_number":next(),"response":responses_object(ctx, c, final_status(c))}),
+    ));
     evs
 }
 
@@ -497,55 +592,63 @@ pub fn codex_ws_frames(ctx: &ReqCtx, content: Content) -> Vec<Value> {
 
 // ----------------------------------------------------------------- Gemini
 
-fn gemini_parts(ctx: &ReqCtx, content: Content) -> Vec<Value> {
-    match content {
-        Content::Text => vec![json!({"text":format!("{TEXT_A}{TEXT_B}")})],
-        Content::Thinking => vec![
-            json!({"text":format!("{THINK_A}{THINK_B}"),"thought":true}),
-            json!({"text":format!("{TEXT_A}{TEXT_B}")}),
-        ],
-        Content::ToolCall => vec![json!({"functionCall":{"name":ctx.tool,"args":tool_args()}})],
-    }
-}
-
-fn gemini_usage(content: Content) -> Value {
+fn gemini_usage(c: Content) -> Value {
     let mut usage = json!({"promptTokenCount":USAGE_IN,"candidatesTokenCount":USAGE_OUT,"totalTokenCount":USAGE_IN + USAGE_OUT});
-    if content == Content::Thinking {
+    if c == Content::Thinking {
         usage["thoughtsTokenCount"] = json!(USAGE_REASONING);
         usage["totalTokenCount"] = json!(USAGE_IN + USAGE_OUT + USAGE_REASONING);
+    }
+    if cached(c) {
+        usage["cachedContentTokenCount"] = json!(5);
     }
     usage
 }
 
-fn gemini_response(ctx: &ReqCtx, content: Content, last: bool) -> Value {
-    let mut candidate = json!({"content":{"role":"model","parts":gemini_parts(ctx, content)},"index":0});
-    let mut resp = json!({"candidates":[candidate.clone()],"modelVersion":ctx.model,"responseId":"mockresp01"});
-    if last {
-        candidate["finishReason"] = json!("STOP");
-        resp["candidates"] = json!([candidate]);
-        resp["usageMetadata"] = gemini_usage(content);
-    }
-    resp
+fn gemini_finish(c: Content) -> &'static str {
+    if truncated(c) { "MAX_TOKENS" } else { "STOP" }
 }
 
-fn gemini_events(ctx: &ReqCtx, content: Content) -> Vec<Ev> {
-    let chunk = |parts: Vec<Value>, last: bool| {
-        let mut candidate = json!({"content":{"role":"model","parts":parts},"index":0});
-        let mut resp = json!({"modelVersion":ctx.model,"responseId":"mockresp01"});
-        if last {
-            candidate["finishReason"] = json!("STOP");
-            resp["usageMetadata"] = gemini_usage(content);
+fn gemini_parts(ctx: &ReqCtx, c: Content) -> Vec<Value> {
+    items(c)
+        .into_iter()
+        .map(|i| match i {
+            Item::Think => json!({"text":format!("{THINK_A}{THINK_B}"),"thought":true}),
+            Item::Text => json!({"text":format!("{TEXT_A}{TEXT_B}")}),
+            Item::Tool(n) => json!({"functionCall":{"name":ctx.tool,"args":tool_input(n)}}),
+        })
+        .collect()
+}
+
+fn gemini_response(ctx: &ReqCtx, c: Content) -> Value {
+    json!({
+        "candidates":[{"content":{"role":"model","parts":gemini_parts(ctx, c)},"finishReason":gemini_finish(c),"index":0}],
+        "usageMetadata":gemini_usage(c),"modelVersion":ctx.model,"responseId":"mockresp01"
+    })
+}
+
+fn gemini_events(ctx: &ReqCtx, c: Content) -> Vec<Ev> {
+    // One part list per chunk; text and thoughts stream in two pieces.
+    let mut chunks: Vec<Vec<Value>> = vec![];
+    for item in items(c) {
+        match item {
+            Item::Think => chunks.extend([THINK_A, THINK_B].map(|d| vec![json!({"text":d,"thought":true})])),
+            Item::Text => chunks.extend([TEXT_A, TEXT_B].map(|d| vec![json!({"text":d})])),
+            Item::Tool(n) => chunks.push(vec![json!({"functionCall":{"name":ctx.tool,"args":tool_input(n)}})]),
         }
-        resp["candidates"] = json!([candidate]);
-        Ev::data(resp)
-    };
-    match content {
-        Content::Text => vec![chunk(vec![json!({"text":TEXT_A})], false), chunk(vec![json!({"text":TEXT_B})], true)],
-        Content::Thinking => vec![
-            chunk(vec![json!({"text":THINK_A,"thought":true})], false),
-            chunk(vec![json!({"text":THINK_B,"thought":true})], false),
-            chunk(vec![json!({"text":format!("{TEXT_A}{TEXT_B}")})], true),
-        ],
-        Content::ToolCall => vec![chunk(gemini_parts(ctx, content), true)],
     }
+    let last = chunks.len() - 1;
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(i, parts)| {
+            let mut candidate = json!({"content":{"role":"model","parts":parts},"index":0});
+            let mut resp = json!({"modelVersion":ctx.model,"responseId":"mockresp01"});
+            if i == last {
+                candidate["finishReason"] = json!(gemini_finish(c));
+                resp["usageMetadata"] = gemini_usage(c);
+            }
+            resp["candidates"] = json!([candidate]);
+            Ev::data(resp)
+        })
+        .collect()
 }

@@ -26,7 +26,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -83,7 +84,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-904eeaa86b64bbcf-<uuid:2>"
         },
         "body": {
           "type": "json",
@@ -112,7 +114,11 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json; charset=utf-8"
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
         },
         "body": {
           "type": "json",
@@ -151,7 +157,7 @@
                 "Content-Type": [
                   "text/event-stream"
                 ],
-                "Date": "<Date>"
+                "Date": "<date>"
               },
               "accounting_version": 2,
               "token_breakdown": {
@@ -181,7 +187,7 @@
               "request_id": "<request_id>",
               "execution_id": "<execution_id>",
               "trace_id": "<trace_id>",
-              "session_id": "<uuid:1>",
+              "session_id": "6ae58c5c-b8ab-81a6-ab97-26da30358da1",
               "reasoning_effort": "",
               "service_tier": "auto",
               "response_model": "claude-sonnet-4-5-20250929"
@@ -220,7 +226,7 @@
                 "Content-Type": [
                   "application/json"
                 ],
-                "Date": "<Date>"
+                "Date": "<date>"
               },
               "accounting_version": 2,
               "token_breakdown": {
@@ -250,7 +256,7 @@
               "request_id": "<request_id>",
               "execution_id": "<execution_id>",
               "trace_id": "<trace_id>",
-              "session_id": "<uuid:1>",
+              "session_id": "6ae58c5c-b8ab-81a6-ab97-26da30358da1",
               "reasoning_effort": "",
               "service_tier": "auto"
             }
@@ -273,7 +279,11 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json; charset=utf-8"
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
         },
         "body": {
           "type": "json",
@@ -298,7 +308,11 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json; charset=utf-8"
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
         },
         "body": {
           "type": "json",
@@ -316,6 +330,7 @@
       "credential": "sk-claude-1",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
@@ -352,6 +367,7 @@
       "credential": "sk-claude-2",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
         "content-type": "application/json",

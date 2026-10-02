@@ -26,7 +26,8 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-cache",
           "connection": "keep-alive",
-          "content-type": "text/event-stream"
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
         },
         "body": {
           "type": "sse",
@@ -197,7 +198,19 @@
                 "item_id": "msg_resp_mockresp01_1",
                 "output_index": 1,
                 "content_index": 0,
-                "delta": "Hello from mock",
+                "delta": "Hello from ",
+                "logprobs": []
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 13,
+                "item_id": "msg_resp_mockresp01_1",
+                "output_index": 1,
+                "content_index": 0,
+                "delta": "mock",
                 "logprobs": []
               }
             },
@@ -205,7 +218,7 @@
               "event": "response.output_text.done",
               "data": {
                 "type": "response.output_text.done",
-                "sequence_number": 13,
+                "sequence_number": 14,
                 "item_id": "msg_resp_mockresp01_1",
                 "output_index": 1,
                 "content_index": 0,
@@ -217,7 +230,7 @@
               "event": "response.content_part.done",
               "data": {
                 "type": "response.content_part.done",
-                "sequence_number": 14,
+                "sequence_number": 15,
                 "item_id": "msg_resp_mockresp01_1",
                 "output_index": 1,
                 "content_index": 0,
@@ -233,7 +246,7 @@
               "event": "response.output_item.done",
               "data": {
                 "type": "response.output_item.done",
-                "sequence_number": 15,
+                "sequence_number": 16,
                 "output_index": 1,
                 "item": {
                   "id": "msg_resp_mockresp01_1",
@@ -255,7 +268,7 @@
               "event": "response.completed",
               "data": {
                 "type": "response.completed",
-                "sequence_number": 16,
+                "sequence_number": 17,
                 "response": {
                   "id": "resp_mockresp01",
                   "object": "response",
@@ -324,6 +337,7 @@
       "query": "alt=sse",
       "credential": "sk-gemini-1",
       "headers": {
+        "accept-encoding": "gzip",
         "content-type": "application/json",
         "user-agent": "<go-default-ua>",
         "x-goog-api-key": "sk-gemini-1"

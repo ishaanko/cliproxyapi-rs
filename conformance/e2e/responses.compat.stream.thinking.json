@@ -26,7 +26,8 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-cache",
           "connection": "keep-alive",
-          "content-type": "text/event-stream"
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
         },
         "body": {
           "type": "sse",
@@ -70,7 +71,7 @@
                 "sequence_number": 3,
                 "output_index": 0,
                 "item": {
-                  "id": "rs_chatcmpl-mock01_0",
+                  "id": "rs_<id:1>-mock01_0",
                   "type": "reasoning",
                   "status": "in_progress",
                   "summary": []
@@ -82,7 +83,7 @@
               "data": {
                 "type": "response.reasoning_summary_part.added",
                 "sequence_number": 4,
-                "item_id": "rs_chatcmpl-mock01_0",
+                "item_id": "rs_<id:1>-mock01_0",
                 "output_index": 0,
                 "summary_index": 0,
                 "part": {
@@ -96,7 +97,7 @@
               "data": {
                 "type": "response.reasoning_summary_text.delta",
                 "sequence_number": 5,
-                "item_id": "rs_chatcmpl-mock01_0",
+                "item_id": "rs_<id:1>-mock01_0",
                 "output_index": 0,
                 "summary_index": 0,
                 "delta": "Let me "
@@ -107,7 +108,7 @@
               "data": {
                 "type": "response.reasoning_summary_text.delta",
                 "sequence_number": 6,
-                "item_id": "rs_chatcmpl-mock01_0",
+                "item_id": "rs_<id:1>-mock01_0",
                 "output_index": 0,
                 "summary_index": 0,
                 "delta": "think."
@@ -118,7 +119,7 @@
               "data": {
                 "type": "response.reasoning_summary_text.done",
                 "sequence_number": 7,
-                "item_id": "rs_chatcmpl-mock01_0",
+                "item_id": "rs_<id:1>-mock01_0",
                 "output_index": 0,
                 "summary_index": 0,
                 "text": "Let me think."
@@ -129,7 +130,7 @@
               "data": {
                 "type": "response.reasoning_summary_part.done",
                 "sequence_number": 8,
-                "item_id": "rs_chatcmpl-mock01_0",
+                "item_id": "rs_<id:1>-mock01_0",
                 "output_index": 0,
                 "summary_index": 0,
                 "part": {
@@ -143,7 +144,7 @@
               "data": {
                 "type": "response.output_item.done",
                 "item": {
-                  "id": "rs_chatcmpl-mock01_0",
+                  "id": "rs_<id:1>-mock01_0",
                   "type": "reasoning",
                   "encrypted_content": "",
                   "summary": [
@@ -164,7 +165,7 @@
                 "sequence_number": 10,
                 "output_index": 1,
                 "item": {
-                  "id": "msg_chatcmpl-mock01_0",
+                  "id": "msg_<id:1>-mock01_0",
                   "type": "message",
                   "status": "in_progress",
                   "content": [],
@@ -177,7 +178,7 @@
               "data": {
                 "type": "response.content_part.added",
                 "sequence_number": 11,
-                "item_id": "msg_chatcmpl-mock01_0",
+                "item_id": "msg_<id:1>-mock01_0",
                 "output_index": 1,
                 "content_index": 0,
                 "part": {
@@ -193,7 +194,7 @@
               "data": {
                 "type": "response.output_text.delta",
                 "sequence_number": 12,
-                "item_id": "msg_chatcmpl-mock01_0",
+                "item_id": "msg_<id:1>-mock01_0",
                 "output_index": 1,
                 "content_index": 0,
                 "delta": "Hello from ",
@@ -205,7 +206,7 @@
               "data": {
                 "type": "response.output_text.delta",
                 "sequence_number": 13,
-                "item_id": "msg_chatcmpl-mock01_0",
+                "item_id": "msg_<id:1>-mock01_0",
                 "output_index": 1,
                 "content_index": 0,
                 "delta": "mock",
@@ -217,7 +218,7 @@
               "data": {
                 "type": "response.output_text.done",
                 "sequence_number": 14,
-                "item_id": "msg_chatcmpl-mock01_0",
+                "item_id": "msg_<id:1>-mock01_0",
                 "output_index": 1,
                 "content_index": 0,
                 "text": "Hello from mock",
@@ -229,7 +230,7 @@
               "data": {
                 "type": "response.content_part.done",
                 "sequence_number": 15,
-                "item_id": "msg_chatcmpl-mock01_0",
+                "item_id": "msg_<id:1>-mock01_0",
                 "output_index": 1,
                 "content_index": 0,
                 "part": {
@@ -247,7 +248,7 @@
                 "sequence_number": 16,
                 "output_index": 1,
                 "item": {
-                  "id": "msg_chatcmpl-mock01_0",
+                  "id": "msg_<id:1>-mock01_0",
                   "type": "message",
                   "status": "completed",
                   "content": [
@@ -280,7 +281,7 @@
                   },
                   "output": [
                     {
-                      "id": "rs_chatcmpl-mock01_0",
+                      "id": "rs_<id:1>-mock01_0",
                       "type": "reasoning",
                       "summary": [
                         {
@@ -290,7 +291,7 @@
                       ]
                     },
                     {
-                      "id": "msg_chatcmpl-mock01_0",
+                      "id": "msg_<id:1>-mock01_0",
                       "type": "message",
                       "status": "completed",
                       "content": [
@@ -310,10 +311,10 @@
                       "cached_tokens": 0
                     },
                     "output_tokens": 7,
-                    "total_tokens": 18,
                     "output_tokens_details": {
-                      "reasoning_tokens": 0
-                    }
+                      "reasoning_tokens": 3
+                    },
+                    "total_tokens": 18
                   }
                 }
               }
@@ -335,6 +336,7 @@
       "credential": "sk-compat-2",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-compat-2",
         "cache-control": "no-cache",
         "content-type": "application/json",

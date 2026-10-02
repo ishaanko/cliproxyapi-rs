@@ -25,7 +25,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use replies::{Family, Op, RBody, Rendered, ReqCtx};
-use script::{Pick, Reply, Script, ScriptState};
+use script::{Chunking, Pick, Reply, Script, ScriptState};
 
 /// One request observed by the mock.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -144,8 +144,20 @@ fn classify(family: Family, path: &str, body: &Value) -> Option<(Op, ReqCtx)> {
     }
 }
 
+/// Re-splits per-event chunks so streams arrive with different write boundaries.
+fn rechunk(chunks: Vec<Bytes>, mode: Chunking) -> Vec<Bytes> {
+    match mode {
+        Chunking::Whole => chunks,
+        Chunking::Split => chunks.into_iter().flat_map(|c| [c.slice(..c.len() / 2), c.slice(c.len() / 2..)]).filter(|c| !c.is_empty()).collect(),
+        Chunking::Merged => chunks
+            .chunks(3)
+            .map(|group| Bytes::from(group.iter().flat_map(|b| b.iter().copied()).collect::<Vec<u8>>()))
+            .collect(),
+    }
+}
+
 /// `stall_ms` pauses a stream after its first chunk.
-fn to_response(r: Rendered, stall_ms: u64) -> Response {
+fn to_response(r: Rendered, stall_ms: u64, chunking: Chunking) -> Response {
     let mut builder = Response::builder().status(StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
     for (k, v) in &r.headers {
         if let Ok(v) = HeaderValue::from_str(v) {
@@ -155,6 +167,7 @@ fn to_response(r: Rendered, stall_ms: u64) -> Response {
     let body = match r.body {
         RBody::Full(b) => Body::from(b),
         RBody::Chunks { chunks, abort } => {
+            let chunks = rechunk(chunks, chunking);
             let items = chunks.into_iter().map(Ok::<Bytes, io::Error>).chain(abort.then(|| Err(io::Error::other("mock abort"))));
             let stall = Duration::from_millis(stall_ms);
             let paced = stream::iter(items.enumerate()).then(move |(i, item)| async move {
@@ -214,11 +227,11 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
             headers: vec![("content-type".into(), "application/json".into())],
             body: RBody::Full(Bytes::from(json!({"error":"mock: unknown route"}).to_string())),
         };
-        return to_response(rendered, 0);
+        return to_response(rendered, 0, Chunking::Whole);
     };
     // Model listings are not part of any scenario script.
     let pick = if op == Op::Models {
-        Pick { reply: Reply::ok(script::Content::Text), delay_ms: 0, stall_ms: 0, headers: vec![] }
+        Pick { reply: Reply::ok(script::Content::Text), delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![] }
     } else {
         mock.inner.lock().await.script.next(&cred)
     };
@@ -227,7 +240,7 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
     }
     let mut rendered = replies::render(family, op, &ctx, &pick.reply);
     rendered.headers.extend(pick.headers);
-    to_response(rendered, pick.stall_ms)
+    to_response(rendered, pick.stall_ms, pick.chunking)
 }
 
 async fn push_log(mock: &Mock, entry: LoggedRequest) -> usize {

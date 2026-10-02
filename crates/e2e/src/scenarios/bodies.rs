@@ -42,9 +42,18 @@ pub enum Kind {
     Text,
     Tool,
     Thinking,
+    /// Two tool calls in one turn.
+    Parallel,
+    /// Text followed by a tool call.
+    Mixed,
+    /// Output cut off at the token limit.
+    Length,
+    /// Usage with cached prompt tokens.
+    Cached,
 }
 
-pub const KINDS: [Kind; 3] = [Kind::Text, Kind::Tool, Kind::Thinking];
+/// Text first: dialects that cannot express the others only use `KINDS[..1]`.
+pub const KINDS: [Kind; 7] = [Kind::Text, Kind::Tool, Kind::Thinking, Kind::Parallel, Kind::Mixed, Kind::Length, Kind::Cached];
 
 impl Kind {
     pub fn label(self) -> &'static str {
@@ -52,6 +61,10 @@ impl Kind {
             Kind::Text => "text",
             Kind::Tool => "tool",
             Kind::Thinking => "thinking",
+            Kind::Parallel => "parallel",
+            Kind::Mixed => "mixed",
+            Kind::Length => "length",
+            Kind::Cached => "cached",
         }
     }
 
@@ -60,6 +73,10 @@ impl Kind {
             Kind::Text => Content::Text,
             Kind::Tool => Content::ToolCall,
             Kind::Thinking => Content::Thinking,
+            Kind::Parallel => Content::Parallel,
+            Kind::Mixed => Content::Mixed,
+            Kind::Length => Content::Length,
+            Kind::Cached => Content::Cached,
         }
     }
 }
@@ -75,11 +92,12 @@ pub fn chat(model: &str, stream: bool, kind: Kind) -> Value {
         b["stream_options"] = json!({"include_usage": true});
     }
     match kind {
-        Kind::Text => {}
-        Kind::Tool => {
+        Kind::Text | Kind::Cached => {}
+        Kind::Tool | Kind::Parallel | Kind::Mixed => {
             b["tools"] = json!([{"type":"function","function":{"name":"get_weather","description":"Get the weather","parameters":weather_schema()}}]);
         }
         Kind::Thinking => b["reasoning_effort"] = json!("high"),
+        Kind::Length => b["max_tokens"] = json!(16),
     }
     b
 }
@@ -93,11 +111,12 @@ pub fn completions(model: &str, stream: bool) -> Value {
 pub fn responses(model: &str, stream: bool, kind: Kind) -> Value {
     let mut b = json!({"model": model, "input": "What is the weather in Paris?", "stream": stream});
     match kind {
-        Kind::Text => {}
-        Kind::Tool => {
+        Kind::Text | Kind::Cached => {}
+        Kind::Tool | Kind::Parallel | Kind::Mixed => {
             b["tools"] = json!([{"type":"function","name":"get_weather","description":"Get the weather","parameters":weather_schema()}]);
         }
         Kind::Thinking => b["reasoning"] = json!({"effort":"high"}),
+        Kind::Length => b["max_output_tokens"] = json!(16),
     }
     b
 }
@@ -106,11 +125,12 @@ pub fn responses(model: &str, stream: bool, kind: Kind) -> Value {
 pub fn claude(model: &str, stream: bool, kind: Kind) -> Value {
     let mut b = json!({"model": model, "max_tokens": 4096, "messages": [{"role":"user","content":"What is the weather in Paris?"}], "stream": stream});
     match kind {
-        Kind::Text => {}
-        Kind::Tool => {
+        Kind::Text | Kind::Cached => {}
+        Kind::Tool | Kind::Parallel | Kind::Mixed => {
             b["tools"] = json!([{"name":"get_weather","description":"Get the weather","input_schema":weather_schema()}]);
         }
         Kind::Thinking => b["thinking"] = json!({"type":"enabled","budget_tokens":2048}),
+        Kind::Length => b["max_tokens"] = json!(16),
     }
     b
 }
@@ -119,11 +139,12 @@ pub fn claude(model: &str, stream: bool, kind: Kind) -> Value {
 pub fn gemini(kind: Kind) -> Value {
     let mut b = json!({"contents":[{"role":"user","parts":[{"text":"What is the weather in Paris?"}]}]});
     match kind {
-        Kind::Text => {}
-        Kind::Tool => {
+        Kind::Text | Kind::Cached => {}
+        Kind::Tool | Kind::Parallel | Kind::Mixed => {
             b["tools"] = json!([{"functionDeclarations":[{"name":"get_weather","description":"Get the weather","parameters":weather_schema()}]}]);
         }
         Kind::Thinking => b["generationConfig"] = json!({"thinkingConfig":{"thinkingBudget":1024,"includeThoughts":true}}),
+        Kind::Length => b["generationConfig"] = json!({"maxOutputTokens":16}),
     }
     b
 }

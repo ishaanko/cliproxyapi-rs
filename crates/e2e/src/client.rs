@@ -167,39 +167,25 @@ fn is_zero(n: &usize) -> bool {
     *n == 0
 }
 
-/// Response headers worth comparing (everything else is transport noise or volatile).
-fn keep_response_header(name: &str) -> bool {
-    // `x-e2e-*` headers are injected by the mock upstream to test header passthrough.
-    name.starts_with("x-e2e-")
-        || matches!(
-        name,
-        "content-type"
-            | "cache-control"
-            | "retry-after"
-            | "www-authenticate"
-            | "location"
-            | "content-disposition"
-            | "x-cpa-safe-mode"
-            | "x-codex-turn-state"
-            | "access-control-allow-origin"
-            | "access-control-allow-methods"
-            | "access-control-allow-headers"
-            | "access-control-expose-headers"
-            | "x-accel-buffering"
-            | "connection"
-            | "x-content-type-options"
-    )
-}
+/// Response headers that carry no behavior: derived from the body or the connection, or random.
+const DROP_RESPONSE_HEADERS: &[&str] = &["date", "content-length", "transfer-encoding", "sec-websocket-accept"];
 
-fn filtered_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<String, String> {
+fn header_map(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> {
     headers
         .iter()
-        .filter(|(k, _)| keep_response_header(k.as_str()))
+        .filter(|(k, _)| !DROP_RESPONSE_HEADERS.contains(&k.as_str()))
         .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
         .collect()
 }
 
+fn filtered_headers(headers: &reqwest::header::HeaderMap) -> BTreeMap<String, String> {
+    header_map(headers)
+}
+
 // ------------------------------------------------------------------- execution
+
+/// How long to keep reading after a terminal websocket event.
+const WS_TRAILING_MS: u64 = 250;
 
 pub struct Client {
     http: reqwest::Client,
@@ -290,28 +276,21 @@ impl Client {
                     Err(_) if text.is_empty() => ObsBody::Empty,
                     Err(_) => ObsBody::Text { value: text },
                 };
-                let headers = resp
-                    .headers()
-                    .iter()
-                    .filter(|(k, _)| keep_response_header(k.as_str()))
-                    .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-                    .collect();
-                return Ok(Observed { status, headers, body });
+                return Ok(Observed { status, headers: header_map(resp.headers()), body });
             }
             Err(e) => return Err(e.into()),
         };
-        let headers = resp
-            .headers()
-            .iter()
-            .filter(|(k, _)| keep_response_header(k.as_str()))
-            .map(|(k, v)| (k.as_str().to_string(), String::from_utf8_lossy(v.as_bytes()).into_owned()))
-            .collect();
+        let headers = header_map(resp.headers());
         let mut frames: Vec<Value> = vec![];
         let mut close: Option<String> = None;
         'messages: for msg in &r.messages {
             socket.send(Message::Text(msg.to_string().into())).await?;
+            let mut terminal_seen = false;
             loop {
-                match tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
+                // After a terminal event keep listening briefly for trailing frames or a close.
+                let wait = if terminal_seen { WS_TRAILING_MS } else { 10_000 };
+                match tokio::time::timeout(Duration::from_millis(wait), socket.next()).await {
+                    Err(_) if terminal_seen => break,
                     Err(_) => {
                         frames.push(json!({"timeout": true}));
                         break 'messages;
@@ -333,14 +312,15 @@ impl Client {
                     }
                     Ok(Some(Ok(Message::Text(t)))) => {
                         let v = serde_json::from_str::<Value>(t.as_str()).unwrap_or_else(|_| Value::String(t.to_string()));
-                        let terminal = matches!(
+                        terminal_seen |= matches!(
                             v["type"].as_str(),
                             Some("response.completed" | "response.done" | "response.failed" | "response.incomplete" | "error")
                         );
                         frames.push(v);
-                        if terminal {
-                            break;
-                        }
+                    }
+                    Ok(Some(Ok(Message::Binary(b)))) => {
+                        let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+                        frames.push(json!({"binary": hex}));
                     }
                     Ok(Some(Ok(_))) => {}
                 }

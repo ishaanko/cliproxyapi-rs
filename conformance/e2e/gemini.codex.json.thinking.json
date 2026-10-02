@@ -34,7 +34,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -75,10 +76,12 @@
       "credential": "sk-codex-2",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
         "content-type": "application/json",
         "originator": "codex-tui",
-        "session-id": "<uuid:1>",
+        "session-id": "adf1044d-b029-5ce7-80fd-8cb194f3cf8e",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
       "body": {
@@ -112,7 +115,7 @@
             "output_format": "png"
           }
         ],
-        "prompt_cache_key": "<uuid:1>"
+        "prompt_cache_key": "adf1044d-b029-5ce7-80fd-8cb194f3cf8e"
       }
     }
   ]

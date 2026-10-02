@@ -58,8 +58,9 @@ struct Common {
     /// Fixed port the server under test listens on (the port shows up in config dumps).
     #[arg(long, default_value_t = 38922)]
     server_port: u16,
-    /// Scratch directory; per-scenario config, auth dir and server log are kept here.
-    #[arg(long, default_value = "/tmp/cpa-e2e-work")]
+    /// Scratch directory (relative to the current directory, normally the repo root where `tmp/`
+    /// is gitignored); per-scenario config, auth dir and server log are kept here.
+    #[arg(long, default_value = "tmp/e2e-work")]
     work_dir: PathBuf,
     /// Config layout generated for the server.
     #[arg(long, value_enum, default_value = "legacy")]
@@ -72,7 +73,8 @@ enum Cmd {
     Record {
         #[command(flatten)]
         common: Common,
-        /// Runs per scenario; all runs must normalize to the same capture.
+        /// Runs per scenario. Leaves that differ between runs are masked in the golden (and listed);
+        /// structural differences make the scenario unstable.
         #[arg(long, default_value_t = 2)]
         runs: usize,
     },
@@ -80,9 +82,9 @@ enum Cmd {
     Check {
         #[command(flatten)]
         common: Common,
-        /// Also compare JSON object key order.
+        /// Do not compare JSON object key order (it is compared by default).
         #[arg(long)]
-        strict_order: bool,
+        ignore_key_order: bool,
         /// Report path (default: <golden-dir>/report.md).
         #[arg(long)]
         report: Option<PathBuf>,
@@ -108,7 +110,8 @@ fn run_opts(c: &Common) -> RunOpts {
         server_bin: c.server.clone(),
         mock_port: c.mock_port,
         server_port: c.server_port,
-        work_dir: c.work_dir.clone(),
+        // Absolute: file credentials hash their path, and the server runs from another cwd.
+        work_dir: std::fs::create_dir_all(&c.work_dir).and_then(|_| std::fs::canonicalize(&c.work_dir)).unwrap_or_else(|_| c.work_dir.clone()),
         layout: match c.config_layout {
             LayoutArg::Legacy => Layout::Legacy,
             LayoutArg::V8 => Layout::V8,
@@ -142,7 +145,7 @@ async fn real_main() -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Record { common, runs } => record(common, runs).await,
-        Cmd::Check { common, strict_order, report } => check(common, strict_order, report).await,
+        Cmd::Check { common, ignore_key_order, report } => check(common, !ignore_key_order, report).await,
     }
 }
 
@@ -155,21 +158,30 @@ async fn record(common: Common, runs: usize) -> Result<ExitCode> {
     }
     let mut unstable = 0;
     for s in &list {
-        let first = runner::run_scenario(&opts, s).await?;
-        let mut stable = true;
+        let mut golden = runner::run_scenario(&opts, s).await?;
+        let mut error = None;
         for _ in 1..runs.max(1) {
             let again = runner::run_scenario(&opts, s).await?;
-            if let Some(d) = golden::diff(&first, &again, true) {
-                println!("UNSTABLE {}: {d}", s.id);
-                stable = false;
-                break;
+            match golden::learn_volatile(&golden, &again) {
+                Ok(merged) => golden = merged,
+                Err(e) => {
+                    error = Some(e);
+                    break;
+                }
             }
         }
-        if stable {
-            golden::save(&common.golden_dir, &first)?;
-            println!("recorded {}", s.id);
-        } else {
-            unstable += 1;
+        match error {
+            None => {
+                golden::save(&common.golden_dir, &golden)?;
+                println!("recorded {}", s.id);
+                for p in &golden.volatile {
+                    println!("    volatile {p}");
+                }
+            }
+            Some(e) => {
+                println!("UNSTABLE {}: {e}", s.id);
+                unstable += 1;
+            }
         }
     }
     println!("{} scenarios, {} unstable", list.len(), unstable);
@@ -185,30 +197,42 @@ async fn check(common: Common, strict_order: bool, report: Option<PathBuf>) -> R
     }
     let mut outcomes: Vec<Outcome> = vec![];
     for s in &list {
-        let failure = match golden::load(&common.golden_dir, &s.id)? {
-            None => Some("no golden recorded".to_string()),
+        let failures = match golden::load(&common.golden_dir, &s.id)? {
+            None => vec!["no golden recorded".to_string()],
             Some(g) => match runner::run_scenario(&opts, s).await {
-                Ok(actual) => golden::diff(&g, &actual, strict_order),
-                Err(e) => Some(format!("run error: {e:#}")),
+                Ok(actual) => {
+                    let diffs = golden::diff(&g, &actual, strict_order);
+                    if diffs.is_empty() {
+                        golden::clear_actual(&common.golden_dir, &s.id);
+                    } else {
+                        golden::save_actual(&common.golden_dir, &actual)?;
+                    }
+                    diffs
+                }
+                Err(e) => vec![format!("run error: {e:#}")],
             },
         };
-        match &failure {
-            None => println!("PASS  {}", s.id),
-            Some(d) => println!("FAIL  {}\n        {d}", s.id),
+        if failures.is_empty() {
+            println!("PASS  {}", s.id);
+        } else {
+            println!("FAIL  {}", s.id);
+            for d in &failures {
+                println!("        {d}");
+            }
         }
-        outcomes.push(Outcome { id: s.id.clone(), desc: s.desc.clone(), failure });
+        outcomes.push(Outcome { id: s.id.clone(), desc: s.desc.clone(), failures });
     }
     // Goldens without a scenario usually mean a renamed or removed scenario.
     if common.filter.is_none() {
         let known: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
         for id in golden::list_ids(&common.golden_dir) {
             if !known.contains(&id.as_str()) {
-                outcomes.push(Outcome { id: id.clone(), desc: String::new(), failure: Some("golden has no scenario".into()) });
                 println!("FAIL  {id}\n        golden has no scenario");
+                outcomes.push(Outcome { id, desc: String::new(), failures: vec!["golden has no scenario".into()] });
             }
         }
     }
-    let failed = outcomes.iter().filter(|o| o.failure.is_some()).count();
+    let failed = outcomes.iter().filter(|o| !o.passed()).count();
     let layout = match common.config_layout {
         LayoutArg::Legacy => "legacy",
         LayoutArg::V8 => "v8",

@@ -19,6 +19,7 @@
         "status": 101,
         "headers": {
           "connection": "Upgrade",
+          "upgrade": "websocket",
           "x-codex-turn-state": "state-abc"
         },
         "body": {
