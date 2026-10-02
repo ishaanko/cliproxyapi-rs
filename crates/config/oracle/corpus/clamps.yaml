@@ -1,0 +1,7 @@
+logs-max-total-size-mb: -5
+error-logs-max-files: -1
+redis-usage-queue-retention-seconds: 99999
+max-retry-credentials: -3
+pprof: {addr: '  '}
+remote-management: {panel-github-repository: '   '}
+trusted-proxies: [192.0.2.0/24, '2001:db8::1']

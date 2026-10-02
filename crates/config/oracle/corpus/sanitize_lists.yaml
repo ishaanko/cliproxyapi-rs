@@ -1,0 +1,21 @@
+gemini-api-key:
+  - {api-key: ' k1 ', prefix: '/team/', headers: {' A ': ' b ', C: ''}, excluded-models: [' X ', x, '']}
+  - {api-key: k1, prefix: team, headers: {A: b}}
+  - {api-key: '', base-url: ''}
+  - {api-key: '', base-url: ' https://only-base.invalid '}
+vertex-api-key:
+  - {api-key: v, base-url: ' https://v.invalid ', models: [{name: a, alias: b}, {name: a}, {alias: b}]}
+  - {api-key: v, base-url: https://v.invalid}
+  - {api-key: '  '}
+openai-compatibility:
+  - {name: ' keep ', base-url: ' https://oai.invalid ', prefix: 'a/b', headers: {X: ' y '}}
+  - {name: dropped, base-url: ' '}
+codex-api-key:
+  - {api-key: c, base-url: ''}
+  - {api-key: c, base-url: https://codex.invalid, prefix: ' p ', alpha-search: true}
+xai-api-key:
+  - {api-key: ' x ', base-url: ' https://x.invalid ', alpha-search: true}
+meta-api-key:
+  - {}
+  - api-key: ' LLM|valid '
+  - api-key: 'dca:no'

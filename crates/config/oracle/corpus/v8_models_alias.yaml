@@ -1,0 +1,1 @@
+oauth: {model-alias: {codex: [{name: a, alias: b}]}, settings: {codex: [{name: a, max-context-length: 5}]}, excluded-models: {codex: [A]}, request-scoped-errors: {codex: [{status: 400, match: [x], action: stop}]}}

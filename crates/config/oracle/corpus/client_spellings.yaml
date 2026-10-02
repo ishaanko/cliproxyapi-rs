@@ -1,0 +1,4 @@
+client: {codex: {optimize-multi-agent-v2: null}}
+providers: {codex: {optimize-multi-agent-v2: true}}
+oauth: {providers: {codex: {optimize-multi-agent-v2: false}}}
+codex: {optimize-multi-agent-v2: true, live-media-relay: {allow-private-remote-ips: true}}

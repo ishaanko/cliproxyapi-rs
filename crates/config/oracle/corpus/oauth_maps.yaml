@@ -1,0 +1,20 @@
+oauth-excluded-models: {' Codex ': [' A ', a, B], empty: [], '': [x]}
+oauth-model-alias:
+  Codex:
+    - {name: gpt-5, alias: g5, fork: true, display-name: ' G5 '}
+    - {name: gpt-5, alias: G5}
+    - {name: same, alias: SAME}
+    - {name: '', alias: x}
+  ghost: []
+oauth-settings:
+  Codex:
+    - {name: m, max-context-length: 1}
+    - {name: ' M ', max-context-length: 2}
+    - {name: m, alias: a, max-context-length: 3}
+    - {name: ''}
+oauth-request-scoped-errors:
+  Codex:
+    - {status: 400, match: [' x ', ''], action: ' STOP '}
+    - {status: 0, match: [x], action: stop}
+    - {status: 500, action: stop}
+    - {status: 500, match: [x], action: ''}

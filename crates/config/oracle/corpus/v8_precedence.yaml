@@ -1,0 +1,7 @@
+request-retry: 4
+disable-cooling: true
+api-keys: [old]
+routing:
+  retry: {request-retry: 0}
+  cooldown: {disable-cooling: false}
+access: {api-keys: []}

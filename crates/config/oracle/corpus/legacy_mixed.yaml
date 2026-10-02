@@ -1,0 +1,20 @@
+host: 127.0.0.1
+port: 8317
+api-keys: [client]
+request-retry: 0
+ws-auth: false
+quota-exceeded: {switch-project: true, switch-preview-model: true, antigravity-credits: true}
+codex-api-key:
+  - api-key: a
+    base-url: https://example.invalid
+    headers: {X-Test: first}
+    request-retry: 0
+    disable-cooling: false
+  - api-key: b
+    base-url: https://example.invalid
+    headers: {X-Test: second}
+    request-retry: -1
+openai-compatibility:
+  - name: compatible
+    base-url: https://example.invalid
+    api-key-entries: [{api-key: a, weight: 0}, {api-key: b, proxy-url: direct}]

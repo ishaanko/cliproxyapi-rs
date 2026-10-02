@@ -1,0 +1,4 @@
+codex: {disable-codex-cloaking: true, stream-bootstrap-timeout: '20s', live-media-relay: {enabled: true, max-sessions: 8, udp-port-min: 4000, udp-port-max: 4100, ice-servers: [{urls: ['stun:s:3478'], username: u, credential: c}]}}
+antigravity: {sensitive-words: [a], connection-pool: {enabled: false, idle-conn-timeout: 40s, max-idle-conns-per-host: 3}}
+devin: {sensitive-words: [d]}
+antigravity-signature-cache-enabled: false

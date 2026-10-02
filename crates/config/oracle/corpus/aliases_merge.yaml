@@ -1,0 +1,4 @@
+base: &b {port: 1, debug: true}
+<<: *b
+logging-to-file: true
+routing: {strategy: wrr}

@@ -1,0 +1,5 @@
+credential-concurrency:
+  lifecycle-config-revision: 2
+  cpa-heartbeat-timeout: 20s
+  release-flush-interval: 100ms
+credential-in-flight: {stale-after: 12s}
