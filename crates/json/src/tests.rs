@@ -153,3 +153,17 @@ fn judge_regressions() {
     assert!(valid(deep(500).as_bytes()));
     assert!(!valid(b"{} trailing"));
 }
+
+#[test]
+fn lone_surrogates_and_raw_at() {
+    assert_eq!(parse(br#"{"a":"\ud800"}"#).g("a").str(), "\u{fffd}");
+    assert_eq!(parse(br#"{"a":"x\udc00y"}"#).g("a").str(), "x\u{fffd}y");
+    assert_eq!(parse(br#"{"a":"\ud83d\ude00"}"#).g("a").str(), "\u{1f600}");
+    assert_eq!(parse(br#"{"a":"\\ud800"}"#).g("a").str(), "\\ud800");
+    let src = br#"{ "a" : { "b" : [ 1 , {"c": {"x": 1,  "x": 2}} ] }, "k.d": true }"#;
+    assert_eq!(raw_at(src, "a.b.1.c"), Some(r#"{"x": 1,  "x": 2}"#));
+    assert_eq!(raw_at(src, "a.b.0"), Some("1"));
+    assert_eq!(raw_at(src, r"k\.d"), Some("true"));
+    assert_eq!(raw_at(src, "a.zz"), None);
+    assert_eq!(raw_at(b"[1,2", "5"), None);
+}
