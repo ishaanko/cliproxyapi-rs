@@ -131,6 +131,7 @@ dependencies = [
  "base64",
  "chrono",
  "cpa-json",
+ "flate2",
  "hex",
  "http",
  "once_cell",
