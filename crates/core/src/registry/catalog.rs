@@ -245,24 +245,10 @@ pub fn detect_changed_providers(old: &StaticModels, new: &StaticModels) -> Vec<S
     changed
 }
 
-/// Whether two model lists differ, including internal metadata omitted from normal JSON.
+/// Whether two model lists differ in any catalog field, including the internal metadata that is
+/// omitted from normal JSON (structural comparison; header overrides are ordered maps).
 fn model_section_changed(a: &[ModelInfo], b: &[ModelInfo]) -> bool {
-    if a.len() != b.len() {
-        return true;
-    }
-    if a.is_empty() {
-        return false;
-    }
-    if a.iter().zip(b).any(|(x, y)| {
-        x.native_capabilities != y.native_capabilities
-            || x.support_configuration_update != y.support_configuration_update
-    }) {
-        return true;
-    }
-    match (serde_json::to_string(a), serde_json::to_string(b)) {
-        (Ok(aj), Ok(bj)) => aj != bj,
-        _ => true,
-    }
+    a != b
 }
 
 fn notify_model_refresh(changed: &[String]) {
@@ -352,5 +338,35 @@ mod tests {
             &["gemini".into(), "codex".into()],
         );
         assert_eq!(merged, ["gemini", "codex"]);
+    }
+}
+
+#[cfg(test)]
+mod change_tests {
+    use super::*;
+    use crate::registry::ModelConfig;
+
+    fn with_headers(pairs: &[(&str, &str)]) -> StaticModels {
+        let mut catalog = StaticModels::default();
+        catalog.claude.push(ModelInfo {
+            id: "m".into(),
+            config: Some(ModelConfig {
+                override_header: pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            }),
+            ..Default::default()
+        });
+        catalog
+    }
+
+    #[test]
+    fn header_override_order_is_not_a_change() {
+        let a = with_headers(&[("user-agent", "x"), ("x-b", "1"), ("x-a", "2")]);
+        let b = with_headers(&[("x-a", "2"), ("x-b", "1"), ("user-agent", "x")]);
+        assert!(detect_changed_providers(&a, &b).is_empty());
+        let c = with_headers(&[("x-a", "3"), ("x-b", "1"), ("user-agent", "x")]);
+        assert_eq!(detect_changed_providers(&a, &c), ["claude"]);
     }
 }
