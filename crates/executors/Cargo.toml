@@ -37,7 +37,11 @@ async-trait = "0.1"
 flate2 = "1"
 base64.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "gzip", "brotli", "deflate", "socks", "stream", "json"] }
+aes-gcm = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["full"] }
 axum = "0.8"
+flate2 = "1.1.10"
+tokio = { workspace = true, features = ["full"] }
