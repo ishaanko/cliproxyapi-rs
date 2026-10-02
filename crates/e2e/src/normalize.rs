@@ -148,6 +148,10 @@ impl Normalizer {
         headers
             .iter()
             .filter(|(k, _)| !DROP_REQUEST_HEADERS.contains(&k.as_str()))
+            // reqwest always sends `Accept: */*` when no Accept is set; Go sends none. The two are
+            // equivalent to every upstream, so the literal default is treated as absent. Any other
+            // Accept value is still compared.
+            .filter(|(k, v)| !(k.as_str() == "accept" && v.as_str() == "*/*"))
             .map(|(k, v)| {
                 let v = if k == "user-agent" && v.starts_with("Go-http-client") { "<go-default-ua>".to_string() } else { self.string(v) };
                 (k.clone(), v)
