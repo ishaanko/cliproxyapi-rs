@@ -1,6 +1,7 @@
 //! Streaming Messages call (Go: ExecuteStream in claude_executor_stream.go).
 
 use bytes::Bytes;
+use futures_util::TryStreamExt;
 use cpa_auth::Auth;
 use cpa_config::Config;
 use cpa_runtime::executor::{ExecError, Options, Request, StreamResult};
@@ -98,7 +99,10 @@ async fn run_stream(
     tx: &mpsc::Sender<Result<Bytes, ExecError>>,
 ) -> Result<(), ExecError> {
     let to = Format::Claude;
-    let mut lines = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
+    let mut lines = LineReader::from_stream(
+        resp.bytes_stream().map_err(|e| super::http::describe_body_error(&e)),
+        STREAM_SCANNER_BUFFER,
+    );
     let mut upstream_message_id = String::new();
     let mut upstream_completed = false;
     let restore_error = |err: super::tool_remap::ClaudeMcpAliasRestoreError| {

@@ -36,7 +36,6 @@ use super::diagnostics::{
 use super::fast_error::{
     claude_request_is_fast, new_claude_fast_direct_response_error, wrap_claude_fast_request_error,
 };
-use super::helps::client_detection::ClaudeCodeRequestDetection;
 use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::credential_identity::{apply_claude_credential_metadata, claude_agent_session_uuid_for_request, claude_request_has_execution_metadata};
 use super::helps::diagnostics::{
@@ -45,7 +44,7 @@ use super::helps::diagnostics::{
 };
 use super::helps::upstream::is_anthropic_upstream_base;
 use super::helps::{ClaudeContinuityContext, ClaudeCtx};
-use super::policy::{ClaudeFingerprintPolicy, resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
+use super::policy::{resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
 use super::request::{
     ClaudeHeaderInput, apply_claude_headers_with_native_profile, claude_creds, classify_claude_upstream_error_with_cooling, header_value,
     set_bool_if_different_bytes, set_string_if_different_bytes,
@@ -72,10 +71,7 @@ use crate::helps::usage::{Detail, StreamUsageBuffer, UsageReporter, parse_claude
 /// Everything the response half needs after the shared request pipeline ran.
 pub(super) struct Prepared {
     pub url: String,
-    pub base_model: String,
     pub upstream_stream: bool,
-    pub cloaked: bool,
-    pub fp: ClaudeFingerprintPolicy,
     pub body_for_translation: Vec<u8>,
     pub body_for_upstream: Vec<u8>,
     pub headers: HeaderMap,
@@ -85,9 +81,6 @@ pub(super) struct Prepared {
     pub fast_request: bool,
     pub replay_scope: ClaudeThinkingReplayScope,
     pub req: Request,
-    pub detection: ClaudeCodeRequestDetection,
-    pub session_id: String,
-    pub api_key: String,
 }
 
 /// Translates one payload to the Claude schema (Go: helps.TranslateRequestWithAPIKeyModelCompatibility,
@@ -511,10 +504,7 @@ impl ClaudeExecutor {
 
         Ok(Prepared {
             url,
-            base_model,
             upstream_stream,
-            cloaked,
-            fp,
             body_for_translation,
             body_for_upstream,
             headers,
@@ -523,9 +513,6 @@ impl ClaudeExecutor {
             fast_request,
             replay_scope,
             req,
-            detection,
-            session_id: claude_session_id,
-            api_key,
         })
     }
 
@@ -582,7 +569,7 @@ impl ClaudeExecutor {
         let resp_headers = resp.headers().clone();
         let body = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => Bytes::from(format!("failed to read error response body: {e}")),
+            Err(e) => Bytes::from(format!("failed to read error response body: {}", super::http::describe_body_error(&e))),
         };
         tracing::debug!(
             "request error, error status: {status}, error message: {}",
@@ -613,7 +600,11 @@ impl ClaudeExecutor {
         let data = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                return Err(wrap_claude_fast_request_error(p.fast_request, status, ExecError::new(0, e.to_string())));
+                return Err(wrap_claude_fast_request_error(
+                    p.fast_request,
+                    status,
+                    ExecError::new(0, super::http::describe_body_error(&e)),
+                ));
             }
         };
         let mut data = data.to_vec();

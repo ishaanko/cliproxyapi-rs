@@ -8,7 +8,7 @@ use cpa_auth::Auth;
 use cpa_config::Config;
 use cpa_json::J;
 use serde_json::Value;
-use cpa_runtime::executor::{Executor, Options, Request};
+use cpa_runtime::executor::{Options, Request};
 use cpa_translator::Format;
 use http::HeaderMap;
 use parking_lot::Mutex;
@@ -37,6 +37,16 @@ struct MockUpstream {
 /// Starts a one-route mock that answers every request with `status` and `body`
 /// (`content_type` decides JSON vs SSE).
 async fn mock_upstream(status: u16, content_type: &'static str, body: String) -> MockUpstream {
+    mock_upstream_with(status, content_type, move |_| body.clone()).await
+}
+
+/// Like [`mock_upstream`], but the response body is computed from the request body.
+async fn mock_upstream_with(
+    status: u16,
+    content_type: &'static str,
+    respond: impl Fn(&[u8]) -> String + Send + Sync + 'static,
+) -> MockUpstream {
+    let respond = Arc::new(respond);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let captured = Arc::new(Mutex::new(Vec::new()));
@@ -44,7 +54,7 @@ async fn mock_upstream(status: u16, content_type: &'static str, body: String) ->
     tokio::spawn(async move {
         loop {
             let Ok((mut sock, _)) = listener.accept().await else { return };
-            let (sink, body) = (Arc::clone(&sink), body.clone());
+            let (sink, respond) = (Arc::clone(&sink), Arc::clone(&respond));
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 8192];
@@ -81,7 +91,9 @@ async fn mock_upstream(status: u16, content_type: &'static str, body: String) ->
                         headers.append(k, v);
                     }
                 }
-                sink.lock().push(Captured { path, headers, body: buf[head_end..].to_vec() });
+                let request_body = buf[head_end..].to_vec();
+                let body = respond(&request_body);
+                sink.lock().push(Captured { path, headers, body: request_body });
                 let response = format!(
                     "HTTP/1.1 {status} X\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                     body.len()
@@ -144,6 +156,7 @@ async fn api_key_passthrough_forwards_caller_body_to_custom_base_url() {
     assert_eq!(c.headers.get("authorization").unwrap(), "Bearer sk-ant-api-test");
     assert!(c.headers.get("x-api-key").is_none());
     assert_eq!(c.headers.get("anthropic-version").unwrap(), "2023-06-01");
+    eprintln!("HEADERS {:?}", c.headers);
     // Caller-owned passthrough: no cloaking, no billing header.
     let body = cpa_json::parse(&c.body);
     assert_eq!(body.g("model").str(), "claude-opus-4-6");
@@ -232,4 +245,79 @@ async fn count_tokens_is_local_on_third_party_base_url() {
     let err = executor().count_tokens(&api_key_auth(&upstream.base_url), req, opts).await.unwrap_err();
     assert_eq!(err.status, 400);
     assert!(err.is_request_scoped());
+}
+
+#[tokio::test]
+async fn claude_code_cli_profile_on_third_party_gateway() {
+    let upstream = mock_upstream_with(200, "application/json", |request| {
+        let tool = cpa_json::parse(request).g("tools.0.name").str();
+        format!(
+            r#"{{"id":"msg_1","type":"message","model":"claude-sonnet-5","role":"assistant","content":[{{"type":"tool_use","id":"toolu_1","name":"{tool}","input":{{}}}}],"stop_reason":"tool_use","usage":{{"input_tokens":1,"output_tokens":1}}}}"#
+        )
+    })
+    .await;
+    let mut auth = Auth::new("claude-code-cli-api-key", "claude");
+    auth.attributes.insert("api_key".into(), "key-claude-code-cli-fp".into());
+    auth.attributes.insert("base_url".into(), upstream.base_url.clone());
+    auth.attributes.insert("fingerprint_profile".into(), "claude-code-cli".into());
+    let payload = r#"{"model":"claude-sonnet-5","messages":[{"role":"user","content":[{"type":"text","text":"What can you do?"}]}],"tools":[{"name":"read_file","description":"Read a file","input_schema":{"type":"object"}}]}"#;
+    let mut req = claude_request(payload).0;
+    req.model = "claude-sonnet-5".into();
+    let resp = executor().execute(&auth, req, Options::new(Format::Claude)).await.unwrap();
+
+    let c = upstream.captured.lock()[0].clone();
+    assert_eq!(c.headers.get("authorization").unwrap(), "Bearer key-claude-code-cli-fp");
+    let want_betas = super::request::claude_code_cli_betas(payload.as_bytes(), &Default::default(), true);
+    assert_eq!(c.headers.get("anthropic-beta").unwrap().to_str().unwrap(), want_betas);
+
+    let body = cpa_json::parse(&c.body);
+    let billing = body.g("system.0.text").str();
+    assert!(billing.starts_with("x-anthropic-billing-header:"), "{billing}");
+    // Native only signs for first-party; a gateway gets the billing header without cch.
+    assert!(!billing.contains("cch="), "{billing}");
+    assert_eq!(body.g("system.1.text").str(), "You are Claude Code, Anthropic's official CLI for Claude.");
+
+    let user_id_text = body.g("metadata.user_id").str();
+    assert!(crate::helps::id_cache::is_valid_user_id(&user_id_text), "{user_id_text}");
+    let user_id = cpa_json::parse(user_id_text.as_bytes());
+    assert!(!user_id.g("account_uuid").str().is_empty());
+    let session_header = c.headers.get("x-claude-code-session-id").unwrap().to_str().unwrap().to_string();
+    assert_eq!(user_id.g("session_id").str(), session_header);
+
+    let upstream_tool = body.g("tools.0.name").str();
+    assert!(upstream_tool.starts_with("mcp__"), "{upstream_tool}");
+    assert_eq!(cpa_json::parse(&resp.payload).g("content.0.name").str(), "read_file");
+}
+
+#[tokio::test]
+async fn openai_chat_client_gets_translated_non_stream_response_from_sse_upstream() {
+    let sse = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-opus-4-6\",\"role\":\"assistant\",\"usage\":{\"input_tokens\":5,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":3}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n";
+    let upstream = mock_upstream(200, "text/event-stream", sse.to_string()).await;
+    let req = Request {
+        model: "claude-opus-4-6".into(),
+        payload: Bytes::from_static(br#"{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hi"}]}"#),
+        format: Format::OpenAI,
+        metadata: Default::default(),
+    };
+    let resp = executor().execute(&api_key_auth(&upstream.base_url), req, Options::new(Format::OpenAI)).await.unwrap();
+    // A non-Claude client always streams upstream, even for a non-stream call.
+    let c = upstream.captured.lock()[0].clone();
+    assert_eq!(cpa_json::parse(&c.body).g("stream").bool(), true);
+    let out = cpa_json::parse(&resp.payload);
+    assert_eq!(out.g("choices.0.message.content").str(), "hello");
+    assert_eq!(resp.metadata["usage"]["output_tokens"], 3);
+}
+
+#[tokio::test]
+async fn empty_upstream_stream_is_a_502() {
+    let upstream = mock_upstream(200, "text/event-stream", String::new()).await;
+    let req = Request {
+        model: "claude-opus-4-6".into(),
+        payload: Bytes::from_static(br#"{"model":"claude-opus-4-6","messages":[{"role":"user","content":"hi"}]}"#),
+        format: Format::OpenAI,
+        metadata: Default::default(),
+    };
+    let err = executor().execute(&api_key_auth(&upstream.base_url), req, Options::new(Format::OpenAI)).await.unwrap_err();
+    assert_eq!(err.status, 502);
+    assert!(err.message.contains("empty stream response"), "{}", err.message);
 }

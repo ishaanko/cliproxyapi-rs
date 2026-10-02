@@ -264,3 +264,185 @@ fn wire_policy_cloaks_oauth_and_honors_modes() {
     assert!(policy.cloak && settings.strict_mode);
     assert!(!resolve_claude_wire_policy(&always, &apikey, "sk-plain", true).0.cloak);
 }
+
+// ---------------------------------------------------------------------------- apply_cloaking
+
+use super::helps::ClaudeCtx;
+
+fn apply_cloaking(cfg: &Config, auth: &Auth, payload: &str, api_key: &str, confirmed: bool) -> (Vec<u8>, bool) {
+    apply_cloaking_internal(&ClaudeCtx::default(), cfg, auth, payload.as_bytes().to_vec(), api_key, confirmed, true, true).unwrap()
+}
+
+fn key_cfg(api_key: &str, cloak: CloakConfig) -> Config {
+    Config {
+        claude_key: vec![cpa_config::ClaudeKey { api_key: api_key.into(), cloak: Some(cloak), ..Default::default() }],
+        ..Default::default()
+    }
+}
+
+fn key_auth(api_key: &str) -> Auth {
+    let mut auth = Auth::new("k", "claude");
+    auth.attributes.insert("api_key".into(), api_key.into());
+    auth
+}
+
+#[test]
+fn wire_policy_modes_and_confirmed_clients() {
+    let cases = [
+        ("unknown auto", false, "auto", true),
+        ("unknown always", false, "always", true),
+        ("unknown never", false, "never", false),
+        ("confirmed auto", true, "auto", false),
+        ("confirmed always", true, "always", false),
+        ("confirmed never", true, "never", false),
+    ];
+    for (name, confirmed, mode, want_cloak) in cases {
+        let mut auth = Auth::new("a", "claude");
+        auth.metadata.insert("cloak_mode".into(), mode.into());
+        let (policy, _) = resolve_claude_wire_policy(&Config::default(), &auth, "sk-ant-oat-test", confirmed);
+        assert!(policy.oauth, "{name}");
+        assert_eq!(policy.confirmed_claude_code, confirmed, "{name}");
+        assert_eq!(policy.cloak, want_cloak, "{name}");
+    }
+}
+
+#[test]
+fn configured_strict_mode_and_sensitive_words_apply_when_mode_is_omitted() {
+    let cfg = key_cfg("key-123", CloakConfig { strict_mode: true, sensitive_words: vec!["proxy".into()], ..Default::default() });
+    let payload = r#"{"system":"proxy rules","messages":[{"role":"user","content":[{"type":"text","text":"proxy access"}]}]}"#;
+    let (out, cloaked) = apply_cloaking(&cfg, &key_auth("key-123"), payload, "key-123", false);
+    assert!(cloaked);
+    let v = cpa_json::parse(&out);
+    assert_eq!(v.g("system").array().len(), 2, "strict mode keeps only the injected blocks");
+    let content = arr(&v, "messages.0.content");
+    assert_eq!(content.len(), 2);
+    assert!(content[1].g("text").str().contains('\u{200B}'), "sensitive word obfuscation applies");
+}
+
+#[test]
+fn opus55_fallback_only_for_unconfirmed_clients() {
+    let cfg = key_cfg("sk-ant-oat-opus55-test", CloakConfig::default());
+    let auth = key_auth("sk-ant-oat-opus55-test");
+    let cases = [
+        (r#"{"model":"claude-opus-5-5","messages":[{"role":"user","content":"test"}]}"#, false, "claude-opus-4-8"),
+        (r#"{"model":"claude-opus-5-5","messages":[{"role":"user","content":"test"}]}"#, true, ""),
+        (
+            r#"{"model":"claude-opus-5-5","fallbacks":[{"model":"claude-sonnet-5"}],"messages":[{"role":"user","content":"test"}]}"#,
+            false,
+            "claude-sonnet-5",
+        ),
+        (r#"{"model":"claude-opus-5","messages":[{"role":"user","content":"test"}]}"#, false, ""),
+    ];
+    for (payload, confirmed, want_model) in cases {
+        let (body, cloaked) = apply_cloaking(&cfg, &auth, payload, "sk-ant-oat-opus55-test", confirmed);
+        assert_eq!(cloaked, !confirmed);
+        let v = cpa_json::parse(&body);
+        let fallbacks = arr(&v, "fallbacks");
+        if want_model.is_empty() {
+            assert!(fallbacks.is_empty(), "{payload}");
+        } else {
+            assert_eq!(fallbacks.len(), 1);
+            assert_eq!(fallbacks[0].g("model").str(), want_model);
+        }
+        if confirmed {
+            assert_eq!(body, payload.as_bytes(), "confirmed native payload must not be cloaked");
+        } else {
+            assert!(v.g("system.0.text").str().contains("cc_turn_origin=human;"));
+        }
+    }
+}
+
+#[test]
+fn opus55_fallback_reconciles_after_model_override() {
+    let before = br#"{"model":"claude-opus-5-5","system":[{"type":"text","text":"billing"}]}"#;
+    let cloaked = r#"{"model":"claude-opus-5-5","fallbacks":[{"model":"claude-opus-4-8"}],"system":[{"type":"text","text":"billing"}]}"#;
+    let state = capture_claude_code_fable_state(before, cloaked.as_bytes(), true);
+    let cases = [
+        ("switch to Sonnet", r#"{"model":"claude-sonnet-5","fallbacks":[{"model":"claude-opus-4-8"}],"system":[{"type":"text","text":"billing"}]}"#.to_string(), "", false),
+        ("switch to Fable", r#"{"model":"claude-fable-5-1","fallbacks":[{"model":"claude-opus-4-8"}],"system":[{"type":"text","text":"billing"}]}"#.to_string(), "claude-opus-5", false),
+        ("same Opus", cloaked.to_string(), "claude-opus-4-8", false),
+        ("Opus probe", cloaked.to_string(), "", true),
+    ];
+    for (name, body, want, probe) in cases {
+        let got = reconcile_claude_code_fable_model_after_payload(body.into_bytes(), state, false, false, true, probe);
+        assert_eq!(cpa_json::parse(&got).g("fallbacks.0.model").str(), want, "{name}");
+    }
+    let got = reconcile_claude_code_fable_model_after_payload(
+        br#"{"model":"claude-opus-5-5","system":[]}"#.to_vec(),
+        ClaudeCodeFableState::default(),
+        false,
+        false,
+        true,
+        false,
+    );
+    assert_eq!(cpa_json::parse(&got).g("fallbacks.0.model").str(), "claude-opus-4-8");
+}
+
+#[test]
+fn fable_cloaking_injects_fallbacks_display_and_reporting_block() {
+    let cfg = key_cfg("sk-ant-oat-fable-test", CloakConfig::default());
+    let payload = r#"{"model":"claude-fable-5-1","thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"test"}]}"#;
+    let (out, cloaked) = apply_cloaking(&cfg, &key_auth("sk-ant-oat-fable-test"), payload, "sk-ant-oat-fable-test", false);
+    assert!(cloaked);
+    let v = cpa_json::parse(&out);
+    let fallbacks = arr(&v, "fallbacks");
+    assert_eq!(fallbacks.len(), 1);
+    assert_eq!(fallbacks[0].g("model").str(), "claude-opus-5");
+    let system = arr(&v, "system");
+    assert_eq!(system.len(), 3, "billing, identity, reporting outcomes");
+    assert!(system[2].g("text").str().contains("Reporting outcomes"));
+    assert!(!system[2].g("cache_control").exists());
+    assert_eq!(v.g("thinking.display").str(), "updates");
+
+    let betas = super::request::claude_code_cli_betas(&out, &Default::default(), true);
+    assert!(betas.contains("server-side-fallback-2026-06-01") && betas.contains("thinking-display-updates-2026-08-18"), "{betas}");
+    assert!(!betas.contains("redact-thinking-2026-02-12"), "{betas}");
+}
+
+#[test]
+fn non_fable_models_omit_reporting_outcomes_and_fable5_omits_fallbacks() {
+    for (key, model) in [("sk-ant-oat-sonnet-test", "claude-sonnet-5"), ("sk-ant-oat-fable5-test", "claude-fable-5")] {
+        let cfg = key_cfg(key, CloakConfig::default());
+        let payload = format!(r#"{{"model":"{model}","messages":[{{"role":"user","content":"test"}}]}}"#);
+        let (out, cloaked) = apply_cloaking(&cfg, &key_auth(key), &payload, key, false);
+        assert!(cloaked);
+        let v = cpa_json::parse(&out);
+        let system = arr(&v, "system");
+        assert_eq!(system.len(), 2, "{model}");
+        assert!(system.iter().all(|b| !b.g("text").str().contains("Reporting outcomes")), "{model}");
+        assert!(!v.g("fallbacks").exists(), "{model}");
+    }
+}
+
+#[test]
+fn disabled_or_native_requests_are_left_untouched() {
+    let system = "You are a custom assistant for my company.";
+    let payload = format!(r#"{{"model":"claude-fable-5-1","system":"{system}","messages":[{{"role":"user","content":"test"}}]}}"#);
+    let disabled = Config { disable_claude_cloak_mode: true, ..Default::default() };
+    let (out, cloaked) = apply_cloaking(&disabled, &key_auth("sk-ant-oat-fable-test"), &payload, "sk-ant-oat-fable-test", false);
+    assert!(!cloaked);
+    let v = cpa_json::parse(&out);
+    assert_eq!(v.g("system").str(), system);
+    assert!(!v.g("fallbacks").exists());
+
+    let cfg = key_cfg("sk-ant-oat-fable-test", CloakConfig::default());
+    let (out, cloaked) = apply_cloaking(&cfg, &key_auth("sk-ant-oat-fable-test"), &payload, "sk-ant-oat-fable-test", true);
+    assert!(!cloaked);
+    assert_eq!(cpa_json::parse(&out).g("system").str(), system);
+}
+
+#[test]
+fn cloaking_rejects_non_text_caller_system_blocks_unless_strict() {
+    let payload = r#"{"model":"claude-opus-5","system":[{"type":"image","source":{}}],"messages":[{"role":"user","content":"hi"}]}"#;
+    let mut auth = Auth::new("a", "claude");
+    auth.metadata.insert("access_token".into(), "sk-ant-oat-x".into());
+    let err = apply_cloaking_internal(&ClaudeCtx::default(), &Config::default(), &auth, payload.as_bytes().to_vec(), "sk-ant-oat-x", false, false, false)
+        .unwrap_err();
+    assert_eq!(err.status, 400);
+    assert!(err.is_request_scoped());
+
+    let strict = key_cfg("sk-ant-oat-x", CloakConfig { strict_mode: true, ..Default::default() });
+    let (out, cloaked) = apply_cloaking(&strict, &key_auth("sk-ant-oat-x"), payload, "sk-ant-oat-x", false);
+    assert!(cloaked);
+    assert_eq!(cpa_json::parse(&out).g("system").array().len(), 2);
+}

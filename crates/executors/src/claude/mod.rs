@@ -36,6 +36,10 @@ mod beta_matrix_tests;
 mod cloaking_tests;
 #[cfg(test)]
 mod exec_tests;
+#[cfg(test)]
+mod policy_tests;
+#[cfg(test)]
+mod state_tests;
 pub mod signing;
 pub mod stream;
 pub mod thinking_replay;
