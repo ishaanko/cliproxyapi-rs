@@ -842,3 +842,235 @@ fn executor_error_code_marks_request_scoped() {
     let e = ExecError::new(500, "x").with_code(ErrorCode::RequestScoped);
     assert!(errors::Failure::of_exec(&e).is_request_invalid());
 }
+
+// ---- Alias-aware availability (Go: conductor_alias_cooldown_test) ----
+
+fn mark_failure(h: &Harness, auth_id: &str, model: &str, status: i32, retry_after: Duration) {
+    h.mgr.mark_result(cooldown::ExecResult {
+        auth_id: auth_id.into(),
+        provider: "mock".into(),
+        model: model.into(),
+        route_model: model.into(),
+        success: false,
+        retry_after: Some(retry_after),
+        credential_scope: false,
+        error: Some(cpa_auth::types::AuthError { http_status: status, message: "limited".into(), ..Default::default() }),
+        options: Options::new(Format::OpenAI),
+        skip_quota_observation: true,
+        response_headers: Default::default(),
+    });
+}
+
+#[tokio::test]
+async fn alias_quota_failover_with_unobserved_target_model_for_every_strategy() {
+    for strategy in ["round-robin", "weighted-round-robin", "fill-first"] {
+        for stream in [false, true] {
+            let h = Harness::new();
+            h.config(|c| {
+                c.routing.strategy = strategy.into();
+                c.request_retry = 3;
+                c.max_retry_interval = 30;
+                c.oauth_model_alias.insert(
+                    "mock".into(),
+                    vec![OAuthModelAlias { name: "quota-target".into(), alias: "quota-route".into(), fork: true, ..Default::default() }],
+                );
+            });
+            for (id, prio) in [("high", "4"), ("low", "3")] {
+                h.add(id, &["quota-route", "quota-target", "quota-other"], |a| {
+                    a.attributes.insert("priority".into(), prio.into());
+                    a.attributes.insert("weight".into(), "1".into());
+                })
+                .await;
+            }
+            // An unrelated model of the preferred credential is rate limited for an hour: that
+            // flags the credential's aggregate state but not the requested target model.
+            mark_failure(&h, "high", "quota-other", 429, Duration::from_secs(3600));
+            let high = h.mgr.get("high").unwrap();
+            assert!(high.unavailable && !high.model_states.contains_key("quota-target"));
+
+            h.exec.script(
+                "high",
+                vec![Step::Err(
+                    status_err(429, "account quota exhausted").with_retry_after(Duration::from_secs(3600)).with_credential_scope(),
+                )],
+            );
+            let providers = ["mock".to_string()];
+            let payload = if stream {
+                let s = h.mgr.execute_stream(&providers, request("quota-route"), Options::new(Format::OpenAI)).await.unwrap();
+                drain(s).await.into_iter().map(|c| c.unwrap()).collect::<String>()
+            } else {
+                h.payload("quota-route").await
+            };
+            assert_eq!(payload, "low", "{strategy} stream={stream}");
+            assert_eq!(h.exec.call_ids(), ["high", "low"], "{strategy} stream={stream}");
+            assert!(h.exec.calls.lock().iter().all(|(_, m)| m == "quota-target"), "upstream model is the alias target");
+        }
+    }
+}
+
+#[tokio::test]
+async fn alias_request_is_not_blocked_by_other_model_cooldown_but_by_its_own_target() {
+    let h = Harness::new();
+    h.config(|c| {
+        c.oauth_model_alias.insert(
+            "mock".into(),
+            vec![OAuthModelAlias { name: "target".into(), alias: "route".into(), fork: true, ..Default::default() }],
+        );
+    });
+    h.add("a", &["route", "target", "image"], |_| {}).await;
+    mark_failure(&h, "a", "image", 429, Duration::from_secs(3600));
+    // Another model's quota cooldown does not block the alias route...
+    assert_eq!(h.payload("route").await, "a");
+    // ...but a cooldown of the alias target does, reported against the route model.
+    mark_failure(&h, "a", "target", 429, Duration::from_secs(3600));
+    let err = h.run("route").await.unwrap_err();
+    assert_eq!(err.auth_code.as_deref(), Some("model_cooldown"));
+    let v: serde_json::Value = serde_json::from_str(&err.message).unwrap();
+    assert_eq!(v["error"]["model"], "route");
+    assert_eq!(h.mgr.select_auth("mock", "route", &Options::new(Format::OpenAI)).unwrap_err().status, 429);
+}
+
+// ---- Retry-storm guards (Go: conductor_subsecond_cooldown_test) ----
+
+fn expired_state_edit(model: &'static str, at: DateTime<Utc>) -> impl FnOnce(&mut Auth) {
+    move |a: &mut Auth| {
+        a.model_states.insert(
+            model.into(),
+            cpa_auth::types::ModelState {
+                status: cpa_auth::types::Status::Error,
+                unavailable: true,
+                next_retry_after: Some(at),
+                quota: cpa_auth::types::QuotaState { exceeded: true, reason: "quota".into(), next_recover_at: Some(at), ..Default::default() },
+                ..Default::default()
+            },
+        );
+    }
+}
+
+#[tokio::test]
+async fn subsecond_retry_after_is_floored_so_rounds_do_not_storm() {
+    let h = Harness::new();
+    h.config(|c| {
+        c.request_retry = 5;
+        c.max_retry_interval = 5;
+        c.max_retry_credentials = 6;
+    });
+    for id in ["storm-1", "storm-2"] {
+        h.add(id, &["m"], |_| {}).await;
+        h.exec.script(id, (0..10).map(|_| Step::Err(status_err(429, "quota exhausted").with_retry_after(Duration::from_millis(708)))).collect());
+    }
+    let err = h.run("m").await.unwrap_err();
+    assert_eq!(err.status, 429);
+    // Both credentials are tried once; their 10s floor exceeds the 5s max wait, so no further round.
+    assert_eq!(h.exec.call_ids().len(), 2);
+    assert!(h.clock.sleeps().is_empty());
+}
+
+#[tokio::test]
+async fn attempted_credential_after_429_never_gets_a_zero_wait_round() {
+    let h = Harness::new();
+    let expired = t0() - chrono::Duration::seconds(5);
+    h.add("a", &["m"], expired_state_edit("m", expired)).await;
+    let elig = pick::Eligibility::default();
+    let providers = ["mock".to_string()];
+    // Untried credential with an expired cooldown is available immediately.
+    let untried = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &Default::default());
+    assert_eq!(untried, Some(Duration::ZERO));
+    // The same credential after failing this round with 429 must wait at least the quota floor.
+    let attempted: std::collections::HashSet<String> = ["a".to_string()].into();
+    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted).unwrap();
+    assert!(wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR, "{wait:?}");
+    // And should_retry honors a large max wait with that positive wait.
+    let err = status_err(429, "RESOURCE_EXHAUSTED");
+    let (wait, retry) = h.mgr.should_retry_after_error(&err, 0, &providers, "m", Duration::from_secs(30), 5, &attempted, &Default::default());
+    assert!(retry && wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR);
+}
+
+#[tokio::test]
+async fn provider_cooling_override_allows_immediate_retry_round() {
+    let h = Harness::with_executor("openai-compatibility");
+    let expired = t0() - chrono::Duration::seconds(5);
+    h.add("a", &["m"], |a| {
+        a.attributes.insert("provider_key".into(), "custom-llm".into());
+        expired_state_edit("m", expired)(a);
+    })
+    .await;
+    let elig = pick::Eligibility::default();
+    let providers = ["openai-compatibility".to_string()];
+    let attempted: std::collections::HashSet<String> = ["a".to_string()].into();
+    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted).unwrap();
+    assert!(wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR);
+    h.config(|c| {
+        c.openai_compatibility.push(cpa_config::OpenAiCompatibility {
+            name: "custom-llm".into(),
+            disable_cooling: Some(true),
+            ..Default::default()
+        });
+    });
+    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted);
+    assert_eq!(wait, Some(Duration::ZERO));
+}
+
+#[tokio::test]
+async fn later_shorter_failure_keeps_the_longer_model_deadline() {
+    let h = Harness::new();
+    h.add("a", &["m"], |_| {}).await;
+    mark_failure(&h, "a", "m", 429, Duration::from_secs(600));
+    let long = h.mgr.get("a").unwrap().model_states["m"].next_retry_after;
+    mark_failure(&h, "a", "m", 429, Duration::from_secs(15));
+    assert_eq!(h.mgr.get("a").unwrap().model_states["m"].next_retry_after, long);
+    // Credential-scope failures extend siblings but never shorten them.
+    let r = cooldown::ExecResult {
+        auth_id: "a".into(),
+        provider: "mock".into(),
+        model: "m".into(),
+        route_model: "m".into(),
+        success: false,
+        retry_after: Some(Duration::from_secs(30)),
+        credential_scope: true,
+        error: Some(cpa_auth::types::AuthError { http_status: 429, message: "q".into(), ..Default::default() }),
+        options: Options::new(Format::OpenAI),
+        skip_quota_observation: true,
+        response_headers: Default::default(),
+    };
+    h.mgr.mark_result(r);
+    let st = h.mgr.get("a").unwrap();
+    assert_eq!(st.quota.reason, "credential_quota");
+    assert!(st.model_states["m"].next_retry_after >= long);
+}
+
+// ---- Compile-time guarantees ----
+
+#[test]
+fn manager_futures_are_send_so_handlers_can_spawn_them() {
+    fn is_send<T: Send>(_: &T) {}
+    let m = Manager::new();
+    let providers: Vec<String> = Vec::new();
+    is_send(&m.execute(&providers, request("m"), Options::new(Format::OpenAI)));
+    is_send(&m.execute_stream(&providers, request("m"), Options::new(Format::OpenAI)));
+    is_send(&m.execute_count(&providers, request("m"), Options::new(Format::OpenAI)));
+    is_send(&m.update(Auth::new("a", "mock")));
+    is_send(&m.remove("a"));
+    is_send(&m.force_refresh_all());
+    is_send(&m.refresh_due_auths());
+    is_send(&m.restore_cooldown_states());
+    fn is_sync<T: Sync>(_: &T) {}
+    is_sync(&m);
+}
+
+#[tokio::test]
+async fn payload_only_requests_still_get_session_affinity() {
+    let h = Harness::new();
+    h.config(|c| c.routing.session_affinity = true);
+    for id in ["a", "b", "c"] {
+        h.add(id, &["m"], |_| {}).await;
+    }
+    // No `original_request`: enrichment shares the request payload, so affinity still sees it.
+    let mut req = request("m");
+    req.payload = Bytes::from_static(br#"{"prompt_cache_key":"payload-only"}"#);
+    let providers = ["mock".to_string()];
+    let first = h.mgr.execute(&providers, req.clone(), Options::new(Format::OpenAI)).await.unwrap().payload;
+    for _ in 0..3 {
+        assert_eq!(h.mgr.execute(&providers, req.clone(), Options::new(Format::OpenAI)).await.unwrap().payload, first);
+    }
+}

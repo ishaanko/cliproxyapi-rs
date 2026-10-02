@@ -521,10 +521,12 @@ impl Manager {
                         result.credential_scope = true;
                     }
                     let credential_scope = result.credential_scope;
+                    // Token counting is not generation traffic: no usage record.
+                    let usage_facts = (kind == Kind::Execute).then_some(facts);
                     if neutral {
-                        self.record_availability_neutral_result(result, Some(facts));
+                        self.record_availability_neutral_result(result, usage_facts);
                     } else {
-                        self.mark_result_inner(result, Some(facts));
+                        self.mark_result_inner(result, usage_facts);
                     }
                     if action.is_some() {
                         if rules::is_stop(action) {
@@ -548,7 +550,7 @@ impl Manager {
                 Ok(mut resp) => {
                     result.response_headers = resp.headers.clone();
                     facts.tokens = tokens_from_response(exec_opts.response_format_or_source(), &resp.payload, &resp.metadata);
-                    self.mark_result_inner(result, Some(facts));
+                    self.mark_result_inner(result, (kind == Kind::Execute).then_some(facts));
                     let attempt_alias = resolve_attempt_alias_result(&cfg, &auth, route_model, upstream_model, alias_result);
                     if attempt_alias.force_mapping && !attempt_alias.original_alias.trim().is_empty() {
                         resp.payload = Bytes::from(rewrite_model_in_response(&resp.payload, attempt_alias.original_alias.trim()));

@@ -219,15 +219,18 @@ impl Manager {
     pub fn refresh_api_key_model_alias(&self) {}
 
     fn apply_selector_config(&self, cfg: &Config) {
+        // Valid TTLs are clamped up to 1s; empty/invalid/non-positive means the 1h default.
         let ttl = cpa_config::GoDuration::parse(cfg.routing.session_affinity_ttl.trim())
             .ok()
-            .filter(|d| d.0 >= 1_000_000_000)
-            .map_or(Duration::from_secs(3600), |d| d.to_std());
+            .filter(|d| d.0 > 0)
+            .map_or(Duration::from_secs(3600), |d| d.to_std().max(Duration::from_secs(1)));
+        let session_affinity = cfg.routing.session_affinity;
         let next = SelectorConfig {
             strategy: Strategy::parse(&cfg.routing.strategy),
-            session_affinity: cfg.routing.session_affinity,
+            session_affinity,
             affinity_ttl: ttl,
-            subagent_affinity: cfg.routing.session_affinity_subagents.unwrap_or(true),
+            // The subagent switch only matters (and only compares) with affinity on.
+            subagent_affinity: !session_affinity || cfg.routing.session_affinity_subagents.unwrap_or(true),
         };
         let mut current = self.selector_config.lock();
         if *current == next {

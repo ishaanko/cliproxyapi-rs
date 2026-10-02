@@ -295,6 +295,7 @@ impl Manager {
                 options: exec_opts,
                 alias: attempt_alias,
                 started,
+                response_headers: stream.headers.clone(),
             };
             return Ok(wrap_stream(wrap, stream.headers, buffered, if closed { None } else { Some(stream.chunks) }));
         }
@@ -319,13 +320,15 @@ struct WrapCtx {
     options: Options,
     alias: AliasResult,
     started: Instant,
+    /// Upstream response headers, for passive quota observation.
+    response_headers: http::HeaderMap,
 }
 
 /// Forwards the bootstrapped stream, then records one result.
 fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, remaining: Option<mpsc::Receiver<Chunk>>) -> StreamResult {
     let (tx, rx) = mpsc::channel::<Chunk>(1);
     tokio::spawn(async move {
-        let WrapCtx { manager, auth_id, provider, result_model, route_model, upstream_model, requested_model, options, alias, started } = ctx;
+        let WrapCtx { manager, auth_id, provider, result_model, route_model, upstream_model, requested_model, options, alias, started, response_headers } = ctx;
         let mut rewriter = (alias.force_mapping && !alias.original_alias.trim().is_empty())
             .then(|| StreamRewriter::new(alias.original_alias.trim()));
         let mut usage = StreamUsage::new(options.response_format_or_source());
@@ -347,7 +350,7 @@ fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, rem
                 error: Some(result_error_from_error(err)),
                 options: options.clone(),
                 skip_quota_observation: false,
-                response_headers: err.headers.clone(),
+                response_headers: if err.headers.is_empty() { response_headers.clone() } else { err.headers.clone() },
             };
             if let Some(auth) = auth {
                 let action = rules::match_action(&auth, err, &manager.cfg());
@@ -426,7 +429,7 @@ fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, rem
                 error: None,
                 options,
                 skip_quota_observation: false,
-                response_headers: Default::default(),
+                response_headers,
             };
             let facts = UsageFacts {
                 latency: started.elapsed(),
