@@ -48,9 +48,14 @@ fn has_refresh_credential(auth: &Auth) -> bool {
 /// `POST /credentials/refresh`: `?all=true`, `?name=`, or a JSON body `{"name","auth_index","all"}`.
 pub(crate) async fn refresh(State(st): State<ManagementState>, req: Request) -> ApiResult {
     let uri = req.uri().clone();
-    let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+    let body = crate::http::read_body(req.into_body())
         .await
-        .unwrap_or_default();
+        .map_err(|_| ApiError::bad_request("failed to read body"))?;
+    // Token exchanges may rotate refresh tokens: finish them even if the client goes away.
+    crate::http::detached(refresh_inner(st, uri, body)).await
+}
+
+async fn refresh_inner(st: ManagementState, uri: axum::http::Uri, body: Bytes) -> ApiResult {
     let mut parsed = RefreshRequest::default();
     if !body.trim_ascii().is_empty() {
         parsed = serde_json::from_slice(&body)
@@ -103,6 +108,10 @@ pub(crate) async fn refresh(State(st): State<ManagementState>, req: Request) -> 
 
 /// `POST /routing/cooldown/reset` with `{"auth_index": "..."}`.
 pub(crate) async fn reset_cooldown(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+    crate::http::detached(reset_cooldown_inner(st, body)).await
+}
+
+async fn reset_cooldown_inner(st: ManagementState, body: Bytes) -> ApiResult {
     #[derive(Deserialize)]
     struct Body {
         #[serde(default)]
