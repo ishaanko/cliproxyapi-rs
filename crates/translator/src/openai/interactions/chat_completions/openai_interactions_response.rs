@@ -7,6 +7,8 @@ use cpa_json::{Res, Value, J};
 
 use super::{first_non_empty, is_antigravity_model, json_string_value, set_items, sse_payload, tmpl, unix_nanos};
 use crate::common;
+use crate::openai::interactions::responses::raw_text::parse_lenient;
+use crate::openai::interactions::responses::raw_text::restore_step_arguments;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream state (Go: `interactionsToOpenAIChatStreamState`).
@@ -46,7 +48,8 @@ pub(super) fn convert_interactions_response_to_openai_non_stream(
     raw: &[u8],
     _param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let root = cpa_json::parse(raw);
+    let mut root = parse_lenient(raw);
+    restore_step_arguments(raw, &mut root);
     let nested = root.g("interaction");
     let interaction = if nested.exists() { nested } else { Res::of(&root) };
     let mut out = tmpl(
@@ -125,7 +128,7 @@ fn convert_event(model_name: &str, raw: &[u8], st: &mut StreamState) -> Vec<Valu
     if payload.is_empty() || payload.trim_ascii() == b"[DONE]" {
         return vec![];
     }
-    let root = cpa_json::parse(&payload);
+    let root = parse_lenient(&payload);
     match root.g("event_type").str().as_str() {
         "interaction.created" => {
             let interaction = root.g("interaction");
