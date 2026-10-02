@@ -409,7 +409,7 @@ async fn forward_rest(
 // ------------------------------------------------------------------ routing helpers
 
 /// `getRequestDetailsWithOptions`.
-fn request_details(model: &str, allow_image: bool) -> Result<(Vec<String>, String), ErrorMessage> {
+pub fn request_details(model: &str, allow_image: bool) -> Result<(Vec<String>, String), ErrorMessage> {
     let initial = parse_suffix(model);
     let resolved = if initial.model_name == "auto" {
         let base = resolve_auto_model(&initial.model_name);
