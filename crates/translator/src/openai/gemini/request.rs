@@ -4,11 +4,10 @@
 use std::collections::HashMap;
 
 use cpa_core::thinking;
-use cpa_json::{Res, Value, J};
+use cpa_json::{raw_at, Res, Value, J};
 use sha2::{Digest, Sha256};
 
 use crate::common;
-use crate::openai::claude::raw::{raw_at, Seg};
 
 fn tpl(s: &str) -> Value {
     cpa_json::parse_str(s)
@@ -90,10 +89,10 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                 if !thinking_budget.exists() {
                     thinking_budget = thinking_config.g("thinking_budget");
                 }
-                if thinking_budget.exists() {
-                    if let Some(effort) = thinking::convert_budget_to_level(thinking_budget.int()) {
-                        cpa_json::set(&mut out, "reasoning_effort", effort);
-                    }
+                if thinking_budget.exists()
+                    && let Some(effort) = thinking::convert_budget_to_level(thinking_budget.int())
+                {
+                    cpa_json::set(&mut out, "reasoning_effort", effort);
                 }
             }
         }
@@ -188,17 +187,15 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                     }
 
                     // Verbatim `Raw` of a sub-value of this part (client whitespace included).
-                    let part_raw = |sub: &[Seg<'static>], fallback: &Res<'_>| -> String {
-                        let mut path = vec![Seg::Key("contents"), Seg::Index(msg_idx), Seg::Key("parts"), Seg::Index(part_idx)];
-                        path.extend_from_slice(sub);
-                        raw_at(input, &path).map_or_else(|| fallback.raw(), str::to_string)
+                    let part_raw = |sub: &str, fallback: &Res<'_>| -> String {
+                        raw_at(input, &format!("contents.{msg_idx}.parts.{part_idx}.{sub}")).map_or_else(|| fallback.raw(), str::to_string)
                     };
 
                     let function_call = part.g("functionCall");
                     if function_call.exists() {
                         let func_name = function_call.g("name").str();
                         let args = function_call.g("args");
-                        let args_raw = if args.exists() { part_raw(&[Seg::Key("functionCall"), Seg::Key("args")], &args) } else { String::new() };
+                        let args_raw = if args.exists() { part_raw("functionCall.args", &args) } else { String::new() };
                         let mut tool_call_id = explicit_gemini_tool_id(&function_call);
                         if tool_call_id.is_empty() {
                             tool_call_id = deterministic_tool_call_id("call", msg_idx, part_idx, &func_name, &args_raw);
@@ -226,9 +223,9 @@ pub fn convert_gemini_request_to_openai(model_name: &str, input: &[u8], stream: 
                         if response.exists() {
                             let content_field = response.g("content");
                             if content_field.exists() {
-                                response_raw = part_raw(&[Seg::Key("functionResponse"), Seg::Key("response"), Seg::Key("content")], &content_field);
+                                response_raw = part_raw("functionResponse.response.content", &content_field);
                             } else {
-                                response_raw = part_raw(&[Seg::Key("functionResponse"), Seg::Key("response")], &response);
+                                response_raw = part_raw("functionResponse.response", &response);
                             }
                             cpa_json::set(&mut tool_msg, "content", response_raw.clone());
                         }

@@ -1,6 +1,5 @@
 //! Port of internal/translator/openai/claude (Claude client -> OpenAI Chat Completions upstream).
 
-pub(crate) mod raw;
 mod request;
 mod response;
 

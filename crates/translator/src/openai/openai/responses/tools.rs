@@ -8,7 +8,6 @@ use cpa_json::{Res, Value, J};
 
 use super::RawSrc;
 use crate::common;
-use crate::openai::claude::raw::Seg;
 
 /// Chat Completions function name limit enforced by strict upstreams (e.g. z-ai/glm). Responses
 /// namespace tools routinely flatten to longer names.
@@ -258,7 +257,7 @@ pub(super) fn responses_tool_output_text(output: &Res<'_>, src: &RawSrc<'_>) -> 
             }
             let text = part.g("text");
             if text.exists() {
-                b.push_str(&src.child(Seg::Index(k)).child(Seg::Key("text")).string(&text));
+                b.push_str(&src.child(k).child("text").string(&text));
             }
         }
         return b;
@@ -280,7 +279,7 @@ pub(super) fn unwrap_custom_tool_input(arguments: &str) -> String {
         }
         // Non-strings come back as the original text of the value.
         let doc = lenient_start(arguments).map_or(arguments, |start| &arguments[start..]);
-        let src = RawSrc::new(doc.as_bytes(), vec![Seg::Key("input")]);
+        let src = RawSrc::new(doc.as_bytes(), "input".into());
         return src.raw(&v);
     }
     arguments.to_string()

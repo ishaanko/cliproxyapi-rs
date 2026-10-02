@@ -330,20 +330,20 @@ fn emit_tool_item(st: &mut State, out: &mut Out, key: &str, force: bool) {
         st.func_item_custom.remove(key);
     }
     if is_custom_tool {
-        if st.tool_index.is_apply_patch(&name) {
-            if let Some(d) = st.tool_index.by_chat.get(&name) {
-                st.apply_patch_calls.insert(
-                    key.to_string(),
-                    ApplyPatchCallState {
-                        item_id: format!("ctc_{call_id}"),
-                        call_id: call_id.clone(),
-                        name: d.local_name.clone(),
-                        namespace: d.namespace.clone(),
-                        output_index,
-                        ..Default::default()
-                    },
-                );
-            }
+        if st.tool_index.is_apply_patch(&name)
+            && let Some(d) = st.tool_index.by_chat.get(&name)
+        {
+            st.apply_patch_calls.insert(
+                key.to_string(),
+                ApplyPatchCallState {
+                    item_id: format!("ctc_{call_id}"),
+                    call_id: call_id.clone(),
+                    name: d.local_name.clone(),
+                    namespace: d.namespace.clone(),
+                    output_index,
+                    ..Default::default()
+                },
+            );
         }
         let mut o = tpl(
             r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}"#,
@@ -939,11 +939,11 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                     if !new_id.is_empty() && !old_id.is_empty() && new_id != old_id {
                         st.func_identity_conflicts.insert(key.clone());
                     }
-                    if st.tool_index.is_apply_patch(&old_name) || st.tool_index.is_apply_patch(&new_name) {
-                        if st.func_identity_conflicts.contains(&key) || (!new_name.is_empty() && !old_name.is_empty() && new_name != old_name) {
-                            fail_tool_input(st, &mut out, "conflicting apply_patch call identity".into());
-                            break;
-                        }
+                    if (st.tool_index.is_apply_patch(&old_name) || st.tool_index.is_apply_patch(&new_name))
+                        && (st.func_identity_conflicts.contains(&key) || (!new_name.is_empty() && !old_name.is_empty() && new_name != old_name))
+                    {
+                        fail_tool_input(st, &mut out, "conflicting apply_patch call identity".into());
+                        break;
                     }
                     let new_call_id = tc.g("id").str();
                     if !new_call_id.is_empty() && st.func_call_ids.get(&key).is_none_or(String::is_empty) {

@@ -3,12 +3,12 @@
 
 use std::collections::{HashMap, HashSet};
 
+use cpa_core::util::go_json_string;
 use cpa_json::{Res, Value, J};
 
 use super::tools::{responses_tool_output_text, ToolIndex};
 use super::{go_any, RawSrc};
 use crate::common;
-use crate::openai::claude::raw::Seg;
 
 /// Writes a tool output into a Chat Completions message; the source locates `output` in the request.
 type SetContent = fn(&mut Value, &Res<'_>, &RawSrc<'_>);
@@ -143,7 +143,7 @@ impl Conv {
         self.mergeable_assistant_index = None;
         self.count_output(call_id);
         let output = item.g("output");
-        let output_src = item_src.child(Seg::Key("output"));
+        let output_src = item_src.child("output");
         if !self.awaiting_tool_outputs.remove(call_id) {
             self.append_standalone_tool_output_as_user(&output, set_content, &output_src);
         } else {
@@ -184,17 +184,17 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
 
     let root = cpa_json::parse(input_bytes);
     let tool_index = ToolIndex::new(&root);
-    let root_src = RawSrc::new(input_bytes, Vec::new());
+    let root_src = RawSrc::new(input_bytes, String::new());
 
     cpa_json::set(&mut out, "model", model_name);
     cpa_json::set(&mut out, "stream", stream);
 
     // Responses text format -> Chat Completions response format.
     let text_format = root.g("text.format");
-    if text_format.exists() {
-        if let Some(response_format) = convert_text_format_to_chat_response_format(&text_format) {
-            cpa_json::set(&mut out, "response_format", response_format);
-        }
+    if text_format.exists()
+        && let Some(response_format) = convert_text_format_to_chat_response_format(&text_format)
+    {
+        cpa_json::set(&mut out, "response_format", response_format);
     }
 
     let max_tokens = root.g("max_output_tokens");
@@ -218,7 +218,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
     let instructions = root.g("instructions");
     if instructions.exists() {
         let mut system_message = tpl(r#"{"role":"system","content":""}"#);
-        cpa_json::set(&mut system_message, "content", root_src.child(Seg::Key("instructions")).string(&instructions));
+        cpa_json::set(&mut system_message, "content", root_src.child("instructions").string(&instructions));
         conv.messages.push(system_message);
     }
 
@@ -281,7 +281,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
             }
         } else if reasoning_obj.exists() {
             // `String()` of an object is its raw text, whitespace included.
-            let raw = root_src.child(Seg::Key("reasoning")).string(&reasoning_obj);
+            let raw = root_src.child("reasoning").string(&reasoning_obj);
             let reasoning_raw = raw.trim().to_lowercase();
             if !matches!(reasoning_raw.as_str(), "" | "none" | "false" | "{}") {
                 conv.has_reasoning_in_session = true;
@@ -297,7 +297,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
         let aligned_with_request = input_items.len() == raw_input_array.len();
         for (item_index, item) in input_items.iter().enumerate() {
             let item_src = if aligned_with_request {
-                RawSrc::new(input_bytes, vec![Seg::Key("input"), Seg::Index(item_index)])
+                RawSrc::new(input_bytes, format!("input.{item_index}"))
             } else {
                 RawSrc::none()
             };
@@ -388,7 +388,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
 
                     let arguments = item.g("arguments");
                     if arguments.exists() {
-                        cpa_json::set(&mut tool_call, "function.arguments", item_src.child(Seg::Key("arguments")).string(&arguments));
+                        cpa_json::set(&mut tool_call, "function.arguments", item_src.child("arguments").string(&arguments));
                     }
                     conv.pending_tool_calls.push(tool_call);
                     if !call_id.is_empty() {
@@ -420,9 +420,8 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
                         tool_index.namespace_name(&namespace, &function_name)
                     };
                     cpa_json::set(&mut tool_call, "function.name", function_name);
-                    let mut wrapped_args = tpl(r#"{"input":""}"#);
-                    cpa_json::set(&mut wrapped_args, "input", item_src.child(Seg::Key("input")).string(&item.g("input")));
-                    cpa_json::set(&mut tool_call, "function.arguments", cpa_json::to_string(&wrapped_args));
+                    let wrapped_args = format!(r#"{{"input":{}}}"#, sjson_string(&item_src.child("input").string(&item.g("input"))));
+                    cpa_json::set(&mut tool_call, "function.arguments", wrapped_args);
                     conv.pending_tool_calls.push(tool_call);
                     if !call_id.is_empty() {
                         conv.pending_tool_call_ids.push(call_id);
@@ -478,6 +477,16 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
     }
 
     cpa_json::to_vec(&out)
+}
+
+/// A string as sjson writes it: verbatim between quotes unless it holds control, non-ASCII, quote
+/// or backslash bytes, in which case it is `json.Marshal`ed (escaping `<`, `>`, `&`, U+2028).
+fn sjson_string(s: &str) -> String {
+    if s.bytes().any(|b| !(0x20..=0x7f).contains(&b) || b == b'"' || b == b'\\') {
+        go_json_string(s)
+    } else {
+        format!("\"{s}\"")
+    }
 }
 
 /// Chat Completions content part for one Responses message content item (unknown types are
@@ -602,8 +611,7 @@ fn set_function_call_output_content(tool_message: &mut Value, output: &Res<'_>, 
         }
         structured = Res::owned(cpa_json::parse_str(&text));
         // A JSON string output is its own document.
-        structured_src = RawSrc::new(&[], Vec::new());
-        structured_src.doc = std::borrow::Cow::Owned(text.into_bytes());
+        structured_src = RawSrc::owned(text.into_bytes());
     }
 
     if has_chat_tool_output_image_part(&structured) {
@@ -611,7 +619,7 @@ fn set_function_call_output_content(tool_message: &mut Value, output: &Res<'_>, 
             .array()
             .iter()
             .enumerate()
-            .map(|(k, item)| chat_tool_output_content_part(item, &structured_src.child(Seg::Index(k))))
+            .map(|(k, item)| chat_tool_output_content_part(item, &structured_src.child(k)))
             .collect();
         cpa_json::set(tool_message, "content", Value::Array(content_items));
         return;

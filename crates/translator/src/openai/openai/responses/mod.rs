@@ -11,9 +11,8 @@ use cpa_json::Value;
 
 use std::borrow::Cow;
 
-use cpa_json::Res;
+use cpa_json::{raw_at, Res};
 
-use crate::openai::claude::raw::{raw_at, Seg};
 use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_openai_responses_request_to_openai_chat_completions;
@@ -55,28 +54,34 @@ fn pick_request_json<'a>(original: &'a [u8], translated: &'a [u8]) -> Option<&'a
 #[derive(Clone)]
 struct RawSrc<'a> {
     doc: Cow<'a, [u8]>,
-    path: Vec<Seg<'static>>,
+    /// Dotted gjson path of the value inside `doc`.
+    path: String,
 }
 
 impl<'a> RawSrc<'a> {
-    fn new(doc: &'a [u8], path: Vec<Seg<'static>>) -> Self {
+    fn new(doc: &'a [u8], path: String) -> Self {
         RawSrc { doc: Cow::Borrowed(doc), path }
+    }
+
+    /// A source owning its document (a JSON string output parsed as its own document).
+    fn owned(doc: Vec<u8>) -> RawSrc<'static> {
+        RawSrc { doc: Cow::Owned(doc), path: String::new() }
     }
 
     /// A source with no document: every lookup falls back to the parsed value.
     fn none() -> RawSrc<'static> {
-        RawSrc { doc: Cow::Borrowed(&[]), path: Vec::new() }
+        RawSrc { doc: Cow::Borrowed(&[]), path: String::new() }
     }
 
-    fn child(&self, seg: Seg<'static>) -> RawSrc<'_> {
-        let mut path = self.path.clone();
-        path.push(seg);
+    fn child(&self, seg: impl std::fmt::Display) -> RawSrc<'_> {
+        let path = if self.path.is_empty() { seg.to_string() } else { format!("{}.{seg}", self.path) };
         RawSrc { doc: Cow::Borrowed(&self.doc), path }
     }
 
     /// gjson `Raw`: original text, else the value's compact serialization.
     fn raw(&self, fallback: &Res<'_>) -> String {
-        raw_at(&self.doc, &self.path).map_or_else(|| fallback.raw(), str::to_string)
+        let found = if self.path.is_empty() { None } else { raw_at(&self.doc, &self.path) };
+        found.map_or_else(|| fallback.raw(), str::to_string)
     }
 
     /// gjson `String()`: containers come back as their raw text.

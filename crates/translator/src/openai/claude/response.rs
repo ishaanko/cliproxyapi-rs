@@ -589,13 +589,13 @@ fn finalize_single_tool_call(state: &mut State, openai_tool_index: i64, results:
     let block_index = tool_content_block_index(state, openai_tool_index);
 
     // One input_json_delta with all accumulated arguments.
-    if let Some(acc) = state.tool_calls_accumulator.get(&openai_tool_index) {
-        if !acc.arguments.is_empty() {
-            let mut d = tpl(r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}"#);
-            cpa_json::set(&mut d, "index", block_index);
-            cpa_json::set(&mut d, "delta.partial_json", fix_json(&acc.arguments));
-            results.push(frame("content_block_delta", &d));
-        }
+    if let Some(acc) = state.tool_calls_accumulator.get(&openai_tool_index)
+        && !acc.arguments.is_empty()
+    {
+        let mut d = tpl(r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}"#);
+        cpa_json::set(&mut d, "index", block_index);
+        cpa_json::set(&mut d, "delta.partial_json", fix_json(&acc.arguments));
+        results.push(frame("content_block_delta", &d));
     }
 
     let mut stop = tpl(r#"{"type":"content_block_stop","index":0}"#);

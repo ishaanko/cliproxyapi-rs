@@ -9,9 +9,8 @@ use cpa_core::util::{
     go_json_sorted, has_unsupported_unicode_property_escape, is_claude_code_attribution_system_text, GoJsonStyle,
     SCHEMA_MAP_KEYWORDS, SCHEMA_VALUE_KEYWORDS,
 };
-use cpa_json::{Map, Res, Value, J};
+use cpa_json::{raw_at, Map, Res, Value, J};
 
-use super::raw::{raw_at, Seg};
 use crate::common;
 
 /// Placeholder text keeping an OpenAI tool message non-empty when a Claude tool_result carried
@@ -212,7 +211,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                                 let input = part.g("input");
                                 if input.exists() {
                                     // Go copies `input.Raw` verbatim (client whitespace included).
-                                    let path = [Seg::Key("messages"), Seg::Index(message_index), Seg::Key("content"), Seg::Index(part_index), Seg::Key("input")];
+                                    let path = format!("messages.{message_index}.content.{part_index}.input");
                                     let raw = raw_at(input_bytes, &path).map_or_else(|| input.raw(), str::to_string);
                                     cpa_json::set(&mut tool_call, "function.arguments", raw);
                                 } else {
@@ -232,7 +231,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                                 &part.g("content"),
                                 &RawSource {
                                     json: input_bytes,
-                                    path: vec![Seg::Key("messages"), Seg::Index(message_index), Seg::Key("content"), Seg::Index(part_index), Seg::Key("content")],
+                                    path: format!("messages.{message_index}.content.{part_index}.content"),
                                 },
                             );
                             cpa_json::set(&mut tool_result, "content", content);
@@ -527,14 +526,17 @@ fn original_part_indices(original: &[Res<'_>], aligned: &[Res<'_>]) -> Vec<usize
 /// Where a value sits in the original request, for verbatim `Raw` copies.
 struct RawSource<'a> {
     json: &'a [u8],
-    path: Vec<Seg<'static>>,
+    /// Dotted gjson path of the tool_result `content`.
+    path: String,
 }
 
 impl RawSource<'_> {
     /// Original text of the value (or of its `index`th element), falling back to compact JSON.
     fn raw(&self, index: Option<usize>, fallback: &Res<'_>) -> String {
-        let mut path = self.path.clone();
-        path.extend(index.map(Seg::Index));
+        let path = match index {
+            Some(i) => format!("{}.{i}", self.path),
+            None => self.path.clone(),
+        };
         raw_at(self.json, &path).map_or_else(|| fallback.raw(), str::to_string)
     }
 }
@@ -582,10 +584,10 @@ fn convert_claude_tool_result_content(content: &Res<'_>, src: &RawSource<'_>) ->
     }
 
     if content.is_object() {
-        if content.g("type").str() == "image" {
-            if let Some(content_item) = convert_claude_content_part(content) {
-                return (TOOL_RESULT_IMAGE_PLACEHOLDER.to_string(), vec![content_item]);
-            }
+        if content.g("type").str() == "image"
+            && let Some(content_item) = convert_claude_content_part(content)
+        {
+            return (TOOL_RESULT_IMAGE_PLACEHOLDER.to_string(), vec![content_item]);
         }
         let text = content.g("text");
         if text.is_string() {
