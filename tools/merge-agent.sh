@@ -11,6 +11,7 @@ if git diff --name-only --diff-filter=U | grep -qv '^Cargo.lock$'; then
   echo "non-lockfile conflicts:"; git diff --name-only --diff-filter=U; exit 1
 fi
 git checkout --theirs Cargo.lock 2>/dev/null || true
+python3 tools/dedupe-toml.py
 git add -A
 cargo build -q --workspace
 if ! cargo test -q --workspace --all-targets >/tmp/merge-agent-test.log 2>&1; then
