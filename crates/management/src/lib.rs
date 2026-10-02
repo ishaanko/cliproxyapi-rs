@@ -24,12 +24,18 @@ mod credential_edit;
 mod credentials;
 mod gate;
 mod http;
+mod key_lists;
 mod logs;
 mod oauth;
 mod observability;
+mod plugin_store;
+mod plugins_v0;
 mod routing;
+mod settings_v0;
 mod state;
 mod tools;
+mod v0_routes;
+mod v0_util;
 mod yaml_comments;
 
 use axum::Router;
@@ -208,6 +214,7 @@ pub fn router(state: ManagementState) -> Router {
 
     Router::new()
         .nest("/v8/management", v8)
+        .nest("/v0/management", v0_routes::router(state.clone()))
         .merge(callbacks)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(gate::cors))

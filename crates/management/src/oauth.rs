@@ -74,6 +74,16 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
     let Some(provider) = v8_provider(&name) else {
         return Err(ApiError::new(404, "provider_not_found"));
     };
+    start_login(&st, uri, provider).await
+}
+
+/// v0 `GET /<provider>-auth-url` (`RequestAnthropicToken` and friends): the provider is fixed by
+/// the route.
+pub(crate) async fn auth_url_for(st: ManagementState, req: Request, provider: Provider) -> ApiResult {
+    start_login(&st, req.uri(), provider).await
+}
+
+async fn start_login(st: &ManagementState, uri: &Uri, provider: Provider) -> ApiResult {
     let cfg = st.cfg();
     let mut opts = LoginOptions::management(cfg.proxy_url.trim());
     let codex_device =
@@ -178,6 +188,11 @@ pub(crate) async fn import(State(st): State<ManagementState>, req: Request) -> A
         "vertex" => import_vertex(&st, req).await,
         _ => Err(ApiError::new(404, "provider_not_found")),
     }
+}
+
+/// v0 `POST /vertex/import`.
+pub(crate) async fn import_vertex_v0(State(st): State<ManagementState>, req: Request) -> ApiResult {
+    import_vertex(&st, req).await
 }
 
 async fn import_vertex(st: &ManagementState, req: Request) -> ApiResult {
