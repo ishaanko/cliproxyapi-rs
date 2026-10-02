@@ -97,9 +97,10 @@ pub fn convert_interactions_response_to_gemini_non_stream(
         steps = root.g("steps");
         steps_path = "steps";
     }
+    let step_raws = cpa_json::raw_children(raw, steps_path);
     let mut step_index = 0;
     steps.for_each(|_, step| {
-        parts.extend(step_to_gemini_parts(&step.value(), raw, &format!("{steps_path}.{step_index}")));
+        parts.extend(step_to_gemini_parts(&step.value(), step_raws.get(step_index).copied()));
         step_index += 1;
         true
     });
@@ -278,11 +279,11 @@ fn step_delta_to_gemini_chunk(model_name: &str, root: &Value, st: &mut ToGeminiS
     }
 }
 
-/// `path` locates `step` in `src`, for copying results as source text.
-fn step_to_gemini_parts(step: &Value, src: &[u8], path: &str) -> Vec<Value> {
+/// `raw` is the source text of `step`, for copying results as source text.
+fn step_to_gemini_parts(step: &Value, raw: Option<&str>) -> Vec<Value> {
     match step.g("type").str().as_str() {
         "function_call" => vec![function_call_step_to_gemini_part(step)],
-        "function_result" => vec![function_response_step_to_gemini_part(step, src, path)],
+        "function_result" => vec![function_response_step_to_gemini_part(step, raw)],
         "thought" => content_to_gemini_parts(&step.g("content"), true),
         _ => content_to_gemini_parts(&step.g("content"), false),
     }
@@ -338,7 +339,7 @@ fn function_call_step_to_gemini_part(step: &Value) -> Value {
     part
 }
 
-fn function_response_step_to_gemini_part(step: &Value, src: &[u8], path: &str) -> Value {
+fn function_response_step_to_gemini_part(step: &Value, raw: Option<&str>) -> Value {
     let mut part = json!({ "functionResponse": { "name": "", "response": {} } });
     cpa_json::set(&mut part, "functionResponse.name", step.g("name").str());
     let id = first_non_blank(&[&step.g("call_id").str(), &step.g("id").str()]);
@@ -346,7 +347,7 @@ fn function_response_step_to_gemini_part(step: &Value, src: &[u8], path: &str) -
         cpa_json::set(&mut part, "functionResponse.id", id);
     }
     let key = ["result", "response"].into_iter().find(|key| step.g(key).exists());
-    let text = key.and_then(|key| cpa_json::raw_at(src, &format!("{path}.{key}")));
+    let text = key.and_then(|key| cpa_json::raw_at(raw?.as_bytes(), key));
     set_function_response(&mut part, "functionResponse.response", &first_existing(step, &["result", "response"]), text);
     part
 }
