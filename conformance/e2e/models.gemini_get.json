@@ -1,0 +1,52 @@
+{
+  "id": "models.gemini_get",
+  "desc": "GET /v1beta/models/<id>",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1beta/models/gemini-2.5-flash",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "description": "Stable version of Gemini 2.5 Flash, our mid-size multimodal model that supports up to 1 million tokens, released in June of 2025.",
+            "displayName": "Gemini 2.5 Flash",
+            "inputTokenLimit": 1048576,
+            "name": "models/gemini-2.5-flash",
+            "outputTokenLimit": 65536,
+            "supportedGenerationMethods": [
+              "generateContent",
+              "countTokens",
+              "createCachedContent",
+              "batchGenerateContent"
+            ],
+            "supportedInputModalities": [
+              "text",
+              "image",
+              "audio",
+              "video"
+            ],
+            "supportedOutputModalities": [
+              "text"
+            ],
+            "version": "001"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

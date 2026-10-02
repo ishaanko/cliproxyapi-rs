@@ -1,0 +1,277 @@
+{
+  "id": "rich.gemini.codex.json",
+  "desc": "multi-turn request with system prompt, image, tool round trip and sampling options: gemini -> codex",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/gpt-5.5:generateContent",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "systemInstruction": {
+            "parts": [
+              {
+                "text": "You are a terse weather bot."
+              }
+            ]
+          },
+          "contents": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "text": "What does this look like and what is the weather in Paris?"
+                },
+                {
+                  "inlineData": {
+                    "mimeType": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                  }
+                }
+              ]
+            },
+            {
+              "role": "model",
+              "parts": [
+                {
+                  "functionCall": {
+                    "name": "get_weather",
+                    "args": {
+                      "city": "Paris"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "functionResponse": {
+                    "name": "get_weather",
+                    "response": {
+                      "result": "18C and sunny"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "text": "Thanks. And in Rome?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "functionDeclarations": [
+                {
+                  "name": "get_weather",
+                  "description": "Get the weather",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "city": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "type": "string",
+                        "enum": [
+                          "c",
+                          "f"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "city"
+                    ]
+                  }
+                },
+                {
+                  "name": "get_time",
+                  "description": "Get the time"
+                }
+              ]
+            }
+          ],
+          "toolConfig": {
+            "functionCallingConfig": {
+              "mode": "AUTO"
+            }
+          },
+          "generationConfig": {
+            "temperature": 0.2,
+            "topP": 0.9,
+            "maxOutputTokens": 300,
+            "stopSequences": [
+              "END"
+            ]
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "candidates": [
+              {
+                "content": {
+                  "role": "model",
+                  "parts": [
+                    {
+                      "text": "Hello from mock"
+                    }
+                  ]
+                },
+                "finishReason": "STOP"
+              }
+            ],
+            "usageMetadata": {
+              "trafficType": "PROVISIONED_THROUGHPUT",
+              "promptTokenCount": 11,
+              "candidatesTokenCount": 7,
+              "totalTokenCount": 18
+            },
+            "modelVersion": "gpt-5.5",
+            "createTime": "2023-11-14T22:13:20Z",
+            "responseId": "resp_mock01"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "authorization": "Bearer sk-codex-2",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "<uuid:1>",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "instructions": "",
+        "input": [
+          {
+            "type": "message",
+            "role": "developer",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "You are a terse weather bot."
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What does this look like and what is the weather in Paris?"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Paris\"}",
+            "call_id": "<call:1>"
+          },
+          {
+            "type": "function_call_output",
+            "output": "18C and sunny",
+            "call_id": "<call:1>"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Thanks. And in Rome?"
+              }
+            ]
+          }
+        ],
+        "tool_choice": "auto",
+        "tools": [
+          {
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "c",
+                    "f"
+                  ]
+                }
+              },
+              "required": [
+                "city"
+              ],
+              "additionalProperties": false
+            },
+            "strict": false
+          },
+          {
+            "type": "function",
+            "name": "get_time",
+            "description": "Get the time",
+            "strict": false
+          },
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "parallel_tool_calls": true,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "stream": true,
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "<uuid:1>"
+      }
+    }
+  ]
+}

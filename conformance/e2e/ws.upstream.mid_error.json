@@ -1,0 +1,165 @@
+{
+  "id": "ws.upstream.mid_error",
+  "desc": "upstream response.failed after some output",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [
+            {
+              "type": "response.created",
+              "sequence_number": 0,
+              "response": {
+                "id": "resp_mock01",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "model": "gpt-5.5",
+                "output": [],
+                "parallel_tool_calls": true,
+                "store": false
+              }
+            },
+            {
+              "type": "response.in_progress",
+              "sequence_number": 1,
+              "response": {
+                "id": "resp_mock01",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "model": "gpt-5.5",
+                "output": [],
+                "parallel_tool_calls": true,
+                "store": false
+              }
+            },
+            {
+              "type": "response.output_item.added",
+              "sequence_number": 2,
+              "output_index": 0,
+              "item": {
+                "id": "msg_mock01",
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": []
+              }
+            },
+            {
+              "type": "response.content_part.added",
+              "sequence_number": 3,
+              "item_id": "msg_mock01",
+              "output_index": 0,
+              "content_index": 0,
+              "part": {
+                "type": "output_text",
+                "annotations": [],
+                "text": ""
+              }
+            },
+            {
+              "type": "response.output_text.delta",
+              "sequence_number": 4,
+              "item_id": "msg_mock01",
+              "output_index": 0,
+              "content_index": 0,
+              "delta": "Hello from "
+            },
+            {
+              "type": "response.output_text.delta",
+              "sequence_number": 5,
+              "item_id": "msg_mock01",
+              "output_index": 0,
+              "content_index": 0,
+              "delta": "mock"
+            }
+          ],
+          "close": "abnormal"
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "authorization": "Bearer sk-codex-2",
+        "conversation_id": "<uuid:1>",
+        "openai-beta": "responses_websockets=2026-02-06",
+        "originator": "codex-tui",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "session_id": "<uuid:1>",
+        "upgrade": "websocket",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "gpt-5.5",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "store": false,
+          "parallel_tool_calls": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "tools": [
+            {
+              "type": "image_generation",
+              "output_format": "png"
+            }
+          ],
+          "prompt_cache_key": "<uuid:1>",
+          "type": "response.create"
+        }
+      ]
+    }
+  ]
+}

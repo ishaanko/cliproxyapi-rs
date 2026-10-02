@@ -1,0 +1,269 @@
+{
+  "id": "responses.gemini.stream.tool",
+  "desc": "responses client -> gemini upstream, stream, tool",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "input": "What is the weather in Paris?",
+          "stream": true,
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "description": "Get the weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string",
+                    "description": "City name"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "response.created",
+              "data": {
+                "type": "response.created",
+                "sequence_number": 1,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "in_progress",
+                  "background": false,
+                  "error": null,
+                  "output": [],
+                  "model": "gemini-2.5-flash"
+                }
+              }
+            },
+            {
+              "event": "response.in_progress",
+              "data": {
+                "type": "response.in_progress",
+                "sequence_number": 2,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "in_progress",
+                  "output": [],
+                  "model": "gemini-2.5-flash"
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 3,
+                "output_index": 0,
+                "item": {
+                  "id": "<fc:1>",
+                  "type": "function_call",
+                  "status": "in_progress",
+                  "arguments": "",
+                  "call_id": "<call:1>",
+                  "name": "get_weather"
+                }
+              }
+            },
+            {
+              "event": "response.function_call_arguments.delta",
+              "data": {
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 4,
+                "item_id": "<fc:1>",
+                "output_index": 0,
+                "delta": "{\"city\":\"Paris\"}"
+              }
+            },
+            {
+              "event": "response.function_call_arguments.done",
+              "data": {
+                "type": "response.function_call_arguments.done",
+                "sequence_number": 5,
+                "item_id": "<fc:1>",
+                "output_index": 0,
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 6,
+                "output_index": 0,
+                "item": {
+                  "id": "<fc:1>",
+                  "type": "function_call",
+                  "status": "completed",
+                  "arguments": "{\"city\":\"Paris\"}",
+                  "call_id": "<call:1>",
+                  "name": "get_weather"
+                }
+              }
+            },
+            {
+              "event": "response.completed",
+              "data": {
+                "type": "response.completed",
+                "sequence_number": 7,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "completed",
+                  "background": false,
+                  "error": null,
+                  "model": "gemini-2.5-flash",
+                  "tools": [
+                    {
+                      "description": "Get the weather",
+                      "name": "get_weather",
+                      "parameters": {
+                        "properties": {
+                          "city": {
+                            "description": "City name",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "city"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "function"
+                    }
+                  ],
+                  "output": [
+                    {
+                      "id": "<fc:1>",
+                      "type": "function_call",
+                      "status": "completed",
+                      "arguments": "{\"city\":\"Paris\"}",
+                      "call_id": "<call:1>",
+                      "name": "get_weather"
+                    }
+                  ],
+                  "usage": {
+                    "input_tokens": 11,
+                    "input_tokens_details": {
+                      "cached_tokens": 0
+                    },
+                    "output_tokens": 7,
+                    "output_tokens_details": {
+                      "reasoning_tokens": 0
+                    },
+                    "total_tokens": 18
+                  }
+                }
+              }
+            },
+            {
+              "trailing_whitespace": "\n"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "description": "Get the weather",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string",
+                      "description": "City name"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ],
+        "model": "gemini-2.5-flash"
+      }
+    }
+  ]
+}

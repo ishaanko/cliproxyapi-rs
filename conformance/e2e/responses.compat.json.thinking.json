@@ -1,0 +1,108 @@
+{
+  "id": "responses.compat.json.thinking",
+  "desc": "responses client -> compat upstream, json, thinking",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "input": "What is the weather in Paris?",
+          "stream": false,
+          "reasoning": {
+            "effort": "high"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "chatcmpl-mock01",
+            "object": "response",
+            "created_at": 1700000000,
+            "status": "completed",
+            "background": false,
+            "error": null,
+            "incomplete_details": null,
+            "model": "mock-gpt-4o",
+            "output": [
+              {
+                "id": "rs_chatcmpl-mock01",
+                "type": "reasoning",
+                "encrypted_content": "",
+                "summary": [
+                  {
+                    "type": "summary_text",
+                    "text": "Let me think."
+                  }
+                ]
+              },
+              {
+                "id": "msg_chatcmpl-mock01_0",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "logprobs": [],
+                    "text": "Hello from mock"
+                  }
+                ],
+                "role": "assistant"
+              }
+            ],
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 7,
+              "total_tokens": 18,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "input_tokens_details": {
+                "cached_tokens": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "user",
+            "content": "What is the weather in Paris?"
+          }
+        ],
+        "stream": false,
+        "reasoning_effort": "high"
+      }
+    }
+  ]
+}

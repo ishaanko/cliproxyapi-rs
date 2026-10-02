@@ -1,0 +1,146 @@
+{
+  "id": "mgmt.api_call",
+  "desc": "api-call substitutes $TOKEN$ with the credential and proxies the request",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/api-call",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "auth_index": "8db9a3c0713f1d8d",
+          "method": "GET",
+          "url": "http://<mock>/compat/models",
+          "header": {
+            "Authorization": "Bearer $TOKEN$",
+            "X-E2E": "1"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status_code": 200,
+            "header": {
+              "Content-Length": [
+                "81"
+              ],
+              "Content-Type": [
+                "application/json"
+              ],
+              "Date": "<Date>"
+            },
+            "body": "{\"object\":\"list\",\"data\":[{\"id\":\"mock-model\",\"object\":\"model\",\"owned_by\":\"mock\"}]}"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/api-call",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "method": "GET"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "missing url"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/api-call",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "url": "http://127.0.0.1:1/x"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "missing method"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/api-call",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "method": "GET",
+          "url": "not a url"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid url"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "GET",
+      "path": "/models",
+      "query": "",
+      "credential": "sk-compat-1",
+      "headers": {
+        "authorization": "Bearer sk-compat-1",
+        "user-agent": "<go-default-ua>",
+        "x-e2e": "1"
+      },
+      "body": null
+    }
+  ]
+}

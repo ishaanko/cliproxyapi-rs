@@ -1,0 +1,228 @@
+{
+  "id": "ws.fallback.compat.text",
+  "desc": "one response.create over the client websocket",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "compat-gpt-4o",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [
+            {
+              "type": "response.created",
+              "sequence_number": 1,
+              "response": {
+                "id": "chatcmpl-mock01",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "output": [],
+                "model": "compat-gpt-4o"
+              }
+            },
+            {
+              "type": "response.in_progress",
+              "sequence_number": 2,
+              "response": {
+                "id": "chatcmpl-mock01",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "in_progress",
+                "output": [],
+                "model": "compat-gpt-4o"
+              }
+            },
+            {
+              "type": "response.output_item.added",
+              "sequence_number": 3,
+              "output_index": 0,
+              "item": {
+                "id": "msg_chatcmpl-mock01_0",
+                "type": "message",
+                "status": "in_progress",
+                "content": [],
+                "role": "assistant"
+              }
+            },
+            {
+              "type": "response.content_part.added",
+              "sequence_number": 4,
+              "item_id": "msg_chatcmpl-mock01_0",
+              "output_index": 0,
+              "content_index": 0,
+              "part": {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": ""
+              }
+            },
+            {
+              "type": "response.output_text.delta",
+              "sequence_number": 5,
+              "item_id": "msg_chatcmpl-mock01_0",
+              "output_index": 0,
+              "content_index": 0,
+              "delta": "Hello from ",
+              "logprobs": []
+            },
+            {
+              "type": "response.output_text.delta",
+              "sequence_number": 6,
+              "item_id": "msg_chatcmpl-mock01_0",
+              "output_index": 0,
+              "content_index": 0,
+              "delta": "mock",
+              "logprobs": []
+            },
+            {
+              "type": "response.output_text.done",
+              "sequence_number": 7,
+              "item_id": "msg_chatcmpl-mock01_0",
+              "output_index": 0,
+              "content_index": 0,
+              "text": "Hello from mock",
+              "logprobs": []
+            },
+            {
+              "type": "response.content_part.done",
+              "sequence_number": 8,
+              "item_id": "msg_chatcmpl-mock01_0",
+              "output_index": 0,
+              "content_index": 0,
+              "part": {
+                "type": "output_text",
+                "annotations": [],
+                "logprobs": [],
+                "text": "Hello from mock"
+              }
+            },
+            {
+              "type": "response.output_item.done",
+              "sequence_number": 9,
+              "output_index": 0,
+              "item": {
+                "id": "msg_chatcmpl-mock01_0",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "logprobs": [],
+                    "text": "Hello from mock"
+                  }
+                ],
+                "role": "assistant"
+              }
+            },
+            {
+              "type": "response.completed",
+              "sequence_number": 10,
+              "response": {
+                "id": "chatcmpl-mock01",
+                "object": "response",
+                "created_at": 1700000000,
+                "status": "completed",
+                "background": false,
+                "error": null,
+                "model": "compat-gpt-4o",
+                "output": [
+                  {
+                    "id": "msg_chatcmpl-mock01_0",
+                    "type": "message",
+                    "status": "completed",
+                    "content": [
+                      {
+                        "type": "output_text",
+                        "annotations": [],
+                        "logprobs": [],
+                        "text": "Hello from mock"
+                      }
+                    ],
+                    "role": "assistant"
+                  }
+                ],
+                "usage": {
+                  "input_tokens": 11,
+                  "input_tokens_details": {
+                    "cached_tokens": 0
+                  },
+                  "output_tokens": 7,
+                  "total_tokens": 18,
+                  "output_tokens_details": {
+                    "reasoning_tokens": 0
+                  }
+                }
+              }
+            }
+          ],
+          "close": null
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "authorization": "Bearer sk-compat-2",
+        "cache-control": "no-cache",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "hello"
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "stream_options": {
+          "include_usage": true
+        }
+      }
+    }
+  ]
+}

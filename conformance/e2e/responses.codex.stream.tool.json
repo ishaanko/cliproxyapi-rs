@@ -1,0 +1,254 @@
+{
+  "id": "responses.codex.stream.tool",
+  "desc": "responses client -> codex upstream, stream, tool",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "input": "What is the weather in Paris?",
+          "stream": true,
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "description": "Get the weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string",
+                    "description": "City name"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "response.created",
+              "data": {
+                "type": "response.created",
+                "sequence_number": 0,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "model": "gpt-5.5",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "store": false
+                }
+              }
+            },
+            {
+              "event": "response.in_progress",
+              "data": {
+                "type": "response.in_progress",
+                "sequence_number": 1,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "in_progress",
+                  "model": "gpt-5.5",
+                  "output": [],
+                  "parallel_tool_calls": true,
+                  "store": false
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 2,
+                "output_index": 0,
+                "item": {
+                  "id": "fc_mock01",
+                  "type": "function_call",
+                  "status": "in_progress",
+                  "call_id": "call_mock01",
+                  "name": "get_weather",
+                  "arguments": ""
+                }
+              }
+            },
+            {
+              "event": "response.function_call_arguments.delta",
+              "data": {
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 3,
+                "item_id": "fc_mock01",
+                "output_index": 0,
+                "delta": "{\"city\":"
+              }
+            },
+            {
+              "event": "response.function_call_arguments.delta",
+              "data": {
+                "type": "response.function_call_arguments.delta",
+                "sequence_number": 4,
+                "item_id": "fc_mock01",
+                "output_index": 0,
+                "delta": "\"Paris\"}"
+              }
+            },
+            {
+              "event": "response.function_call_arguments.done",
+              "data": {
+                "type": "response.function_call_arguments.done",
+                "sequence_number": 5,
+                "item_id": "fc_mock01",
+                "output_index": 0,
+                "arguments": "{\"city\":\"Paris\"}"
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 6,
+                "output_index": 0,
+                "item": {
+                  "id": "fc_mock01",
+                  "type": "function_call",
+                  "status": "completed",
+                  "call_id": "call_mock01",
+                  "name": "get_weather",
+                  "arguments": "{\"city\":\"Paris\"}"
+                }
+              }
+            },
+            {
+              "event": "response.completed",
+              "data": {
+                "type": "response.completed",
+                "sequence_number": 7,
+                "response": {
+                  "id": "resp_mock01",
+                  "object": "response",
+                  "created_at": 1700000000,
+                  "status": "completed",
+                  "model": "gpt-5.5",
+                  "output": [
+                    {
+                      "id": "fc_mock01",
+                      "type": "function_call",
+                      "status": "completed",
+                      "call_id": "call_mock01",
+                      "name": "get_weather",
+                      "arguments": "{\"city\":\"Paris\"}"
+                    }
+                  ],
+                  "parallel_tool_calls": true,
+                  "store": false,
+                  "usage": {
+                    "input_tokens": 11,
+                    "input_tokens_details": {
+                      "cached_tokens": 0
+                    },
+                    "output_tokens": 7,
+                    "output_tokens_details": {
+                      "reasoning_tokens": 0
+                    },
+                    "total_tokens": 18
+                  }
+                }
+              }
+            },
+            {
+              "trailing_whitespace": "\n"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "authorization": "Bearer sk-codex-2",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "<uuid:1>",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "stream": true,
+        "tools": [
+          {
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string",
+                  "description": "City name"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          },
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "store": false,
+        "parallel_tool_calls": true,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "instructions": "",
+        "prompt_cache_key": "<uuid:1>"
+      }
+    }
+  ]
+}
