@@ -198,24 +198,20 @@ pub fn collect_claude_input_token_segments(payload: &[u8]) -> Result<Vec<String>
     if let Some(system) = raw_at(root, "system") {
         collect_system(system, &mut segments);
     }
-    if let Some(messages) = raw_at(root, "messages") {
-        if kind(messages) == Kind::Array {
-            for message in children(messages) {
-                append_string(&mut segments, &gstring(message, "role"));
-                if let Some(content) = raw_at(message, "content") {
-                    collect_content(content, &mut segments);
-                }
+    if let Some(messages) = raw_at(root, "messages").filter(|r| kind(r) == Kind::Array) {
+        for message in children(messages) {
+            append_string(&mut segments, &gstring(message, "role"));
+            if let Some(content) = raw_at(message, "content") {
+                collect_content(content, &mut segments);
             }
         }
     }
-    if let Some(tools) = raw_at(root, "tools") {
-        if kind(tools) == Kind::Array {
-            for tool in children(tools) {
-                append_string(&mut segments, &gstring(tool, "type"));
-                append_string(&mut segments, &gstring(tool, "name"));
-                append_string(&mut segments, &gstring(tool, "description"));
-                append_json(&mut segments, raw_at(tool, "input_schema"));
-            }
+    if let Some(tools) = raw_at(root, "tools").filter(|r| kind(r) == Kind::Array) {
+        for tool in children(tools) {
+            append_string(&mut segments, &gstring(tool, "type"));
+            append_string(&mut segments, &gstring(tool, "name"));
+            append_string(&mut segments, &gstring(tool, "description"));
+            append_json(&mut segments, raw_at(tool, "input_schema"));
         }
     }
     if let Some(tool_choice) = raw_at(root, "tool_choice") {

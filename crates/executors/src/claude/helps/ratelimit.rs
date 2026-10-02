@@ -141,11 +141,8 @@ pub fn parse_claude_rate_limit_reset_with(headers: &HeaderMap, now: DateTime<Utc
 
     // 2-4. Window resets, only for rejected windows.
     let mut push_reset = |name: &str| {
-        let raw = header(headers, name);
-        if !raw.is_empty() {
-            if let Some(t) = parse_unix_or_timestamp(&raw).filter(|t| *t > now) {
-                candidates.push(t);
-            }
+        if let Some(t) = parse_unix_or_timestamp(&header(headers, name)).filter(|t| *t > now) {
+            candidates.push(t);
         }
     };
     if status_5h == "rejected" {
@@ -277,7 +274,7 @@ mod tests {
 
     fn near(got: Option<Duration>, want: Duration) {
         let got = got.expect("expected a cooldown");
-        let delta = if got > want { got - want } else { want - got };
+        let delta = got.abs_diff(want);
         assert!(delta <= Duration::from_secs(5), "got {got:?}, want ~{want:?}");
     }
 

@@ -20,10 +20,8 @@ pub fn is_claude_token_event(payload: &[u8]) -> bool {
     }
 
     // Strip the "event: ..." line of a multi-line SSE buffer.
-    if payload.starts_with(b"event:") {
-        if let Some(idx) = payload.iter().position(|b| *b == b'\n') {
-            payload = trim_space(&payload[idx + 1..]);
-        }
+    if let Some(idx) = payload.iter().position(|b| *b == b'\n').filter(|_| payload.starts_with(b"event:")) {
+        payload = trim_space(&payload[idx + 1..]);
     }
 
     // Strip the SSE data prefix ("data: {...}").

@@ -134,7 +134,7 @@ pub(crate) fn value_span(body: &[u8], path: &str) -> Option<Range<usize>> {
 /// sjson's string encoding for `SetBytes`: strings with `"`, `\`, control or non-ASCII bytes go
 /// through `json.Marshal` (HTML-escaped); anything else is quoted verbatim (so `<` stays literal).
 pub(crate) fn sjson_string(s: &str) -> String {
-    if s.bytes().any(|b| b < b' ' || b > 0x7f || b == b'"' || b == b'\\') {
+    if s.bytes().any(|b| !(b' '..=0x7f).contains(&b) || b == b'"' || b == b'\\') {
         go_json_string(s)
     } else {
         format!("\"{s}\"")
@@ -180,7 +180,7 @@ fn splice(body: &[u8], span: Range<usize>, replacement: &[u8]) -> Vec<u8> {
 
 /// sjson `SetRawBytes` for a top-level key: replaces the existing value, or appends the member
 /// before the closing brace of the (whitespace-trimmed) root object.
-fn set_raw_top_level(body: &[u8], key: &str, raw: &[u8]) -> Result<Vec<u8>, ClaudeCchError> {
+pub(crate) fn set_raw_top_level(body: &[u8], key: &str, raw: &[u8]) -> Result<Vec<u8>, ClaudeCchError> {
     if let Some(span) = value_span(body, key) {
         return Ok(splice(body, span, raw));
     }
@@ -985,11 +985,27 @@ mod tests {
             (r#"{"system":[{"type":"text","text":"s"}]}"#, format!(r#"{{"system":[{block},{{"type":"text","text":"s"}}]}}"#)),
             (r#"{"system":{"k":1}}"#, format!(r#"{{"system":[{block}]}}"#)),
             (r#"{"system":"a<b"}"#, format!(r#"{{"system":[{block},{{"type":"text","text":"a<b"}}]}}"#)),
+            // A missing key is appended to the whitespace-trimmed root.
+            ("  {\n \"a\": 1 }  ", format!("{{\n \"a\": 1 ,\"system\":[{block}]}}")),
+            ("{}", format!(r#"{{"system":[{block}]}}"#)),
+            // `[ ]` is not byte-equal to `[]`, so the Go code splices it as-is (invalid JSON).
+            (r#"{"system":[ ],"a":1}"#, format!(r#"{{"system":[{block}, ],"a":1}}"#)),
         ];
         for (body, want) in cases {
             let got = prepend_claude_billing_system_block(body.as_bytes(), fallback).expect("prepend");
             assert_eq!(String::from_utf8_lossy(&got), want, "{body}");
         }
+    }
+
+    /// Oracle value from the Go `finalizeAnthropicMessagesBodyCCH`.
+    #[test]
+    fn finalize_string_system_vector() {
+        let body = br#"{"system":"a<b","messages":[]}"#;
+        let signed = finalize_anthropic_messages_body_cch(body, "x-anthropic-billing-header: cc_version=1; cc_entrypoint=cli;").expect("finalize");
+        assert_eq!(
+            String::from_utf8_lossy(&signed),
+            r#"{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=1; cc_entrypoint=cli; cch=83957;"},{"type":"text","text":"a<b"}],"messages":[]}"#
+        );
     }
 
     #[test]
