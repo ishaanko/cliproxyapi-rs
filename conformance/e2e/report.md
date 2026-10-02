@@ -1,6 +1,6 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/tmp/cli-proxy-api-go`
+- server: `/home/ishaan/box/cliproxyapirust/target/release/cliproxy`
 - config layout: `legacy`
 - goldens digest: `e50089bce4159915`
 - scenarios: 669 total, 669 passed, 0 failed
