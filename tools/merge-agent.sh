@@ -13,7 +13,9 @@ fi
 git checkout --theirs Cargo.lock 2>/dev/null || true
 git add -A
 cargo build -q --workspace
-cargo test -q --workspace 2>&1 | grep -E 'test result|FAILED|panicked' | grep -v 'ok\.' && { echo "tests failed"; exit 1; } || true
+if ! cargo test -q --workspace --all-targets >/tmp/merge-agent-test.log 2>&1; then
+  grep -E '^error|FAILED|panicked' /tmp/merge-agent-test.log | head -20; echo "tests failed"; exit 1
+fi
 git commit -qm "$msg"
 git push -q
 echo "merged $branch"
