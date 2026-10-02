@@ -21,3 +21,7 @@ uuid.workspace = true
 rand.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+http = "1"
+url = "2"
+percent-encoding = "2"
+png = "0.17"
