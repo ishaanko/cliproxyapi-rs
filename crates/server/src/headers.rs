@@ -1,6 +1,6 @@
 //! Upstream response header filtering and passthrough (Go: sdk/api/handlers/header_filter.go).
 
-use axum::http::{HeaderMap, HeaderName, HeaderValue};
+use axum::http::HeaderMap;
 
 /// Header name prefixes injected by AI gateway proxies; stripped so clients cannot detect them.
 const GATEWAY_PREFIXES: &[&str] = &["x-litellm-", "helicone-", "x-portkey-", "cf-aig-", "x-kong-", "x-bt-"];
@@ -92,18 +92,6 @@ pub fn replace_headers(dst: &mut HeaderMap, src: &HeaderMap) {
     }
 }
 
-/// Header value from a static string (panics only on invalid constants).
-pub fn static_value(value: &'static str) -> HeaderValue {
-    HeaderValue::from_static(value)
-}
-
-/// Sets a header from runtime text; invalid values are skipped.
-pub fn set_header(map: &mut HeaderMap, name: &'static str, value: &str) {
-    if let Ok(v) = HeaderValue::from_str(value) {
-        map.insert(HeaderName::from_static(name), v);
-    }
-}
-
 /// `strings.TrimSpace(c.GetHeader(name))`.
 pub fn header_trimmed(headers: &HeaderMap, name: &str) -> String {
     headers
@@ -116,6 +104,7 @@ pub fn header_trimmed(headers: &HeaderMap, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::{HeaderName, HeaderValue};
 
     fn map(pairs: &[(&str, &str)]) -> HeaderMap {
         let mut m = HeaderMap::new();

@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 use axum::body::{Body, Bytes, HttpBody};
 use http_body_util::BodyExt;
 
-type OnChunk = Box<dyn FnMut(&Bytes) + Send>;
+pub type OnChunk = Box<dyn FnMut(&Bytes) + Send>;
 type OnDone = Box<dyn FnOnce() + Send>;
 
 pub struct TeeBody {
@@ -20,7 +20,7 @@ pub struct TeeBody {
 impl TeeBody {
     pub fn wrap(body: Body, on_chunk: Option<OnChunk>, on_done: OnDone) -> Body {
         Body::new(TeeBody {
-            inner: Box::pin(body.map_err(|e| axum::Error::new(e))),
+            inner: Box::pin(body.map_err(axum::Error::new)),
             on_chunk,
             on_done: Some(on_done),
         })
