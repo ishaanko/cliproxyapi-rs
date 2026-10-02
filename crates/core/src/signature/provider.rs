@@ -193,15 +193,11 @@ pub fn detect_signature_provider_for_block(
                     return SignatureProvider::Claude;
                 }
             }
-            SignatureProvider::Gpt => {
-                if is_valid_gpt_reasoning_signature(&unprefixed) {
-                    return SignatureProvider::Gpt;
-                }
+            SignatureProvider::Gpt if is_valid_gpt_reasoning_signature(&unprefixed) => {
+                return SignatureProvider::Gpt;
             }
-            SignatureProvider::Swe => {
-                if unprefixed.starts_with("sealed.v1.") {
-                    return SignatureProvider::Swe;
-                }
+            SignatureProvider::Swe if unprefixed.starts_with("sealed.v1.") => {
+                return SignatureProvider::Swe;
             }
             _ => {}
         }
@@ -499,11 +495,7 @@ fn normalize_compatible_signature_for_provider(
                 return payload;
             }
         }
-        SignatureProvider::Kimi => {
-            if is_valid_kimi_thinking_signature(&payload) {
-                return payload;
-            }
-        }
+        SignatureProvider::Kimi if is_valid_kimi_thinking_signature(&payload) => return payload,
         _ => {}
     }
     String::new()

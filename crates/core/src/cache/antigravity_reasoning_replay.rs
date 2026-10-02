@@ -221,17 +221,15 @@ fn normalize_function_call_part_item(item: &Value) -> Option<Vec<u8>> {
     }
     let mut name = trimmed(item, "name");
     let mut args: Res<'_> = item.g("args");
-    if name.is_empty() || !args.exists() {
-        if item.g("functionCall").exists() {
-            if call_id.is_empty() {
-                call_id = trimmed(item, "functionCall.id");
-            }
-            if name.is_empty() {
-                name = trimmed(item, "functionCall.name");
-            }
-            if !args.exists() {
-                args = item.g("functionCall.args");
-            }
+    if (name.is_empty() || !args.exists()) && item.g("functionCall").exists() {
+        if call_id.is_empty() {
+            call_id = trimmed(item, "functionCall.id");
+        }
+        if name.is_empty() {
+            name = trimmed(item, "functionCall.name");
+        }
+        if !args.exists() {
+            args = item.g("functionCall.args");
         }
     }
     if name.is_empty() || !args.exists() {

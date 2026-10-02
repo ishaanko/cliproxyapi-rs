@@ -163,6 +163,7 @@ dependencies = [
  "chrono",
  "cpa-core",
  "cpa-json",
+ "flate2",
  "hex",
  "once_cell",
  "parking_lot",
