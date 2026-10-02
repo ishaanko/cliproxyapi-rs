@@ -1545,3 +1545,109 @@ async fn antigravity_credits_fallback_retries_claude_models_with_credits_flag() 
     assert_eq!(err.status, 429);
     assert_eq!(h2.exec.call_ids().len(), 1);
 }
+
+// ---- Usage records ----
+
+#[tokio::test]
+async fn every_attempt_records_usage_with_tokens_alias_and_failure_details() {
+    let h = Harness::new();
+    let tracker = Arc::new(crate::usage::UsageTracker::new());
+    h.mgr.set_usage_tracker(Some(tracker.clone()));
+    h.config(|c| {
+        c.oauth_model_alias.insert(
+            "mock".into(),
+            vec![OAuthModelAlias {
+                name: "up".into(),
+                alias: "friendly".into(),
+                ..Default::default()
+            }],
+        );
+    });
+    h.add("a", &["friendly"], |a| {
+        a.label = "me@example.com".into();
+    })
+    .await;
+    h.exec.script(
+        "a",
+        vec![
+            Step::Ok(r#"{"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}"#),
+            Step::Err(status_err(500, "upstream exploded")),
+        ],
+    );
+    h.run("friendly").await.unwrap();
+    h.run("friendly").await.unwrap_err();
+
+    let events = tracker.requests(10, None).events;
+    assert_eq!(events.len(), 2);
+    let ok = &events[0].record;
+    assert!(!ok.failed && !ok.stream);
+    assert_eq!(
+        (ok.provider.as_str(), ok.model.as_str(), ok.alias.as_str()),
+        ("mock", "up", "friendly")
+    );
+    assert_eq!(
+        (
+            ok.tokens.input_tokens,
+            ok.tokens.output_tokens,
+            ok.tokens.total_tokens
+        ),
+        (3, 2, 5)
+    );
+    assert_eq!(ok.source, "me@example.com");
+    assert!(!ok.auth_index.is_empty());
+    let failed = &events[1].record;
+    assert!(failed.failed);
+    assert_eq!(
+        (failed.fail.status_code, failed.fail.body.as_str()),
+        (500, "upstream exploded")
+    );
+}
+
+#[tokio::test]
+async fn streams_record_usage_when_they_finish_and_count_tokens_does_not() {
+    let h = Harness::new();
+    let tracker = Arc::new(crate::usage::UsageTracker::new());
+    h.mgr.set_usage_tracker(Some(tracker.clone()));
+    h.add("a", &["m"], |_| {}).await;
+    h.exec.script(
+        "a",
+        vec![Step::Stream(vec![
+            Ok("data: {\"choices\":[]}\n\n"),
+            Ok("data: {\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":6}}\n\n"),
+        ])],
+    );
+    let providers = ["mock".to_string()];
+    let s = h
+        .mgr
+        .execute_stream(&providers, request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
+    assert_eq!(drain(s).await.len(), 2);
+    for _ in 0..50 {
+        if !tracker.requests(10, None).events.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let events = tracker.requests(10, None).events;
+    assert_eq!(events.len(), 1);
+    let rec = &events[0].record;
+    assert!(rec.stream && !rec.failed);
+    assert_eq!(
+        (
+            rec.tokens.input_tokens,
+            rec.tokens.output_tokens,
+            rec.tokens.total_tokens
+        ),
+        (4, 6, 10)
+    );
+    h.mgr
+        .execute_count(&providers, request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
+    assert_eq!(
+        tracker.requests(10, None).events.len(),
+        1,
+        "token counting is not usage"
+    );
+}
