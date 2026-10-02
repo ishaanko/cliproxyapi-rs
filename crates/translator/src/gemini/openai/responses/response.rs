@@ -72,8 +72,7 @@ struct StreamBufferedPart {
 
 /// Per-stream state (Go: geminiToResponsesState).
 #[derive(Default)]
-#[allow(dead_code)]
-pub struct GeminiToResponsesState {
+struct GeminiToResponsesState {
     err: ApplyPatchErrorState,
     seq: i64,
     response_id: String,
@@ -125,17 +124,13 @@ pub struct GeminiToResponsesState {
     web_search_done: bool,
     web_search_index: usize,
     web_search_item_id: String,
-    web_search_done_item: Option<Value>,
     web_search_query: String,
     web_search_queries: Vec<String>,
     web_search_sources: Vec<Value>,
-    web_search_annotations: Vec<Value>,
-    web_search_annotations_attached: bool,
     web_search_buffered_deltas: Vec<String>,
     web_search_buffered_parts: Vec<StreamBufferedPart>,
     raw_grounding_metadata: Option<Value>,
     part_mappings: Vec<GeminiPartMapping>,
-    stream_part_index: i64,
     current_logical_part_index: i64,
     current_part_kind: String,
     has_seen_first_part: bool,
@@ -474,7 +469,6 @@ impl Stream<'_> {
         self.push("response.web_search_call.completed", &completed);
 
         let done_item = build_responses_web_search_call_item(&self.st.web_search_item_id, &self.st.web_search_query, &self.st.web_search_queries, &self.st.web_search_sources);
-        self.st.web_search_done_item = Some(done_item.clone());
         let seq = self.next_seq();
         let done_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": self.st.web_search_index, "item": done_item});
         self.push("response.output_item.done", &done_event);
@@ -654,7 +648,6 @@ impl Stream<'_> {
                     msg_citations = first.clone();
                 }
             }
-            self.st.web_search_annotations = msg_citations.clone();
         }
         let (msg_id, msg_index) = (self.st.current_msg_id.clone(), self.st.msg_index);
         self.emit_new_citation_annotations(msg_index, &msg_id, &msg_citations);
@@ -671,7 +664,6 @@ impl Stream<'_> {
         let mut final_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": msg_index, "item": {"id": msg_id, "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": full_text}], "role": "assistant"}});
         if !msg_citations.is_empty() {
             cpa_json::set(&mut final_event, "item.content.0.annotations", Value::Array(msg_citations.clone()));
-            self.st.web_search_annotations_attached = true;
         }
         self.push("response.output_item.done", &final_event);
 
@@ -840,13 +832,6 @@ impl Stream<'_> {
             if !sources.is_empty() {
                 self.st.web_search_sources = sources;
             }
-            // Function calls, thoughts, or signature boundaries may finalize the search item
-            // before later grounding frames arrive. Keep the cached completed item aligned with
-            // the latest queries and sources so response.completed is complete.
-            if self.st.web_search_done {
-                self.st.web_search_done_item = Some(build_responses_web_search_call_item(&self.st.web_search_item_id, &self.st.web_search_query, &self.st.web_search_queries, &self.st.web_search_sources));
-            }
-
             if !self.st.web_search_opened && has_valid_web_grounding(&merged_gm) {
                 self.open_web_search();
             }
@@ -1072,7 +1057,6 @@ impl Stream<'_> {
             }
             current_part_index = self.st.current_logical_part_index;
         }
-        self.st.stream_part_index = current_part_index;
 
         let text_str = text.str();
         if function_call.exists() && !self.st.pending_reasoning_signature.is_empty() {

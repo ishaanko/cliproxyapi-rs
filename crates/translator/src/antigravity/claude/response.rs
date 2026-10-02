@@ -530,7 +530,6 @@ fn resolve_stop_reason(params: &Params) -> &'static str {
 }
 
 /// Go: `ConvertAntigravityResponseToClaudeNonStream`.
-#[allow(unused_assignments)]
 pub fn convert_antigravity_response_to_claude_non_stream(
     _ctx: &Ctx,
     _model: &str,
@@ -596,8 +595,10 @@ pub fn convert_antigravity_response_to_claude_non_stream(
             }
         };
     }
+    // `flush_thinking!()` emits the buffered thinking block and resets the signature carrier
+    // fields; `flush_thinking!(last)` skips the reset when nothing reads them afterwards.
     macro_rules! flush_thinking {
-        () => {
+        (@emit $($reset:ident)?) => {
             if !(thinking_builder.is_empty() && thinking_signature.is_empty()) {
                 let mut block = json!({"type": "thinking", "thinking": std::mem::take(&mut thinking_builder)});
                 if !thinking_signature.is_empty() {
@@ -606,9 +607,18 @@ pub fn convert_antigravity_response_to_claude_non_stream(
                 }
                 blocks.push(block);
                 thinking_signature.clear();
-                thinking_signature_direction = CARRIER_STANDALONE.to_string();
-                thinking_signature_target_kind = CARRIER_TEXT.to_string();
+                $( flush_thinking!(@$reset); )?
             }
+        };
+        (@reset) => {
+            thinking_signature_direction = CARRIER_STANDALONE.to_string();
+            thinking_signature_target_kind = CARRIER_TEXT.to_string();
+        };
+        () => {
+            flush_thinking!(@emit reset)
+        };
+        (last) => {
+            flush_thinking!(@emit)
         };
     }
     macro_rules! append_signature_carrier {
@@ -734,7 +744,7 @@ pub fn convert_antigravity_response_to_claude_non_stream(
         }
     }
 
-    flush_thinking!();
+    flush_thinking!(last);
     flush_text!();
 
     if !blocks.is_empty() {

@@ -18,7 +18,7 @@ use cpa_core::format::Format;
 use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_openai_responses_request_to_gemini;
-pub use response::{convert_gemini_response_to_openai_responses, GeminiToResponsesState};
+pub use response::convert_gemini_response_to_openai_responses;
 pub(crate) use response::finalize_tool_input;
 pub use response_nonstream::convert_gemini_response_to_openai_responses_non_stream;
 pub use web_search::{

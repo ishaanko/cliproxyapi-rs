@@ -61,37 +61,6 @@ fn resolve_cache_mode_signature(model: &str, thinking_text: &str, raw_signature:
     String::new()
 }
 
-/// Touches the signature cache for every thinking block like Go's pre-check does (which refreshes
-/// entry TTLs); the cache in this port cannot fail, so this always succeeds.
-pub fn require_cached_thinking_signatures(model: &str, raw_json: &[u8]) -> Result<(), String> {
-    if !cache::signature_cache_enabled() || signature::signature_provider_from_model_name(model) == SignatureProvider::Gemini {
-        return Ok(());
-    }
-    let root = cpa_json::parse(raw_json);
-    let messages = root.g("messages");
-    if !messages.is_array() {
-        return Ok(());
-    }
-    for message in messages.array() {
-        let contents = message.g("content");
-        if !contents.is_array() {
-            continue;
-        }
-        for content in contents.array() {
-            if content.g("type").str() != "thinking" {
-                continue;
-            }
-            let Some(block) = content.v() else { continue };
-            let thinking_text = get_thinking_text(block);
-            if thinking_text.is_empty() {
-                continue;
-            }
-            cache::get_cached_signature_required(model, &thinking_text);
-        }
-    }
-    Ok(())
-}
-
 fn resolve_bypass_mode_signature_for_provider(target: SignatureProvider, raw_signature: &str) -> String {
     if raw_signature.is_empty() {
         return String::new();
