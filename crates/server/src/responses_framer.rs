@@ -174,9 +174,7 @@ impl ResponsesSseFramer {
             return self.repair_error_payload(&root, &payload);
         }
         let mut event_type = payload_type;
-        if is_terminal_event(&stream_event) {
-            event_type = stream_event.clone();
-        } else if event_type.is_empty() {
+        if is_terminal_event(&stream_event) || event_type.is_empty() {
             event_type = stream_event.clone();
         }
         if !event_type.is_empty() {

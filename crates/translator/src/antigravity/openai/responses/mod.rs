@@ -23,6 +23,8 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_antigravity_response_to_openai_responses),
             non_stream: Some(convert_antigravity_response_to_openai_responses_non_stream),
             token_count: None,
+            // Antigravity streams reuse the Gemini Responses stream state.
+            finalize: Some(crate::gemini::openai::responses::finalize_tool_input),
         },
     );
     // The envelope variant overrides the plain request transform to see request-scoped ModelInfo.

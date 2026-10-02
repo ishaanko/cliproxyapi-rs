@@ -1,5 +1,6 @@
 //! Claude request to Gemini request (Go: gemini/claude/gemini_claude_request.go).
 
+use crate::common::text_part;
 use std::collections::HashMap;
 
 use cpa_core::registry::lookup_model_info;
@@ -28,10 +29,6 @@ pub fn convert_claude_request_to_gemini(model_name: &str, raw: &[u8], stream: bo
 /// signatures or the bypass sentinel) for configured compatibility endpoints.
 pub fn convert_claude_request_to_gemini_with_compat(model_name: &str, raw: &[u8], stream: bool) -> Vec<u8> {
     convert(model_name, raw, stream, true)
-}
-
-fn text_part(text: &str) -> Value {
-    json!({ "text": text })
 }
 
 fn content_with_parts(role: &str, parts: Vec<Value>) -> Value {
@@ -74,6 +71,8 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         let mut content_items: Vec<Value> = Vec::new();
         let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
         let mut pending_tool_use_ids: Vec<String> = Vec::new();
+        // Source text of each message, resolved on first use (only `$ref` results need it).
+        let message_raws: std::cell::OnceCell<Vec<&str>> = std::cell::OnceCell::new();
         for (message_index, message) in messages.array().into_iter().enumerate() {
             let role_result = message.g("role");
             let Some(original_role) = role_result.as_str() else { continue };
@@ -171,7 +170,8 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
                             if tool_result.result_is_raw {
                                 // Results holding `$ref` are stored as text, so keep the source text.
                                 let source_text = if tool_result.result.contains("$ref") {
-                                    tool_result_source_text(raw, message_index, &original_contents, &content)
+                                    let message_raw = message_raws.get_or_init(|| cpa_json::raw_children(raw, "messages")).get(message_index).copied();
+                                    tool_result_source_text(message_raw, &original_contents, &content)
                                 } else {
                                     None
                                 };
@@ -221,13 +221,12 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         }
 
         // Strip a trailing model turn with unanswered function calls.
-        if let Some(last) = content_items.last() {
-            if last.g("role").str() == "model"
+        if let Some(last) = content_items.last()
+            && last.g("role").str() == "model"
                 && last.g("parts").array().iter().any(|part| part.g("functionCall").exists())
             {
                 content_items.pop();
             }
-        }
         let items: Vec<Vec<u8>> = content_items.iter().map(cpa_json::to_vec).collect();
         let merged = merge_adjacent_gemini_contents(&items);
         // SetRawArrayItems is a no-op for an empty list, keeping the template's `contents`.
@@ -372,14 +371,13 @@ fn is_base64_image(block: &Value) -> bool {
 /// the single non-image block, the `[a,b]` join of several, or the content itself. `original` is
 /// the message content before tool results were reordered.
 fn tool_result_source_text(
-    src: &[u8],
-    message_index: usize,
+    message_raw: Option<&str>,
     original: &Res<'_>,
     element: &Res<'_>,
 ) -> Option<String> {
     let value = element.value();
     let position = original.array().iter().position(|e| e.v() == Some(&value))?;
-    let content_text = cpa_json::raw_at(src, &format!("messages.{message_index}.content.{position}.content"))?;
+    let content_text = cpa_json::raw_at(message_raw?.as_bytes(), &format!("content.{position}.content"))?;
     let Some(Value::Array(blocks)) = value.get("content") else {
         return Some(content_text.to_string());
     };

@@ -1,7 +1,12 @@
 //! Request body handling (Go: sdk/api/handlers/request_body.go).
 
+use std::io::Read;
+
 use axum::http::HeaderMap;
 use bytes::Bytes;
+
+/// Upper bound for a decoded request body, so a tiny compressed payload cannot expand without limit.
+pub const MAX_DECODED_BODY: u64 = 512 << 20;
 
 /// `ReadRequestBody` after the raw bytes were read: decodes the `Content-Encoding` list
 /// (right to left, only `zstd` is supported). An undecodable body that is already valid JSON is
@@ -33,8 +38,16 @@ fn decode_encodings(raw: &Bytes, encoding: &str) -> Result<Bytes, String> {
         match part.trim().to_ascii_lowercase().as_str() {
             "" | "identity" => {}
             "zstd" => {
-                let decoded = zstd::stream::decode_all(&body[..])
+                let decoder = zstd::stream::read::Decoder::new(&body[..])
                     .map_err(|e| format!("failed to decode zstd request body: {e}"))?;
+                let mut decoded = Vec::new();
+                decoder
+                    .take(MAX_DECODED_BODY + 1)
+                    .read_to_end(&mut decoded)
+                    .map_err(|e| format!("failed to decode zstd request body: {e}"))?;
+                if decoded.len() as u64 > MAX_DECODED_BODY {
+                    return Err("decoded request body is too large".into());
+                }
                 body = Bytes::from(decoded);
             }
             other => return Err(format!("unsupported request content encoding: {other}")),

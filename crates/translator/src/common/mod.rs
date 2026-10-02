@@ -9,8 +9,9 @@
 //! `Res::NONE`. Go `error` returns are `String` messages with Go's text.
 //!
 //! Known gaps against Go, inherent to the `Value` based JSON model: raw sub-values are
-//! re-serialized compactly rather than copied byte for byte; duplicate object keys collapse;
-//! `SetStringWithoutHTMLEscape` cannot emit the ` `/` ` escapes Go's encoder adds.
+//! re-serialized compactly rather than copied byte for byte; duplicate object keys collapse.
+//! Where Go copies `Raw` text into output, look the original text up with [`raw_in`] or
+//! `cpa_json::raw_at` instead.
 
 mod antigravity_tools;
 mod apply_patch;
@@ -24,8 +25,10 @@ mod file_data;
 mod gemini;
 mod interactions_usage;
 mod openai_tools;
+mod raw;
 mod request;
 mod responses;
+mod util;
 
 pub use antigravity_tools::*;
 pub use apply_patch::*;
@@ -39,8 +42,10 @@ pub use file_data::*;
 pub use gemini::*;
 pub use interactions_usage::*;
 pub use openai_tools::*;
+pub use raw::*;
 pub use request::*;
 pub use responses::*;
+pub use util::*;
 
 #[cfg(test)]
 mod tests;

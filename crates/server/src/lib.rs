@@ -9,6 +9,9 @@
 //! Not ported: realtime/live endpoints, image and video generation (501), `/v1/alpha/search`,
 //! the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
 
+// `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
+#![allow(clippy::result_large_err)]
+
 pub mod access;
 pub mod body;
 pub mod bodytee;
@@ -37,5 +40,5 @@ pub mod thinking;
 pub mod ui;
 pub mod ws;
 
-pub use router::{apply_global_layers, build_router, build_router_with_management, nest_management};
+pub use router::{apply_global_layers, build_router, build_router_with_management};
 pub use state::{AppState, BuildInfo, KeepAlive};

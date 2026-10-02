@@ -1,7 +1,4 @@
 //! Client-facing Responses websocket against a real `Manager` with a scripted fake executor.
-//!
-//! These need the conductor port: on bases where `Manager` is still a stub they are ignored.
-//! Run them with `cargo test -p cpa-server --test websocket -- --include-ignored`.
 
 mod common;
 
@@ -57,7 +54,6 @@ fn turn() -> Vec<common::Chunk> {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn turns_stream_json_frames_and_append_merges_history() {
     let h = harness("ws", |_| {}).await;
     h.script("first", Script::Stream(turn()));
@@ -94,7 +90,6 @@ async fn turns_stream_json_frames_and_append_merges_history() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn prewarm_is_answered_locally() {
     let h = harness("ws-prewarm", |_| {}).await;
     let mut ws = connect(&serve_ws(&h).await).await;
@@ -115,7 +110,6 @@ async fn prewarm_is_answered_locally() {
 }
 
 #[tokio::test]
-#[ignore = "needs the conductor port (Manager is a stub on this base)"]
 async fn validation_errors_keep_the_socket_open_and_upstream_faults_close_it() {
     let h = harness("ws-err", |_| {}).await;
     h.script(

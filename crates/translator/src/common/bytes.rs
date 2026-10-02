@@ -16,11 +16,6 @@ pub fn claude_input_tokens_json(count: i64) -> Vec<u8> {
     format!(r#"{{"input_tokens":{count}}}"#).into_bytes()
 }
 
-/// An empty raw item list sized for the expected input (Go returns nil for a non-positive hint).
-pub fn new_raw_array_items(capacity: i64) -> Vec<Vec<u8>> {
-    Vec::with_capacity(usize::try_from(capacity).unwrap_or(0))
-}
-
 /// Joins raw JSON items into an array: `[]` when empty, else `[a,b,...]`.
 pub fn join_raw_array<T: AsRef<[u8]>>(items: &[T]) -> Vec<u8> {
     let mut out = Vec::with_capacity(items.iter().map(|i| i.as_ref().len() + 1).sum::<usize>() + 2);
@@ -100,16 +95,4 @@ pub fn append_sse_event_bytes(out: &mut Vec<u8>, event: &str, payload: &[u8], tr
     out.extend_from_slice(b"\ndata: ");
     out.extend_from_slice(payload);
     out.extend(std::iter::repeat_n(b'\n', trailing_newlines));
-}
-
-/// Sets a string field without escaping `<`, `>`, `&` (Go's `sjson.SetBytes` would turn them into
-/// `<` etc. for strings that also contain quotes or non-ASCII; serialization here never
-/// escapes them, so this is a plain string set).
-pub fn set_string_without_html_escape(data: &[u8], path: &str, value: &str) -> Vec<u8> {
-    if path.is_empty() {
-        return data.to_vec();
-    }
-    let mut root = cpa_json::parse(data);
-    cpa_json::set(&mut root, path, value);
-    cpa_json::to_vec(&root)
 }

@@ -11,8 +11,8 @@ use bytes::Bytes;
 use cpa_config::Config;
 use cpa_core::format::{Format, constant};
 use cpa_core::util::{get_provider_name, resolve_auto_model};
-use cpa_runtime::executor::{ExecError, Metadata, Options, Request, StreamResult, meta};
-use serde_json::{Value, json};
+use cpa_runtime::executor::{ExecError, Metadata, Options, Request, SelectedAuthCallback, StreamResult, meta};
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
@@ -47,8 +47,6 @@ pub struct ExecOk {
     pub body: Bytes,
     /// Upstream headers to forward (empty unless `passthrough-headers`).
     pub headers: HeaderMap,
-    /// Selected credential index when the conductor reported it (`X-CPA-TRACE-ID`).
-    pub auth_index: Option<String>,
 }
 
 /// Per-call execution parameters (Go: `modelExecutionOptions` plus the positional arguments).
@@ -186,6 +184,9 @@ impl Pipeline {
             opts.response_format = Some(a.exit.unwrap_or(a.entry));
         }
         opts.metadata = metadata;
+        // Every credential pick (including failover) refreshes the trace id header value.
+        let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
+        opts.selected_auth = Some(SelectedAuthCallback(Arc::new(move |_auth_id, index| trace.record(index, &request_id))));
         (req, opts)
     }
 
@@ -206,7 +207,7 @@ impl Pipeline {
             .execute(&providers, req, opts)
             .await
             .map_err(|e| exec_error_message(&enrich_auth_selection_error(&e, &providers, &normalized)))?;
-        Ok(self.finish_ok(resp.payload, &resp.headers, &resp.metadata))
+        Ok(self.finish_ok(resp.payload, &resp.headers))
     }
 
     /// `ExecuteCountWithAuthManager`.
@@ -219,25 +220,16 @@ impl Pipeline {
             .execute_count(&providers, req, opts)
             .await
             .map_err(|e| exec_error_message(&enrich_auth_selection_error(&e, &providers, &normalized)))?;
-        Ok(self.finish_ok(resp.payload, &resp.headers, &resp.metadata))
+        Ok(self.finish_ok(resp.payload, &resp.headers))
     }
 
-    fn finish_ok(&self, body: Bytes, headers: &HeaderMap, metadata: &Metadata) -> ExecOk {
+    fn finish_ok(&self, body: Bytes, headers: &HeaderMap) -> ExecOk {
         let headers = if self.settings.passthrough_headers {
             filter_upstream_headers(headers)
         } else {
             HeaderMap::new()
         };
-        let auth_index = metadata
-            .get(meta::SELECTED_AUTH_INDEX)
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .filter(|s| !s.is_empty());
-        ExecOk {
-            body,
-            headers,
-            auth_index,
-        }
+        ExecOk { body, headers }
     }
 
     /// `ExecuteStreamWithAuthManager`: streaming execution with the bootstrap read (retries
@@ -312,10 +304,14 @@ impl Pipeline {
                 let _ = tx.send(Err(err)).await;
                 return;
             }
-            if let Some(payload) = bootstrap_payload
-                && tx.send(Ok(payload)).await.is_err()
-            {
-                return;
+            if let Some(payload) = bootstrap_payload {
+                let sent = tokio::select! {
+                    r = tx.send(Ok(payload)) => r.is_ok(),
+                    () = tx.closed() => false,
+                };
+                if !sent {
+                    return;
+                }
             }
             forward_rest(stream, validator, tx).await;
         });
@@ -378,7 +374,13 @@ async fn forward_rest(
     tx: mpsc::Sender<Result<Bytes, ErrorMessage>>,
 ) {
     loop {
-        let Some(item) = stream.chunks.recv().await else {
+        // A dropped consumer (client disconnect) must release the upstream stream promptly, not
+        // only after the next chunk arrives and fails to send.
+        let next = tokio::select! {
+            item = stream.chunks.recv() => item,
+            () = tx.closed() => return,
+        };
+        let Some(item) = next else {
             if let Some(v) = validator.as_mut()
                 && let Err(msg) = v.finish()
             {
