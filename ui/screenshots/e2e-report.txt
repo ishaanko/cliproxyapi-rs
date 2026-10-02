@@ -1,0 +1,15 @@
+PASS api key: add via UI persists to config
+PASS api key: remove via UI
+PASS credential: upload JSON appears in list
+PASS credential: disable toggle persists
+PASS credential: edit routing note via sheet
+PASS credential: delete via sheet
+PASS oauth: claude login shows URL, cancel releases session
+PASS oauth: device flow shows user code
+PASS provider: add claude entry via sheet, then delete
+PASS config: invalid YAML blocks save and shows problem
+PASS config: server-side rejection is surfaced with line
+PASS config: valid edit saves, persists, and round-trips
+PASS logs: application log renders lines
+
+13 passed, 0 failed
