@@ -82,10 +82,8 @@ impl ManagerPort for Manager {
     fn register_executor(&self, executor: DynExecutor) {
         Manager::register_executor(self, executor);
     }
-    async fn update(&self, auth: Auth, _persist: bool) -> Result<Auth, ExecError> {
-        // TODO(conductor): `Manager::update` has no skip-persist switch yet; pass `_persist`
-        // through once it persists.
-        Manager::update(self, auth).await
+    async fn update(&self, auth: Auth, persist: bool) -> Result<Auth, ExecError> {
+        Manager::update_with(self, auth, crate::conductor::UpdateOptions { skip_persist: !persist }).await
     }
     async fn remove(&self, id: &str) {
         Manager::remove(self, id).await;
@@ -104,6 +102,9 @@ impl ManagerPort for Manager {
     }
     fn auth_batch_applied(&self) {
         Manager::refresh_api_key_model_alias(self);
+    }
+    async fn auth_removed(&self, auth_id: &str, provider: &str) {
+        Manager::auth_removed(self, auth_id, provider).await;
     }
 }
 

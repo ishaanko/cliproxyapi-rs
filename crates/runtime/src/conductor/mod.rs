@@ -330,6 +330,17 @@ impl Manager {
         }
     }
 
+    /// Hook for the service after a credential was removed: releases the Codex / xAI websocket
+    /// sessions that may still be bound to it (`remove` already asks the executor to release all
+    /// sessions; this covers executors registered for those providers explicitly).
+    pub async fn auth_removed(&self, _auth_id: &str, provider: &str) {
+        if matches!(provider.trim().to_lowercase().as_str(), "codex" | "xai")
+            && let Some(exec) = self.executor(provider)
+        {
+            exec.close_execution_session(CLOSE_ALL_EXECUTION_SESSIONS_ID).await;
+        }
+    }
+
     /// Go: SupportsApplyPatchForProviders; every routing candidate must support the tool.
     pub fn supports_apply_patch_for_providers(&self, providers: &[String], model: &str) -> bool {
         if providers.is_empty() {
