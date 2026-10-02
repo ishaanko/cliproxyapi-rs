@@ -5,6 +5,8 @@
 //! rewrite (internal/client/codex/optimize-multi-agent-v2) are not ported; both are opt-in
 //! config features that leave the payload untouched when disabled.
 
+use std::sync::Arc;
+
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
@@ -20,6 +22,7 @@ use crate::exec::{ExecArgs, Pipeline};
 use crate::forward::{StreamHooks, openai_error_reply, start_sse_stream, with_nonstream_keepalive};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
+use crate::reqlog::ApiLog;
 use crate::responses_error::{build_error_chunk, build_failed_chunk, sanitize_error_message, stream_error_text};
 use crate::responses_framer::{ResponsesSseFramer, is_codex_responses_client};
 use crate::state::AppState;
@@ -71,13 +74,12 @@ async fn nonstream(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes, alt: 
     let passthrough = pipeline.settings.passthrough_headers;
     let model = model.to_string();
     let alt = alt.to_string();
-    let info = info.clone();
     with_nonstream_keepalive(interval, async move {
         match pipeline.execute(ExecArgs::new(Format::OpenAIResponse, &model, raw, &alt)).await {
             Err(err) => openai_error_reply(&err, passthrough),
             Ok(ok) => {
                 let b = ok.body.clone();
-                ok_reply(&info, ok, b)
+                ok_reply(ok, b)
             }
         }
     })
@@ -90,6 +92,18 @@ async fn nonstream(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes, alt: 
 struct ResponsesHooks {
     framer: ResponsesSseFramer,
     is_codex: bool,
+    api_log: Arc<ApiLog>,
+}
+
+/// `logResponsesStreamError`: records `responses stream terminated after <lastEvent>: <text>`.
+fn log_stream_error(api_log: &ApiLog, framer: &ResponsesSseFramer, err: &ErrorMessage) {
+    let status = match err.status_or_500() {
+        s @ 400..=599 => s,
+        _ => 500,
+    };
+    let last = if framer.last_event.is_empty() { "none" } else { &framer.last_event };
+    let text = stream_error_text(Some(err), status);
+    api_log.record_error(status, &format!("responses stream terminated after {last}: {text}"));
 }
 
 impl StreamHooks for ResponsesHooks {
@@ -98,7 +112,9 @@ impl StreamHooks for ResponsesHooks {
     }
 
     fn chunk_error(&mut self) -> Option<ErrorMessage> {
-        self.framer.terminal_error.clone()
+        let err = self.framer.terminal_error.clone()?;
+        log_stream_error(&self.api_log, &self.framer, &err);
+        Some(err)
     }
 
     fn normalize_terminal_error(&mut self, err: ErrorMessage) -> ErrorMessage {
@@ -109,6 +125,7 @@ impl StreamHooks for ResponsesHooks {
         self.framer.flush(out);
         let status = err.status_or_500();
         let err_text = stream_error_text(Some(err), status);
+        log_stream_error(&self.api_log, &self.framer, err);
         if !self.framer.terminal_event.is_empty() {
             return;
         }
@@ -175,7 +192,7 @@ async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes
     // Frames are buffered until the first real data frame, so early failures still get a JSON
     // status; after that the response is committed as SSE and the forwarder takes over.
     let forward = |framer: ResponsesSseFramer, initial: Vec<u8>, rx: Rx, headers: &HeaderMap| {
-        let hooks = ResponsesHooks { framer, is_codex };
+        let hooks = ResponsesHooks { framer, is_codex, api_log: info.api_log.clone() };
         start_sse_stream(HeaderMap::new(), headers, initial, rx, hooks, keepalive, true)
     };
 
@@ -187,11 +204,16 @@ async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes
                 if framer.data_frames > 0 {
                     return forward(framer, initial, error_only_stream(safe), &es.headers);
                 }
+                info.api_log.record_error(safe.status_or_500(), &safe.text);
                 return openai_error_reply(&safe, passthrough).into_response();
             }
             None => {
                 framer.flush(&mut initial);
                 if framer.data_frames > 0 {
+                    if let Some(err) = &framer.terminal_error {
+                        log_stream_error(&info.api_log, &framer, err);
+                        return commit_terminal(initial, &es.headers);
+                    }
                     if !framer.terminal_event.is_empty() {
                         return commit_terminal(initial, &es.headers);
                     }
@@ -200,6 +222,7 @@ async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes
                 }
                 if framer.terminal_event.is_empty() {
                     let err = sanitize_error_message(&ErrorMessage::new(502, "upstream stream closed before first payload"));
+                    info.api_log.record_error(err.status_or_500(), &err.text);
                     return openai_error_reply(&err, passthrough).into_response();
                 }
                 return openai_error_reply(&ErrorMessage::new(500, ""), passthrough).into_response();
@@ -209,7 +232,8 @@ async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes
                 if framer.data_frames == 0 {
                     continue;
                 }
-                if framer.terminal_error.is_some() {
+                if let Some(err) = &framer.terminal_error {
+                    log_stream_error(&info.api_log, &framer, err);
                     return commit_terminal(initial, &es.headers);
                 }
                 let rx = std::mem::replace(&mut es.rx, empty_stream());

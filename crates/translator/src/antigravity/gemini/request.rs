@@ -101,12 +101,11 @@ fn normalize_tools(root: &mut Value, function_name_map: &HashMap<String, String>
                 let name_result = declaration.g("name");
                 let original_name = name_result.str();
                 let mapped_name = util::map_sanitized_function_name(function_name_map, &original_name);
-                if !mapped_name.is_empty() {
-                    if !seen_function_names.insert(mapped_name.clone()) {
+                if !mapped_name.is_empty()
+                    && !seen_function_names.insert(mapped_name.clone()) {
                         declarations_changed = true;
                         continue;
                     }
-                }
                 let mut declaration_json = declaration.value();
                 if !name_result.is_string() || mapped_name != original_name {
                     cpa_json::set(&mut declaration_json, "name", mapped_name);

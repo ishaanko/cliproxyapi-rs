@@ -55,7 +55,7 @@ pub async fn count_tokens(State(st): State<AppState>, info: ReqInfo, body: Bytes
         Err(err) => claude_error_reply(&err, passthrough).into_response(),
         Ok(ok) => {
             let body = ok.body.clone();
-            ok_reply(&info, ok, body).into_response()
+            ok_reply(ok, body).into_response()
         }
     }
 }
@@ -63,9 +63,9 @@ pub async fn count_tokens(State(st): State<AppState>, info: ReqInfo, body: Bytes
 /// Claude sometimes returns gzip without a `Content-Encoding` header; decompress it.
 fn gunzip_if_needed(body: Bytes) -> Bytes {
     if body.len() >= 2 && body[0] == 0x1f && body[1] == 0x8b {
-        let mut decoder = flate2::read::GzDecoder::new(&body[..]);
+        let decoder = flate2::read::GzDecoder::new(&body[..]);
         let mut out = Vec::new();
-        match decoder.read_to_end(&mut out) {
+        match decoder.take(crate::body::MAX_DECODED_BODY).read_to_end(&mut out) {
             Ok(_) => return Bytes::from(out),
             Err(e) => tracing::warn!("failed to decompress gzipped Claude response: {e}"),
         }
@@ -79,13 +79,12 @@ async fn nonstream_messages(st: &AppState, info: &ReqInfo, model: &str, raw: Byt
     let passthrough = pipeline.settings.passthrough_headers;
     let alt = info.alt();
     let model = model.to_string();
-    let info = info.clone();
     with_nonstream_keepalive(interval, async move {
         match pipeline.execute(ExecArgs::new(Format::Claude, &model, raw, &alt)).await {
             Err(err) => claude_error_reply(&err, passthrough),
             Ok(ok) => {
                 let body = gunzip_if_needed(ok.body.clone());
-                ok_reply(&info, ok, body)
+                ok_reply(ok, body)
             }
         }
     })

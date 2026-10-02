@@ -25,6 +25,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_claude_response_to_gemini),
             non_stream: Some(convert_claude_response_to_gemini_non_stream),
             token_count: Some(gemini_token_count),
+            finalize: None,
         },
     );
 }

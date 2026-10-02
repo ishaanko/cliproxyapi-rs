@@ -11,7 +11,7 @@ use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::handlers::{claude, gemini, images, openai, responses};
-use crate::middleware::{access_log, api_key_auth, cors, recover_panic, safe_mode};
+use crate::middleware::{access_log, api_key_auth, cors, recover_panic, safe_mode, trace_header};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
 use crate::state::AppState;
@@ -31,12 +31,6 @@ pub fn build_router_with_management(state: AppState, management: Router) -> Rout
     apply_global_layers(proxy_routes(&state).merge(management), &state)
 }
 
-/// Merges an already-built management router into `router`. Routes merged this way do not get
-/// the global middleware; prefer [`build_router_with_management`].
-pub fn nest_management(router: Router, management: Router) -> Router {
-    router.merge(management)
-}
-
 /// Go middleware order: logger, recovery, request logging, CORS, safe mode (outermost first).
 ///
 /// The stack wraps the whole router service (not each route), so `OPTIONS` short-circuits before
@@ -47,6 +41,7 @@ pub fn apply_global_layers(router: Router, state: &AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), access_log))
         .layer(CatchPanicLayer::custom(recover_panic))
         .layer(from_fn_with_state(state.clone(), crate::reqlog::request_log))
+        .layer(from_fn(trace_header))
         .layer(from_fn(cors))
         .layer(from_fn_with_state(state.clone(), safe_mode))
         .layer(from_fn(head_not_found))
@@ -92,6 +87,57 @@ const ROUTE_TABLE: &[(&str, &str)] = &[
     ("POST", "/v1beta/interactions"),
     ("GET", "/v1beta/models/*action"),
     ("POST", "/v1beta/models/*action"),
+    // Management routes (`cpa_management::router`), mirrored so their trailing-slash redirects match gin.
+    ("GET", "/v8/management/config"),
+    ("PUT", "/v8/management/config"),
+    ("PATCH", "/v8/management/config"),
+    ("DELETE", "/v8/management/config"),
+    ("GET", "/v8/management/config.yaml"),
+    ("PUT", "/v8/management/config.yaml"),
+    ("GET", "/v8/management/config/"),
+    ("PUT", "/v8/management/config/"),
+    ("PATCH", "/v8/management/config/"),
+    ("DELETE", "/v8/management/config/"),
+    ("GET", "/v8/management/config/*path"),
+    ("PUT", "/v8/management/config/*path"),
+    ("PATCH", "/v8/management/config/*path"),
+    ("DELETE", "/v8/management/config/*path"),
+    ("GET", "/v8/management/server/latest-version"),
+    ("POST", "/v8/management/requests/api-call"),
+    ("POST", "/v8/management/routing/cooldown/reset"),
+    ("GET", "/v8/management/routing/model-definitions/:channel"),
+    ("GET", "/v8/management/observability/logs"),
+    ("DELETE", "/v8/management/observability/logs"),
+    ("GET", "/v8/management/observability/logs/errors"),
+    ("GET", "/v8/management/observability/logs/errors/:name"),
+    ("GET", "/v8/management/observability/logs/requests/:id"),
+    ("GET", "/v8/management/observability/usage/api-keys"),
+    ("GET", "/v8/management/observability/usage/queue"),
+    ("GET", "/v8/management/observability/usage/summary"),
+    ("GET", "/v8/management/observability/requests"),
+    ("GET", "/v8/management/credentials"),
+    ("POST", "/v8/management/credentials"),
+    ("DELETE", "/v8/management/credentials"),
+    ("GET", "/v8/management/credentials/models"),
+    ("GET", "/v8/management/credentials/download"),
+    ("PATCH", "/v8/management/credentials/status"),
+    ("PATCH", "/v8/management/credentials/fields"),
+    ("POST", "/v8/management/credentials/refresh"),
+    ("POST", "/v8/management/oauth/import"),
+    ("GET", "/v8/management/oauth/auth-url"),
+    ("GET", "/v8/management/oauth/status"),
+    ("DELETE", "/v8/management/oauth/session"),
+    ("GET", "/v8/management/plugins"),
+    ("DELETE", "/v8/management/plugins/:id"),
+    ("GET", "/v8/management/plugins/store"),
+    ("POST", "/v8/management/plugins/store/:id/install"),
+    ("GET", "/v8/management/plugins/:id/quota"),
+    ("POST", "/v8/management/plugins/:id/quota"),
+    ("DELETE", "/v8/management/plugins/:id/quota"),
+    ("GET", "/v8/management/oauth/callback"),
+    ("POST", "/v8/management/oauth/callback"),
+    ("GET", "/v0/management/oauth-callback"),
+    ("POST", "/v0/management/oauth-callback"),
 ];
 
 fn pattern_matches(pattern: &str, path: &str) -> bool {
@@ -232,9 +278,15 @@ async fn healthz_head() -> Response {
     Reply::new(200).into_response()
 }
 
-/// `GET /`: the embedded UI when present and enabled, else the Go JSON banner.
-async fn root(State(st): State<AppState>) -> Response {
-    if !st.cfg().remote_management.disable_control_panel
+/// `GET /`: the Go JSON banner for API clients. Browsers (`Accept` includes `text/html`) get the
+/// embedded UI when present and enabled; `/management.html` serves it unconditionally.
+async fn root(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let wants_html = headers
+        .get_all(axum::http::header::ACCEPT)
+        .iter()
+        .any(|v| v.to_str().is_ok_and(|v| v.to_ascii_lowercase().contains("text/html")));
+    if wants_html
+        && !st.cfg().remote_management.disable_control_panel
         && let Some(index) = ui::index()
     {
         return index.into_response();
@@ -261,10 +313,10 @@ async fn management_html(State(st): State<AppState>) -> Response {
 
 /// Unmatched routes: embedded UI assets, else an empty 404 (also used for wrong methods).
 async fn fallback(method: Method, uri: axum::http::Uri) -> Response {
-    if method == Method::GET || method == Method::HEAD {
-        if let Some(asset) = ui::asset(uri.path()) {
-            return asset.into_response();
-        }
+    if (method == Method::GET || method == Method::HEAD)
+        && let Some(asset) = ui::asset(uri.path())
+    {
+        return asset.into_response();
     }
     Reply::new(404).into_response()
 }

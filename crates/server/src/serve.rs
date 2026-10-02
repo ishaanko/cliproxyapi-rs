@@ -10,6 +10,8 @@ use axum::Router;
 use axum::serve::{Listener, ListenerExt};
 use cpa_config::Config;
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::server::TlsStream;
@@ -26,10 +28,49 @@ pub fn listen_addr(cfg: &Config) -> String {
     }
 }
 
-/// TLS listener: handshakes inside `accept` (bounded) and yields decrypted streams.
+/// TLS listener: a background task accepts TCP connections and runs each handshake in its own
+/// task (bounded by a timeout), so one slow client cannot stall the others. Finished streams
+/// arrive through a channel that `accept` drains.
 struct TlsListener {
-    inner: TcpListener,
-    acceptor: TlsAcceptor,
+    ready: mpsc::Receiver<(TlsStream<TcpStream>, SocketAddr)>,
+    local_addr: SocketAddr,
+    accept_task: JoinHandle<()>,
+}
+
+impl TlsListener {
+    fn new(inner: TcpListener, acceptor: TlsAcceptor) -> io::Result<Self> {
+        let local_addr = inner.local_addr()?;
+        let (tx, ready) = mpsc::channel(64);
+        let accept_task = tokio::spawn(async move {
+            loop {
+                let (tcp, addr) = match inner.accept().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::debug!("accept error: {e}");
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    }
+                };
+                let (acceptor, tx) = (acceptor.clone(), tx.clone());
+                tokio::spawn(async move {
+                    match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
+                        Ok(Ok(tls)) => {
+                            let _ = tx.send((tls, addr)).await;
+                        }
+                        Ok(Err(e)) => tracing::debug!("tls handshake with {addr} failed: {e}"),
+                        Err(_) => tracing::debug!("tls handshake with {addr} timed out"),
+                    }
+                });
+            }
+        });
+        Ok(Self { ready, local_addr, accept_task })
+    }
+}
+
+impl Drop for TlsListener {
+    fn drop(&mut self) {
+        self.accept_task.abort();
+    }
 }
 
 impl Listener for TlsListener {
@@ -37,25 +78,12 @@ impl Listener for TlsListener {
     type Addr = SocketAddr;
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        loop {
-            let (tcp, addr) = match self.inner.accept().await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::debug!("accept error: {e}");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                }
-            };
-            match tokio::time::timeout(Duration::from_secs(10), self.acceptor.accept(tcp)).await {
-                Ok(Ok(tls)) => return (tls, addr),
-                Ok(Err(e)) => tracing::debug!("tls handshake with {addr} failed: {e}"),
-                Err(_) => tracing::debug!("tls handshake with {addr} timed out"),
-            }
-        }
+        // The sender lives in the accept task, which only ends when this listener is dropped.
+        self.ready.recv().await.expect("tls accept task ended")
     }
 
     fn local_addr(&self) -> io::Result<Self::Addr> {
-        self.inner.local_addr()
+        Ok(self.local_addr)
     }
 }
 
@@ -93,7 +121,7 @@ pub async fn serve(cfg: &Config, app: Router) -> Result<(), String> {
     let listener = TcpListener::bind(&addr)
         .await
         .map_err(|e| format!("failed to start HTTP server: {e}"))?;
-    println!("API server started successfully on: {addr}");
+    println!("API server started successfully on: {}:{}", cfg.host, cfg.port);
     let service = app.into_make_service_with_connect_info::<SocketAddr>();
     if cfg.tls.enable {
         let (cert, key) = (cfg.tls.cert.trim(), cfg.tls.key.trim());
@@ -103,11 +131,9 @@ pub async fn serve(cfg: &Config, app: Router) -> Result<(), String> {
         let tls = load_tls_config(cert, key).map_err(|e| format!("failed to start HTTPS server: {e}"))?;
         tracing::debug!("Starting API server on {addr} with TLS");
         // `tap_io` lets axum derive `ConnectInfo<SocketAddr>` from the wrapped listener's address.
-        let listener = TlsListener {
-            inner: listener,
-            acceptor: TlsAcceptor::from(Arc::new(tls)),
-        }
-        .tap_io(|_| {});
+        let listener = TlsListener::new(listener, TlsAcceptor::from(Arc::new(tls)))
+            .map_err(|e| format!("failed to start HTTPS server: {e}"))?
+            .tap_io(|_| {});
         axum::serve(listener, service)
             .await
             .map_err(|e| format!("failed to start HTTP server: {e}"))

@@ -53,8 +53,9 @@ fn claude_system_text_parts(content: &Res<'_>) -> Vec<String> {
 
 /// Formats structured output settings (Chat Completions `response_format` or Responses
 /// `text.format`) as explicit instructions to inject into Claude's system prompt. Empty for
-/// absent or unsupported formats.
-pub fn build_claude_structured_output_instruction(format: &Res<'_>) -> String {
+/// absent or unsupported formats. `schema_raw` is the schema text as sent (Go: `schema.Raw`);
+/// without it the schema is serialized compactly.
+pub fn build_claude_structured_output_instruction(format: &Res<'_>, schema_raw: Option<&str>) -> String {
     if !format.exists() {
         return String::new();
     }
@@ -94,7 +95,7 @@ pub fn build_claude_structured_output_instruction(format: &Res<'_>) -> String {
                 out.push('\n');
             }
             out.push_str("JSON Schema:\n");
-            out.push_str(&schema.raw());
+            out.push_str(&schema_raw.map_or_else(|| schema.raw(), str::to_string));
             out.push_str("\nDo not include any explanations, markdown code blocks (such as ```json), or any text outside of the JSON object.");
             out
         }

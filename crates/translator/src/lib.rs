@@ -20,6 +20,6 @@ pub mod openai;
 
 pub use cpa_core::format::Format;
 pub use registry::{
-    global, translate_non_stream, translate_request, translate_request_envelope, translate_stream,
+    global, translate_finalize, translate_non_stream, translate_request, translate_request_envelope, translate_stream,
     translate_token_count, Ctx, Param, Registry, RequestEnvelope,
 };

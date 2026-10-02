@@ -9,7 +9,7 @@ use cpa_core::util::{go_json_sorted, sanitize_claude_function_name, walk, GoJson
 use cpa_json::{json, Res, Value, J};
 
 use crate::common::{
-    derive_claude_user_id, is_gemini_thought_part, set_raw_array_items, ClaudeMessageAccumulator,
+    derive_claude_user_id, is_gemini_thought_part, join_raw_array, ClaudeMessageAccumulator,
 };
 
 /// Converts a Gemini `generateContent` request into a Claude Messages request. Tool call ids
@@ -24,7 +24,7 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
     let mut accumulator = ClaudeMessageAccumulator::new(root.g("contents.#").int().max(0) as usize + 1);
 
     // FIFO of generated tool ids waiting for their functionResponse.
-    let mut pending_tool_ids: Vec<String> = Vec::new();
+    let mut pending_tool_ids: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     let mut tool_call_counter = 0u64;
 
     cpa_json::set(&mut out, "model", model_name);
@@ -115,7 +115,7 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
                             tool_call_counter += 1;
                             tool_id = format!("toolu_gemini_{tool_call_counter:016}");
                         }
-                        pending_tool_ids.push(tool_id.clone());
+                        pending_tool_ids.push_back(tool_id.clone());
                         cpa_json::set(&mut tool_use, "id", tool_id);
                         let name = fc.g("name");
                         if name.exists() {
@@ -139,8 +139,8 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
                                 pending_tool_ids.remove(pos);
                             }
                             custom_id
-                        } else if !pending_tool_ids.is_empty() {
-                            pending_tool_ids.remove(0)
+                        } else if let Some(front) = pending_tool_ids.pop_front() {
+                            front
                         } else {
                             tool_call_counter += 1;
                             format!("toolu_gemini_{tool_call_counter:016}")
@@ -169,11 +169,10 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
                     }
 
                     let file_data = first_existing(&part, "fileData", "file_data");
-                    if file_data.exists() {
-                        if let Some(content_part) = content_part_from_file_data(&file_data) {
+                    if file_data.exists()
+                        && let Some(content_part) = content_part_from_file_data(&file_data) {
                             content_items.push(content_part);
                         }
-                    }
                 }
             }
 
@@ -184,7 +183,9 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
         }
     }
     let messages = accumulator.messages();
-    let mut out = cpa_json::parse(&set_raw_array_items(&cpa_json::to_vec(&out), "messages", &messages));
+    if !messages.is_empty() {
+        cpa_json::set(&mut out, "messages", cpa_json::parse(&join_raw_array(&messages)));
+    }
 
     let tools = root.g("tools");
     if tools.is_array() {

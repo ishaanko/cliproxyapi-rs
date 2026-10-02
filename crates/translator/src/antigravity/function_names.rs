@@ -1,5 +1,5 @@
-//! Function name rewriting shared by the Gemini and Interactions request translators
-//! (Go duplicates it in both packages).
+//! Function name rewriting shared by the Gemini and Interactions translators (Go duplicates it in
+//! each package): requests map names to the sanitized form, responses restore the originals.
 
 use std::collections::HashMap;
 
@@ -10,7 +10,7 @@ use cpa_json::{J, Value};
 /// through the sanitized function name map (non-string names are coerced to strings). Edits in
 /// place, equivalent to Go's rebuild-on-demand of the contents array.
 fn rewrite_part_names(part: &mut Value, function_name_map: &HashMap<String, String>, fields: &[&str]) {
-    for field in fields.iter().copied() {
+    for field in fields {
         let path = format!("{field}.name");
         let name_result = part.g(&path);
         let name = name_result.str();
@@ -58,7 +58,7 @@ pub fn rewrite_function_names(
         let mut edits: Vec<(String, String)> = Vec::new();
         for (content_index, content) in contents.array().iter().enumerate() {
             for (part_index, part) in content.g("parts").array().iter().enumerate() {
-                for field in fields.iter().copied() {
+                for field in fields {
                     let name_result = part.g(&format!("{field}.name"));
                     let name = name_result.str();
                     if name.is_empty() {
@@ -106,3 +106,34 @@ pub fn rewrite_function_names(
     }
 }
 
+
+/// Restores original function names in a response chunk: every `<field>.name` of
+/// `candidates[].content.parts[]` goes back through the sanitized -> original name map
+/// (non-string names are coerced to strings). Returns whether anything was rewritten.
+pub fn restore_response_function_names(root: &mut Value, name_map: &HashMap<String, String>, fields: &[&str]) -> bool {
+    if name_map.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    let candidates = root.g("candidates").array().len();
+    for candidate_index in 0..candidates {
+        let parts = root.g(&format!("candidates.{candidate_index}.content.parts")).array().len();
+        for part_index in 0..parts {
+            for field in fields {
+                let path = format!("candidates.{candidate_index}.content.parts.{part_index}.{field}.name");
+                let name_result = root.g(&path);
+                let name = name_result.str();
+                if name.is_empty() {
+                    continue;
+                }
+                let restored = util::restore_sanitized_tool_name(name_map, &name);
+                if name_result.is_string() && restored == name {
+                    continue;
+                }
+                cpa_json::set(root, &path, restored);
+                changed = true;
+            }
+        }
+    }
+    changed
+}

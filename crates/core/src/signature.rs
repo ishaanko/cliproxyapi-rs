@@ -15,7 +15,7 @@
 
 pub mod protowire;
 
-mod b64;
+pub mod b64;
 mod claude;
 mod claude_sanitize;
 mod gemini;

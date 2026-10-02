@@ -21,6 +21,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(passthrough_gemini_response_stream),
             non_stream: Some(passthrough_gemini_response_non_stream),
             token_count: Some(gemini_token_count),
+            finalize: None,
         },
     );
 }

@@ -1,16 +1,17 @@
 //! Gemini response -> single OpenAI Responses object (Go:
 //! gemini_openai-responses_response.go, non-streaming half).
 
+use crate::common::{parse_create_time, unix_nano_now, unix_now};
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::util::{restore_sanitized_tool_name, responses_tool_reverse_identity_map, sanitized_tool_name_map, unwrap_responses_custom_tool_input, ResponsesToolIdentity};
 use cpa_json::{json, Value, J};
 
-use super::lenient::{gjson_valid, parse_gjson};
+use super::lenient::gjson_valid;
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::response::{
-    echo_request_fields, next_func_call_id_counter, next_response_id_counter, parse_create_time, pick_request_json, set_usage,
-    unix_nanos_now, unix_now, unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
+    echo_request_fields, next_func_call_id_counter, next_response_id_counter, pick_request_json, set_usage,
+    unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
 };
 use super::signature_carrier::{encode_gemini_responses_carrier, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_STANDALONE, CARRIER_TEXT};
 use super::web_search::{
@@ -120,7 +121,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     param: &mut Param,
 ) -> Option<Vec<u8>> {
     let valid_json = gjson_valid(raw_json);
-    let (root, wrapped) = unwrap_gemini_response_root(parse_gjson(raw_json).unwrap_or(Value::Null));
+    let (root, wrapped) = unwrap_gemini_response_root(cpa_json::parse(raw_json));
     let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw_json, "response").map(str::as_bytes).unwrap_or(raw_json) } else { raw_json };
     let req_json = pick_request_json(original_request_raw_json, request_raw_json);
     let req_value: Option<Value> = req_json.map(cpa_json::parse);
@@ -133,7 +134,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     // id: prefer provider responseId, otherwise synthesize; normalized to resp_ prefix.
     let mut id = root.g("responseId").str();
     if id.is_empty() {
-        id = format!("resp_{:x}_{}", unix_nanos_now(), next_response_id_counter());
+        id = format!("resp_{:x}_{}", unix_nano_now(), next_response_id_counter());
     }
     if !id.starts_with("resp_") {
         id = format!("resp_{id}");
@@ -142,11 +143,10 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
 
     let mut created_at = unix_now();
     let create_time = root.g("createTime");
-    if create_time.exists() {
-        if let Some(t) = parse_create_time(&create_time.str()) {
+    if create_time.exists()
+        && let Some(t) = parse_create_time(&create_time.str()) {
             created_at = t;
         }
-    }
     cpa_json::set(&mut resp, "created_at", created_at);
 
     // Echo request fields when present; the model falls back to the response modelVersion.
@@ -192,6 +192,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
 
     let parts = root.g("candidates.0.content.parts");
     if parts.exists() && parts.is_array() {
+        let part_raws = cpa_json::raw_children(root_raw, "candidates.0.content.parts");
         for (key, p) in parts.array().iter().enumerate() {
             let mut part_idx = key as i64;
             let p_idx = p.g("partIndex");
@@ -277,7 +278,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                 // Raw argument text as sent (gjson `Raw`): whitespace and duplicate keys preserved.
                 let args = fc.g("args");
                 let args_str = if args.exists() {
-                    cpa_json::raw_at(root_raw, &format!("candidates.0.content.parts.{key}.functionCall.args")).map(str::to_string).unwrap_or_else(|| args.raw())
+                    crate::common::raw_in(part_raws.get(key), "functionCall.args").map(str::to_string).unwrap_or_else(|| args.raw())
                 } else {
                     String::new()
                 };
@@ -307,22 +308,21 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                 let name = identity.name.clone();
                 let namespace = identity.namespace.clone();
                 let is_custom = identity.custom;
-                if identity.apply_patch {
-                    if let Some(patch_call) = evidence_state.entries[evidence_idx].patch_call.as_mut() {
+                if identity.apply_patch
+                    && let Some(patch_call) = evidence_state.entries[evidence_idx].patch_call.as_mut() {
                         if let Err(err) = patch_call.finish_arguments(&args_str) {
                             tool_input_error = Some(err);
                             break;
                         }
                         continue;
                     }
-                }
 
-                let mut call_id = format!("call_{:x}_{}", unix_nanos_now(), next_func_call_id_counter());
+                let mut call_id = format!("call_{:x}_{}", unix_nano_now(), next_func_call_id_counter());
                 if identity.apply_patch && !evidence_upstream_id.is_empty() {
                     call_id = evidence_upstream_id;
                 }
-                let item_json: Value;
-                if is_custom {
+                
+                let item_json: Value = if is_custom {
                     let mut input_str = unwrap_responses_custom_tool_input(&args_str);
                     if identity.apply_patch {
                         let mut patch_call = ApplyPatchCallState::default();
@@ -337,18 +337,18 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                         }
                         evidence_state.entries[evidence_idx].patch_call = Some(patch_call);
                     }
-                    item_json = with_tool_identity(
+                    with_tool_identity(
                         json!({"id": format!("ctc_{call_id}"), "type": "custom_tool_call", "status": "completed", "input": input_str, "call_id": call_id, "name": ""}),
                         &name,
                         &namespace,
-                    );
+                    )
                 } else {
-                    item_json = with_tool_identity(
+                    with_tool_identity(
                         json!({"id": format!("fc_{call_id}"), "type": "function_call", "status": "completed", "arguments": args_str, "call_id": call_id, "name": ""}),
                         &name,
                         &namespace,
-                    );
-                }
+                    )
+                };
                 let function_index = agg.function_outputs.len();
                 agg.function_outputs.push(FunctionOutput { item: item_json, signature });
                 agg.output_order.push((OutputKind::Function, function_index));
@@ -399,11 +399,10 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     if has_grounding {
         let queries = extract_grounding_queries(&grounding_metadata);
         let mut query = queries.first().cloned().unwrap_or_default();
-        if query.is_empty() {
-            if let Some(req_value) = &req_value {
+        if query.is_empty()
+            && let Some(req_value) = &req_value {
                 query = extract_responses_web_search_query(unwrap_request_root(req_value));
             }
-        }
         let sources = extract_grounding_sources(&grounding_metadata);
         let ws_id = format!("ws_{rid}");
         ws_item = Some(build_responses_web_search_call_item(&ws_id, &query, &queries, &sources));
@@ -464,11 +463,10 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
         }
     }
 
-    if has_grounding && !ws_appended {
-        if let Some(ws) = ws_item {
+    if has_grounding && !ws_appended
+        && let Some(ws) = ws_item {
             outputs.push(ws);
         }
-    }
 
     if !outputs.is_empty() {
         cpa_json::set(&mut resp, "output", Value::Array(outputs));
