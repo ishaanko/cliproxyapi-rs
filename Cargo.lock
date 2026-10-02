@@ -730,6 +730,7 @@ dependencies = [
  "cpa-auth",
  "cpa-config",
  "cpa-core",
+ "cpa-executors",
  "cpa-json",
  "cpa-management",
  "cpa-runtime",

@@ -8,6 +8,11 @@ use std::sync::Arc;
 
 use cpa_config::Config;
 use cpa_runtime::executor::DynExecutor;
+use tokio::sync::watch;
+
+/// Live config handle shared by executors: read `cfg.borrow().clone()` per request so hot
+/// reloads apply without re-registering executors.
+pub type ConfigRx = watch::Receiver<Arc<Config>>;
 
 pub mod antigravity;
 pub mod claude;
@@ -23,8 +28,9 @@ pub mod xai;
 /// Builds every provider executor for registration with the conductor.
 ///
 /// Each provider agent adds exactly one line below (uncomment its constructor, which takes the
-/// shared config and returns a `DynExecutor`). Keep one line per provider so merges stay trivial.
-pub fn all_executors(cfg: Arc<Config>) -> Vec<DynExecutor> {
+/// live config handle and returns a `DynExecutor`). Keep one line per provider so merges stay
+/// trivial.
+pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     let _ = &cfg;
     #[allow(unused_mut)]
     let mut executors: Vec<DynExecutor> = Vec::new();
