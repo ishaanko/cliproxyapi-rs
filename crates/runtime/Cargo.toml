@@ -1,0 +1,26 @@
+[package]
+name = "cpa-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Execution core: the Executor contract (Go sdk/cliproxy/executor), the auth manager /
+# conductor (sdk/cliproxy/auth), service wiring and usage accounting.
+[dependencies]
+cpa-json.workspace = true
+cpa-core = { path = "../core" }
+cpa-translator = { path = "../translator" }
+cpa-config = { path = "../config" }
+cpa-auth = { path = "../auth" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+async-trait = "0.1"
+http = "1"
+futures-core = "0.3"
