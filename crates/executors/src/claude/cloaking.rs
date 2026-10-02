@@ -682,8 +682,10 @@ pub fn capture_claude_code_system_placement(before: &[u8], after: &[u8], cloaked
         return ClaudeCodeSystemPlacementState::default();
     }
     let after_root = cpa_json::parse(after);
-    let before_messages = before_root.g("messages").array();
-    let after_messages = after_root.g("messages").array();
+    let before_res = before_root.g("messages");
+    let after_res = after_root.g("messages");
+    let before_messages = before_res.array();
+    let after_messages = after_res.array();
     if after_messages.len() != before_messages.len() + texts.len() {
         return ClaudeCodeSystemPlacementState::default();
     }
@@ -719,7 +721,8 @@ pub fn reconcile_claude_code_system_placement_after_payload(
     if state.inserted_raw.is_empty() || !claude_uses_legacy_system_reminder(&root) {
         return payload.to_vec();
     }
-    let messages = root.g("messages").array();
+    let messages_res = root.g("messages");
+    let messages = messages_res.array();
     if state.insert_at + state.inserted_raw.len() > messages.len() {
         return payload.to_vec();
     }
@@ -735,6 +738,7 @@ pub fn reconcile_claude_code_system_placement_after_payload(
         .map(|(_, m)| m.value())
         .collect();
     drop(messages);
+    drop(messages_res);
     cpa_json::set(&mut root, "messages", Value::Array(kept));
     prepend_claude_system_reminders_to_first_user_message(&cpa_json::to_vec(&root), &state.texts)
 }
@@ -1134,7 +1138,7 @@ pub fn apply_cloaking_internal(
 
     if obfuscate_sensitive_words_flag && !settings.sensitive_words.is_empty() {
         let matcher = build_sensitive_word_matcher(&settings.sensitive_words);
-        payload = obfuscate_sensitive_words(&payload, &matcher);
+        payload = obfuscate_sensitive_words(&payload, matcher.as_ref());
     }
     Ok((payload, true))
 }

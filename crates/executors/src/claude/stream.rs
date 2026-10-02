@@ -15,8 +15,8 @@ use super::thinking_replay::{clear_claude_thinking_replay_content, should_clear_
 use super::tool_remap::restore_claude_oauth_tool_names_from_stream_line;
 use super::ClaudeExecutor;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error, end_apply_patch_stream,
-    initialize_apply_patch_stream, record_apply_patch_stream_failure, stop_apply_patch_stream,
+    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error, finalize_apply_patch_stream,
+    initialize_apply_patch_stream, record_apply_patch_stream_failure,
 };
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
@@ -44,7 +44,7 @@ impl ClaudeExecutor {
         let resp = match self.send_upstream(cfg, auth, &opts, &prepared).await {
             Ok(resp) => resp,
             Err(err) => {
-                if replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(&err) {
+                if replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(Some(&err)) {
                     clear_claude_thinking_replay_content(&replay_scope);
                 }
                 return Err(err);
@@ -62,7 +62,7 @@ impl ClaudeExecutor {
             if let Err(err) = outcome {
                 let err = wrap_claude_fast_request_error(prepared.fast_request, status, err);
                 reporter.publish_buffer_failure(&usage, &err);
-                if prepared.replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(&err) {
+                if prepared.replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(Some(&err)) {
                     clear_claude_thinking_replay_content(&prepared.replay_scope);
                 }
                 let _ = tx.send(Err(err)).await;
@@ -77,7 +77,7 @@ impl ClaudeExecutor {
         let mut result = StreamResult::new(resp_headers, rx);
         result.usage = Some(usage_rx);
         if replay_scope.valid() {
-            result = wrap_claude_thinking_replay_stream(result, &replay_scope);
+            result = wrap_claude_thinking_replay_stream(result, replay_scope.clone());
         }
         Ok(result)
     }
@@ -101,9 +101,10 @@ async fn run_stream(
     let mut lines = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
     let mut upstream_message_id = String::new();
     let mut upstream_completed = false;
-    let restore_error = |err: ExecError| {
-        ExecError::new(err.status, format!("restore Claude OAuth tool name from streaming response: {}", err.message))
-            .with_code(cpa_runtime::executor::ErrorCode::RequestScoped)
+    let restore_error = |err: super::tool_remap::ClaudeMcpAliasRestoreError| {
+        let mut err = err.into_exec_error();
+        err.message = format!("restore Claude OAuth tool name from streaming response: {}", err.message);
+        err
     };
 
     // The Claude-format client receives upstream events verbatim, one chunk per event.
@@ -184,14 +185,26 @@ async fn run_stream(
                 return Ok(());
             }
         }
-        if stop_apply_patch_stream(&param, reporter, tx, gateway_err()).await {
+        // A retained tool-input failure ends the stream after its one translated frame. (Inlined
+        // from helps::apply_patch::stop_apply_patch_stream: its `&Param` borrow is not `Send`.)
+        if record_apply_patch_stream_failure(&param, reporter, &gateway_err()) {
+            let _ = tx.send(Err(gateway_err())).await;
             return Ok(());
         }
         if upstream_completed {
             break;
         }
     }
-    if end_apply_patch_stream(&mut param, reporter, tx, gateway_err()).await {
+    // EOF check before any synthetic success: finalize frames, then the gateway error if failed.
+    let finalize_chunks = finalize_apply_patch_stream(&mut param);
+    let failed = record_apply_patch_stream_failure(&param, reporter, &gateway_err());
+    for chunk in finalize_chunks {
+        if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
+            return Ok(());
+        }
+    }
+    if failed {
+        let _ = tx.send(Err(gateway_err())).await;
         return Ok(());
     }
     if !upstream_completed && let Some(err) = scan_error {

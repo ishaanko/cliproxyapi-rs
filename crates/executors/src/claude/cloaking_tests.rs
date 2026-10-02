@@ -11,6 +11,11 @@ use super::policy::resolve_claude_wire_policy;
 
 const DATE: &str = "2026-08-01";
 
+/// Owned elements of the array at `path`.
+fn arr(v: &Value, path: &str) -> Vec<Value> {
+    v.g(path).array().iter().map(|r| r.value()).collect()
+}
+
 fn check(payload: &str, strict: bool) -> Value {
     let out = check_system_instructions_with_signing_mode_at(
         payload.as_bytes(),
@@ -28,21 +33,21 @@ fn texts(v: &Value, path: &str) -> Vec<String> {
     v.g(path).array().iter().map(|b| b.g("text").str()).collect()
 }
 
-fn assert_date_block(block: &cpa_json::Res<'_>) {
+fn assert_date_block(block: &Value) {
     assert_eq!(block.g("text").str(), claude_code_current_date_reminder(DATE));
     assert!(!block.g("cache_control").exists());
 }
 
-fn assert_ephemeral_user_text(block: &cpa_json::Res<'_>, text: &str) {
+fn assert_ephemeral_user_text(block: &Value, text: &str) {
     assert_eq!(block.g("text").str(), text);
     assert_eq!(block.g("cache_control.type").str(), "ephemeral");
     assert!(!block.g("cache_control.ttl").exists());
 }
 
 fn assert_mid_system_message(out: &Value, index: usize, text: &str) {
-    let msg = out.g(&format!("messages.{index}"));
+    let msg = out.g(&format!("messages.{index}")).value();
     assert_eq!(msg.g("role").str(), "system", "{out}");
-    let content = msg.g("content").array();
+    let content = arr(&msg, "content");
     assert_eq!(content.len(), 1);
     assert_eq!(content[0].g("text").str(), text);
     assert_eq!(content[0].g("cache_control.type").str(), "ephemeral");
@@ -87,7 +92,7 @@ fn current_date_injection_is_idempotent_and_aligns_first_user_cache() {
     assert!(!String::from_utf8_lossy(&first).contains("\\u003csystem-reminder"));
     assert_eq!(first, inject_claude_code_current_date(&first, DATE));
     let v = cpa_json::parse(&first);
-    let content = v.g("messages.0.content").array();
+    let content = arr(&v, "messages.0.content");
     assert_eq!(content.len(), 2);
     assert_date_block(&content[0]);
     assert_ephemeral_user_text(&content[1], "hello");
@@ -98,7 +103,7 @@ fn current_date_moves_existing_copy_to_first_block() {
     let date_block = build_text_block(&claude_code_current_date_reminder(DATE), false);
     let payload = format!(r#"{{"messages":[{{"role":"user","content":[{{"type":"text","text":"hello"}},{date_block}]}}]}}"#);
     let out = cpa_json::parse(&inject_claude_code_current_date(payload.as_bytes(), DATE));
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 2);
     assert_date_block(&content[0]);
     assert_ephemeral_user_text(&content[1], "hello");
@@ -112,7 +117,7 @@ fn current_date_precedes_existing_reminder() {
         build_text_block(reminder, false)
     );
     let out = cpa_json::parse(&inject_claude_code_current_date(payload.as_bytes(), DATE));
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 3);
     assert_date_block(&content[0]);
     assert_eq!(content[1].g("text").str(), reminder);
@@ -125,7 +130,7 @@ fn current_date_follows_leading_tool_results() {
     let first = inject_claude_code_current_date(payload.as_bytes(), DATE);
     assert_eq!(first, inject_claude_code_current_date(&first, DATE));
     let v = cpa_json::parse(&first);
-    let content = v.g("messages.1.content").array();
+    let content = arr(&v, "messages.1.content");
     assert_eq!(content.len(), 3);
     assert_eq!(content[0].g("type").str(), "tool_result");
     assert_eq!(content[0].g("tool_use_id").str(), "toolu_1");
@@ -134,7 +139,7 @@ fn current_date_follows_leading_tool_results() {
 
     let all = r#"{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{}},{"type":"tool_use","id":"toolu_2","name":"Read","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"ok"},{"type":"tool_result","tool_use_id":"toolu_2","content":"ok"}]}]}"#;
     let v = cpa_json::parse(&inject_claude_code_current_date(all.as_bytes(), DATE));
-    let content = v.g("messages.1.content").array();
+    let content = arr(&v, "messages.1.content");
     assert_eq!(content.len(), 3);
     assert_eq!(content[0].g("tool_use_id").str(), "toolu_1");
     assert_eq!(content[1].g("tool_use_id").str(), "toolu_2");
@@ -147,13 +152,13 @@ fn string_system_becomes_mid_conversation_system_message() {
         r#"{"model":"claude-opus-5","system":"You are a helpful assistant.","messages":[{"role":"user","content":"hi"}]}"#,
         false,
     );
-    let blocks = out.g("system").array();
+    let blocks = arr(&out, "system");
     assert_eq!(blocks.len(), 2);
     assert!(blocks[0].g("text").str().contains("cc_entrypoint=cli;"));
     assert_eq!(blocks[1].g("text").str(), CLAUDE_CODE_CLI_IDENTITY);
     assert_eq!(blocks[1].g("cache_control.type").str(), "ephemeral");
     assert!(!blocks[1].g("cache_control.ttl").exists());
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 2);
     assert_date_block(&content[0]);
     assert_ephemeral_user_text(&content[1], "hi");
@@ -169,7 +174,7 @@ fn future_model_defaults_to_mid_system_and_legacy_uses_reminders() {
     let out = check(r#"{"model":"claude-opus-4-6","system":"legacy instructions","messages":[{"role":"user","content":"hi"}]}"#, false);
     assert_eq!(out.g("system.#").int(), 2);
     assert_eq!(out.g("messages.#").int(), 1);
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 3);
     assert_date_block(&content[0]);
     assert_eq!(content[1].g("text").str(), claude_caller_system_reminder("legacy instructions"));
@@ -181,7 +186,7 @@ fn future_model_defaults_to_mid_system_and_legacy_uses_reminders() {
 fn caller_system_blocks_stay_separate() {
     let system = r#""system":[{"type":"text","text":"first guidance","cache_control":{"type":"ephemeral","ttl":"1h"}},{"type":"text","text":"second guidance"}],"messages":[{"role":"user","content":"hi"}]}"#;
     let out = check(&format!(r#"{{"model":"claude-opus-4-6",{system}"#), false);
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 4);
     assert_date_block(&content[0]);
     for (idx, want) in ["first guidance", "second guidance"].iter().enumerate() {
@@ -200,7 +205,7 @@ fn caller_system_blocks_stay_separate() {
 fn strict_mode_and_empty_system_add_only_injected_blocks() {
     let out = check(r#"{"system":"You are a helpful assistant.","messages":[{"role":"user","content":"hi"}]}"#, true);
     assert_eq!(out.g("system").array().len(), 2);
-    let content = out.g("messages.0.content").array();
+    let content = arr(&out, "messages.0.content");
     assert_eq!(content.len(), 2);
     assert_date_block(&content[0]);
     assert_ephemeral_user_text(&content[1], "hi");

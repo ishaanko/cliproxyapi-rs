@@ -23,10 +23,10 @@ use super::helps::input_tokens::count_claude_input_tokens;
 use super::helps::upstream::is_anthropic_upstream_base;
 use super::policy::{resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
 use super::request::{
-    ClaudeHeaderInput, CLAUDE_TOKEN_COUNTING_BETA, apply_claude_headers_with_native_profile,
+    ClaudeHeaderInput, CLAUDE_TOKEN_COUNTING_BETA, set_string_if_different_bytes, apply_claude_headers_with_native_profile,
     classify_claude_upstream_error_with_cooling, claude_creds,
 };
-use super::rebuild_mid_system_message_enabled;
+use super::signing::rebuild_mid_system_message_enabled;
 use super::tool_remap::{prepare_claude_oauth_tool_names_for_upstream, resolve_claude_mcp_alias_options};
 use super::{ClaudeExecutor, DEFAULT_BASE_URL};
 use crate::helps::status::status_err;
@@ -179,7 +179,7 @@ impl ClaudeExecutor {
             }
             body = relocate_claude_system_prompt_for_count_tokens(&body, settings.strict_mode);
             if !settings.sensitive_words.is_empty() {
-                body = obfuscate_sensitive_words(&body, &build_sensitive_word_matcher(&settings.sensitive_words));
+                body = obfuscate_sensitive_words(&body, build_sensitive_word_matcher(&settings.sensitive_words).as_ref());
             }
         }
 

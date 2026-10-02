@@ -6,7 +6,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::SystemTime;
 
 use cpa_auth::Auth;
 use cpa_auth::types::AUTH_KIND_API_KEY;
@@ -565,7 +564,7 @@ pub fn classify_claude_upstream_error_with_cooling(
 ) -> ExecError {
     let mut err = status_err(status_code, String::from_utf8_lossy(body).into_owned());
     if status_code == 429 || (400..600).contains(&status_code) {
-        err.retry_after = parse_claude_rate_limit_reset(headers, SystemTime::now());
+        err.retry_after = parse_claude_rate_limit_reset(headers, chrono::Utc::now());
     }
     if status_code == 429 {
         if !model_level_cooling && claude_headers_indicate_unified_rate_limit_rejection(headers) {
@@ -811,7 +810,7 @@ pub fn apply_claude_headers_with_native_profile(
     let apply_cli_fingerprint = fp.profile_claude_code_cli || wire_policy.cloak;
     let preserve_caller_fingerprint = !apply_cli_fingerprint && !confirmed;
     let use_oauth_betas = fp.use_oauth_betas;
-    let is_anthropic_base = is_anthropic_upstream_url(input.url);
+    let is_anthropic_base = is_anthropic_upstream_url(Some(input.url));
     if !api_key.trim().is_empty() {
         if is_anthropic_base && use_api_key {
             del_header(headers, "authorization");

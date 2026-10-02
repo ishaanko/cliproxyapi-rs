@@ -7,6 +7,7 @@ use bytes::Bytes;
 use cpa_auth::Auth;
 use cpa_config::Config;
 use cpa_json::J;
+use serde_json::Value;
 use cpa_runtime::executor::{Executor, Options, Request};
 use cpa_translator::Format;
 use http::HeaderMap;
@@ -14,6 +15,11 @@ use parking_lot::Mutex;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
+
+/// Owned elements of the array at `path`.
+fn arr(v: &Value, path: &str) -> Vec<Value> {
+    v.g(path).array().iter().map(|r| r.value()).collect()
+}
 
 /// One request captured by the mock upstream.
 #[derive(Debug, Clone)]
@@ -143,7 +149,9 @@ async fn api_key_passthrough_forwards_caller_body_to_custom_base_url() {
     assert_eq!(body.g("model").str(), "claude-opus-4-6");
     assert!(!body.g("system").exists());
     assert_eq!(body.g("stream").bool(), false);
-    assert_eq!(body.g("messages.0.content").str(), "hi");
+    // CPA still owns cache_control placement for non-native callers (latest user block).
+    assert_eq!(body.g("messages.0.content.0.text").str(), "hi");
+    assert_eq!(body.g("messages.0.content.0.cache_control.type").str(), "ephemeral");
     // Response is the upstream message and carries executor-measured usage.
     assert_eq!(cpa_json::parse(&resp.payload).g("id").str(), "msg_1");
     assert_eq!(resp.metadata["usage"]["input_tokens"], 3);
@@ -174,7 +182,7 @@ async fn oauth_request_is_cloaked_and_signed() {
     assert_eq!(body.g("system.1.text").str(), "You are Claude Code, Anthropic's official CLI for Claude.");
     // The caller's system prompt moved into a mid-conversation system message (legacy model:
     // opus-4-6 uses the reminder path instead).
-    let first_user = body.g("messages.0.content").array();
+    let first_user = arr(&body, "messages.0.content");
     assert!(first_user.iter().any(|b| b.g("text").str().contains("be brief")), "{body}");
     // Identity: metadata.user_id is a JSON string with the credential device and account.
     let user_id = cpa_json::parse(body.g("metadata.user_id").str().as_bytes());

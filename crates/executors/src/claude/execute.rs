@@ -15,22 +15,53 @@ use cpa_translator::{Ctx, Format, Param, RequestEnvelope};
 use http::HeaderMap;
 use parking_lot::Mutex;
 
-use super::body::*;
-use super::cache_control::*;
-use super::cloaking::*;
-use super::diagnostics::*;
-use super::fast_error::*;
-use super::helps::client_detection::{ClaudeCodeRequestDetection, detect_claude_code_request};
+use super::body::{
+    extract_and_remove_betas, disable_thinking_if_tool_choice_forced, normalize_claude_sampling_for_upstream, rebuild_mid_system_messages_to_top_level,
+    sanitize_claude_web_search_domains,
+};
+use super::cache_control::{
+    CLAUDE_CACHE_CONTROL_TTL_1H, enforce_cache_control_limit, ensure_cache_control, ensure_model_max_tokens, normalize_cache_control_ttl,
+    should_ensure_cache_control, strip_claude_cache_control_ttl, upgrade_claude_cache_control_ttl,
+};
+use super::cloaking::{
+    ClaudeCodeContextManagementState, apply_cloaking_internal, capture_claude_code_fable_state, capture_claude_code_system_placement,
+    claude_cch_fallback_billing_header, detect_incoming_claude_code_request, inject_claude_code_context_management,
+    reconcile_claude_code_context_management, reconcile_claude_code_fable_model_after_payload,
+    reconcile_claude_code_system_placement_after_payload, resolve_claude_continuity_tags, validate_claude_mid_system_message_model,
+};
+use super::diagnostics::{
+    ClaudeDiagnosticsRequestState, claude_message_id_from_response, claude_message_id_from_sse, commit_claude_continuity_state,
+    inject_claude_diagnostics, inject_claude_diagnostics_with_state,
+};
+use super::fast_error::{
+    claude_request_is_fast, new_claude_fast_direct_response_error, wrap_claude_fast_request_error,
+};
+use super::helps::client_detection::ClaudeCodeRequestDetection;
 use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
-use super::helps::credential_identity::*;
-use super::helps::diagnostics::*;
+use super::helps::credential_identity::{apply_claude_credential_metadata, claude_agent_session_uuid_for_request, claude_request_has_execution_metadata};
+use super::helps::diagnostics::{
+    claude_subagent_requests_1h, extract_claude_billing_tags, inject_claude_billing_tags, is_claude_probe_or_helper_request,
+    is_claude_subagent_request, strip_claude_billing_tags,
+};
 use super::helps::upstream::is_anthropic_upstream_base;
 use super::helps::{ClaudeContinuityContext, ClaudeCtx};
-use super::policy::*;
-use super::request::*;
-use super::signing::*;
-use super::thinking_replay::*;
-use super::tool_remap::*;
+use super::policy::{ClaudeFingerprintPolicy, resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
+use super::request::{
+    ClaudeHeaderInput, apply_claude_headers_with_native_profile, claude_creds, classify_claude_upstream_error_with_cooling, header_value,
+    set_bool_if_different_bytes, set_string_if_different_bytes,
+};
+use super::signing::{
+    ClaudeCchUpstreamKind, claude_body_needs_billing_fallback, claude_cch_signing_enabled, finalize_anthropic_messages_body_cch,
+    is_kimi_messages_upstream, rebuild_mid_system_message_enabled, strip_default_kimi_claude_code_attribution,
+};
+use super::thinking_replay::{
+    ClaudeThinkingReplayScope, cache_claude_thinking_replay_response, claude_thinking_replay_enabled,
+    clear_claude_thinking_replay_content, prepare_claude_thinking_replay_request, should_clear_kimi_thinking_replay_after_error,
+};
+use super::tool_remap::{
+    prepare_claude_oauth_tool_names_for_upstream, resolve_claude_mcp_alias_options, restore_claude_oauth_tool_names_from_response,
+    restore_claude_oauth_tool_names_from_stream_line,
+};
 use super::{ClaudeExecutor, DEFAULT_BASE_URL};
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE};
 use crate::helps::payload::{PayloadRequest, apply_payload_config_tracked, payload_request_path, payload_requested_model};
@@ -160,6 +191,37 @@ impl ClaudeExecutor {
         stream: bool,
         reporter: &UsageReporter,
     ) -> Result<Prepared, ExecError> {
+        let mut req = req;
+        let mut replay_scope = ClaudeThinkingReplayScope::default();
+        if claude_thinking_replay_enabled(auth, &req, opts) {
+            let replay_ctx = ClaudeCtx { incoming_headers: Some(opts.headers.clone()), ..Default::default() };
+            let caller_api_key = opts.metadata.get("client_api_key").and_then(|v| v.as_str()).unwrap_or("");
+            let (new_req, scope) = prepare_claude_thinking_replay_request(&replay_ctx, auth, req, opts, caller_api_key);
+            req = new_req;
+            replay_scope = scope;
+        }
+        // Any later failure drops the replayed content, like the Go deferred clear.
+        let outcome = self.prepare_messages_request_inner(cfg, auth, req, replay_scope.clone(), opts, stream, reporter);
+        if let Err(err) = &outcome
+            && replay_scope.replay_applied
+            && should_clear_kimi_thinking_replay_after_error(Some(err))
+        {
+            clear_claude_thinking_replay_content(&replay_scope);
+        }
+        outcome
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_messages_request_inner(
+        &self,
+        cfg: &Config,
+        auth: &Auth,
+        req: Request,
+        replay_scope: ClaudeThinkingReplayScope,
+        opts: &Options,
+        stream: bool,
+        reporter: &UsageReporter,
+    ) -> Result<Prepared, ExecError> {
         let base_model = parse_suffix(&req.model).model_name;
         let upstream_model = base_model.clone();
 
@@ -175,13 +237,6 @@ impl ClaudeExecutor {
         let from = opts.source_format;
         let response_format = opts.response_format_or_source();
         let to = Format::Claude;
-        let mut req = req;
-        let mut replay_scope = ClaudeThinkingReplayScope::default();
-        if claude_thinking_replay_enabled(auth, &req, opts) {
-            let (new_req, scope) = prepare_claude_thinking_replay_request(auth, req, opts);
-            req = new_req;
-            replay_scope = scope;
-        }
         // Use an upstream stream whenever the downstream response needs translation from Claude
         // events. Native Claude responses use the JSON response path.
         let upstream_stream = if stream { true } else { response_format != to };
@@ -398,8 +453,8 @@ impl ClaudeExecutor {
         let mut body_for_upstream = body;
         let mut tool_reverse_map = HashMap::new();
         if fp.mcp_alias && cloaked {
-            let alias_secret = resolve_claude_mcp_alias_options(opts.metadata.get("client_api_key").and_then(|v| v.as_str()).unwrap_or(""));
-            let (updated, reverse) = prepare_claude_oauth_tool_names_for_upstream(&body_for_upstream, &alias_secret);
+            let alias_options = resolve_claude_mcp_alias_options(opts.metadata.get("client_api_key").and_then(|v| v.as_str()).unwrap_or(""));
+            let (updated, reverse) = prepare_claude_oauth_tool_names_for_upstream(&body_for_upstream, &alias_options);
             body_for_upstream = updated;
             tool_reverse_map = reverse;
         }
@@ -416,7 +471,7 @@ impl ClaudeExecutor {
         }
         if cloaked && !wire_settings.sensitive_words.is_empty() {
             let matcher = build_sensitive_word_matcher(&wire_settings.sensitive_words);
-            body_for_upstream = obfuscate_sensitive_words(&body_for_upstream, &matcher);
+            body_for_upstream = obfuscate_sensitive_words(&body_for_upstream, matcher.as_ref());
         }
         if cch_signing {
             let mut cch_billing = String::new();
@@ -426,7 +481,7 @@ impl ClaudeExecutor {
             body_for_upstream = finalize_anthropic_messages_body_cch(&body_for_upstream, &cch_billing)
                 .map_err(|e| ExecError::new(0, format!("finalize Claude CCH: {e}")))?;
         }
-        body_for_upstream = strip_default_kimi_claude_code_attribution(auth, &url, fp.profile_claude_code_cli, &body_for_upstream);
+        body_for_upstream = strip_default_kimi_claude_code_attribution(Some(auth), &url, fp.profile_claude_code_cli, &body_for_upstream);
         // Runs on the finished body: payload rules can rewrite model and messages long after
         // translation.
         validate_claude_mid_system_message_model(&body_for_upstream, confirmed_claude_code, is_anthropic_upstream_base(&base_url))?;
@@ -495,7 +550,7 @@ impl ClaudeExecutor {
         let result = self.send_non_stream(cfg, auth, &opts, response_format, &prepared, reporter).await;
         if let Err(err) = &result
             && replay_scope.replay_applied
-            && should_clear_kimi_thinking_replay_after_error(err)
+            && should_clear_kimi_thinking_replay_after_error(Some(err))
         {
             clear_claude_thinking_replay_content(&replay_scope);
         }
@@ -578,8 +633,8 @@ impl ClaudeExecutor {
                 match restore_claude_oauth_tool_names_from_stream_line(line, &p.tool_reverse_map) {
                     Ok(restored) => *line = restored,
                     Err(err) => {
-                        let err = ExecError::new(err.status, format!("restore Claude OAuth tool name from streaming response: {}", err.message))
-                            .with_code(cpa_runtime::executor::ErrorCode::RequestScoped);
+                        let mut err = err.into_exec_error();
+                        err.message = format!("restore Claude OAuth tool name from streaming response: {}", err.message);
                         reporter.publish_buffer_failure(&stream_usage, &err);
                         return Err(wrap_claude_fast_request_error(p.fast_request, status, err));
                     }
@@ -594,12 +649,9 @@ impl ClaudeExecutor {
             );
             reporter.observe_response_model(&data);
             data = restore_claude_oauth_tool_names_from_response(&data, &p.tool_reverse_map).map_err(|err| {
-                wrap_claude_fast_request_error(
-                    p.fast_request,
-                    status,
-                    ExecError::new(err.status, format!("restore Claude OAuth tool name from response: {}", err.message))
-                        .with_code(cpa_runtime::executor::ErrorCode::RequestScoped),
-                )
+                let mut err = err.into_exec_error();
+                err.message = format!("restore Claude OAuth tool name from response: {}", err.message);
+                wrap_claude_fast_request_error(p.fast_request, status, err)
             })?;
         }
         cache_claude_thinking_replay_response(&p.replay_scope, &data);
@@ -651,7 +703,7 @@ pub fn apply_claude_cli_identity(
     synthesize: bool,
 ) -> Result<Vec<u8>, ExecError> {
     use super::helps::cli_identity_seed::{claude_cli_auth_identity_seed, prepare_claude_cli_fingerprint_auth};
-    let identity_seed = if is_kimi_messages_upstream(auth, upstream_url) {
+    let identity_seed = if is_kimi_messages_upstream(Some(auth), upstream_url) {
         claude_cli_auth_identity_seed(auth)
     } else {
         api_key.to_string()

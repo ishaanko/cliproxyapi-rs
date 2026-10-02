@@ -3,8 +3,6 @@
 //! A `speed:"fast"` request failure is request scoped: it must not rotate credentials or cool the
 //! selected credential, unless the failure is a genuine credential-level rate limit.
 
-use std::time::SystemTime;
-
 use cpa_runtime::executor::{ErrorCode, ExecError};
 use http::HeaderMap;
 
@@ -38,7 +36,7 @@ pub fn new_claude_fast_direct_response_error(status: u16, headers: &HeaderMap, b
     let mut retry_after = None;
     let mut credential_scoped = false;
     if status == 429 {
-        retry_after = parse_claude_rate_limit_reset(headers, SystemTime::now());
+        retry_after = parse_claude_rate_limit_reset(headers, chrono::Utc::now());
         credential_scoped = claude_headers_indicate_unified_rate_limit_rejection(headers);
     }
     let message = if body.is_empty() {
