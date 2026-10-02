@@ -1,0 +1,28 @@
+[package]
+name = "cpa-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# End-to-end differential harness: runs a CLIProxyAPI-compatible server binary against a mock
+# upstream, records or checks the observable behavior (client responses + upstream requests).
+[[bin]]
+name = "cpa-e2e"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+once_cell.workspace = true
+bytes.workspace = true
+axum = { version = "0.8", features = ["ws"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
+clap = { version = "4", features = ["derive"] }
+chrono.workspace = true
+sha2.workspace = true

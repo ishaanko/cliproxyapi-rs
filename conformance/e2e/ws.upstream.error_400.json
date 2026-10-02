@@ -1,0 +1,106 @@
+{
+  "id": "ws.upstream.error_400",
+  "desc": "upstream error frame",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [
+            {
+              "type": "error",
+              "status": 400,
+              "error": {
+                "message": "mock upstream error 400",
+                "type": "invalid_request_error",
+                "code": null
+              }
+            }
+          ],
+          "close": null
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "authorization": "Bearer sk-codex-2",
+        "conversation_id": "<uuid:1>",
+        "openai-beta": "responses_websockets=2026-02-06",
+        "originator": "codex-tui",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "session_id": "<uuid:1>",
+        "upgrade": "websocket",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "gpt-5.5",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "store": false,
+          "parallel_tool_calls": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "tools": [
+            {
+              "type": "image_generation",
+              "output_format": "png"
+            }
+          ],
+          "prompt_cache_key": "<uuid:1>",
+          "type": "response.create"
+        }
+      ]
+    }
+  ]
+}

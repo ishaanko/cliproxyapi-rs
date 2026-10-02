@@ -1,0 +1,33 @@
+{
+  "id": "ws.handshake.turn_state_echo",
+  "desc": "x-codex-turn-state is echoed on the upgrade response",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [
+          [
+            "x-codex-turn-state",
+            "state-abc"
+          ]
+        ],
+        "messages": []
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade",
+          "x-codex-turn-state": "state-abc"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [],
+          "close": null
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

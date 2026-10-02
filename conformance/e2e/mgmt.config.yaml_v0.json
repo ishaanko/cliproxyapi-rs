@@ -1,0 +1,32 @@
+{
+  "id": "mgmt.config.yaml_v0",
+  "desc": "GET /v0/management/config.yaml",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "text",
+          "value": "host: \"127.0.0.1\"\nport: 38922\nauth-dir: \"<work>/mgmt.config.yaml_v0/auth\"\napi-keys:\n  - \"e2e-client-key\"\n  - \"e2e-client-key-2\"\nremote-management:\n  allow-remote: false\n  secret-key: \"<bcrypt>\"\n  disable-control-panel: true\nrequest-retry: 2\nmax-retry-credentials: 0\nmax-retry-interval: 0\nforce-model-prefix: false\nusage-statistics-enabled: false\ndisable-cooling: false\npassthrough-headers: false\nnonstream-keepalive-interval: 0\nstreaming:\n  keepalive-seconds: 0\n  bootstrap-retries: 0\nclaude-api-key:\n  - api-key: \"sk-claude-1\"\n    base-url: \"http://<mock>/anthropic\"\n  - api-key: \"sk-claude-2\"\n    base-url: \"http://<mock>/anthropic\"\ncodex-api-key:\n  - api-key: \"sk-codex-1\"\n    base-url: \"http://<mock>/codex\"\n  - api-key: \"sk-codex-2\"\n    base-url: \"http://<mock>/codex\"\ngemini-api-key:\n  - api-key: \"sk-gemini-1\"\n    base-url: \"http://<mock>/gemini\"\n  - api-key: \"sk-gemini-2\"\n    base-url: \"http://<mock>/gemini\"\nopenai-compatibility:\n  - name: \"mockcompat\"\n    base-url: \"http://<mock>/compat\"\n    api-key-entries:\n      - api-key: \"sk-compat-1\"\n      - api-key: \"sk-compat-2\"\n    models:\n      - name: \"mock-gpt-4o\"\n        alias: \"compat-gpt-4o\"\n      - name: \"mock-reason\"\n        alias: \"compat-reason\"\n"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}
