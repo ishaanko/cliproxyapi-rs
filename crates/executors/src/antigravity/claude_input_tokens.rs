@@ -94,13 +94,18 @@ impl ClaudeInputTokenState {
     }
 
     fn estimate(&self) -> Result<i64, String> {
-        let enc = tokenizer_for_model("gpt-5").map_err(|e| format!("initialize O200kBase tokenizer: {e}"))?;
-        let segments = collect_segments(&self.original_request).map_err(|e| format!("count Claude input tokens: {e}"))?;
-        if segments.is_empty() {
-            return Ok(0);
-        }
-        Ok(enc.count(&segments.join("\n")) as i64)
+        count_claude_input_tokens(&self.original_request)
     }
+}
+
+/// `o200k_base` token estimate of a Claude request (system, messages, tools, tool choice).
+pub(crate) fn count_claude_input_tokens(payload: &[u8]) -> Result<i64, String> {
+    let enc = tokenizer_for_model("gpt-5").map_err(|e| format!("initialize O200kBase tokenizer: {e}"))?;
+    let segments = collect_segments(payload).map_err(|e| format!("count Claude input tokens: {e}"))?;
+    if segments.is_empty() {
+        return Ok(0);
+    }
+    Ok(enc.count(&segments.join("\n")) as i64)
 }
 
 fn collect_segments(payload: &[u8]) -> Result<Vec<String>, String> {

@@ -29,6 +29,9 @@ use super::AntigravityExecutor;
 
 const ORACLE: &str = include_str!("testdata/oracle.json");
 
+/// Tests that touch the process-wide replay ledger or cooldown state run one at a time.
+pub(crate) static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[derive(Default, Clone)]
 struct Captured {
     method: String,
@@ -358,6 +361,7 @@ fn compare_case(case: &Value, captured: Option<Captured>, out: Outcome) -> Vec<S
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn oracle_cases_match_go() {
+    let _guard = SERIAL.lock().await;
     let cases: Vec<Value> = serde_json::from_str(ORACLE).expect("oracle fixture");
     cpa_core::cache::clear_antigravity_reasoning_replay_cache();
     let filter = std::env::var("ORACLE_FILTER").unwrap_or_default();
