@@ -17,7 +17,6 @@ use serde_yaml_ng::{Mapping, Value};
 
 use crate::http::{ApiError, ApiResult, json_response, no_store};
 use crate::state::ManagementState;
-use crate::yaml_comments::carry_comments;
 
 /// v8 path of the Codex live-media TURN servers (secrets are redacted on JSON reads).
 const ICE_SERVERS_PATH: [&str; 5] = [
@@ -140,9 +139,8 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
     let data = if req.yaml && parts.is_empty() && req.method != Method::DELETE {
         String::from_utf8_lossy(&req.body).into_owned()
     } else {
-        let rendered = serde_yaml_ng::to_string(&root)
-            .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
-        carry_comments(&text, &rendered)
+        cpa_config::marshal_document(&root, &text)
+            .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?
     };
     let mut next = cpa_config::parse_config_bytes(data.as_bytes())
         .map_err(|e| ApiError::with_message(422, "invalid_config", e.to_string()))?;

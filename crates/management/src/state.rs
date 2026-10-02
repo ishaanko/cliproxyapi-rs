@@ -69,7 +69,9 @@ impl AuthRegistry for Manager {
     }
 
     async fn force_refresh_auth(&self, id: &str) -> Result<Auth, String> {
-        Manager::force_refresh_auth(self, id).await.map_err(|e| e.message)
+        Manager::force_refresh_auth(self, id)
+            .await
+            .map_err(|e| e.message)
     }
 }
 
@@ -89,6 +91,8 @@ pub(crate) struct Shared {
     pub verified: Mutex<Option<([u8; 32], String)>>,
     /// Serializes config file mutations (Go: `Handler.mu`).
     pub config_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Highest usage event sequence number already popped through the usage queue endpoints.
+    pub usage_queue_cursor: Mutex<u64>,
 }
 
 /// Everything the management API needs, passed explicitly. Cheap to clone.

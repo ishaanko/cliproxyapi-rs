@@ -102,8 +102,8 @@ fn set_cpa_headers(st: &ManagementState, h: &mut HeaderMap) {
         ("x-cpa-version", st.build.version.as_str()),
         ("x-cpa-commit", st.build.commit.as_str()),
         ("x-cpa-build-date", st.build.build_date.as_str()),
-        // No plugin host in this build.
-        ("x-cpa-support-plugin", "0"),
+        // Go: `pluginhost.SupportPluginHeaderValue()`; clients use it to show the plugin UI.
+        ("x-cpa-support-plugin", "1"),
     ];
     for (name, value) in pairs {
         if let Ok(v) = HeaderValue::from_str(value) {

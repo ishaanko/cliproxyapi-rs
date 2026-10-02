@@ -21,6 +21,8 @@ parking_lot.workspace = true
 chrono.workspace = true
 base64.workspace = true
 sha2.workspace = true
+hex.workspace = true
+uuid.workspace = true
 bytes.workspace = true
 async-trait = "0.1"
 bcrypt = "0.17"
@@ -29,6 +31,7 @@ url = "2"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "socks", "json"] }
 
-[dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+
+[dev-dependencies]
 http-body-util = "0.1"
