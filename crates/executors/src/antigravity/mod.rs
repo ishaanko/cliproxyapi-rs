@@ -36,6 +36,8 @@ mod tokens;
 mod transport;
 
 #[cfg(test)]
+mod exec_tests;
+#[cfg(test)]
 mod misc_tests;
 #[cfg(test)]
 mod replay_tests;

@@ -159,6 +159,11 @@ fn tls_config() -> Option<Arc<rustls::ClientConfig>> {
     CONFIG.clone()
 }
 
+#[cfg(test)]
+pub(crate) fn tls_config_for_test() -> Option<Arc<rustls::ClientConfig>> {
+    tls_config()
+}
+
 fn build_client(setting: &ProxySetting, pool: PoolSettings) -> Result<reqwest::Client, reqwest::Error> {
     let mut builder = reqwest::Client::builder();
     if let Some(tls) = tls_config() {
