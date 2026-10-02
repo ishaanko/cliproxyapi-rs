@@ -32,6 +32,12 @@ http = "1"
 futures-util = "0.3"
 httpdate = "1"
 url = "2"
+async-trait = "0.1"
+base64 = "0.22"
+sha1 = "0.10"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+flate2 = "1"
+webpki-roots = "1"
 tiktoken-rs = "0.7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "gzip", "brotli", "deflate", "socks", "stream", "json"] }
 

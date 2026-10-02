@@ -35,7 +35,7 @@ use cpa_json::{J, Map, Value};
 use http::HeaderMap;
 use parking_lot::RwLock;
 
-pub use orphan::{rewrite_orphan_delegation_input, rewrite_orphan_delegation_input_for_config};
+pub use orphan::rewrite_orphan_delegation_input_for_config;
 
 const SPAWN_AGENT_DESCRIPTION_MARKER: &str = "Spawns an agent";
 const SPAWN_AGENT_MODELS_HEADING: &str =
