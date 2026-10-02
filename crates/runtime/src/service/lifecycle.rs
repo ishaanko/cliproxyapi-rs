@@ -320,12 +320,12 @@ impl Service {
         inner.apply_updates(updates).await;
 
         if inner.watch {
-            self.start_watchers(&cfg)?;
+            self.start_watchers(&cfg).await?;
         }
         Ok(())
     }
 
-    fn start_watchers(&self, cfg: &Arc<Config>) -> Result<(), ServiceError> {
+    async fn start_watchers(&self, cfg: &Arc<Config>) -> Result<(), ServiceError> {
         let inner = &self.inner;
         let watcher = Arc::new(
             ConfigWatcher::start(&inner.config_path, cfg.clone(), None).await.map_err(|e| ServiceError::Watcher(e.to_string()))?,
