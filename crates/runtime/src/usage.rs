@@ -1,7 +1,11 @@
 //! Usage accounting (Go: sdk/cliproxy/usage + the record built in redisqueue/plugin.go).
 //!
-//! The conductor builds one [`UsageRecord`] per completed upstream execution and calls
-//! [`UsageTracker::record`]. The management API reads aggregates ([`UsageTracker::summary`]) and
+//! Recording happens in the conductor (`conductor::Manager`): once per completed upstream
+//! execution, whether it succeeded or failed, it builds a [`UsageRecord`] and calls
+//! [`UsageTracker::record`], independently of any queue or consumer. Nothing is recorded until
+//! the conductor is wired to a tracker. The service should mirror `usage-statistics-enabled`
+//! into [`UsageTracker::set_enabled`] at start and on every config reload. The management API
+//! reads aggregates ([`UsageTracker::summary`]) and
 //! the recent-request ring buffer ([`UsageTracker::requests`]); shapes are specified in
 //! ui/API_EXTENSIONS.md. Memory only; resets on restart.
 
@@ -51,6 +55,7 @@ pub struct UsageFailure {
 /// One usage event (field names match the Go usage-queue record).
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageRecord {
+    #[serde(serialize_with = "serialize_ts")]
     pub timestamp: DateTime<Utc>,
     pub latency_ms: i64,
     /// 0 for non-streaming requests.
@@ -80,24 +85,8 @@ pub struct UsageRecord {
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageEvent {
     pub seq: u64,
-    #[serde(serialize_with = "serialize_ts")]
-    pub timestamp: DateTime<Utc>,
-    pub latency_ms: i64,
-    pub ttft_ms: i64,
-    pub source: String,
-    pub auth_index: String,
-    pub auth_type: String,
-    pub provider: String,
-    pub executor_type: String,
-    pub model: String,
-    pub alias: String,
-    pub endpoint: String,
-    pub api_key: String,
-    pub request_id: String,
-    pub failed: bool,
-    pub stream: bool,
-    pub fail: UsageFailure,
-    pub tokens: TokenUsage,
+    #[serde(flatten)]
+    pub record: UsageRecord,
 }
 
 /// UTC RFC 3339 without a fraction when it is zero, else milliseconds.
@@ -320,26 +309,7 @@ impl UsageTracker {
 
         st.seq += 1;
         let seq = st.seq;
-        st.ring.push_back(UsageEvent {
-            seq,
-            timestamp: record.timestamp,
-            latency_ms: record.latency_ms,
-            ttft_ms: record.ttft_ms,
-            source: record.source,
-            auth_index: record.auth_index,
-            auth_type: record.auth_type,
-            provider: record.provider,
-            executor_type: record.executor_type,
-            model: record.model,
-            alias: record.alias,
-            endpoint: record.endpoint,
-            api_key: record.api_key,
-            request_id: record.request_id,
-            failed: record.failed,
-            stream: record.stream,
-            fail: record.fail,
-            tokens: record.tokens,
-        });
+        st.ring.push_back(UsageEvent { seq, record });
         while st.ring.len() > REQUEST_RING_CAPACITY {
             st.ring.pop_front();
         }
@@ -574,7 +544,7 @@ mod tests {
             body: "é".repeat(2000),
         };
         t.record(r);
-        let body = &t.requests(1, None).events[0].fail.body;
+        let body = &t.requests(1, None).events[0].record.fail.body;
         assert!(body.len() <= FAIL_BODY_MAX_BYTES && body.chars().all(|c| c == 'é'));
     }
 

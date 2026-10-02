@@ -164,7 +164,9 @@ async fn main() {
     }
     let cfg = cpa_config::load_config(&config_path).unwrap();
     let watcher = Arc::new(
-        cpa_config::watcher::ConfigWatcher::start(&config_path, Arc::new(cfg), None).unwrap(),
+        cpa_config::watcher::ConfigWatcher::start(&config_path, Arc::new(cfg), None)
+            .await
+            .unwrap(),
     );
 
     let store = Arc::new(FileTokenStore::with_dir(&auth_dir));

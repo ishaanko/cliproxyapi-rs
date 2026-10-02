@@ -91,22 +91,135 @@ fn normalize_identifier(value: &str) -> String {
     value.trim().to_lowercase().replace(['-', ' '], "_")
 }
 
-/// Simplified `isExplicitModelNotFoundError`: structured codes and the unambiguous message forms.
-fn is_model_not_found(err: &AuthError) -> bool {
-    let code = err.code.trim().to_lowercase();
-    let code = code.rsplit(['/', ':', '#']).next().unwrap_or("");
-    let identifiers = [
-        "model_not_found",
-        "model_not_found_error",
-        "unknown_model",
-        "model_does_not_exist",
-        "model_not_exist",
-    ];
-    if identifiers.contains(&normalize_identifier(code).as_str()) {
+/// `isModelNotFoundIdentifier`: a code or type such as `model_not_found`, optionally as the last
+/// segment of a URI or fragment.
+fn is_model_not_found_identifier(value: &str) -> bool {
+    let mut candidate = value.trim().to_lowercase();
+    match candidate.rfind('#').filter(|i| i + 1 < candidate.len()) {
+        Some(i) => candidate = candidate[i + 1..].to_string(),
+        None => {
+            if let Some(q) = candidate.find('?') {
+                candidate.truncate(q);
+            }
+            let trimmed = candidate.trim_end_matches('/');
+            candidate = match trimmed.rfind(['/', ':']) {
+                Some(i) => trimmed[i + 1..].to_string(),
+                None => trimmed.to_string(),
+            };
+        }
+    }
+    matches!(
+        normalize_identifier(&candidate).as_str(),
+        "model_not_found"
+            | "model_not_found_error"
+            | "unknown_model"
+            | "model_does_not_exist"
+            | "model_not_exist"
+    )
+}
+
+fn is_missing_model_phrase(value: &str) -> bool {
+    matches!(
+        value.trim_matches(|c| " .!;\t\r\n".contains(c)),
+        "not found"
+            | "was not found"
+            | "could not be found"
+            | "does not exist"
+            | "doesn't exist"
+            | "not exist"
+            | "is unknown"
+            | "does not exist or you do not have access to it"
+    )
+}
+
+/// `isExplicitModelNotFoundMessage` without a requested model (the cooldown view has none).
+fn is_explicit_model_not_found_message(message: &str) -> bool {
+    let lower = message.trim().to_lowercase();
+    let lower = lower.trim_matches(|c| " .!;\t\r\n".contains(c));
+    if lower.is_empty()
+        || lower.contains("in request")
+        || lower.contains("in body")
+        || lower.contains("request body")
+    {
+        return false;
+    }
+    let normalized = lower.replace('-', "_");
+    if normalized.contains("model_not_found") || normalized.contains("unknown_model") {
         return true;
     }
-    let message = err.message.to_lowercase().replace('-', "_");
-    message.contains("model_not_found") || message.contains("unknown_model")
+    let remainder_after = |prefix: &str| -> Option<String> {
+        if lower != prefix
+            && !lower.starts_with(&format!("{prefix} "))
+            && !lower.starts_with(&format!("{prefix}:"))
+        {
+            return None;
+        }
+        let rest = lower[prefix.len()..].trim();
+        Some(rest.strip_prefix(':').unwrap_or(rest).trim().to_string())
+    };
+    for prefix in ["no such model", "unknown model"] {
+        if let Some(rest) = remainder_after(prefix) {
+            return rest.is_empty();
+        }
+    }
+    for prefix in [
+        "the requested model",
+        "requested model",
+        "the model",
+        "model",
+    ] {
+        if let Some(rest) = remainder_after(prefix) {
+            return is_missing_model_phrase(&rest);
+        }
+    }
+    false
+}
+
+/// `containsStructuredModelNotFound` with no requested model, so the "type not_found plus an
+/// exact model reference" rule can never fire.
+fn contains_structured_model_not_found(value: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => map.iter().any(|(key, item)| {
+            if let Value::String(text) = item {
+                match key.trim().to_lowercase().as_str() {
+                    "code" | "type" if is_model_not_found_identifier(text) => return true,
+                    "error" | "message" | "detail" | "error_description" | "title"
+                        if is_explicit_model_not_found_message(text) =>
+                    {
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            matches!(item, Value::Object(_) | Value::Array(_))
+                && contains_structured_model_not_found(item)
+        }),
+        Value::Array(items) => items.iter().any(|item| {
+            matches!(item, Value::String(t) if is_explicit_model_not_found_message(t))
+                || contains_structured_model_not_found(item)
+        }),
+        _ => false,
+    }
+}
+
+fn is_structured_model_not_found(message: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(message.trim())
+        .is_ok_and(|v| contains_structured_model_not_found(&v))
+}
+
+/// `isExplicitModelNotFoundError`: the code, or a JSON error body in the message (also checked
+/// as the `code: message` rendering of the error).
+fn is_model_not_found(err: &AuthError) -> bool {
+    if is_model_not_found_identifier(&err.code) || is_structured_model_not_found(&err.message) {
+        return true;
+    }
+    let rendered = if err.code.is_empty() {
+        err.message.clone()
+    } else {
+        format!("{}: {}", err.code, err.message)
+    };
+    is_structured_model_not_found(&rendered)
 }
 
 fn is_model_support_error(err: &AuthError) -> bool {
@@ -564,6 +677,42 @@ mod tests {
         assert!(
             cooldown_snapshot(&a, now).is_empty() && !a.unavailable && a.status == Status::Active
         );
+    }
+
+    #[test]
+    fn model_not_found_follows_the_structured_go_rules() {
+        let err = |code: &str, message: &str| AuthError {
+            code: code.into(),
+            message: message.into(),
+            ..Default::default()
+        };
+        assert!(is_model_not_found(&err("model_not_found", "")));
+        assert!(is_model_not_found(&err(
+            "https://x/errors#Model-Not-Found",
+            ""
+        )));
+        assert!(is_model_not_found(&err(
+            "",
+            r#"{"error":{"code":"model_not_found"}}"#
+        )));
+        assert!(is_model_not_found(&err(
+            "",
+            r#"{"error":{"message":"The model does not exist."}}"#
+        )));
+        assert!(is_model_not_found(&err(
+            "x",
+            r#"{"message":"Unknown model"}"#
+        )));
+        // Plain text and request-body complaints are not model-not-found.
+        assert!(!is_model_not_found(&err("", "model_not_found")));
+        assert!(!is_model_not_found(&err(
+            "",
+            r#"{"error":"model not found in request body"}"#
+        )));
+        assert!(!is_model_not_found(&err(
+            "",
+            r#"{"error":"the model gpt-5 does not exist"}"#
+        )));
     }
 
     #[test]
