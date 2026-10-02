@@ -118,40 +118,60 @@ impl ErrorMessage {
     }
 }
 
-/// `Error()` of an executor failure: the upstream body when there is one, else the message.
+/// `Error()` of an executor failure. Executors put the upstream body text in `message` (Go's
+/// `statusErr{msg: body}`); `body` is only used when the message is empty.
 pub fn exec_error_text(err: &ExecError) -> String {
+    if !err.message.is_empty() {
+        return err.message.clone();
+    }
     match &err.body {
         Some(body) if !body.is_empty() => String::from_utf8_lossy(body).into_owned(),
-        _ => err.message.clone(),
+        _ => String::new(),
     }
 }
 
-/// Messages of the conductor's credential-selection failures (Go: `auth_not_found` /
-/// `auth_unavailable` errors). `ExecError` carries no selection code, so these are matched by text.
+/// Conductor credential-selection failures render as `<code>: <message>` (Go `*auth.Error`).
+/// `ExecError` on this base carries no machine code, so the code is read back from the text.
+const SELECTION_CODES: &[&str] = &["auth_not_found", "auth_unavailable"];
+
+/// Messages of selection failures built without the code prefix.
 const SELECTION_MESSAGES: &[&str] = &[
     "no auth available",
     "no auth candidates",
-    "no auth available with positive weight",
     "selector returned no auth",
     "selector returned no eligible auth",
     "selected auth has no ID",
     "selector repeatedly returned an ineligible auth",
 ];
 
+/// `(code, base message)` of an `auth_not_found` / `auth_unavailable` failure.
+fn selection_parts(err: &ExecError) -> Option<(&'static str, &str)> {
+    let message = err.message.trim();
+    for code in SELECTION_CODES {
+        if let Some(rest) = message.strip_prefix(code).and_then(|r| r.strip_prefix(": ")) {
+            return Some((code, rest));
+        }
+    }
+    SELECTION_MESSAGES
+        .iter()
+        .any(|m| message.starts_with(m))
+        .then_some(("auth_not_found", message))
+}
+
 /// `isAuthSelectionUnavailable` / the codes handled by `enrichAuthSelectionError`.
 pub fn is_selection_error(err: &ExecError) -> bool {
-    if err.body.as_ref().is_some_and(|b| !b.is_empty()) {
-        return false;
-    }
-    let message = err.message.trim();
-    SELECTION_MESSAGES.iter().any(|m| message.starts_with(m))
+    selection_parts(err).is_some()
+}
+
+/// Model-level cooldown (`modelCooldownError`): its text is a JSON body with that code.
+fn is_model_cooldown(err: &ExecError) -> bool {
+    err.message.contains("\"model_cooldown\"")
 }
 
 /// `executionErrorMessage`: converts an executor failure to a handler error.
 pub fn exec_error_message(err: &ExecError) -> ErrorMessage {
-    let retry_after = err
-        .retry_after
-        .filter(|_| is_selection_error(err) || err.status == 503 && err.body.is_none());
+    // `coreauth.SafeResponseHeaders`: only selection / cooldown failures expose Retry-After.
+    let retry_after = err.retry_after.filter(|_| is_selection_error(err) || is_model_cooldown(err));
     ErrorMessage {
         status: err.status,
         text: exec_error_text(err),
@@ -164,25 +184,22 @@ pub fn exec_error_message(err: &ExecError) -> ErrorMessage {
 /// `enrichAuthSelectionError`: adds providers/model (and a Claude hint) to credential selection
 /// failures; the status defaults to 503.
 pub fn enrich_auth_selection_error(err: &ExecError, providers: &[String], model: &str) -> ExecError {
-    if !is_selection_error(err) {
+    let Some((code, base)) = selection_parts(err) else {
         return err.clone();
-    }
+    };
     let provider_text = if providers.is_empty() {
         "unknown".to_string()
     } else {
         providers.join(",")
     };
     let model_text = if model.trim().is_empty() { "unknown" } else { model.trim() };
-    let base = {
-        let m = err.message.trim();
-        if m.is_empty() { "no auth available" } else { m }
-    };
+    let base = if base.trim().is_empty() { "no auth available" } else { base.trim() };
     let mut detail = format!("{base} (providers={provider_text}, model={model_text})");
     if format!(",{provider_text},").contains(",claude,") {
         detail.push_str("; check Claude auth/key session and cooldown state via /v0/management/auth-files");
     }
     let mut out = err.clone();
-    out.message = detail;
+    out.message = format!("{code}: {detail}");
     if out.status == 0 {
         out.status = 503;
     }
@@ -472,13 +489,15 @@ mod tests {
 
     #[test]
     fn selection_error_enrichment() {
-        let e = ExecError::new(0, "no auth available");
+        let e = ExecError::new(0, "auth_not_found: no auth available");
         let out = enrich_auth_selection_error(&e, &["claude".into(), "codex".into()], "m");
         assert_eq!(out.status, 503);
         assert_eq!(
             out.message,
-            "no auth available (providers=claude,codex, model=m); check Claude auth/key session and cooldown state via /v0/management/auth-files"
+            "auth_not_found: no auth available (providers=claude,codex, model=m); check Claude auth/key session and cooldown state via /v0/management/auth-files"
         );
+        let plain = enrich_auth_selection_error(&ExecError::new(503, "auth_unavailable: no auth available"), &["x".into()], "");
+        assert_eq!(plain.message, "auth_unavailable: no auth available (providers=x, model=unknown)");
         let other = ExecError::new(500, "boom");
         assert_eq!(enrich_auth_selection_error(&other, &[], "m").message, "boom");
     }

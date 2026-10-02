@@ -210,12 +210,12 @@ mod tests {
     #[test]
     fn crlf_is_normalized_even_when_split() {
         let mut v = SseJsonValidator::default();
-        // A complete-looking JSON line is released immediately (as in Go); the `\n` that
-        // completes the split CRLF is swallowed.
+        // A complete-looking JSON line is released immediately (as in Go); the blank remainder of
+        // the split CRLF is dropped.
         let a = v.add_chunk(b"data: {\"a\":1}\r").unwrap();
         assert_eq!(a, b"data: {\"a\":1}\n");
         let b = v.add_chunk(b"\n\r\n").unwrap();
-        assert_eq!(b, b"\n");
+        assert!(b.is_empty());
     }
 
     #[test]

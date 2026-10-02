@@ -56,5 +56,8 @@ rustls-pemfile = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.29"
+futures-util = "0.3"
 tempfile = "3"
 async-trait = "0.1"
