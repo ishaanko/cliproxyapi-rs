@@ -9,7 +9,9 @@ use crate::types::{Config, DEFAULT_AUTH_DIR, DEFAULT_PLUGINS_DIR};
 /// The user's home directory, like Go's `os.UserHomeDir` ($HOME, or %USERPROFILE% on Windows).
 fn user_home_dir() -> Option<PathBuf> {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Lexical path cleaning with Go `filepath.Clean` semantics (no filesystem access): collapses
@@ -61,7 +63,11 @@ fn expand_dir(raw: &str, what: &str) -> Result<PathBuf> {
 /// Resolves the auth directory: empty means `~/.cli-proxy-api`, a leading `~` expands to the home
 /// directory.
 pub fn resolve_auth_dir(auth_dir: &str) -> Result<PathBuf> {
-    let raw = if auth_dir.is_empty() { DEFAULT_AUTH_DIR } else { auth_dir };
+    let raw = if auth_dir.is_empty() {
+        DEFAULT_AUTH_DIR
+    } else {
+        auth_dir
+    };
     expand_dir(raw, "auth dir")
 }
 
@@ -69,14 +75,20 @@ pub fn resolve_auth_dir(auth_dir: &str) -> Result<PathBuf> {
 /// directory.
 pub fn resolve_plugins_dir(plugins_dir: &str) -> Result<PathBuf> {
     let trimmed = plugins_dir.trim();
-    let raw = if trimmed.is_empty() { DEFAULT_PLUGINS_DIR } else { trimmed };
+    let raw = if trimmed.is_empty() {
+        DEFAULT_PLUGINS_DIR
+    } else {
+        trimmed
+    };
     expand_dir(raw, "plugins directory")
 }
 
 impl Config {
     /// Resolves and stores the effective plugin directory.
     pub fn resolve_plugins_dir(&mut self) -> Result<()> {
-        self.plugins.dir = resolve_plugins_dir(&self.plugins.dir)?.to_string_lossy().into_owned();
+        self.plugins.dir = resolve_plugins_dir(&self.plugins.dir)?
+            .to_string_lossy()
+            .into_owned();
         Ok(())
     }
 }

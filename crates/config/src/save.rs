@@ -10,14 +10,17 @@ use std::path::Path;
 
 use serde_yaml_ng::{Mapping, Value};
 
-use crate::comments::{CPath, Comments, Seg};
+use crate::comments::{CPath, Comments, Seg, dotted};
 use crate::error::{ConfigError, Result};
 use crate::layout::{
-    KEY_FAMILIES, flatten_v8_with_comments, group_legacy_keys, normalize_config_layout, render_yaml, v8_paths,
+    KEY_FAMILIES, family_comments_to_legacy, flatten_v8_with_comments, group_legacy_keys,
+    move_family_comments, normalize_config_layout, render_yaml, v8_paths,
 };
 use crate::load::{decode_config, parse_config_bytes};
 use crate::types::*;
-use crate::yamlpath::{delete_yaml_path, empty_map, legacy_path, parse_yaml, set_yaml_path, str_key, yaml_path};
+use crate::yamlpath::{
+    delete_yaml_path, empty_map, legacy_path, parse_yaml, set_yaml_path, str_key, yaml_path,
+};
 
 /// Writes `data` with mode 0600 when creating the file (existing files keep their permissions).
 pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -32,14 +35,19 @@ pub(crate) fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 fn read_text(path: &Path) -> Result<String> {
-    let data = std::fs::read(path).map_err(|e| ConfigError::io(format!("read {}", path.display()), e))?;
+    let data =
+        std::fs::read(path).map_err(|e| ConfigError::io(format!("read {}", path.display()), e))?;
     String::from_utf8(data).map_err(|_| ConfigError::invalid("config is not valid UTF-8"))
 }
 
 /// Writes `cfg` back to `path`, preserving comments and key order of the existing file. With
 /// `migrate_v8` the result is also migrated to the v8 layout (see [`normalize_config_layout`]) and
 /// `cfg.oauth_only_fields` is synchronised with the migrated document.
-pub fn save_config_preserve_comments(path: impl AsRef<Path>, cfg: &mut Config, migrate_v8: bool) -> Result<()> {
+pub fn save_config_preserve_comments(
+    path: impl AsRef<Path>,
+    cfg: &mut Config,
+    migrate_v8: bool,
+) -> Result<()> {
     let path = path.as_ref();
     let data = read_text(path)?;
     let Some(layout) = parse_yaml(&data)? else {
@@ -72,27 +80,44 @@ pub fn save_config_preserve_comments(path: impl AsRef<Path>, cfg: &mut Config, m
     }
     remove_legacy_openai_compat_api_keys(&mut root);
 
-    for key in ["oauth-excluded-models", "oauth-model-alias", "oauth-request-scoped-errors", "oauth-settings"] {
+    for key in [
+        "oauth-excluded-models",
+        "oauth-model-alias",
+        "oauth-request-scoped-errors",
+        "oauth-settings",
+    ] {
         prune_mapping_to_generated_keys(&mut root, &generated, key);
     }
     replace_plugin_configs_subtree(&mut root, &generated);
 
+    // Comments live at v8 paths but the merge works on the legacy view (and re-orders lists), so
+    // they are re-keyed to legacy paths for the merge and moved back afterwards.
+    let stashed = comments_to_legacy(&mut comments, &layout);
     // Merge generated into the original in place, preserving order and comments of existing nodes.
     merge_mapping_preserve(&mut root, &generated, &mut Vec::new(), &mut comments);
-    restore_v8_layout(&mut root, &layout, &data, &generated)?;
+    restore_v8_layout(
+        &mut root,
+        &layout,
+        &data,
+        &generated,
+        &mut comments,
+        stashed,
+    )?;
 
     let mut out = render_yaml(&root, &comments)?;
     let mut migrated = None;
     if migrate_v8 {
         let (bytes, _) = normalize_config_layout(out.as_bytes(), true)?;
-        out = String::from_utf8(bytes).map_err(|_| ConfigError::invalid("migrated config is not valid UTF-8"))?;
+        out = String::from_utf8(bytes)
+            .map_err(|_| ConfigError::invalid("migrated config is not valid UTF-8"))?;
         let parsed = parse_yaml(&out)?;
         migrated = Some(
             decode_config(&parsed.unwrap_or_else(empty_map))
                 .map_err(|e| ConfigError::invalid(format!("decode migrated config: {e}")))?,
         );
     }
-    write_private(path, out.as_bytes()).map_err(|e| ConfigError::io(format!("write {}", path.display()), e))?;
+    write_private(path, out.as_bytes())
+        .map_err(|e| ConfigError::io(format!("write {}", path.display()), e))?;
     if let Some(migrated) = migrated {
         // Publish the OAuth scope only after the write succeeds.
         cfg.oauth_only_fields = migrated.oauth_only_fields;
@@ -102,7 +127,11 @@ pub fn save_config_preserve_comments(path: impl AsRef<Path>, cfg: &mut Config, m
 
 /// Sets a nested scalar such as `["management", "secret-key"]`, preserving comments and positions.
 /// Anchors and merge keys are expanded first so a shared anchor is never mutated.
-pub fn save_config_update_nested_scalar(path: impl AsRef<Path>, keys: &[&str], value: &str) -> Result<()> {
+pub fn save_config_update_nested_scalar(
+    path: impl AsRef<Path>,
+    keys: &[&str],
+    value: &str,
+) -> Result<()> {
     let path = path.as_ref();
     let data = read_text(path)?;
     let Some(mut root) = parse_yaml(&data)? else {
@@ -143,7 +172,10 @@ fn remove_map_key(root: &mut Value, key: &str) {
 }
 
 fn remove_legacy_openai_compat_api_keys(root: &mut Value) {
-    let Some(Value::Sequence(items)) = root.as_mapping_mut().and_then(|m| m.get_mut("openai-compatibility")) else {
+    let Some(Value::Sequence(items)) = root
+        .as_mapping_mut()
+        .and_then(|m| m.get_mut("openai-compatibility"))
+    else {
         return;
     };
     for item in items {
@@ -154,7 +186,9 @@ fn remove_legacy_openai_compat_api_keys(root: &mut Value) {
 /// Removes keys of `dst[key]` that are absent from the generated mapping (so deleted channels
 /// disappear), and replaces non-mapping values.
 fn prune_mapping_to_generated_keys(dst_root: &mut Value, src_root: &Value, key: &str) {
-    let (Some(dst), Some(src)) = (dst_root.as_mapping_mut(), src_root.as_mapping()) else { return };
+    let (Some(dst), Some(src)) = (dst_root.as_mapping_mut(), src_root.as_mapping()) else {
+        return;
+    };
     if !dst.contains_key(key) {
         return;
     }
@@ -165,7 +199,9 @@ fn prune_mapping_to_generated_keys(dst_root: &mut Value, src_root: &Value, key: 
         return;
     };
     match (dst.get_mut(key), src_val) {
-        (Some(dst_val @ Value::Mapping(_)), Value::Mapping(src_map)) => prune_missing_map_keys(dst_val, src_map),
+        (Some(dst_val @ Value::Mapping(_)), Value::Mapping(src_map)) => {
+            prune_missing_map_keys(dst_val, src_map)
+        }
         (Some(dst_val), _) => *dst_val = src_val.clone(),
         (None, _) => {}
     }
@@ -173,13 +209,18 @@ fn prune_mapping_to_generated_keys(dst_root: &mut Value, src_root: &Value, key: 
 
 fn prune_missing_map_keys(dst: &mut Value, src: &Mapping) {
     if let Value::Mapping(dst) = dst {
-        dst.retain(|key, _| key.as_str().is_some_and(|k| !k.trim().is_empty() && src.contains_key(k.trim())));
+        dst.retain(|key, _| {
+            key.as_str()
+                .is_some_and(|k| !k.trim().is_empty() && src.contains_key(k.trim()))
+        });
     }
 }
 
 /// Plugin option trees are opaque: replace `plugins.configs` wholesale by the generated one.
 fn replace_plugin_configs_subtree(dst_root: &mut Value, src_root: &Value) {
-    let Some(dst) = dst_root.as_mapping_mut() else { return };
+    let Some(dst) = dst_root.as_mapping_mut() else {
+        return;
+    };
     let src_configs = yaml_path(src_root, "plugins.configs")
         .and_then(Value::as_mapping)
         .filter(|m| !m.is_empty());
@@ -209,14 +250,21 @@ fn is_plugin_configs_subtree(path: &[&str]) -> bool {
 
 /// Merges `src` keys into `dst`: existing keys are updated in place, new keys are added only when
 /// their value is non-zero and not a known default.
-fn merge_mapping_preserve(dst: &mut Value, src: &Value, cpath: &mut CPath, comments: &mut Comments) {
+fn merge_mapping_preserve(
+    dst: &mut Value,
+    src: &Value,
+    cpath: &mut CPath,
+    comments: &mut Comments,
+) {
     let (Value::Mapping(dst_map), Value::Mapping(src_map)) = (&mut *dst, src) else {
         // Kinds differ: replace dst by src semantics.
         *dst = src.clone();
         return;
     };
     for (key, src_val) in src_map {
-        let Some(key_str) = key.as_str() else { continue };
+        let Some(key_str) = key.as_str() else {
+            continue;
+        };
         cpath.push(Seg::Key(key_str.to_string()));
         let keys = key_path(cpath);
         let key_refs = as_strs(&keys);
@@ -250,9 +298,10 @@ fn merge_node_preserve(dst: &mut Value, src: &Value, cpath: &mut CPath, comments
             }
             merge_mapping_preserve(dst, src, cpath, comments);
             if should_prune_nested_mapping_keys(&as_strs(&key_path(cpath)))
-                && let Value::Mapping(src_map) = src {
-                    prune_missing_map_keys(dst, src_map);
-                }
+                && let Value::Mapping(src_map) = src
+            {
+                prune_missing_map_keys(dst, src_map);
+            }
         }
         Value::Sequence(src_items) => {
             // Preserve an explicit null when the new list is empty.
@@ -262,7 +311,9 @@ fn merge_node_preserve(dst: &mut Value, src: &Value, cpath: &mut CPath, comments
             if !dst.is_sequence() {
                 *dst = Value::Sequence(Vec::new());
             }
-            let Value::Sequence(dst_items) = dst else { return };
+            let Value::Sequence(dst_items) = dst else {
+                return;
+            };
             if let Some(new_to_old) = reorder_sequence_for_merge(dst_items, src_items) {
                 comments.permute_sequence(cpath, &new_to_old);
             }
@@ -272,7 +323,8 @@ fn merge_node_preserve(dst: &mut Value, src: &Value, cpath: &mut CPath, comments
                         cpath.push(Seg::Index(index));
                         merge_node_preserve(dst_item, src_item, cpath, comments);
                         cpath.pop();
-                        if let (Value::Mapping(_), Value::Mapping(src_map)) = (&*dst_item, src_item) {
+                        if let (Value::Mapping(_), Value::Mapping(src_map)) = (&*dst_item, src_item)
+                        {
                             prune_missing_map_keys(dst_item, src_map);
                         }
                     }
@@ -305,7 +357,10 @@ fn reorder_sequence_for_merge(dst: &mut Vec<Value>, src: &[Value]) -> Option<Vec
     *dst = new_to_old
         .iter()
         .zip(src)
-        .map(|(old, new)| old.and_then(|i| original[i].take()).unwrap_or_else(|| new.clone()))
+        .map(|(old, new)| {
+            old.and_then(|i| original[i].take())
+                .unwrap_or_else(|| new.clone())
+        })
         .collect();
     Some(new_to_old)
 }
@@ -315,23 +370,28 @@ fn match_sequence_element(original: &[Value], used: &[bool], target: &Value) -> 
     match target {
         Value::Mapping(_) => {
             if let Some(id) = sequence_element_identity(target)
-                && let Some((i, _)) = candidates()
-                    .find(|(_, o)| o.is_mapping() && sequence_element_identity(o).as_deref() == Some(id.as_str()))
-                {
-                    return Some(i);
-                }
+                && let Some((i, _)) = candidates().find(|(_, o)| {
+                    o.is_mapping() && sequence_element_identity(o).as_deref() == Some(id.as_str())
+                })
+            {
+                return Some(i);
+            }
         }
         _ => {
-            if let Some(text) = scalar_text(target).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
-                && let Some((i, _)) = candidates()
-                    .find(|(_, o)| scalar_text(o).is_some_and(|t| t.trim() == text))
-                {
-                    return Some(i);
-                }
+            if let Some(text) = scalar_text(target)
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                && let Some((i, _)) =
+                    candidates().find(|(_, o)| scalar_text(o).is_some_and(|t| t.trim() == text))
+            {
+                return Some(i);
+            }
         }
     }
     // Structural equality for nodes lacking explicit identifiers.
-    candidates().find(|(_, o)| nodes_structurally_equal(o, target)).map(|(i, _)| i)
+    candidates()
+        .find(|(_, o)| nodes_structurally_equal(o, target))
+        .map(|(i, _)| i)
 }
 
 fn scalar_text(value: &Value) -> Option<String> {
@@ -340,17 +400,23 @@ fn scalar_text(value: &Value) -> Option<String> {
         Value::Number(n) => Some(n.to_string()),
         Value::Bool(b) => Some(b.to_string()),
         Value::Null => Some(String::new()),
+        Value::Tagged(_) => crate::rawparse::raw_text(value).map(str::to_string),
         _ => None,
     }
 }
 
 fn sequence_element_identity(node: &Value) -> Option<String> {
-    let Value::Mapping(map) = node else { return None };
-    const IDENTITY_KEYS: [&str; 9] = ["id", "name", "alias", "api-key", "api_key", "apikey", "key", "provider", "model"];
+    let Value::Mapping(map) = node else {
+        return None;
+    };
+    const IDENTITY_KEYS: [&str; 9] = [
+        "id", "name", "alias", "api-key", "api_key", "apikey", "key", "provider", "model",
+    ];
     for key in IDENTITY_KEYS {
         let found = map.iter().find_map(|(k, v)| {
             let (k, v) = (k.as_str()?, scalar_text(v)?);
-            (k.trim().eq_ignore_ascii_case(key) && !v.trim().is_empty()).then(|| v.trim().to_string())
+            (k.trim().eq_ignore_ascii_case(key) && !v.trim().is_empty())
+                .then(|| v.trim().to_string())
         });
         if let Some(v) = found {
             return Some(format!("{key}={v}"));
@@ -383,11 +449,18 @@ fn nodes_structurally_equal(a: &Value, b: &Value) -> bool {
 /// Credential-nested mappings (cloak, headers) drop keys that disappeared, so deleted entries do
 /// not linger; other mappings are left alone.
 fn should_prune_nested_mapping_keys(path: &[&str]) -> bool {
-    let [.., parent, last] = path else { return false };
+    let [.., parent, last] = path else {
+        return false;
+    };
     match *parent {
         "claude-api-key" => matches!(*last, "cloak" | "headers"),
-        "codex-api-key" | "gemini-api-key" | "interactions-api-key" | "xai-api-key" | "meta-api-key"
-        | "vertex-api-key" | "openai-compatibility" => *last == "headers",
+        "codex-api-key"
+        | "gemini-api-key"
+        | "interactions-api-key"
+        | "xai-api-key"
+        | "meta-api-key"
+        | "vertex-api-key"
+        | "openai-compatibility" => *last == "headers",
         _ => false,
     }
 }
@@ -407,10 +480,13 @@ fn is_known_default_value(path: &[&str], node: &Value) -> bool {
     }
     if path == ["plugins"]
         && let Some(Value::Mapping(configs)) = node.as_mapping().and_then(|m| m.get("configs"))
-            && !configs.is_empty() {
-                return false;
-            }
-    let Some(last) = path.last() else { return false };
+        && !configs.is_empty()
+    {
+        return false;
+    }
+    let Some(last) = path.last() else {
+        return false;
+    };
     // Credential weights and retry overrides are pointer-backed: zero is explicit.
     if matches!(*last, "weight" | "request-retry") && is_int(node) {
         return false;
@@ -424,7 +500,9 @@ fn is_known_default_value(path: &[&str], node: &Value) -> bool {
     }
     match (path.join(".").as_str(), node) {
         ("pprof.addr", Value::String(s)) => s == DEFAULT_PPROF_ADDR,
-        ("remote-management.panel-github-repository", Value::String(s)) => s == DEFAULT_PANEL_GITHUB_REPOSITORY,
+        ("remote-management.panel-github-repository", Value::String(s)) => {
+            s == DEFAULT_PANEL_GITHUB_REPOSITORY
+        }
         ("plugins.dir", Value::String(s)) => s == DEFAULT_PLUGINS_DIR,
         ("routing.strategy", Value::String(s)) => s == "round-robin",
         ("error-logs-max-files", n) if is_int(n) => n.as_i64() == Some(10),
@@ -447,10 +525,13 @@ fn prune_known_defaults_in_new_node(path: &[&str], node: &mut Value) {
                     return false;
                 }
                 prune_known_defaults_in_new_node(&child_path, child);
-                !matches!(child, Value::Mapping(m) if m.is_empty()) && !matches!(child, Value::Sequence(s) if s.is_empty())
+                !matches!(child, Value::Mapping(m) if m.is_empty())
+                    && !matches!(child, Value::Sequence(s) if s.is_empty())
             });
         }
-        Value::Sequence(items) => items.iter_mut().for_each(|child| prune_known_defaults_in_new_node(path, child)),
+        Value::Sequence(items) => items
+            .iter_mut()
+            .for_each(|child| prune_known_defaults_in_new_node(path, child)),
         _ => {}
     }
 }
@@ -472,34 +553,95 @@ fn is_zero_value_node(node: &Value) -> bool {
 // v8 layout restore
 // ---------------------------------------------------------------------------------------------
 
+/// A v8 API-key family's comments, set aside while the merge works on the flattened entries.
+struct FamilyStash {
+    legacy: &'static str,
+    family: &'static str,
+    comments: Comments,
+}
+
+/// Re-keys comments from v8 paths to the legacy paths the merge operates on: leaf fields move to
+/// their legacy name, and each flattened legacy entry takes the comments of the group/key it came
+/// from (the originals are kept in the returned stash).
+fn comments_to_legacy(comments: &mut Comments, layout: &Value) -> Vec<FamilyStash> {
+    for (old, current) in v8_paths() {
+        if yaml_path(layout, current).is_some() {
+            comments.move_prefix(&dotted(current), &dotted(old));
+        }
+    }
+    let mut stashed = Vec::new();
+    for (legacy, family) in KEY_FAMILIES {
+        let Some(groups) = yaml_path(layout, &format!("api-keys.{family}")) else {
+            continue;
+        };
+        let stash = comments.take_prefix(&dotted(&format!("api-keys.{family}")));
+        family_comments_to_legacy(comments, &stash, legacy, family, groups);
+        stashed.push(FamilyStash {
+            legacy,
+            family,
+            comments: stash,
+        });
+    }
+    stashed
+}
+
 /// After merging into the legacy-named view, moves each field back to the v8 path it had in the
 /// original document so saves do not reintroduce legacy spellings.
-fn restore_v8_layout(root: &mut Value, layout: &Value, original: &str, generated: &Value) -> Result<()> {
+fn restore_v8_layout(
+    root: &mut Value,
+    layout: &Value,
+    original: &str,
+    generated: &Value,
+    comments: &mut Comments,
+    stashed: Vec<FamilyStash>,
+) -> Result<()> {
     let upstreams_is_mapping = yaml_path(layout, "api-keys").is_some_and(Value::is_mapping);
     for (old, current) in v8_paths() {
         let client_key_collision = *old == "api-keys" && upstreams_is_mapping;
         if yaml_path(layout, current).is_none() && !client_key_collision {
             continue;
         }
-        let Some(value) = legacy_path(root, old).cloned() else { continue };
+        let Some(value) = legacy_path(root, old).cloned() else {
+            continue;
+        };
         delete_yaml_path(root, old);
         set_yaml_path(root, current, value);
+        comments.move_prefix(&dotted(old), &dotted(current));
     }
     let mut baseline: Option<Value> = None;
     for (old, family) in KEY_FAMILIES {
         let path = format!("api-keys.{family}");
-        let Some(groups) = yaml_path(layout, &path).cloned() else { continue };
+        let Some(groups) = yaml_path(layout, &path).cloned() else {
+            continue;
+        };
         if baseline.is_none() {
-            baseline = Some(serde_yaml_ng::to_value(parse_config_bytes(original.as_bytes())?)?);
+            baseline = Some(serde_yaml_ng::to_value(parse_config_bytes(
+                original.as_bytes(),
+            )?)?);
         }
         let before = baseline.as_ref().and_then(|b| yaml_path(b, old));
         let after = yaml_path(generated, old);
-        let groups = if before != after {
-            let keys = yaml_path(root, old).cloned().unwrap_or_else(|| Value::Sequence(Vec::new()));
-            group_legacy_keys(&keys, family)
-        } else {
+        let kept_as_written = before == after;
+        let groups = if kept_as_written {
             groups
+        } else {
+            let keys = yaml_path(root, old)
+                .cloned()
+                .unwrap_or_else(|| Value::Sequence(Vec::new()));
+            // Rebuilt groups: entries re-key onto the new groups by position.
+            move_family_comments(comments, old, &path, &keys, family);
+            group_legacy_keys(&keys, family)
         };
+        if kept_as_written {
+            // The groups are unchanged, so their own comments are still right.
+            comments.remove_prefix(&dotted(old));
+            if let Some(stash) = stashed
+                .iter()
+                .find(|s| s.legacy == *old && s.family == *family)
+            {
+                comments.merge(stash.comments.clone());
+            }
+        }
         delete_yaml_path(root, old);
         set_yaml_path(root, &path, groups);
     }

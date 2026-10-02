@@ -1,0 +1,10 @@
+claude-api-key:
+  - api-key: a
+    models: [{name: m, alias: x, thinking: {min: 1, max: 9, zero-allowed: true, dynamic-allowed: true, levels: [low, high]}}]
+openai-compatibility:
+  - name: o
+    base-url: https://o
+    models: [{name: m, alias: x, thinking: {levels: [low]}}]
+payload:
+  default:
+    - {models: [{name: m}], params: {thinking: {zero-allowed: 1}}}

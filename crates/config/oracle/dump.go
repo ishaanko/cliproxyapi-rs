@@ -7,8 +7,10 @@
 //	CPA_CONFIG_ORACLE_OUT=/tmp/rust-out cargo test -p cpa-config --test oracle_dump -- --ignored
 //	python3 crates/config/oracle/compare.py /tmp/go-out /tmp/rust-out
 //
-// Known, accepted differences are limited to exotic integer literals (0x1F, 0o17, 010, 1_000),
-// which are not in the corpus.
+// Accepted differences (all in the Rust implementation's favour or representational):
+//   - block_scalar: Go's NormalizeCommentIndentation drops "# ..." lines inside block scalars on
+//     save (silent data loss); the Rust writer keeps them.
+//   - the "json" record: Go marshals nil slices/maps as null, Rust writes [] / {}.
 package main
 
 import (
@@ -63,6 +65,11 @@ func main() {
 			res["parse"] = map[string]any{"__error": true}
 		} else {
 			res["parse"] = generic(cfg)
+			if raw, errJSON := json.Marshal(cfg); errJSON == nil {
+				var asJSON any
+				_ = json.Unmarshal(raw, &asJSON)
+				res["json"] = asJSON
+			}
 		}
 		res["validate"] = config.ValidateV8Config(raw) == nil
 		migrated, _, errM := config.NormalizeConfigLayout(raw, true)

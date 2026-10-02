@@ -1,0 +1,2 @@
+api-keys: [True, 1.50, 12e4, 0o7, 0x1F, .5, +5, "x"]
+gemini-api-key: [{api-key: 0o7, prefix: True, base-url: 1.50}]
