@@ -4,6 +4,8 @@
 set -euo pipefail
 branch=$1 msg=$2
 cd "$(git rev-parse --show-toplevel)"
+git checkout -q Cargo.lock 2>/dev/null || true
+if [ -n "$(git status --porcelain)" ]; then echo "working tree dirty"; git status --short; exit 1; fi
 git merge --no-ff --no-commit "$branch" || true
 if git diff --name-only --diff-filter=U | grep -qv '^Cargo.lock$'; then
   echo "non-lockfile conflicts:"; git diff --name-only --diff-filter=U; exit 1
