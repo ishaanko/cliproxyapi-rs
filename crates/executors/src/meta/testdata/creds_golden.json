@@ -1,0 +1,142 @@
+[
+ {
+  "auth": {},
+  "base": "https://api.meta.ai/v1",
+  "token": "",
+  "dca": "",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "attributes": {
+    "api_key": "attr-key",
+    "base_url": "https://custom.meta.com/v1"
+   }
+  },
+  "base": "https://custom.meta.com/v1",
+  "token": "attr-key",
+  "dca": "",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "metadata": {
+    "access_token": "meta-oauth-token"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "meta-oauth-token",
+  "dca": "",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "metadata": {
+    "access_token": "dca:abc"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "",
+  "dca": "dca:abc",
+  "should_prepare": true
+ },
+ {
+  "auth": {
+   "metadata": {
+    "access_token": " dca:abc ",
+    "api_key": "real"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "real",
+  "dca": "dca:abc",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "metadata": {
+    "base_url": "https://m.example/v1",
+    "dca_token": "dca:zzz"
+   }
+  },
+  "base": "https://m.example/v1",
+  "token": "",
+  "dca": "dca:zzz",
+  "should_prepare": true
+ },
+ {
+  "auth": {
+   "metadata": {
+    "api_base_url": "https://api2.example/v1",
+    "api_key": "k"
+   }
+  },
+  "base": "https://api2.example/v1",
+  "token": "k",
+  "dca": "",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "attributes": {
+    "access_token": "tok",
+    "api_key": "dca:x"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "tok",
+  "dca": "",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "attributes": {
+    "dca_token": "dca:attr"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "",
+  "dca": "dca:attr",
+  "should_prepare": true
+ },
+ {
+  "auth": {
+   "attributes": {
+    "access_token": "dca:attr2"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "",
+  "dca": "dca:attr2",
+  "should_prepare": true
+ },
+ {
+  "auth": {
+   "attributes": {
+    "api_key": "k",
+    "auth_kind": "apikey"
+   },
+   "metadata": {
+    "dca_token": "dca:m"
+   }
+  },
+  "base": "https://api.meta.ai/v1",
+  "token": "k",
+  "dca": "dca:m",
+  "should_prepare": false
+ },
+ {
+  "auth": {
+   "attributes": {
+    "base_url": "  "
+   },
+   "metadata": {
+    "base_url": " https://trim.example "
+   }
+  },
+  "base": "https://trim.example",
+  "token": "",
+  "dca": "",
+  "should_prepare": false
+ }
+]

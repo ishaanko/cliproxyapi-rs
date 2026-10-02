@@ -1,0 +1,389 @@
+package executor
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/runtime/executor/helps"
+	_ "github.com/router-for-me/CLIProxyAPI/v8/internal/translator"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/auth"
+	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
+	"google.golang.org/protobuf/encoding/protowire"
+)
+
+type oImage struct {
+	Base64Data string `json:"base64_data"`
+	MimeType   string `json:"mime_type"`
+}
+type oToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+type oPrompt struct {
+	MessageID     string      `json:"message_id"`
+	Source        int         `json:"source"`
+	Content       string      `json:"content"`
+	Images        []oImage    `json:"images"`
+	ToolCalls     []oToolCall `json:"tool_calls"`
+	ToolCallID    string      `json:"tool_call_id"`
+	OrigToolCall  string      `json:"original_tool_call_id"`
+	IsOrphaned    bool        `json:"is_orphaned_tool"`
+	Thinking      string      `json:"thinking"`
+	SignatureB64  string      `json:"signature_b64"`
+	SignatureType string      `json:"signature_type"`
+}
+type oTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  string `json:"parameters"`
+}
+type oWire struct {
+	Name         string    `json:"name"`
+	SessionToken string    `json:"session_token"`
+	DeviceSeed   string    `json:"device_seed"`
+	ModelUID     string    `json:"chat_model_uid"`
+	System       string    `json:"system_prompt"`
+	Prompts      []oPrompt `json:"prompts"`
+	Tools        []oTool   `json:"tools"`
+	Temperature  *float64  `json:"temperature"`
+	MaxTokens    int       `json:"max_tokens"`
+	SessionID    string    `json:"session_id"`
+	CascadeID    string    `json:"cascade_id"`
+	Words        []string  `json:"sensitive_words"`
+	Repeat       int       `json:"repeat"`
+	Hex          []string  `json:"hex"`
+}
+type oSanitize struct {
+	Prompt string   `json:"prompt"`
+	Words  []string `json:"words"`
+	Out    string   `json:"out"`
+}
+type oTrailer struct {
+	Payload string `json:"payload"`
+	Status  int    `json:"status"`
+	Err     string `json:"err"`
+}
+type oModel struct {
+	Model  string `json:"model"`
+	Level  string `json:"level"`
+	Budget int    `json:"budget"`
+	Out    string `json:"out"`
+}
+type oParse struct {
+	Name     string          `json:"name"`
+	Payload  string          `json:"payload"`
+	Original string          `json:"original"`
+	Out      json.RawMessage `json:"out"`
+}
+type oSig struct {
+	In     string `json:"in"`
+	BytesB string `json:"bytes_b64"`
+	Type   string `json:"type"`
+	Detect string `json:"detect"`
+}
+type oUUID struct {
+	In  string `json:"in"`
+	Out string `json:"out"`
+}
+type oFrame struct {
+	Flag    int    `json:"flag"`
+	Hex     string `json:"hex"`
+	RawTail string `json:"raw_tail,omitempty"`
+}
+type oFormatOut struct {
+	Format string   `json:"format"`
+	Chunks []string `json:"chunks"`
+	NonStr string   `json:"non_stream"`
+}
+type oStream struct {
+	Name         string            `json:"name"`
+	Frames       []oFrame          `json:"frames"`
+	Requests     map[string]string `json:"requests"`
+	Interactions string            `json:"interactions"`
+	ConsumeErr   string            `json:"consume_err"`
+	ConsumeCode  int               `json:"consume_code"`
+	Formats      []oFormatOut      `json:"formats"`
+}
+type oE2E struct {
+	Name         string `json:"name"`
+	SourceFormat string `json:"source_format"`
+	Model        string `json:"model"`
+	Payload      string `json:"payload"`
+	Hex          string `json:"hex"`
+	URL          string `json:"url"`
+	Err          string `json:"err"`
+}
+type oCases struct {
+	E2E      []oE2E      `json:"e2e"`
+	Wire     []oWire     `json:"wire"`
+	Sanitize []oSanitize `json:"sanitize"`
+	Trailers []oTrailer  `json:"trailers"`
+	Models   []oModel    `json:"models"`
+	Parse    []oParse    `json:"parse"`
+	Sigs     []oSig      `json:"sigs"`
+	UUIDs    []oUUID     `json:"uuids"`
+	Streams  []oStream   `json:"streams"`
+}
+
+func toPrompts(in []oPrompt) []helps.DevinPrompt {
+	var out []helps.DevinPrompt
+	for _, p := range in {
+		dp := helps.DevinPrompt{MessageID: p.MessageID, Source: p.Source, Content: p.Content, ToolCallID: p.ToolCallID, OriginalToolCallID: p.OrigToolCall, IsOrphanedTool: p.IsOrphaned, Thinking: p.Thinking, SignatureType: p.SignatureType}
+		for _, i := range p.Images {
+			dp.Images = append(dp.Images, helps.DevinImage{Base64Data: i.Base64Data, MimeType: i.MimeType})
+		}
+		for _, t := range p.ToolCalls {
+			dp.ToolCalls = append(dp.ToolCalls, helps.DevinToolCall{ID: t.ID, Name: t.Name, Arguments: t.Arguments})
+		}
+		if p.SignatureB64 != "" {
+			b, _ := base64.StdEncoding.DecodeString(p.SignatureB64)
+			dp.Signature = b
+		}
+		out = append(out, dp)
+	}
+	return out
+}
+
+func fromPrompts(in []helps.DevinPrompt) []oPrompt {
+	out := []oPrompt{}
+	for _, p := range in {
+		op := oPrompt{MessageID: "", Source: p.Source, Content: p.Content, ToolCallID: p.ToolCallID, OrigToolCall: p.OriginalToolCallID, IsOrphaned: p.IsOrphanedTool, Thinking: p.Thinking, SignatureType: p.SignatureType, Images: []oImage{}, ToolCalls: []oToolCall{}}
+		for _, i := range p.Images {
+			op.Images = append(op.Images, oImage{i.Base64Data, i.MimeType})
+		}
+		for _, t := range p.ToolCalls {
+			op.ToolCalls = append(op.ToolCalls, oToolCall{t.ID, t.Name, t.Arguments})
+		}
+		if len(p.Signature) > 0 {
+			op.SignatureB64 = base64.StdEncoding.EncodeToString(p.Signature)
+		}
+		out = append(out, op)
+	}
+	return out
+}
+
+type parseOut struct {
+	System    string    `json:"system_prompt"`
+	Prompts   []oPrompt `json:"prompts"`
+	Tools     []oTool   `json:"tools"`
+	Temp      *float64  `json:"temperature"`
+	MaxTokens int       `json:"max_tokens"`
+	Session   string    `json:"session_id"`
+	Cascade   string    `json:"cascade_id"`
+	Level     string    `json:"thinking_level"`
+	Budget    int       `json:"budget_tokens"`
+}
+
+// maskProto drops per-request random values: prompt message ids (3.1), the session id inside
+// field 15 (15.1) and the cascade id (field 16).
+func maskProto(b []byte) []byte {
+	var out []byte
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return out
+		}
+		vn := protowire.ConsumeFieldValue(num, typ, b[n:])
+		if vn < 0 {
+			return out
+		}
+		raw := b[:n+vn]
+		switch {
+		case num == 16 && typ == protowire.BytesType:
+			// dropped
+		case (num == 3 || num == 15) && typ == protowire.BytesType:
+			sub, _ := protowire.ConsumeBytes(b[n:])
+			var masked []byte
+			for len(sub) > 0 {
+				sn, st, tn := protowire.ConsumeTag(sub)
+				sv := protowire.ConsumeFieldValue(sn, st, sub[tn:])
+				if sn != 1 {
+					masked = append(masked, sub[:tn+sv]...)
+				}
+				sub = sub[tn+sv:]
+			}
+			out = protowire.AppendTag(out, num, protowire.BytesType)
+			out = protowire.AppendBytes(out, masked)
+		default:
+			out = append(out, raw...)
+		}
+		b = b[n+vn:]
+	}
+	return out
+}
+
+func TestDevinOracle(t *testing.T) {
+	in := os.Getenv("DEVIN_ORACLE_IN")
+	outPath := os.Getenv("DEVIN_ORACLE_OUT")
+	if in == "" {
+		t.Skip("no oracle input")
+	}
+	raw, err := os.ReadFile(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c oCases
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire requests.
+	for i := range c.Wire {
+		w := &c.Wire[i]
+		helps.ResetDevinSessionTurnIndex(w.SessionID)
+		n := w.Repeat
+		if n < 1 {
+			n = 1
+		}
+		for r := 0; r < n; r++ {
+			tools := []helps.DevinTool{}
+			for _, tl := range w.Tools {
+				tools = append(tools, helps.DevinTool{Name: tl.Name, Description: tl.Description, Parameters: []byte(tl.Parameters)})
+			}
+			matcher := helps.BuildSensitiveWordMatcher(w.Words)
+			b := helps.BuildDevinGetChatMessageRequest(w.SessionToken, w.DeviceSeed, w.ModelUID, w.System, toPrompts(w.Prompts), tools, w.Temperature, w.MaxTokens, w.SessionID, w.CascadeID, matcher)
+			w.Hex = append(w.Hex, hex.EncodeToString(b))
+		}
+		helps.ResetDevinSessionTurnIndex(w.SessionID)
+	}
+	for i := range c.Sanitize {
+		s := &c.Sanitize[i]
+		s.Out = helps.SanitizeDevinSystemPrompt(s.Prompt, helps.BuildSensitiveWordMatcher(s.Words))
+	}
+	for i := range c.Trailers {
+		tr := &c.Trailers[i]
+		code, err := helps.ParseDevinTrailerError([]byte(tr.Payload))
+		tr.Status = code
+		if err != nil {
+			tr.Err = err.Error()
+		}
+	}
+	for i := range c.Models {
+		m := &c.Models[i]
+		m.Out = helps.ResolveDevinChatModelUID(m.Model, m.Level, m.Budget)
+	}
+	for _, mi := range registry.GetDevinModels() {
+		base := strings.TrimPrefix(mi.ID, "devin/")
+		for _, eff := range []string{"", "none", "minimal", "low", "medium", "high", "xhigh", "max", "auto", "fast"} {
+			m := oModel{Model: "devin/" + base, Level: eff}
+			m.Out = helps.ResolveDevinChatModelUID(m.Model, m.Level, 0)
+			c.Models = append(c.Models, m)
+		}
+	}
+	for i := range c.Parse {
+		p := &c.Parse[i]
+		sys, prompts, tools, temp, maxTokens, sess, casc, level, budget := parseInteractionsPayload([]byte(p.Payload), []byte(p.Original))
+		po := parseOut{System: sys, Prompts: fromPrompts(prompts), Tools: []oTool{}, Temp: temp, MaxTokens: maxTokens, Session: sess, Cascade: casc, Level: level, Budget: budget}
+		for _, tl := range tools {
+			po.Tools = append(po.Tools, oTool{tl.Name, tl.Description, string(tl.Parameters)})
+		}
+		p.Out, _ = json.Marshal(po)
+	}
+	for i := range c.Sigs {
+		s := &c.Sigs[i]
+		b, ty := parseSignatureBytes(s.In)
+		s.BytesB = base64.StdEncoding.EncodeToString(b)
+		s.Type = ty
+		s.Detect = detectSignatureType(s.In)
+	}
+	for i := range c.UUIDs {
+		u := &c.UUIDs[i]
+		if u.In == "" {
+			continue
+		}
+		u.Out = normalizeDevinUUID(u.In)
+		if _, err := uuid.Parse(u.In); err == nil {
+			// keep
+		}
+	}
+
+	for i := range c.E2E {
+		e := &c.E2E[i]
+		auth := &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "tok", "device_seed": "seed"}}
+		exec := &DevinExecutor{}
+		req := cliproxyexecutor.Request{Model: e.Model, Payload: []byte(e.Payload)}
+		opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.Format(e.SourceFormat), OriginalRequest: []byte(e.Payload)}
+		httpReq, _, _, err := exec.prepareDevinHTTPRequest(context.Background(), auth, req, opts)
+		if err != nil {
+			e.Err = err.Error()
+			continue
+		}
+		body, _ := io.ReadAll(httpReq.Body)
+		e.URL = httpReq.URL.String()
+		e.Hex = hex.EncodeToString(maskProto(body[5:]))
+	}
+
+	formats := []sdktranslator.Format{sdktranslator.FormatInteractions, sdktranslator.FormatOpenAI, sdktranslator.FormatClaude, sdktranslator.FormatOpenAIResponse, sdktranslator.FormatGemini}
+	for i := range c.Streams {
+		s := &c.Streams[i]
+		build := func() *bytes.Buffer {
+			var buf bytes.Buffer
+			for _, f := range s.Frames {
+				if f.RawTail != "" {
+					rb, _ := hex.DecodeString(f.RawTail)
+					buf.Write(rb)
+					continue
+				}
+				b, _ := hex.DecodeString(f.Hex)
+				buf.Write(helps.WrapConnectEnvelopeWithFlag(byte(f.Flag), b))
+			}
+			return &buf
+		}
+		ij, _, errC := consumeDevinFramesToInteractions(build(), "devin/swe-2", "swe-2-high", []byte(s.Requests["interactions"]))
+		s.Interactions = string(ij)
+		if errC != nil {
+			s.ConsumeErr = errC.Error()
+			if se, ok := errC.(statusErr); ok {
+				s.ConsumeCode = se.code
+			}
+		}
+		for _, f := range formats {
+			fo := oFormatOut{Format: f.String()}
+			req := s.Requests[f.String()]
+			e := &DevinExecutor{}
+			out := make(chan cliproxyexecutor.StreamChunk, 8192)
+			opts := cliproxyexecutor.Options{SourceFormat: f, OriginalRequest: []byte(req)}
+			buf := build()
+			go func() {
+				defer close(out)
+				e.streamDevinFrames(context.Background(), buf, cliproxyexecutor.Request{Model: "devin/swe-2", Payload: []byte(req)}, opts, "swe-2-high", f, nil, out)
+			}()
+			for ch := range out {
+				if ch.Err != nil {
+					msg := "ERR: " + ch.Err.Error()
+					if se, ok := ch.Err.(statusErr); ok {
+						msg += " code=" + string(rune('0'+se.code/100)) + string(rune('0'+(se.code/10)%10)) + string(rune('0'+se.code%10))
+					}
+					fo.Chunks = append(fo.Chunks, msg)
+				} else {
+					fo.Chunks = append(fo.Chunks, string(ch.Payload))
+				}
+			}
+			if errC == nil {
+				var param any
+				nonStream := sdktranslator.TranslateNonStream(context.Background(), sdktranslator.FormatInteractions, f, "devin/swe-2", []byte(req), []byte(req), ij, &param)
+				fo.NonStr = string(nonStream)
+			}
+			s.Formats = append(s.Formats, fo)
+		}
+	}
+
+	b, err := json.MarshalIndent(c, "", " ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outPath, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

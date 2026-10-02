@@ -301,13 +301,19 @@ mod tests {
 
     #[test]
     fn clients_are_cached_per_setting() {
-        let before = CLIENTS.len();
+        // Other tests share the global cache, so assert on this test's own keys only.
+        let key = |proxy: &str, no_compression: bool| ClientKey { proxy: proxy.into(), timeout_ms: 0, no_compression };
+        let http = key("http://cache-test.example:3128", false);
+        let socks_devin = key("socks5://u:p@cache-test.example:1080", true);
         let _ = new_proxy_aware_http_client("http://cache-test.example:3128", None, None, None);
         let _ = new_proxy_aware_http_client("http://cache-test.example:3128", None, None, None);
         let _ = new_devin_http_client("socks5://u:p@cache-test.example:1080", None, None, None);
-        // Same proxy, same timeout: one entry; the devin variant is a separate (no-gzip) entry.
-        assert_eq!(CLIENTS.len(), before + 2);
+        // The devin variant is a separate (no-gzip) entry from the plain client.
+        assert!(CLIENTS.contains(&http));
+        assert!(CLIENTS.contains(&socks_devin));
+        assert!(!CLIENTS.contains(&key("socks5://u:p@cache-test.example:1080", false)));
         assert_eq!(close_cached_clients_for_proxy("http://cache-test.example:3128"), 1);
+        assert!(!CLIENTS.contains(&http));
         // Invalid proxies fall back to the default client without panicking.
         let _ = new_proxy_aware_http_client("ftp://bad", None, None, None);
     }

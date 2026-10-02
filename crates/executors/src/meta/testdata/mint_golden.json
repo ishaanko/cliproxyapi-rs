@@ -1,0 +1,24 @@
+{
+ "attributes": {
+  "access_token": "minted-key",
+  "api_key": "minted-key",
+  "base_url": "https://minted.example/v1"
+ },
+ "got_auth": "Bearer dca:token-1",
+ "got_body": "{\"dca_token\":\"dca:token-1\"}",
+ "got_ua": "muse-code/1.0.2",
+ "metadata": {
+  "access_token": "minted-key",
+  "api_key": "minted-key",
+  "base_url": "https://minted.example/v1",
+  "dca_token": "dca:token-1",
+  "email": "me@example.com",
+  "has_payment_method": true,
+  "is_subs_active": true,
+  "last_refresh": "2026-10-02T09:43:52-07:00",
+  "name": "Me Myself",
+  "subs_tier_id": "t1",
+  "subs_tier_name": "Pro",
+  "type": "meta"
+ }
+}
