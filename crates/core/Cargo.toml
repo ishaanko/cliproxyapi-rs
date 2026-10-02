@@ -27,3 +27,6 @@ percent-encoding = "2"
 png = "0.17"
 serde_stacker = "0.1"
 stacker = "0.1"
+
+[dev-dependencies]
+flate2 = "1"

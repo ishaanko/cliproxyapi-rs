@@ -1,0 +1,684 @@
+package common
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"os"
+	"strings"
+	"testing"
+
+	applypatch "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/apply-patch"
+	"github.com/tidwall/gjson"
+)
+
+// Golden generator for the Rust port of internal/translator/common. Runs the real Go helpers over
+// curated and seeded-random inputs and records outputs. Run via `go test -overlay`; see
+// crates/translator/src/common/testdata.
+
+type gc map[string]any
+
+func errS(err error) any {
+	if err == nil {
+		return nil
+	}
+	return err.Error()
+}
+
+func strsOf(items [][]byte) []string {
+	if items == nil {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = string(it)
+	}
+	return out
+}
+
+func bytesOf(items []string) [][]byte {
+	if items == nil {
+		return nil
+	}
+	out := make([][]byte, len(items))
+	for i, s := range items {
+		out[i] = []byte(s)
+	}
+	return out
+}
+
+func resultOut(r gjson.Result) gc {
+	return gc{"exists": r.Exists(), "raw": r.Raw}
+}
+
+func resultsOut(rs []gjson.Result) []gc {
+	out := make([]gc, len(rs))
+	for i, r := range rs {
+		out[i] = resultOut(r)
+	}
+	return out
+}
+
+func TestZZCommonGolden(t *testing.T) {
+	outPath := os.Getenv("GOLDEN_OUT")
+	if outPath == "" {
+		t.Skip("GOLDEN_OUT not set")
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriterSize(f, 1<<20)
+	defer w.Flush()
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	rng := rand.New(rand.NewSource(11))
+	emit := func(fn string, in, out any) {
+		if err := enc.Encode(gc{"fn": fn, "in": in, "out": out}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pickS := func(xs []string) string { return xs[rng.Intn(len(xs))] }
+
+	// ---- bytes.go
+	for _, n := range []int64{0, 5, -1, 1 << 40} {
+		emit("geminiTokenCount", n, string(GeminiTokenCountJSON(n)))
+		emit("claudeInputTokens", n, string(ClaudeInputTokensJSON(n)))
+	}
+	for _, items := range [][]string{nil, {}, {`{"a":1}`}, {`{"a":1}`, `[2]`, `"x"`}, {`1`, ``}} {
+		emit("joinRawArray", items, string(JoinRawArray(bytesOf(items))))
+	}
+	for _, data := range []string{`{"a":[]}`, `{"a":[1]}`, `{"a":{"b":[]}}`, `{}`, ``, `[]`, `{"a":"x"}`, "{\n \"a\": [ ]\n}"} {
+		for _, path := range []string{"a", "a.b", "c", "c.d", "", "a.0"} {
+			for _, items := range [][]string{nil, {`{"x":1}`}, {`1`, `{"y":[2]}`}} {
+				emit("setRawArrayItems", gc{"data": data, "path": path, "items": items}, string(SetRawArrayItems([]byte(data), path, bytesOf(items))))
+			}
+		}
+	}
+	emit("sse", gc{"event": "message_start", "payload": `{"a":1}`}, string(SSEEventData("message_start", []byte(`{"a":1}`))))
+	for _, n := range []int{0, 1, 2, 3} {
+		emit("appendSSEString", gc{"prefix": "pre", "event": "e", "payload": "p", "n": n}, string(AppendSSEEventString([]byte("pre"), "e", "p", n)))
+		emit("appendSSEBytes", gc{"prefix": "", "event": "e", "payload": "p\nq", "n": n}, string(AppendSSEEventBytes(nil, "e", []byte("p\nq"), n)))
+	}
+	for _, v := range []string{"plain", "a<b>&c", `q"<>&`, "uni é☃ <&>", "line\nbreak <", "tab\t\\", "\u2028x", ""} {
+		for _, data := range []string{`{}`, `{"a":1}`, `{"a":{"b":"x"}}`, ``, `{"s":"old"}`} {
+			for _, path := range []string{"s", "a.b", "x.y.z", "a.0"} {
+				out, e := SetStringWithoutHTMLEscape([]byte(data), path, v)
+				emit("setStringNoEscape", gc{"data": data, "path": path, "value": v}, gc{"value": string(out), "err": errS(e)})
+			}
+		}
+	}
+
+	// ---- request.go / antigravity / interactions usage / file data
+	reqs := []string{``, `{}`, `{"model":"a"}`, `{"model":" "}`, `{"model":5}`, `{"request":{"model":"b"}}`, `{"model":"","request":{"model":"c"}}`, `not json`, `{"model":"x","request":{"model":"y"}}`, `{"request":{"model":" "}}`}
+	for _, a := range reqs {
+		for _, b := range reqs {
+			emit("requestModelName", gc{"a": a, "b": b}, RequestModelName([]byte(a), []byte(b)))
+		}
+	}
+	for _, n := range []string{"read_file", "write_file", "execute_code", "other", "external_read_file", "external_other", "external_", "", "external_external_read_file", "Read_File"} {
+		emit("agTool", n, gc{"up": AntigravityToolNameToUpstream(n), "client": AntigravityUpstreamToolNameToClient(n)})
+	}
+	for _, fn := range []string{"a.PNG", "a.txt", "dir.d/file", "noext", ".hidden", "a.b.PDF", "", "x.", "weird.unknownext"} {
+		for _, fb := range []string{"", "text/plain"} {
+			for _, data := range []string{"", "QUJD", "data:image/png;base64,QUJD", "DATA:image/png;BASE64,QUJD", "data:;base64,QUJD", "data:image/png,QUJD", "data:image/png;base64,", "data:image/png;charset=x;base64,QUJD", "data:image/png;x=y", "data:", "dat"} {
+				mt, d, ok := NormalizeOpenAIFileData(fn, fb, data)
+				emit("fileData", gc{"filename": fn, "fallback": fb, "data": data}, gc{"mime": mt, "data": d, "ok": ok})
+			}
+		}
+	}
+	for _, doc := range []string{`{}`, `{"usage":{"a":1}}`, `{"interaction":{"usage":{"a":2}},"usage":{"a":1}}`, `{"metadata":{"total_usage":{"a":3},"usage":{"a":4}}}`, `{"interaction":{"metadata":{"usage":{"a":5}}}}`, `{"usage":null}`, `{"metadata":{"usage":1}}`} {
+		emit("interactionsUsage", doc, resultOut(InteractionsUsage(gjson.Parse(doc))))
+	}
+
+	// ---- claude messages accumulator
+	msgPool := []string{
+		`{"role":"user","content":"hi"}`, `{"role":"user","content":""}`, `{"role":"user","content":null}`,
+		`{"role":"user","content":[{"type":"text","text":"a"},"str",{"type":"image"},5]}`,
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"n","input":{}},{"type":"text","text":"x"}]}`,
+		`{"role":"assistant","content":"ok"}`, `{"role":"assistant","content":[]}`,
+		`{"role":"user","content":[{"type":"tool_use","id":"t2"}]}`,
+		`{"role":"system","content":"s"}`, `{"content":"norole"}`, `{"role":"user"}`, ``, `not json`,
+		`{"role":"assistant","content":[{"type":"tool_use","id":"t3"},{"type":"text","text":"y"},{"type":"tool_use","id":"t4"}]}`,
+	}
+	for seq := 0; seq < 120; seq++ {
+		var msgs []string
+		for i := rng.Intn(7); i > 0; i-- {
+			msgs = append(msgs, pickS(msgPool))
+		}
+		acc := NewClaudeMessageAccumulator(len(msgs))
+		var steps []string
+		for _, m := range msgs {
+			acc.Append([]byte(m))
+			if rng.Intn(5) == 0 {
+				steps = append(steps, "flush")
+				acc.Flush()
+			} else {
+				steps = append(steps, "")
+			}
+		}
+		emit("accumulator", gc{"msgs": msgs, "steps": steps}, strsOf(acc.Messages()))
+	}
+	contents := []string{
+		`[{"type":"tool_result","tool_use_id":"a"},{"type":"text","text":"x"},{"type":"tool_result","tool_use_id":"b"}]`,
+		`[{"type":"tool_result","tool_use_id":"b"},{"type":"tool_result","tool_use_id":"a"}]`,
+		`[{"type":"tool_result","tool_use_id":"a"},{"type":"tool_result","tool_use_id":"a"}]`,
+		`[{"type":"tool_result","tool_use_id":"a"}]`, `[]`, `"str"`, `{"type":"tool_result"}`, `[{"type":"text"}]`,
+		`[{"type":"tool_result","tool_use_id":""},{"type":"tool_result","tool_use_id":"b"}]`,
+	}
+	for _, c := range contents {
+		for _, ids := range [][]string{nil, {"a"}, {"a", "b"}, {"b", "a"}, {"a", "a"}, {"", "b"}, {"z", "a"}} {
+			emit("alignClaudeToolResults", gc{"content": c, "ids": ids}, resultOut(AlignClaudeToolResults(gjson.Parse(c), ids)))
+		}
+	}
+	emit("alignClaudeToolResults", gc{"content": "", "ids": []string{"a"}}, resultOut(AlignClaudeToolResults(gjson.Result{}, []string{"a"})))
+
+	// ---- claude system
+	for _, text := range []string{"", "x", "multi\nline"} {
+		emit("systemReminderText", text, SystemReminderText(text))
+	}
+	sysVals := []string{`"plain"`, `""`, `"   "`, `"x-anthropic-billing-header: cc_version=1"`, `[{"type":"text","text":"a"},{"type":"text","text":"b"}]`, `[{"type":"text","text":"a"},{"type":"image"},{"type":"text","text":""}]`, `[{"type":"text","text":"x-anthropic-billing-header: z"}]`, `[]`, `null`, `5`, `{"type":"text","text":"a"}`, `[{"type":"text","text":"  "}]`}
+	for _, s := range sysVals {
+		txt, ok := ClaudeMessageSystemReminderText(gjson.Parse(s))
+		emit("claudeSystemReminder", s, gc{"text": txt, "ok": ok})
+	}
+	emit("claudeSystemReminder", "", func() gc { txt, ok := ClaudeMessageSystemReminderText(gjson.Result{}); return gc{"text": txt, "ok": ok} }())
+	fmts := []string{`{"type":"json_object"}`, `{"type":" JSON_OBJECT "}`, `{"type":"json_schema","json_schema":{"name":" N ","description":"d","schema":{"type":"object"}}}`, `{"type":"json_schema","schema":{"a":1},"name":"top","description":" td "}`, `{"type":"json_schema"}`, `{"type":"json_schema","json_schema":{"schema":{"p":[1,2]}}}`, `{"type":"text"}`, `{}`, `null`, `"str"`, `{"type":"json_schema","json_schema":{"name":"","schema":{}},"name":"fallback"}`}
+	for _, s := range fmts {
+		emit("structuredOutput", s, BuildClaudeStructuredOutputInstruction(gjson.Parse(s)))
+	}
+	emit("structuredOutput", "", BuildClaudeStructuredOutputInstruction(gjson.Result{}))
+
+	// ---- cache control
+	ccs := []string{`{"cache_control":{"type":"ephemeral"}}`, `{"cache_control":{"type":"ephemeral","ttl":"1h"}}`, `{"cache_control":{"type":"other"}}`, `{"cache_control":"x"}`, `{"cache_control":null}`, `{}`, `{"cache_control":{"type":"Ephemeral"}}`, `{"cache_control":{}}`}
+	dsts := []string{`{}`, `{"a":1}`, `{"cache_control":{"type":"ephemeral","x":1}}`, ``}
+	for _, s := range ccs {
+		for _, d := range dsts {
+			emit("attachCacheControl", gc{"dst": d, "src": s}, string(AttachCacheControl([]byte(d), gjson.Parse(s))))
+		}
+		for _, m := range []string{`{"content":"text"}`, `{"content":[]}`, `{"content":[{"type":"text","text":"a"}]}`, `{"content":[{"type":"text","text":"a"},{"type":"text","text":"b","cache_control":{"type":"ephemeral","z":1}}]}`, `{"content":5}`, `{"role":"user"}`, `{"content":null}`, `{"content":"","role":"user"}`} {
+			emit("attachMessageCacheControl", gc{"msg": m, "src": s}, string(AttachMessageCacheControl([]byte(m), gjson.Parse(s))))
+		}
+	}
+	toolSrcs := append([]string{
+		`{"content":[{"type":"text","cache_control":{"type":"ephemeral"}}]}`,
+		`{"content":[{"type":"text"},{"type":"text","cache_control":{"type":"ephemeral","a":1}}],"cache_control":{"type":"ephemeral","m":1}}`,
+		`{"content":{"cache_control":{"type":"ephemeral"}}}`, `{"content":"str","cache_control":{"type":"ephemeral"}}`,
+		`[{"cache_control":{"type":"ephemeral","k":1}}]`, `{"cache_control":{"type":"ephemeral"}}`, `{"content":[{"cache_control":{"type":"bad"}}]}`,
+		`{"content":null,"cache_control":{"type":"ephemeral"}}`,
+	}, ccs...)
+	for _, s := range toolSrcs {
+		for _, m := range []string{`{"content":[{"type":"text"},{"type":"tool_result","tool_use_id":"a"},{"type":"tool_result","tool_use_id":"b"}]}`, `{"content":[{"type":"text"}]}`, `{"content":[]}`, `{"content":"s"}`, `{}`} {
+			emit("attachToolMessageCacheControl", gc{"msg": m, "src": s}, string(AttachToolMessageCacheControl([]byte(m), gjson.Parse(s))))
+		}
+	}
+
+	// ---- user id
+	idDocs := []string{
+		`{"metadata":{"user_id":"u1"}}`, `{"metadata":{"user_id":"  "},"user":"usr"}`, `{"user":"  "}`, `{"user":5}`,
+		`{"prompt_cache_key":" pck ","session_id":"s"}`, `{"session_id":" sid "}`, `{"sessionId":"sid2"}`, `{"session_id":"","sessionId":"x"}`,
+		`{"conversation":{"id":" cid "}}`, `{"conversation":" cstr "}`, `{"conversation":"  ","conversation_id":"ignored"}`, `{"conversation":5,"conversation_id":" cid2 "}`, `{"conversation_id":"c3"}`,
+		`{"messages":[{"role":"system","content":"s"},{"role":"user","content":" hello "}]}`,
+		`{"messages":[{"role":"user","content":""},{"role":"USER","content":[{"type":"text","text":" a "},{"type":"image"},{"type":"text","text":"b"}]}]}`,
+		`{"messages":[{"role":"assistant","content":"x"}],"model":"m","system":"sys"}`,
+		`{"input":" text input "}`, `{"input":[{"type":"message","role":"system","content":"x"},{"role":"user","content":[{"type":"input_text","text":"ask"},{"type":"output_text","text":"more"}]}]}`,
+		`{"input":[{"type":"message","content":"msg default user"}]}`, `{"input":[{"type":"function_call"}],"model":"m"}`,
+		`{"contents":[{"role":"model","parts":[{"text":"m"}]},{"parts":[{"thought":true,"text":"t"},{"text":" gem "},{"text":""},{"text":"b"}]}]}`,
+		`{"contents":[{"role":"user","parts":[{"text":" "}]}],"systemInstruction":{"a":1}}`,
+		`{"model":" gpt ","instructions":"i","system":[1],"systemInstruction":"si","system_instruction":"sn"}`, `{"model":"m"}`, `{}`, ``, `not json`,
+		`{"messages":[{"role":"user","content":"a"}],"prompt_cache_key":""}`,
+	}
+	for _, d := range idDocs {
+		emit("deriveClaudeUserID", d, DeriveClaudeUserID([]byte(d)))
+	}
+
+	// ---- devin
+	for _, ns := range []string{"mcp__codex_app", " MCP__CODEX_APP ", "other", ""} {
+		for _, tool := range []string{"automation_update", " AUTOMATION_UPDATE ", "mcp__codex_app__automation_update", "x", ""} {
+			emit("devinAutomation", gc{"ns": ns, "tool": tool}, IsDevinCodexAppAutomationUpdate(ns, tool))
+		}
+	}
+	descs := []string{"", "x returning output or a session ID for ongoing interaction y", "RETURNING OUTPUT OR A SESSION id FOR ONGOING INTERACTION", "already returning output or an session ID for ongoing interaction", "none",
+		"Writes characters to an existing unified exec session and returns recent output.", "WRITES CHARACTERS TO AN EXISTING UNIFIED EXEC SESSION AND RETURNS RECENT OUTPUT", "writes characters to an existing unified exec session and returns recent output.",
+		"Writes characters to a existing unified exec session and returns recent output.", "twice: Writes characters to an existing unified exec session and returns recent output. and Writes characters to an existing unified exec session and returns recent output"}
+	for _, d := range descs {
+		emit("devinObfuscate", d, gc{"exec": ObfuscateExecCommandDescription(d), "stdin": ObfuscateWriteStdinDescription(d)})
+		for _, tool := range []string{"exec_command", " Exec_Command ", "ns__exec_command", "write_stdin", "x__write_stdin", "other"} {
+			emit("devinSanitize", gc{"tool": tool, "desc": d}, SanitizeDevinToolDescription(tool, d))
+		}
+	}
+
+	// ---- gemini contents
+	gPool := []string{
+		`{"role":"user","parts":[{"text":"hi"}]}`, `{"role":"user","parts":[{"text":"hi2"},{"inlineData":{"mimeType":"a"}}]}`,
+		`{"role":"user","parts":[{"functionResponse":{"name":"f","response":{}}}]}`,
+		`{"role":"user","parts":[{"functionResponse":{"name":"g","response":{}}},{"text":"after"}]}`,
+		`{"role":"user","parts":[{"text":"before"},{"function_response":{"name":"h"}}]}`,
+		`{"role":"model","parts":[{"text":"ans"}]}`, `{"role":"model","parts":[{"functionCall":{"name":"f","args":{}}}]}`,
+		`{"role":"model","parts":[{"function_call":{"name":"f","args":{}}},{"text":"t"}]}`,
+		`{"role":"user","parts":[]}`, `{"role":"user"}`, `{"parts":[{"text":"norole"}]}`, `{"role":"user","parts":{"text":"obj"}}`, `{"role":"model","parts":[{"text":"m2"}]}`,
+		``, `not json`, `{"role":"user","parts":[{"text":"r1"}],"extra":1}`,
+	}
+	for seq := 0; seq < 400; seq++ {
+		var list []string
+		for i := rng.Intn(7); i > 0; i-- {
+			list = append(list, pickS(gPool))
+		}
+		emit("geminiMerge", list, strsOf(MergeAdjacentGeminiContents(bytesOf(list))))
+		emit("geminiMergeUser", list, strsOf(MergeAdjacentGeminiUserContents(bytesOf(list))))
+		emit("geminiSplit", list, strsOf(SplitGeminiFunctionResponseTurns(bytesOf(list))))
+	}
+	for _, c := range gPool {
+		emit("geminiContentHas", c, gc{"fc": ContentHasGeminiFunctionCall([]byte(c)), "fr": ContentHasGeminiFunctionResponse([]byte(c))})
+	}
+	partPool := []string{`{"text":"a"}`, `{"functionResponse":{"name":"f"}}`, `{"function_response":{"name":"g"}}`, `{"inlineData":{}}`, `{"text":"b"}`, `{"functionCall":{"name":"x"}}`, `not json`}
+	for seq := 0; seq < 150; seq++ {
+		var list []string
+		for i := rng.Intn(6); i > 0; i-- {
+			list = append(list, pickS(partPool))
+		}
+		emit("geminiReorder", list, strsOf(ReorderGeminiUserParts(bytesOf(list))))
+	}
+	for _, p := range []string{`{"thought":true}`, `{"thought":false}`, `{"thought":"true"}`, `{"thought":"false"}`, `{"thought":1}`, `{}`, `{"thought":null}`, `{"thought":"T"}`} {
+		emit("isThought", p, IsGeminiThoughtPart(gjson.Parse(p)))
+	}
+	for _, v := range []string{`{"$ref":"#/x"}`, `{"a":{"$ref":"#"}}`, `{"$ref":5}`, `[{"$ref":"x"}]`, `[["$ref"]]`, `"str"`, `{"a":[{"b":{"$ref":"y"}}]}`, `{"properties":{"$ref":{"type":"string"}}}`, `5`, `null`, `{}`} {
+		emit("containsJSONRef", v, ContainsJSONRef(gjson.Parse(v)))
+	}
+	results := []string{`{"ok":true}`, `{"$ref":"#/defs/x"}`, `"text"`, `[1,2]`, `{"a":{"$ref":"z"}}`, `5`, `null`}
+	for _, part := range []string{`{"functionResponse":{"name":"f"}}`, `{}`, ``} {
+		for _, path := range []string{"functionResponse.response", "response", "functionResponse.result", "x.response.y", "result"} {
+			for _, r := range results {
+				emit("setGeminiFRResult", gc{"part": part, "path": path, "result": r}, string(SetGeminiFunctionResponseResult([]byte(part), path, gjson.Parse(r))))
+				emit("setGeminiFRRaw", gc{"part": part, "path": path, "raw": " " + r + " "}, string(SetGeminiFunctionResponseRaw([]byte(part), path, " "+r+" ")))
+			}
+			emit("setGeminiFRResult", gc{"part": part, "path": path, "result": nil}, string(SetGeminiFunctionResponseResult([]byte(part), path, gjson.Result{})))
+			emit("setGeminiFRRaw", gc{"part": part, "path": path, "raw": "  "}, string(SetGeminiFunctionResponseRaw([]byte(part), path, "  ")))
+		}
+	}
+
+	// ---- openai tool alignment
+	asst := func(ids ...string) string {
+		var calls []string
+		for _, id := range ids {
+			calls = append(calls, fmt.Sprintf(`{"id":%q,"type":"function"}`, id))
+		}
+		return `{"role":"assistant","tool_calls":[` + strings.Join(calls, ",") + `]}`
+	}
+	tool := func(id string) string { return fmt.Sprintf(`{"role":"tool","tool_call_id":%q,"content":"r-%s"}`, id, id) }
+	oPool := []string{asst("a"), asst("b"), asst("a", "b"), asst("c", "d"), asst(""), asst("e", ""), tool("a"), tool("b"), tool("c"), tool("d"), tool("e"), tool(""), tool("z"), `{"role":"user","content":"u"}`, `{"role":"assistant","content":"plain"}`, `{"role":"assistant","tool_calls":[]}`, `{"role":"assistant","tool_calls":"x"}`, ``, `{"role":"user","content":"u2"}`}
+	for seq := 0; seq < 600; seq++ {
+		var list []string
+		for i := rng.Intn(9); i > 0; i-- {
+			list = append(list, pickS(oPool))
+		}
+		var extra []string
+		if rng.Intn(4) == 0 {
+			extra = []string{pickS([]string{"a", " b ", "c", "", "q"})}
+		}
+		emit("alignOpenAI", gc{"msgs": list, "extra": extra}, strsOf(AlignOpenAIToolCallMessages(bytesOf(list), extra...)))
+	}
+	// canonical reorder
+	emit("alignOpenAI", gc{"msgs": []string{asst("a", "b"), `{"role":"user","content":"u"}`, tool("b"), tool("a")}, "extra": []string(nil)}, strsOf(AlignOpenAIToolCallMessages(bytesOf([]string{asst("a", "b"), `{"role":"user","content":"u"}`, tool("b"), tool("a")}))))
+
+	// ---- responses.go
+	for _, path := range []string{"", "item", "response.output.0"} {
+		for _, item := range []string{`{"name":"old","namespace":"oldns"}`, `{}`, `{"item":{"name":"x"},"response":{"output":[{"name":"y"}]}}`, ``} {
+			for _, ns := range []string{"", "ns"} {
+				emit("setResponsesIdentity", gc{"item": item, "name": "n<&>", "ns": ns, "path": path}, string(SetResponsesToolCallIdentity([]byte(item), "n<&>", ns, path)))
+			}
+		}
+	}
+	for _, n := range []string{`{"call_id":" c "}`, `{"tool_call_id":"t","id":"i"}`, `{"callId":"ci"}`, `{"id":"fco_1"}`, `{"id":" i "}`, `{"id":"fco_x","call_id":""}`, `{}`, `{"call_id":5}`} {
+		emit("extractResponsesCallID", n, ExtractResponsesCallID(gjson.Parse(n)))
+	}
+	fcs := []string{
+		`{"type":"function_call","call_id":"c1","name":"f"}`, `{"type":"function_call","call_id":"c2","name":"g"}`, `{"type":"custom_tool_call","id":"c3","name":"f"}`, `{"type":"function_call","call_id":"c4"}`, `{"type":"function_call","name":"nocall"}`,
+		`{"type":"function_call_output","call_id":"c1","output":"o1"}`, `{"type":"function_call_output","output":"anon1"}`, `{"type":"function_call_output","name":"f","output":"named-f"}`, `{"type":"function_call_output","name":"g","output":"named-g"}`,
+		`{"type":"custom_tool_call_output","call_id":"c3","output":"o3"}`, `{"type":"custom_tool_call_output","output":"anon2"}`, `{"type":"function_call_output","call_id":"zz","output":"orphan"}`, `{"type":"function_call_output","id":"fco_9","output":"fco"}`,
+		`{"type":"function_call_output","tool_call_id":"c2","output":"o2"}`, `{"type":"function_call_output","name":"other","output":"othername"}`, `{"type":"message","role":"user"}`, `{"type":"reasoning"}`,
+	}
+	for seq := 0; seq < 700; seq++ {
+		var list []string
+		for i := rng.Intn(10); i > 0; i-- {
+			list = append(list, pickS(fcs))
+		}
+		var items []gjson.Result
+		for _, s := range list {
+			items = append(items, gjson.Parse(s))
+		}
+		emit("normalizeResponsesOutputs", list, resultsOut(NormalizeResponsesToolCallOutputs(items)))
+	}
+
+	// ---- apply patch decoder
+	decArgs := []string{
+		`{"input":"*** Begin Patch\n+x\n*** End Patch\n"}`, ` {"input" : "a\tb\\c\"d\/e\b\f\r"} `, `{"input":"中文\uD83D\uDE00 \u00e9\u0041"}`, `{"input":""}`, "{\n\"input\"\n:\n\"x\"\n}\n",
+		``, `[]`, `{}`, `{"patch":"x"}`, `{input:"x"}`, `{"in\qput":"x"}`, `{"input" "x"}`, `{"input":42}`, `{"input":null}`, `{"input":{}}`, `{"input":"x","input":"y"}`, `{"input":"x","extra":"y"}`, `{"input":"x",}`, `{"input":"x"}{}`,
+		"\v{\"input\":\"x\"}", `{"input":"\q"}`, `{"input":"\u12G4"}`, `{"input":"\u123"}`, `{"input":"x\`, "{\"input\":\"x\ny\"}", "{\"input\":\"x\x00y\"}", `{"input":"\uDE00"}`, `{"input":"\uD83D"}`, `{"input":"\uD83Dx"}`, `{"input":"\uD83D\n"}`, `{"input":"\uD83D\u0041"}`, `{"input":"\uD83D\uD83D"}`,
+		"{\"input\":\"\xe4A\"}", "{\"input\":\"\xe4\xb8\"}", "{\"input\":\"\xc0\xaf\"}", "{\"input\":\"\xed\xa0\x80\"}", "{\"input\":\"\xf4\x90\x80\x80\"}", "{\"input\":\"\xe4\xb8\xad ok\"}", `{"input":"x`, `{"input":"x"`, `{"input":"\u0000"}`, `{"\u0069nput":"esc key"}`,
+	}
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	runDecoder := func(args string, frags []string, finish bool) gc {
+		var d ApplyPatchInputDecoder
+		var steps []gc
+		for _, fr := range frags {
+			delta, e := d.Push(fr)
+			steps = append(steps, gc{"delta": b64(delta), "err": errS(e)})
+		}
+		out := gc{"steps": steps, "input": b64(d.Input())}
+		if finish {
+			tail, e := d.Finish(args)
+			out["finish"] = gc{"tail": b64(tail), "err": errS(e)}
+			out["inputAfter"] = b64(d.Input())
+			delta, e2 := d.Push("")
+			out["pushAfter"] = gc{"delta": b64(delta), "err": errS(e2)}
+		}
+		return out
+	}
+	for _, args := range decArgs {
+		var splits [][]string
+		splits = append(splits, []string{args})
+		for s := 0; s <= len(args); s++ {
+			splits = append(splits, []string{args[:s], args[s:]})
+		}
+		var bytewise []string
+		for i := 0; i < len(args); i++ {
+			bytewise = append(bytewise, args[i:i+1])
+		}
+		splits = append(splits, bytewise, nil)
+		for _, frs := range splits {
+			var enc []string
+			for _, fr := range frs {
+				enc = append(enc, b64(fr))
+			}
+			emit("decoder", gc{"args": b64(args), "frags": enc, "finish": true}, runDecoder(args, frs, true))
+		}
+		// no finish
+		emit("decoder", gc{"args": b64(args), "frags": []string{b64(args)}, "finish": false}, runDecoder(args, []string{args}, false))
+	}
+	// pending then invalid continuation
+	for _, p := range [][2]string{{`\uD83D`, `"}`}, {`\uD83D`, "x"}, {`\uD83D\`, "n"}, {`\uD83D\u00`, "41"}, {`\`, "q"}, {`\u12`, "G"}, {"\xe4", "x"}, {"\xe4\xb8", `"}`}, {`\u00e`, `9"}`}} {
+		frs := []string{`{"input":"safe` + p[0], p[1]}
+		var encd []string
+		for _, fr := range frs {
+			encd = append(encd, b64(fr))
+		}
+		emit("decoder", gc{"args": b64(""), "frags": encd, "finish": false}, runDecoder("", frs, false))
+	}
+	// finish with conflicting streamed prefix / equivalent encodings
+	emit("decoder", gc{"args": b64(`{"input":"abd"}`), "frags": []string{b64(`{"input":"abc`)}, "finish": true}, runDecoder(`{"input":"abd"}`, []string{`{"input":"abc`}, true))
+	emit("decoder", gc{"args": b64(`{"input":"\u0061b"}`), "frags": []string{b64(`{"input":"ab"}`)}, "finish": true}, runDecoder(`{"input":"\u0061b"}`, []string{`{"input":"ab"}`}, true))
+
+	// ---- events
+	for _, st := range []struct{ item, call, name, ns string; idx int }{{"i1", "c1", "apply_patch", "", 0}, {"", "", "", "ns", 3}, {"i<2>", "c&2", "n", "n\"s", -1}} {
+		state := &ApplyPatchCallState{ItemID: st.item, CallID: st.call, Name: st.name, Namespace: st.ns, OutputIndex: st.idx}
+		for _, seq := range []int{0, 1, 99} {
+			emit("patchEvents", gc{"item": st.item, "call": st.call, "idx": st.idx, "seq": seq, "text": "d<\"\n>"}, gc{"delta": string(ApplyPatchInputDelta(state, "d<\"\n>", seq)), "done": string(ApplyPatchInputDone(state, "d<\"\n>", seq))})
+		}
+	}
+	for _, id := range []string{"", "resp_1", "r<&>"} {
+		emit("patchFailure", gc{"id": id, "seq": 4}, string(ApplyPatchFailure(id, 4)))
+	}
+
+	// ---- normalize request
+	reqPool := []string{
+		`{"tools":[{"type":"custom","name":"apply_patch"}],"input":[]}`,
+		`{"tools":[{"type":"function","name":"apply_patch"}],"input":[]}`, `{"input":[]}`,
+		`{"tools":[{"type":"custom","name":"apply_patch","description":"d This is a FREEFORM tool, so do not wrap the patch in JSON.","format":{"type":"grammar","definition":"start: x"}},{"type":"function","name":"other"}],"tool_choice":{"type":"custom","name":"apply_patch"}}`,
+		`{"tools":[{"type":"function","name":"apply_patch","description":"ordinary"}],"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"apply_patch"}]}]}`,
+		`{"tools":[{"type":"namespace","name":"n","tools":[{"type":"custom","name":"apply_patch"}]},{"type":"function","name":"n__apply_patch","description":"ordinary"}]}`,
+		`{"tools":[{"type":"namespace","name":"n","tools":[{"type":"custom","name":"apply_patch"},{"type":"function","name":"lookup"}]}],"tool_choice":{"type":"custom","name":"apply_patch","namespace":"n"}}`,
+		`{"tools":[{"type":"namespace","name":"n","children":[{"type":"custom","name":"apply_patch"}]}]}`,
+		`{"tools":[{"type":"custom","name":"apply_patch"},{"type":"custom","name":"apply_patch","description":"dup"}]}`,
+		`{"tools":[{"type":"custom","function":{"name":"apply_patch"}},{"type":"web_search"},{"type":" custom ","name":"apply_patch"}]}`,
+		`{"tools":[{"type":"custom","name":"apply_patch"}],"tool_choice":{"type":"allowed_tools","tools":[{"type":"custom","name":"apply_patch"},{"type":"function","name":"x"}]}}`,
+		`{"tools":[{"type":"custom","name":"apply_patch"}],"input":[{"type":"custom_tool_call","call_id":"old","name":"apply_patch","input":"{\"input\":\"raw\"}"},{"type":"custom_tool_call_output","call_id":"old","output":"ok"},{"type":"function_call","call_id":"fn","name":"apply_patch","arguments":"{\"input\":\"existing\"}"},{"type":"custom_tool_call_output","call_id":"other","output":"x"},{"type":"custom_tool_call","call_id":"o","name":"other","input":"x"}]}`,
+		`{"input":[{"type":"custom_tool_call","call_id":"bad","name":"apply_patch","input":5}]}`,
+		`{"input":[{"type":"custom_tool_call","call_id":"bad","name":" apply_patch ","input":{"a":1}}]}`,
+		`{"tools":[{"type":"namespace","name":"a","tools":[{"type":"namespace","name":"b","tools":[{"type":"custom","name":"apply_patch"}]},{"type":"custom","name":"apply_patch"}]}]}`,
+		`{"tools":"x","input":"y"}`, `[]`, ``, `nope`, `{"tools":[{"type":"custom","name":"apply_patch"}],"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"apply_patch"},{"type":"function","name":"f"}]},{"type":"additional_tools","tools":5}]}`,
+	}
+	for _, r := range reqPool {
+		out, e := NormalizeApplyPatchResponsesRequest([]byte(r))
+		emit("normalizeRequest", r, gc{"value": string(out), "err": errS(e)})
+	}
+
+	// ---- bridge scenarios
+	patchReq := `{"tools":[{"type":"custom","name":"apply_patch"}]}`
+	type scenario struct {
+		req    string
+		events []string
+		nonStream string
+	}
+	var scenarios []scenario
+	item := func(kind, id, call, name, args string) string { return patchItem(kind, id, call, name, args) }
+	ev := func(kind string, index int, it string) string { return string(patchEvent(kind, index, it)) }
+	jstr := func(s string) string { return patchJSON(s) }
+	args := `{"input":"*** Begin Patch\n+中文\uD83D\uDE00 \"\\\n*** End Patch\n"}`
+	for _, late := range []bool{false, true} {
+		name := "apply_patch"
+		if late {
+			name = ""
+		}
+		sc := scenario{req: patchReq}
+		sc.events = append(sc.events, ev("response.output_item.added", 0, item("function_call", "", "", name, "")))
+		for _, part := range []string{args[:18], args[18:35], args[35:41], args[41:]} {
+			sc.events = append(sc.events, fmt.Sprintf(`{"type":"response.function_call_arguments.delta","output_index":0,"delta":%s}`, jstr(part)))
+		}
+		it := item("function_call", "fc1", "c1", "apply_patch", args)
+		sc.events = append(sc.events, ev("response.output_item.done", 0, it), `{"type":"response.completed","response":{"id":"r1","output":[`+it+`]}}`, `{"type":"response.completed","response":{"output":[]}}`)
+		scenarios = append(scenarios, sc)
+	}
+	for _, req := range []string{patchReq, `{"tools":[{"type":"function","name":"apply_patch"}]}`, `{}`} {
+		scenarios = append(scenarios, scenario{req: req, events: []string{
+			`{ "type":"response.output_item.added", "output_index":0,"item":{"type":"custom_tool_call","id":"native","name":"apply_patch","input":""}}`,
+			`{ "type":"response.custom_tool_call_input.delta", "item_id":"native","delta":"raw patch"}`,
+			ev("response.output_item.done", 1, item("function_call", "ordinary", "ordinary", "lookup", `{"x":1}`)),
+		}})
+	}
+	evidence := []struct{ before []string; after string }{
+		{[]string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", "")), ev("response.output_item.added", 1, item("function_call", "b", "cb", "lookup", ""))}, `{"type":"response.function_call_arguments.delta","output_index":1,"item_id":"a","delta":"{}"}`},
+		{[]string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", ""))}, `{"type":"response.function_call_arguments.done","output_index":0,"item_id":"a","call_id":"other","arguments":"{\"input\":\"p\"}"}`},
+		{[]string{ev("response.output_item.added", 0, item("message", "a", "ca", "", ""))}, ev("response.output_item.done", 0, item("function_call", "a", "ca", "apply_patch", `{"input":"p"}`))},
+		{[]string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "", `{"input":"p","extra":1}`))}, ev("response.output_item.done", 0, item("function_call", "a", "ca", "apply_patch", `{"input":"p"}`))},
+		{nil, ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", `{"input":"p`))},
+		{nil, `{"type":"response.completed","response":{"output":[{"type":"function_call","name":"apply_patch","arguments":"{}"}]}}`},
+		{[]string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", ""))}, `{"type":"response.completed","response":{"output":[{"type":"message","id":"a","content":[]}]}}`},
+		{[]string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "", ""))}, ev("response.output_item.done", 0, item("function_call", "a", "changed", "apply_patch", `{"input":"p"}`))},
+	}
+	for _, e := range evidence {
+		scenarios = append(scenarios, scenario{req: patchReq, events: append(append([]string{}, e.before...), e.after, `{"type":"response.completed","response":{"output":[]}}`)})
+	}
+	scenarios = append(scenarios, scenario{req: patchReq, events: []string{ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", ""))}})
+	{
+		sc := scenario{req: patchReq}
+		for i := 0; i < 2; i++ {
+			sc.events = append(sc.events, ev("response.output_item.added", i, item("function_call", fmt.Sprint("a", i), fmt.Sprint("c", i), "apply_patch", "")))
+			wa := applypatch.WrapInput(fmt.Sprint("patch", i))
+			sc.events = append(sc.events,
+				fmt.Sprintf(`{"type":"response.function_call_arguments.done","output_index":%d,"arguments":%s}`, i, jstr(wa)),
+				ev("response.output_item.done", i, item("function_call", fmt.Sprint("a", i), fmt.Sprint("c", i), "apply_patch", wa)),
+				ev("response.output_item.done", i, item("function_call", fmt.Sprint("a", i), fmt.Sprint("c", i), "apply_patch", wa)))
+		}
+		scenarios = append(scenarios, sc)
+	}
+	for _, req := range []string{
+		`{"tools":[{"type":"custom","name":"apply_patch"}],"input":[]}`,
+		`{"tools":[{"type":"function","name":"apply_patch","description":"ordinary"}],"input":[{"type":"additional_tools","tools":[{"type":"custom","name":"apply_patch"}]}]}`,
+		`{"tools":[{"type":"namespace","name":"n","tools":[{"type":"custom","name":"apply_patch"}]},{"type":"function","name":"n__apply_patch","description":"ordinary"}]}`,
+		`{"tools":[{"type":"namespace","name":"n","tools":[{"type":"custom","name":"apply_patch"},{"type":"function","name":"lookup"}]}]}`,
+	} {
+		for _, nm := range []string{"apply_patch", "n__apply_patch", "n__lookup", "lookup"} {
+			scenarios = append(scenarios, scenario{req: req, events: []string{
+				ev("response.output_item.done", 0, item("function_call", "a", "c", nm, `{"x":1}`)),
+				ev("response.output_item.done", 1, item("function_call", "b", "d", nm, applypatch.WrapInput("p"))),
+				`{"type":"response.completed","response":{"output":[]}}`,
+			}})
+		}
+		scenarios = append(scenarios, scenario{req: req, nonStream: `{"id":"r","output":[` + item("function_call", "a", "c", "n__apply_patch", applypatch.WrapInput("p")) + `,` + item("function_call", "b", "d", "n__lookup", `{"x":1}`) + `,` + item("function_call", "e", "f", "apply_patch", applypatch.WrapInput("q")) + `]}`})
+	}
+	for _, source := range []string{"deltas", "arguments.done"} {
+		kind, field := "response.function_call_arguments.done", "arguments"
+		if source == "deltas" {
+			kind, field = "response.function_call_arguments.delta", "delta"
+		}
+		scenarios = append(scenarios, scenario{req: patchReq, events: []string{
+			ev("response.output_item.added", 0, item("function_call", "a", "c", "apply_patch", "")),
+			fmt.Sprintf(`{"type":%s,"item_id":"a",%s:%s}`, jstr(kind), jstr(field), jstr(applypatch.WrapInput("p"))),
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"a","call_id":"c","name":"apply_patch"}}`,
+			`{"type":"response.completed","response":{"output":[]}}`,
+		}})
+	}
+	scenarios = append(scenarios,
+		scenario{req: patchReq, events: []string{
+			`{ "type":"response.output_item.done", "output_index":0, "item":{"type":"custom_tool_call","id":"n","name":"apply_patch","input":"raw"}}`,
+			`{ "type":"response.completed", "sequence_number":71, "response": {"output":[{"type":"custom_tool_call","id":"n","name":"apply_patch","input":"raw"}]}}`}},
+		scenario{req: patchReq, events: []string{
+			`{"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"a"}}`,
+			`{"type":"response.function_call_arguments.done","output_index":0,"item_id":"a","call_id":"c","name":"apply_patch","arguments":"{\"input\":\"p\"}"}`}},
+		scenario{req: patchReq, events: []string{ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", applypatch.WrapInput("p")))}},
+	)
+	keys := []string{"output_index", "item_id", "call_id"}
+	for _, patchKey := range keys {
+		for _, firstKey := range keys {
+			if firstKey == patchKey {
+				continue
+			}
+			vals := map[string]string{"output_index": "0", "item_id": `"a"`, "call_id": `"ca"`}
+			vals[patchKey] = map[string]string{"output_index": "1", "item_id": `"b"`, "call_id": `"cb"`}[patchKey]
+			scenarios = append(scenarios, scenario{req: patchReq, events: []string{
+				ev("response.output_item.added", 0, item("function_call", "a", "ca", "lookup", "")),
+				ev("response.output_item.added", 1, item("function_call", "b", "cb", "apply_patch", "")),
+				fmt.Sprintf(`{"type":"response.function_call_arguments.delta","output_index":%s,"item_id":%s,"call_id":%s,"delta":"{}"}`, vals["output_index"], vals["item_id"], vals["call_id"])}})
+		}
+	}
+	for _, discover := range []int{0, 1, 2} {
+		sc := scenario{req: patchReq}
+		for i := 0; i < 3; i++ {
+			sc.events = append(sc.events, ev("response.output_item.added", i, item("function_call", fmt.Sprint("i", i), fmt.Sprint("c", i), "", "")))
+		}
+		sc.events = append(sc.events, `{"type":"response.function_call_arguments.delta","output_index":0,"item_id":"i1","call_id":"c2","delta":""}`,
+			ev("response.output_item.done", discover, item("function_call", fmt.Sprint("i", discover), fmt.Sprint("c", discover), "apply_patch", applypatch.WrapInput("p"))))
+		scenarios = append(scenarios, sc)
+	}
+	for _, terminal := range []bool{false, true} {
+		it := item("function_call", "a", "c", "apply_patch", applypatch.WrapInput("p"))
+		sc := scenario{req: patchReq, events: []string{ev("response.output_item.done", 0, it)}}
+		if terminal {
+			sc.events = append(sc.events, `{"type":"response.completed","response":{"output":[`+it+`]}}`)
+		}
+		sc.events = append(sc.events, ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", applypatch.WrapInput("different"))))
+		scenarios = append(scenarios, sc)
+	}
+	ordinary := `{"type":"message","id":"m","content":[{"type":"output_text","text":"ok"}]}`
+	scenarios = append(scenarios,
+		scenario{req: patchReq, events: []string{ev("response.output_item.done", 0, item("function_call", "p", "cp", "apply_patch", applypatch.WrapInput("p"))), ev("response.output_item.done", 1, ordinary), `{"type":"response.completed","response":{"output":[]}}`}},
+		scenario{req: patchReq, events: []string{ev("response.output_item.done", 0, item("function_call", "p", "cp", "apply_patch", applypatch.WrapInput("p"))), `{"type":"response.completed","response":{"output":[` + ordinary + `]}}`}},
+	)
+	for _, known := range []bool{false, true} {
+		for _, key := range []string{`"item_id":"b"`, `"call_id":"cb"`, `"output_index":1`} {
+			sc := scenario{req: patchReq}
+			if known {
+				sc.events = append(sc.events, ev("response.output_item.added", 0, item("function_call", "a", "ca", "lookup", "")))
+			}
+			sc.events = append(sc.events, `{"type":"response.output_item.added","output_index":1,"item_id":"a","call_id":"ca","item":{"type":"function_call","id":"b","call_id":"cb","name":""}}`,
+				`{"type":"response.function_call_arguments.done",`+key+`,"name":"apply_patch","arguments":"{\"input\":\"p\"}"}`)
+			scenarios = append(scenarios, sc)
+		}
+	}
+	scenarios = append(scenarios,
+		scenario{req: patchReq, events: []string{
+			`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"function_call","id":"a","call_id":"c","name":"apply_patch","arguments":""}}`,
+			`{"type":"response.output_item.added","sequence_number":2,"output_index":1,"item":{"type":"function_call","id":"b","name":"lookup","arguments":""}}`,
+			`{"type":"response.function_call_arguments.done","sequence_number":3,"output_index":0,"item_id":"a","arguments":"{\"input\":\"p\"}"}`,
+			`{"type":"response.output_item.done","sequence_number":4,"output_index":1,"item":{"type":"function_call","id":"b","name":"lookup","arguments":"{\"x\":1}"}}`,
+			`{"type":"response.completed","sequence_number":5,"response":{"output":[]}}`}},
+		scenario{req: `{"tools":[{"type":"namespace","name":"n","tools":[{"type":"custom","name":"apply_patch"},{"type":"function","name":"lookup"}]}]}`, events: []string{
+			`{ "type":"response.function_call_arguments.done", "output_index":0,"name":"lookup","namespace":"n","arguments":"{}"}`}},
+		scenario{req: patchReq, events: []string{
+			`{"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"function_call","id":"a","name":"apply_patch","arguments":""}}`,
+			`  { "type":"response.output_item.added", "sequence_number":2, "output_index":1,"item":{"type":"custom_tool_call","id":"n","name":"apply_patch","input":""}}  `}},
+		scenario{req: patchReq, events: []string{`{"type":"response.failed","response":{"id":"x"}}`, `{"type":"response.completed","response":{"output":[]}}`}},
+		scenario{req: patchReq, events: []string{`{"type":"response.created","response":{"id":"resp9"}}`, ev("response.output_item.added", 0, item("function_call", "a", "ca", "apply_patch", "")), `{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"input\":\"ab"}`, `{"type":"response.completed","response":{"id":"resp9","output":[]}}`}},
+	)
+	// named late identity: all first/boundary combos
+	for _, first := range []string{"item", "call", "neither", "neither-item-first", "neither-call-first"} {
+		for _, boundary := range []string{"item", "terminal"} {
+			sc := scenario{req: patchReq}
+			id, call := "", ""
+			if first == "item" {
+				id = "a"
+			}
+			if first == "call" {
+				call = "c"
+			}
+			sc.events = append(sc.events, ev("response.output_item.added", 0, item("function_call", id, call, "apply_patch", "")))
+			for _, fr := range []string{`{"input":"p`, `q"}`} {
+				sc.events = append(sc.events, fmt.Sprintf(`{"type":"response.function_call_arguments.delta","output_index":0,"delta":%s}`, jstr(fr)))
+			}
+			sc.events = append(sc.events, `{"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"input\":\"pq\"}"}`)
+			if strings.HasPrefix(first, "neither-") {
+				id, call = "a", ""
+				if first == "neither-call-first" {
+					id, call = "", "c"
+				}
+				sc.events = append(sc.events, ev("response.output_item.added", 0, item("function_call", id, call, "apply_patch", "")))
+			}
+			it := item("function_call", "a", "c", "apply_patch", `{"input":"pq"}`)
+			if boundary == "item" {
+				sc.events = append(sc.events, ev("response.output_item.done", 0, it))
+			}
+			sc.events = append(sc.events, `{"type":"response.completed","response":{"output":[`+it+`]}}`)
+			scenarios = append(scenarios, sc)
+		}
+	}
+	// late identity evidence + interleaved calls (from apply_patch_identity_test.go)
+	lateEvidence := []struct{ before, after string }{
+		{ev("response.output_item.added", 0, item("function_call", "a", "", "apply_patch", "")), ev("response.output_item.done", 0, item("function_call", "changed", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "", "c", "apply_patch", "")), ev("response.output_item.done", 0, item("function_call", "a", "changed", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "", "", "apply_patch", `{"input":"p`)), ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "a", "", "apply_patch", `{"input":"pq","extra":1}`)), ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.done", 0, item("function_call", "a", "", "apply_patch", `{"input":"pq"}`)), `{"type":"response.completed","response":{"output":[]}}`},
+	}
+	for _, le := range lateEvidence {
+		scenarios = append(scenarios, scenario{req: patchReq, events: []string{le.before, le.after, le.after}})
+	}
+	{
+		sc := scenario{req: patchReq}
+		for i, it := range []string{item("function_call", "a0", "", "apply_patch", ""), item("function_call", "", "c1", "apply_patch", "")} {
+			sc.events = append(sc.events, ev("response.output_item.added", i, it),
+				fmt.Sprintf(`{"type":"response.function_call_arguments.delta","output_index":%d,"delta":%s}`, i, jstr(`{"input":"`+fmt.Sprint(i)+`"}`)))
+		}
+		for _, i := range []int{1, 0} {
+			sc.events = append(sc.events, ev("response.output_item.done", i, item("function_call", fmt.Sprint("a", i), fmt.Sprint("c", i), "apply_patch", `{"input":"`+fmt.Sprint(i)+`"}`)))
+		}
+		sc.events = append(sc.events, `{"type":"response.completed","response":{"output":[]}}`)
+		scenarios = append(scenarios, sc)
+	}
+	for _, sc := range scenarios {
+		b := NewApplyPatchResponsesBridge([]byte(sc.req))
+		var steps []gc
+		for _, e := range sc.events {
+			out, e2 := b.Transform([]byte(e))
+			steps = append(steps, gc{"events": strsOf(out), "err": errS(e2)})
+		}
+		res := gc{"steps": steps, "finish": errS(b.Finish()), "toolErr": errS(b.ToolInputError())}
+		if sc.nonStream != "" {
+			out, e := b.TransformNonStream([]byte(sc.nonStream))
+			res["nonStream"] = gc{"value": string(out), "err": errS(e)}
+		}
+		emit("bridge", gc{"req": sc.req, "events": sc.events, "nonStream": sc.nonStream}, res)
+	}
+	// check identity
+	for _, e := range []string{`{"type":"response.output_item.added","output_index":0,"item_id":"a","item":{"type":"function_call","id":"a","call_id":"c","name":"apply_patch"}}`, `{"type":"response.function_call_arguments.delta","output_index":0,"delta":"x"}`} {
+		b := NewApplyPatchResponsesBridge([]byte(patchReq))
+		emit("checkIdentity", gc{"req": patchReq, "events": []string{e, e}}, gc{"first": errS(b.CheckIdentity([]byte(e))), "second": errS(b.CheckIdentity([]byte(e)))})
+	}
+	b := NewApplyPatchResponsesBridge([]byte(patchReq))
+	failOut, failErr := b.Fail(fmt.Errorf("boom"))
+	again, againErr := b.Fail(fmt.Errorf("boom2"))
+	emit("bridgeFail", nil, gc{"out": strsOf(failOut), "err": errS(failErr), "again": strsOf(again), "againErr": errS(againErr), "toolErr": errS(b.ToolInputError())})
+}
