@@ -14,7 +14,7 @@ use http::HeaderMap;
 use serde_json::Map;
 
 use super::common::{
-    PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error, compact_unsupported, error_body,
+    PumpSetup, StreamPump, apply_custom_headers, compact_unsupported, error_body,
     fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, observed_lines, original_payload, post_json,
     pre_send, read_body, set_header, set_model, thinking_error, translate_request, upstream_error,
     usage_metadata,
@@ -23,7 +23,7 @@ use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_us
 use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
 use super::vertex_token;
 use crate::ConfigRx;
-use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error};
+use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
@@ -465,7 +465,7 @@ impl GeminiVertexExecutor {
         );
         let out = match out {
             Some(out) if apply_patch_translation_error(&param).is_none() && !out.is_empty() => out,
-            _ => return Err(apply_patch_gateway_error()),
+            _ => return Err(gateway_error()),
         };
         let detail = parse_gemini_usage(&data);
         reporter.publish(detail.clone());

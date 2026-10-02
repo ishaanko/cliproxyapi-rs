@@ -28,7 +28,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::ConfigRx;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_translation_error, record_apply_patch_stream_failure,
+    gateway_error, patch_failure, apply_patch_translation_error, record_apply_patch_stream_failure,
 };
 use crate::helps::apply_patch_responses::{
     ApplyPatchResponsesState, normalize_apply_patch_responses_request_with_original,
@@ -83,17 +83,6 @@ pub fn new(cfg: ConfigRx) -> DynExecutor {
 
 fn thinking_error(err: ThinkingError) -> ExecError {
     ExecError::new(err.status_code(), err.message)
-}
-
-fn gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
-
-/// The sanitized gateway error when the translator retained an `apply_patch` failure (published
-/// first). Synchronous so no `&Param` is held across an await.
-fn patch_failure(param: &Param, reporter: &UsageReporter) -> Option<ExecError> {
-    let err = gateway_error();
-    record_apply_patch_stream_failure(param, reporter, &err).then_some(err)
 }
 
 /// Request after translation and Meta-specific shaping.

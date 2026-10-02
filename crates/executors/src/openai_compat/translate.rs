@@ -73,31 +73,6 @@ pub fn claude_code_prompt_cache_id(model: &str, payload: &[u8], headers: &Header
     Some(uuid_sha1_oid(identity.as_bytes()))
 }
 
-/// Go: helps.EndApplyPatchStream, usable from spawned tasks. The helps version holds `&Param`
-/// across an await, which is not `Send` because `Param` is not `Sync`; this one decides before
-/// awaiting. Sends the finalize frames, then the gateway error when the stream failed; returns
-/// true when the caller must stop (failure or the client went away).
-pub async fn end_apply_patch_stream(
-    param: &mut cpa_translator::Param,
-    reporter: &crate::helps::usage::UsageReporter,
-    out: &crate::helps::apply_patch::ChunkSender,
-    gateway_err: cpa_runtime::executor::ExecError,
-) -> bool {
-    use crate::helps::apply_patch::{apply_patch_translation_error, finalize_apply_patch_stream, record_apply_patch_stream_failure};
-    let chunks = finalize_apply_patch_stream(param);
-    record_apply_patch_stream_failure(param, reporter, &gateway_err);
-    let failed = apply_patch_translation_error(param).is_some();
-    for chunk in chunks {
-        if out.send(Ok(bytes::Bytes::from(chunk))).await.is_err() {
-            return true;
-        }
-    }
-    if failed {
-        let _ = out.send(Err(gateway_err)).await;
-    }
-    failed
-}
-
 /// `UsageReporter::observe_body_stream` for an owned reporter: the helps version borrows the
 /// reporter in its return type, which cannot move into a spawned task. The first non-empty
 /// chunk marks TTFT (`packet_only` marks only the first-packet fallback).
@@ -122,22 +97,6 @@ where
             }
         }
     })
-}
-
-/// Go: helps.StopApplyPatchStream, usable from spawned tasks (see [`end_apply_patch_stream`]).
-/// Propagates a retained failure after its one translated frame; true when the stream failed.
-pub async fn stop_apply_patch_stream(
-    param: &mut cpa_translator::Param,
-    reporter: &crate::helps::usage::UsageReporter,
-    out: &crate::helps::apply_patch::ChunkSender,
-    gateway_err: cpa_runtime::executor::ExecError,
-) -> bool {
-    use crate::helps::apply_patch::record_apply_patch_stream_failure;
-    if !record_apply_patch_stream_failure(param, reporter, &gateway_err) {
-        return false;
-    }
-    let _ = out.send(Err(gateway_err)).await;
-    true
 }
 
 /// Metadata key naming a handler-level source type (`openai-image`, `openai-video`) that the

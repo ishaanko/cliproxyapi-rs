@@ -34,7 +34,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_requested,
+    gateway_error, patch_failure, apply_patch_original_request, apply_patch_requested,
     finalize_apply_patch_stream, initialize_apply_patch_stream, record_apply_patch_stream_failure,
 };
 use crate::helps::apply_patch_responses::{
@@ -93,18 +93,6 @@ pub fn new_with_claude(cfg: ConfigRx, claude: Option<DynExecutor>) -> DynExecuto
 /// Maps a thinking pipeline error to its HTTP status (400, or 500 for apply failures).
 fn thinking_error(err: ThinkingError) -> ExecError {
     ExecError::new(err.status_code(), err.message)
-}
-
-fn gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
-
-/// The sanitized gateway error when the translator retained an `apply_patch` failure; the
-/// failure is published first. Synchronous so no `&Param` is held across an await (the shared
-/// async helpers do, which makes their futures non-`Send`).
-fn patch_failure(param: &Param, reporter: &UsageReporter) -> Option<ExecError> {
-    let err = gateway_error();
-    record_apply_patch_stream_failure(param, reporter, &err).then_some(err)
 }
 
 /// Go: EndApplyPatchStream. Frames that fail a patch stream ended without its terminator, then

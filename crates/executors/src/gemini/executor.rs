@@ -15,7 +15,7 @@ use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 
 use super::common::{
-    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error,
+    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers,
     cap_gemini_max_output_tokens, compact_unsupported, error_body, fix_gemini_image_aspect_ratio,
     is_count_tokens_action, json_headers, observed_lines, original_payload, post_json, read_body, set_header,
     set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
@@ -23,7 +23,7 @@ use super::common::{
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::interactions;
 use crate::ConfigRx;
-use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error};
+use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
@@ -309,7 +309,7 @@ impl GeminiExecutor {
         );
         let out = match out {
             Some(out) if apply_patch_translation_error(&param).is_none() && !out.is_empty() => out,
-            _ => return Err(apply_patch_gateway_error()),
+            _ => return Err(gateway_error()),
         };
         let detail = parse_gemini_usage(&data);
         reporter.publish(detail.clone());

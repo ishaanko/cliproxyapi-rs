@@ -13,10 +13,10 @@ use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::status::{transport_error, transport_message};
-use super::translate::{end_apply_patch_stream, observe_body};
+use super::translate::observe_body;
 use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, apply_patch_translation_error, initialize_apply_patch_stream,
+    ChunkSender, apply_patch_translation_error, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream,
     record_apply_patch_stream_failure,
 };
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER, ScanError};
@@ -92,10 +92,6 @@ struct ChatStream {
 }
 
 impl ChatStream {
-    fn gateway_error() -> ExecError {
-        status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-    }
-
     /// Reports a stream failure to usage and the client. With `contains_payload` the usage log
     /// gets a generic message instead of the upstream payload.
     async fn publish_error(&mut self, err: ExecError, contains_payload: bool) {
@@ -154,7 +150,7 @@ impl ChatStream {
         let mut line = b"data: ".to_vec();
         line.extend_from_slice(&payload);
         let chunks = self.translate(&line);
-        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &Self::gateway_error());
+        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &gateway_error());
         for chunk in chunks {
             if self.out.send(Ok(Bytes::from(chunk))).await.is_err() {
                 self.aborted = true;
@@ -162,7 +158,7 @@ impl ChatStream {
             }
         }
         if apply_patch_translation_error(&self.param).is_some() {
-            self.publish_error(Self::gateway_error(), false).await;
+            self.publish_error(gateway_error(), false).await;
             return true;
         }
         if is_done {
@@ -213,7 +209,7 @@ impl ChatStream {
         }
         if !self.failed
             && !self.aborted
-            && end_apply_patch_stream(&mut self.param, &self.p.reporter, &self.out, Self::gateway_error()).await
+            && end_apply_patch_stream(&mut self.param, &self.p.reporter, &self.out, gateway_error()).await
         {
             return;
         }
@@ -235,7 +231,7 @@ impl ChatStream {
             }
             // Other protocols stay compatible with providers that omit [DONE].
             let chunks = self.translate(b"data: [DONE]");
-            record_apply_patch_stream_failure(&self.param, &self.p.reporter, &Self::gateway_error());
+            record_apply_patch_stream_failure(&self.param, &self.p.reporter, &gateway_error());
             for chunk in chunks {
                 if self.out.send(Ok(Bytes::from(chunk))).await.is_err() {
                     return;

@@ -12,11 +12,11 @@ use cpa_translator::{Ctx, Format, Param};
 use http::{HeaderMap, HeaderValue};
 
 use super::common::{
-    GL_API_VERSION, PumpSetup, StreamPump, apply_patch_gateway_error, error_body, observed_lines, post_json, read_body,
+    GL_API_VERSION, PumpSetup, StreamPump, error_body, observed_lines, post_json, read_body,
     set_model, thinking_error, translate_request, upstream_error, usage_metadata,
 };
 use super::executor::{GeminiExecutor, request_headers, resolve_base_url};
-use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error};
+use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
 use crate::helps::payload::{
     PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model, set_bool_if_different,
 };
@@ -184,7 +184,7 @@ pub(super) async fn execute(
         );
         let out = match out {
             Some(out) if apply_patch_translation_error(&param).is_none() && !out.is_empty() => out,
-            _ => return Err(apply_patch_gateway_error()),
+            _ => return Err(gateway_error()),
         };
         let detail = parse_interactions_usage(&data);
         reporter.publish(detail.clone());

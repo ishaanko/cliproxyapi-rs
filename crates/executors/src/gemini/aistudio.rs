@@ -17,7 +17,7 @@ use cpa_translator::{Ctx, Format, Param};
 use http::{HeaderMap, HeaderValue};
 
 use super::common::{
-    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error,
+    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers,
     compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
     translate_request, upstream_error, usage_metadata,
 };
@@ -27,7 +27,7 @@ use super::wsrelay::{
     MESSAGE_TYPE_STREAM_START, Manager, RelayError, StreamEvent, canonical_header_key,
 };
 use crate::ConfigRx;
-use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error};
+use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::ensure_session_id;
@@ -343,7 +343,7 @@ impl AiStudioExecutor {
         );
         let out = match out {
             Some(out) if apply_patch_translation_error(&param).is_none() && !out.is_empty() => out,
-            _ => return Err(apply_patch_gateway_error()),
+            _ => return Err(gateway_error()),
         };
         let detail = parse_gemini_usage(&resp.body);
         reporter.publish(detail.clone());

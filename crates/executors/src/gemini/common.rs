@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream, record_apply_patch_stream_failure,
+    ChunkSender, end_apply_patch_stream, gateway_error, record_apply_patch_stream_failure,
 };
 use crate::helps::translate::{RequestTranslation, translate_request as translate_request_shared};
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
@@ -48,11 +48,6 @@ pub(crate) fn thinking_error(err: ThinkingError) -> ExecError {
 /// `statusErr{code, msg: body}` for a non-2xx upstream response.
 pub(crate) fn upstream_error(status: u16, body: &[u8]) -> ExecError {
     status_err(status, String::from_utf8_lossy(body).into_owned())
-}
-
-/// The 502 raised when apply_patch arguments from upstream cannot be converted.
-pub(crate) fn apply_patch_gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
 }
 
 /// `/responses/compact` is not supported by the Google executors.
@@ -344,7 +339,7 @@ impl StreamPump {
             &mut self.param,
             &mut self.claude,
         );
-        record_apply_patch_stream_failure(&self.param, &self.reporter, &apply_patch_gateway_error());
+        record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for line in lines {
             if self.tx.send(Ok(Bytes::from(rewrite(&line)))).await.is_err() {
                 return false;
@@ -357,7 +352,7 @@ impl StreamPump {
     /// true when the stream failed. (The `helps` async variants hold `&Param` across an await,
     /// which `Param` (not `Sync`) forbids inside spawned tasks.)
     fn stop_if_failed(&self) -> impl Future<Output = bool> + Send + use<> {
-        let err = apply_patch_gateway_error();
+        let err = gateway_error();
         let failed = record_apply_patch_stream_failure(&self.param, &self.reporter, &err);
         let tx = self.tx.clone();
         async move {
@@ -377,14 +372,7 @@ impl StreamPump {
 
     /// Fails an apply_patch stream that ended early; true when the caller must stop.
     pub async fn end_apply_patch(&mut self) -> bool {
-        let chunks = finalize_apply_patch_stream(&mut self.param);
-        record_apply_patch_stream_failure(&self.param, &self.reporter, &apply_patch_gateway_error());
-        for chunk in chunks {
-            if self.tx.send(Ok(Bytes::from(chunk))).await.is_err() {
-                return true;
-            }
-        }
-        self.stop_if_failed().await
+        end_apply_patch_stream(&mut self.param, &self.reporter, &self.tx, gateway_error()).await
     }
 
     /// Publishes a stream failure and delivers it to the client.
