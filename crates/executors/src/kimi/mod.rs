@@ -54,10 +54,13 @@ use crate::helps::usage::{
 };
 use crate::ConfigRx;
 
+/// The Claude executor serving Kimi must use this as its upstream model normalizer.
+pub use normalize::normalize_kimi_upstream_model;
+
 use headers::kimi_headers;
 use normalize::{
     normalize_kimi_responses_input, normalize_kimi_temperature, normalize_kimi_tool_message_links,
-    normalize_kimi_tools, normalize_kimi_upstream_model, resolve_kimi_chat_url,
+    normalize_kimi_tools, resolve_kimi_chat_url,
     resolve_kimi_claude_base_url, resolve_kimi_responses_url,
 };
 
