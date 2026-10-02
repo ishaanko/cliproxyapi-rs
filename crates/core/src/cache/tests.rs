@@ -741,3 +741,23 @@ fn claude_clear_does_not_clear_kimi_state() {
     assert!(claude.get_required("shared-model", "execution:shared-session").is_none());
     assert_eq!(claude.entry_count(), 1, "the read installed a tombstone");
 }
+
+#[test]
+fn global_caches_work_through_the_go_named_functions() {
+    // Unique keys: the globals are shared with every other test in the process.
+    let sig = "g".repeat(60);
+    cache_signature("claude-global-test", "global think", &sig);
+    assert_eq!(get_cached_signature("claude-3", "global think"), sig);
+    delete_cached_signature_required("claude-3", "global think");
+    assert_eq!(get_cached_signature_required("claude-3", "global think"), "");
+
+    let content = br#"[{"type":"thinking","signature":"global"}]"#;
+    assert!(cache_kimi_thinking_replay_best_effort("global-model", "global-session", content));
+    assert_eq!(get_kimi_thinking_replay_required("global-model", "global-session").unwrap(), content);
+    delete_kimi_thinking_replay_required("global-model", "global-session");
+    purge_expired_caches();
+
+    let clock = Clock::real();
+    let first = clock.now();
+    assert!(clock.now() >= first);
+}

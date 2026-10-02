@@ -635,6 +635,29 @@ func TestZZCommonGolden(t *testing.T) {
 			scenarios = append(scenarios, sc)
 		}
 	}
+	// late identity evidence + interleaved calls (from apply_patch_identity_test.go)
+	lateEvidence := []struct{ before, after string }{
+		{ev("response.output_item.added", 0, item("function_call", "a", "", "apply_patch", "")), ev("response.output_item.done", 0, item("function_call", "changed", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "", "c", "apply_patch", "")), ev("response.output_item.done", 0, item("function_call", "a", "changed", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "", "", "apply_patch", `{"input":"p`)), ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.added", 0, item("function_call", "a", "", "apply_patch", `{"input":"pq","extra":1}`)), ev("response.output_item.done", 0, item("function_call", "a", "c", "apply_patch", `{"input":"pq"}`))},
+		{ev("response.output_item.done", 0, item("function_call", "a", "", "apply_patch", `{"input":"pq"}`)), `{"type":"response.completed","response":{"output":[]}}`},
+	}
+	for _, le := range lateEvidence {
+		scenarios = append(scenarios, scenario{req: patchReq, events: []string{le.before, le.after, le.after}})
+	}
+	{
+		sc := scenario{req: patchReq}
+		for i, it := range []string{item("function_call", "a0", "", "apply_patch", ""), item("function_call", "", "c1", "apply_patch", "")} {
+			sc.events = append(sc.events, ev("response.output_item.added", i, it),
+				fmt.Sprintf(`{"type":"response.function_call_arguments.delta","output_index":%d,"delta":%s}`, i, jstr(`{"input":"`+fmt.Sprint(i)+`"}`)))
+		}
+		for _, i := range []int{1, 0} {
+			sc.events = append(sc.events, ev("response.output_item.done", i, item("function_call", fmt.Sprint("a", i), fmt.Sprint("c", i), "apply_patch", `{"input":"`+fmt.Sprint(i)+`"}`)))
+		}
+		sc.events = append(sc.events, `{"type":"response.completed","response":{"output":[]}}`)
+		scenarios = append(scenarios, sc)
+	}
 	for _, sc := range scenarios {
 		b := NewApplyPatchResponsesBridge([]byte(sc.req))
 		var steps []gc
