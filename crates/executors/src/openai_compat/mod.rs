@@ -543,7 +543,7 @@ async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<
 
 /// Go: openAICompatImageEndpointPath, "" when the request is not an image call.
 fn image_endpoint_path(opts: &Options) -> &'static str {
-    if opts.source_format.as_str() != IMAGE_HANDLER_TYPE {
+    if translate::source_handler_type(opts) != IMAGE_HANDLER_TYPE {
         return "";
     }
     let path = payload_request_path(opts);

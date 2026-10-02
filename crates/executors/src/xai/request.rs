@@ -37,7 +37,7 @@ use crate::helps::payload::{
 };
 use crate::helps::session::derived_session_uuid;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
-use crate::openai_compat::translate::{claude_code_prompt_cache_id, translate_request};
+use crate::openai_compat::translate::{claude_code_prompt_cache_id, source_handler_type, translate_request};
 
 pub const IDENTIFIER: &str = "xai";
 pub const IMAGE_HANDLER_TYPE: &str = "openai-image";
@@ -315,7 +315,7 @@ fn resolve_composer_session_id(req: &Request, opts: &Options, base_model: &str) 
 
 /// Go: xaiImageEndpointPath, "" when the request is not an image call.
 pub fn image_endpoint_path(opts: &Options) -> &'static str {
-    if opts.source_format.as_str() != IMAGE_HANDLER_TYPE {
+    if source_handler_type(opts) != IMAGE_HANDLER_TYPE {
         return "";
     }
     let path = metadata_string(&opts.metadata, meta::REQUEST_PATH);
@@ -323,7 +323,7 @@ pub fn image_endpoint_path(opts: &Options) -> &'static str {
 }
 
 pub fn is_video_request(opts: &Options) -> bool {
-    opts.source_format.as_str() == VIDEO_HANDLER_TYPE
+    source_handler_type(opts) == VIDEO_HANDLER_TYPE
 }
 
 /// Go: xaiVideoEndpointPath, "" when the path names no creation endpoint.
