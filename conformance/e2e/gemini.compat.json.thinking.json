@@ -1,0 +1,97 @@
+{
+  "id": "gemini.compat.json.thinking",
+  "desc": "gemini client -> compat upstream, json, thinking",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/compat-gpt-4o:generateContent",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "contents": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "text": "What is the weather in Paris?"
+                }
+              ]
+            }
+          ],
+          "generationConfig": {
+            "thinkingConfig": {
+              "thinkingBudget": 1024,
+              "includeThoughts": true
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "thought": true,
+                      "text": "Let me think."
+                    },
+                    {
+                      "text": "Hello from mock"
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0,
+                "finishReason": "STOP"
+              }
+            ],
+            "model": "mock-gpt-4o",
+            "usageMetadata": {
+              "promptTokenCount": 11,
+              "candidatesTokenCount": 7,
+              "totalTokenCount": 18,
+              "thoughtsTokenCount": 3
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "user",
+            "content": "What is the weather in Paris?"
+          }
+        ],
+        "reasoning_effort": "low",
+        "stream": false
+      }
+    }
+  ]
+}

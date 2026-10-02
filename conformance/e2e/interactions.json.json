@@ -1,0 +1,79 @@
+{
+  "id": "interactions.json",
+  "desc": "Interactions request translated to generateContent",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/interactions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "input": "hello"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "mockresp01",
+            "object": "interaction",
+            "status": "completed",
+            "model": "gemini-2.5-flash",
+            "steps": [
+              {
+                "type": "model_output",
+                "content": [
+                  {
+                    "text": "Hello from mock"
+                  }
+                ]
+              }
+            ],
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 7,
+              "total_tokens": 18
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:generateContent",
+      "query": "",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "model": "gemini-2.5-flash",
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hello"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

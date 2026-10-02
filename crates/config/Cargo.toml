@@ -17,6 +17,8 @@ sha2.workspace = true
 hex.workspace = true
 bcrypt = "0.17"
 notify = "8"
+yaml-rust2 = "0.13"
+cpa-core = { path = "../core" }
 dotenvy = "0.15"
 
 [dev-dependencies]

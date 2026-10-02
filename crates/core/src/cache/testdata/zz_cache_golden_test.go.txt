@@ -1,0 +1,441 @@
+package cache
+
+import (
+	"bufio"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/signature"
+)
+
+// Golden generator for the Rust port: replays seeded random operation sequences against the real
+// Go caches and records every result. Run via `go test -overlay`; see crates/core/src/cache/testdata.
+
+type op map[string]any
+
+func strs(items [][]byte) []string {
+	if items == nil {
+		return nil
+	}
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = string(it)
+	}
+	return out
+}
+
+func toBytes(items []string) [][]byte {
+	out := make([][]byte, len(items))
+	for i, s := range items {
+		out[i] = []byte(s)
+	}
+	return out
+}
+
+func gptSig(seed byte) string {
+	payload := make([]byte, 1+8+16+16+32)
+	payload[0] = 0x80
+	for i := 9; i < len(payload); i++ {
+		payload[i] = seed + byte(i)
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func grokSig(seed int64) string {
+	for s := seed; ; s++ {
+		buf := make([]byte, 64)
+		rand.New(rand.NewSource(s)).Read(buf)
+		sig := base64.RawStdEncoding.EncodeToString(buf)
+		if _, err := signature.InspectGrokEncryptedContent(sig); err == nil {
+			return sig
+		}
+	}
+}
+
+func TestZZCacheGolden(t *testing.T) {
+	outPath := os.Getenv("GOLDEN_OUT")
+	if outPath == "" {
+		t.Skip("GOLDEN_OUT not set")
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriterSize(f, 1<<20)
+	defer w.Flush()
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	rng := rand.New(rand.NewSource(7))
+	ctx := context.Background()
+
+	models := []string{"m1", "m2", " m1 ", ""}
+	sessions := []string{"s1", "s2", " s1 ", ""}
+	pick := func(xs []string) int { return rng.Intn(len(xs)) }
+
+	// ---- signature cache
+	{
+		longSig := func(n int) string { return fmt.Sprintf("%050d", n) }
+		smodels := []string{"claude-opus", "claude-sonnet", "gpt-5", "gemini-3", "gemini-2.5", "deepseek", "other"}
+		texts := []string{"", "hello", "world", "héllo ☃", "hello"}
+		for seq := 0; seq < 60; seq++ {
+			ClearSignatureCache("")
+			var ops []op
+			var outs []any
+			for i := 0; i < 25; i++ {
+				m := smodels[rng.Intn(len(smodels))]
+				tx := texts[rng.Intn(len(texts))]
+				switch rng.Intn(7) {
+				case 0, 1:
+					sig := longSig(rng.Intn(5))
+					if rng.Intn(4) == 0 {
+						sig = []string{"short", strings.Repeat("x", 49), strings.Repeat("y", 50), strings.Repeat("z", 51)}[rng.Intn(4)]
+					}
+					ops = append(ops, op{"op": "cache", "model": m, "text": tx, "sig": sig})
+					outs = append(outs, CacheSignatureBestEffort(ctx, m, tx, sig))
+				case 2, 3:
+					ops = append(ops, op{"op": "get", "model": m, "text": tx})
+					s, e := GetCachedSignatureRequired(ctx, m, tx)
+					outs = append(outs, []any{s, e == nil})
+				case 4:
+					ops = append(ops, op{"op": "delete", "model": m, "text": tx})
+					outs = append(outs, DeleteCachedSignatureRequired(ctx, m, tx) == nil)
+				case 5:
+					clearModel := ""
+					if rng.Intn(2) == 0 {
+						clearModel = m
+					}
+					ops = append(ops, op{"op": "clear", "model": clearModel})
+					ClearSignatureCache(clearModel)
+					outs = append(outs, nil)
+				case 6:
+					sig := []string{"", "skip_thought_signature_validator", longSig(1), "x"}[rng.Intn(4)]
+					ops = append(ops, op{"op": "hasValid", "model": m, "sig": sig})
+					outs = append(outs, HasValidSignature(m, sig))
+				}
+			}
+			enc.Encode(op{"cache": "signature", "ops": ops, "out": outs})
+		}
+		var groups []op
+		for _, m := range []string{"gpt-5", "claude-3", "gemini-pro", "foo", "", "my-gpt-claude", "claude-gemini"} {
+			groups = append(groups, op{"model": m, "group": GetModelGroup(m)})
+		}
+		enc.Encode(op{"cache": "modelGroups", "groups": groups})
+	}
+
+	// ---- codex
+	{
+		turn := func(id string, extra string) string {
+			return `{"type":"cpa_codex_replay_turn","id":"` + id + `"` + extra + `}`
+		}
+		pool := []string{
+			`{"type":"reasoning","summary":[1],"content":"x","encrypted_content":"` + gptSig(1) + `"}`,
+			`{"type":"reasoning","encrypted_content":"` + gptSig(2) + `"}`,
+			`{"type":"reasoning","encrypted_content":" ` + gptSig(3) + `"}`,
+			`{"type":"reasoning","encrypted_content":"gAAAAnotvalid"}`,
+			`{"type":"reasoning","encrypted_content":5}`,
+			turn("t1", ""), turn("t2", `,"assistant_fingerprint":" fp ","request_fingerprint":"","call_ids":["a"," b ","",3]`),
+			turn("t1", `,"call_ids":"x"`), turn(" ", ""), `{"type":"cpa_codex_replay_turn"}`,
+			`{"type":"function_call","call_id":" c1 ","name":" f ","arguments":"{\"a\":1}"}`,
+			`{"type":"function_call","call_id":"c2","name":"g","arguments":"a<b\"c"}`,
+			`{"type":"function_call","call_id":"c3","name":"g","arguments":{"a":1}}`,
+			`{"type":"function_call","name":"g","arguments":"{}"}`,
+			`{"type":"custom_tool_call","call_id":"k1","name":"apply_patch","input":"*** Begin"}`,
+			`{"type":"custom_tool_call","call_id":"k2","name":"x","input":{"a":[1,2]},"status":" in_progress "}`,
+			`{"type":"custom_tool_call","call_id":"k3","name":"x"}`,
+			`{"type":"custom_tool_call","call_id":"k4","name":"x","input":null}`,
+			`{"type":"message","role":"assistant"}`, `not json`, `{}`,
+		}
+		for seq := 0; seq < 80; seq++ {
+			ClearCodexReasoningReplayCache()
+			var ops []op
+			var outs []any
+			for i := 0; i < 25; i++ {
+				m, s := pick(models), pick(sessions)
+				if rng.Intn(4) != 0 { // mostly valid scopes
+					m, s = rng.Intn(2), rng.Intn(2)
+				}
+				items := []string{}
+				for j := rng.Intn(5); j > 0; j-- {
+					items = append(items, pool[rng.Intn(len(pool))])
+				}
+				base := op{"model": models[m], "session": sessions[s]}
+				switch rng.Intn(7) {
+				case 0, 1:
+					base["op"], base["items"] = "cache", items
+					outs = append(outs, CacheCodexReasoningReplayItems(models[m], sessions[s], toBytes(items)))
+				case 2, 3:
+					base["op"], base["items"] = "append", items
+					outs = append(outs, AppendCodexReasoningReplayItemsBestEffort(ctx, models[m], sessions[s], toBytes(items)))
+				case 4:
+					base["op"] = "getItems"
+					got, ok := GetCodexReasoningReplayItems(models[m], sessions[s])
+					outs = append(outs, []any{strs(got), ok})
+				case 5:
+					base["op"] = "getItem"
+					got, ok := GetCodexReasoningReplayItem(models[m], sessions[s])
+					outs = append(outs, []any{string(got), ok})
+				case 6:
+					if rng.Intn(6) == 0 {
+						base["op"] = "clear"
+						ClearCodexReasoningReplayCache()
+						outs = append(outs, nil)
+					} else {
+						base["op"] = "delete"
+						DeleteCodexReasoningReplayItem(models[m], sessions[s])
+						outs = append(outs, nil)
+					}
+				}
+				ops = append(ops, base)
+			}
+			enc.Encode(op{"cache": "codex", "ops": ops, "out": outs})
+		}
+		// turn bounding: many turns
+		ClearCodexReasoningReplayCache()
+		var ops []op
+		var outs []any
+		for i := 0; i < CodexReasoningReplayCacheMaxTurnsPerEntry+5; i++ {
+			items := []string{turn(fmt.Sprintf("turn-%d", i), ""), `{"type":"reasoning","encrypted_content":"` + gptSig(byte(i)) + `"}`}
+			ops = append(ops, op{"op": "append", "model": "m1", "session": "s1", "items": items})
+			outs = append(outs, AppendCodexReasoningReplayItemsBestEffort(ctx, "m1", "s1", toBytes(items)))
+		}
+		got, ok := GetCodexReasoningReplayItems("m1", "s1")
+		ops = append(ops, op{"op": "getItems", "model": "m1", "session": "s1"})
+		outs = append(outs, []any{strs(got), ok})
+		enc.Encode(op{"cache": "codex", "ops": ops, "out": outs})
+	}
+
+	// ---- xai
+	{
+		g1, g2 := grokSig(100), grokSig(200)
+		msg := func(role string, parts string) string {
+			return `{"type":"message","role":"` + role + `","content":` + parts + `}`
+		}
+		pool := []string{
+			`{"type":"reasoning","encrypted_content":"` + g1 + `"}`,
+			`{"type":"reasoning","encrypted_content":"` + g2 + `","summary":[1]}`,
+			`{"type":"reasoning","encrypted_content":"` + gptSig(1) + `"}`,
+			`{"type":"reasoning","encrypted_content":" ` + g1 + `"}`,
+			msg("assistant", `[{"type":"output_text","text":"hi <b>"},{"type":"refusal","refusal":"no"},{"type":"output_text","text":5},{"type":"image"}]`),
+			msg(" Assistant ", `[{"type":"output_text","text":"a\"b"}]`),
+			msg("user", `[{"type":"output_text","text":"hi"}]`),
+			msg("assistant", `[]`), msg("assistant", `"str"`), msg("assistant", `[{"type":"refusal","refusal":3}]`),
+			`{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"}`,
+			`{"type":"function_call","call_id":"","name":"f","arguments":"{}"}`,
+			`{"type":"custom_tool_call","call_id":"k1","name":"x","input":{"q":1}}`,
+			`{"type":"junk"}`, `bad`,
+		}
+		for seq := 0; seq < 60; seq++ {
+			ClearXAIReasoningReplayCache()
+			var ops []op
+			var outs []any
+			for i := 0; i < 20; i++ {
+				m, s := rng.Intn(2), rng.Intn(2)
+				if rng.Intn(8) == 0 {
+					m, s = pick(models), pick(sessions)
+				}
+				items := []string{}
+				for j := rng.Intn(5); j > 0; j-- {
+					items = append(items, pool[rng.Intn(len(pool))])
+				}
+				base := op{"model": models[m], "session": sessions[s]}
+				switch rng.Intn(5) {
+				case 0, 1:
+					base["op"], base["items"] = "store", items
+					outs = append(outs, int(StoreXAIReasoningReplayItems(ctx, models[m], sessions[s], toBytes(items))))
+				case 2:
+					base["op"] = "getItems"
+					got, ok := GetXAIReasoningReplayItems(models[m], sessions[s])
+					outs = append(outs, []any{strs(got), ok})
+				case 3:
+					base["op"] = "getItem"
+					got, ok := GetXAIReasoningReplayItem(models[m], sessions[s])
+					outs = append(outs, []any{string(got), ok})
+				case 4:
+					base["op"] = "delete"
+					DeleteXAIReasoningReplayItem(models[m], sessions[s])
+					outs = append(outs, nil)
+				}
+				ops = append(ops, base)
+			}
+			enc.Encode(op{"cache": "xai", "ops": ops, "out": outs})
+		}
+	}
+
+	// ---- antigravity
+	{
+		ts := func(sig string, extra string) string {
+			return `{"type":"thought_signature","thoughtSignature":"` + sig + `"` + extra + `}`
+		}
+		pool := []string{
+			ts("sig-aaaaaaaaaaaaaaaaaaaa", `,"contentIndex":1,"partIndex":0`),
+			ts("sig-bbbbbbbbbbbbbbbbbbbb", `,"contentIndex":1.7,"partIndex":"x","targetKind":" text ","targetHash":" h ","targetOccurrence":2,"contextHash":"c"`),
+			ts("sig-cccccccccccccccccccc", `,"targetKind":"other","targetOccurrence":-1`),
+			ts("short", ``), ts("skip_thought_signature_validator", ``),
+			`{"type":"thought_signature","thought_signature":"snake-dddddddddddddddddd"}`,
+			`{"type":"thought_signature","thoughtSignature":"  ","thought_signature":"snake-eeeeeeeeeeeeeeeeee"}`,
+			`{"type":"function_call_part","call_id":" c1 ","name":" f ","args":{"a":1},"thoughtSignature":" sigsig ","contentIndex":2,"partIndex":1,"targetOccurrence":0,"contextHash":" ch "}`,
+			`{"type":"function_call_part","id":"i1","name":"f","args":"{\"a\":1}","thoughtSignature":"skip_thought_signature_validator"}`,
+			`{"type":"function_call_part","functionCall":{"id":"fc1","name":"g","args":{"z":[1]}}}`,
+			`{"type":"function_call_part","name":"g","functionCall":{"id":"fc2","args":null}}`,
+			`{"type":"function_call_part","name":"g"}`,
+			`{"type":"function_call_part","args":{}}`,
+			`{"type":"junk"}`, `bad`,
+		}
+		for seq := 0; seq < 120; seq++ {
+			ClearAntigravityReasoningReplayCache()
+			var ops []op
+			var outs []any
+			snaps := make([]AntigravityReasoningReplaySnapshot, 3)
+			for i := 0; i < 25; i++ {
+				m, s := rng.Intn(2), rng.Intn(2)
+				if rng.Intn(10) == 0 {
+					m, s = pick(models), pick(sessions)
+				}
+				slot := rng.Intn(3)
+				items := []string{}
+				// favour chains so descendant/prefix logic is exercised
+				for j := rng.Intn(4); j > 0; j-- {
+					items = append(items, pool[rng.Intn(8)])
+				}
+				base := op{"model": models[m], "session": sessions[s], "slot": slot}
+				switch rng.Intn(8) {
+				case 0:
+					base["op"], base["items"] = "cache", items
+					outs = append(outs, CacheAntigravityReasoningReplayItems(models[m], sessions[s], toBytes(items)))
+				case 1, 2:
+					base["op"] = "snap"
+					got, snap, found, e := GetAntigravityReasoningReplayItemsWithSnapshotRequired(ctx, models[m], sessions[s])
+					snaps[slot] = snap
+					outs = append(outs, []any{strs(got), found, e == nil})
+				case 3, 4, 5:
+					base["op"], base["items"] = "replace", items
+					ok, e := ReplaceAntigravityReasoningReplayItemsIfUnchanged(ctx, models[m], sessions[s], snaps[slot], toBytes(items))
+					outs = append(outs, []any{ok, errS(e)})
+				case 6:
+					base["op"] = "deleteIf"
+					ok, e := DeleteAntigravityReasoningReplayItemsIfUnchanged(ctx, models[m], sessions[s], snaps[slot])
+					outs = append(outs, []any{ok, errS(e)})
+				case 7:
+					if rng.Intn(3) == 0 {
+						base["op"] = "getItems"
+						got, ok := GetAntigravityReasoningReplayItems(models[m], sessions[s])
+						outs = append(outs, []any{strs(got), ok})
+					} else if rng.Intn(2) == 0 {
+						base["op"] = "delete"
+						DeleteAntigravityReasoningReplayItem(models[m], sessions[s])
+						outs = append(outs, nil)
+					} else {
+						base["op"] = "getItem"
+						got, ok := GetAntigravityReasoningReplayItem(models[m], sessions[s])
+						outs = append(outs, []any{string(got), ok})
+					}
+				}
+				ops = append(ops, base)
+			}
+			enc.Encode(op{"cache": "antigravity", "ops": ops, "out": outs})
+		}
+	}
+
+	// ---- kimi + claude replay
+	{
+		pool := []string{
+			`[{"type":"thinking","thinking":"a","signature":"s1"}]`,
+			`[{"type":"thinking","thinking":"b","signature":"s2"},{"type":"tool_use","id":"t","name":"n","input":{"p":1}}]`,
+			`[ {"signature":"s1","thinking":"a","type":"thinking"} ]`,
+			`[{"type":"thinking","thinking":"a","signature":"s1"}]  `,
+			`[{"n":1.0}]`, `[{"n":1}]`, `[{"s":"<>&"}]`, `[{"s":"<>&"}]`,
+			`[]`, `{"a":1}`, `not json`, ``, `[1] trailing`,
+		}
+		for _, which := range []string{"kimi", "claude"} {
+			for seq := 0; seq < 80; seq++ {
+				ClearKimiThinkingReplayCache()
+				ClearClaudeThinkingReplayCache()
+				var ops []op
+				var outs []any
+				snaps := make([]KimiThinkingReplaySnapshot, 3)
+				for i := 0; i < 25; i++ {
+					m, s := rng.Intn(2), rng.Intn(2)
+					if rng.Intn(10) == 0 {
+						m, s = pick(models), pick(sessions)
+					}
+					slot := rng.Intn(3)
+					content := pool[rng.Intn(len(pool))]
+					base := op{"model": models[m], "session": sessions[s], "slot": slot, "content": content}
+					switch rng.Intn(7) {
+					case 0:
+						base["op"] = "cache"
+						if which == "kimi" {
+							outs = append(outs, CacheKimiThinkingReplayBestEffort(ctx, models[m], sessions[s], []byte(content)))
+						} else {
+							outs = append(outs, CacheClaudeThinkingReplayBestEffort(ctx, models[m], sessions[s], []byte(content)))
+						}
+					case 1, 2:
+						base["op"] = "snap"
+						if which == "kimi" {
+							got, snap, found, e := GetKimiThinkingReplayWithSnapshotRequired(ctx, models[m], sessions[s])
+							snaps[slot] = snap
+							outs = append(outs, []any{string(got), found, e == nil})
+						} else {
+							got, snap, found, e := GetClaudeThinkingReplayWithSnapshotRequired(ctx, models[m], sessions[s])
+							snaps[slot] = snap
+							outs = append(outs, []any{strs(got), found, e == nil})
+						}
+					case 3, 4:
+						base["op"] = "replace"
+						if which == "kimi" {
+							ok, e := ReplaceKimiThinkingReplayIfUnchanged(ctx, models[m], sessions[s], snaps[slot], []byte(content))
+							outs = append(outs, []any{ok, errS(e)})
+						} else {
+							ok, e := ReplaceClaudeThinkingReplayIfUnchanged(ctx, models[m], sessions[s], snaps[slot], []byte(content))
+							outs = append(outs, []any{ok, errS(e)})
+						}
+					case 5:
+						base["op"] = "deleteIf"
+						if which == "kimi" {
+							ok, e := DeleteKimiThinkingReplayIfUnchanged(ctx, models[m], sessions[s], snaps[slot])
+							outs = append(outs, []any{ok, errS(e)})
+						} else {
+							ok, e := DeleteClaudeThinkingReplayIfUnchanged(ctx, models[m], sessions[s], snaps[slot])
+							outs = append(outs, []any{ok, errS(e)})
+						}
+					case 6:
+						if rng.Intn(2) == 0 {
+							base["op"] = "get"
+							if which == "kimi" {
+								got, found, _ := GetKimiThinkingReplayRequired(ctx, models[m], sessions[s])
+								outs = append(outs, []any{string(got), found})
+							} else {
+								got, found, _ := GetClaudeThinkingReplayRequired(ctx, models[m], sessions[s])
+								outs = append(outs, []any{strs(got), found})
+							}
+						} else {
+							base["op"] = "delete"
+							if which == "kimi" {
+								_ = DeleteKimiThinkingReplayRequired(ctx, models[m], sessions[s])
+							} else {
+								_ = DeleteClaudeThinkingReplayRequired(ctx, models[m], sessions[s])
+							}
+							outs = append(outs, nil)
+						}
+					}
+					ops = append(ops, base)
+				}
+				enc.Encode(op{"cache": which, "ops": ops, "out": outs})
+			}
+		}
+	}
+}
+
+func errS(err error) any {
+	if err == nil {
+		return nil
+	}
+	return err.Error()
+}

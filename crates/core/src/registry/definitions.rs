@@ -1,6 +1,7 @@
 //! Static model definitions per provider and lookup helpers (Go: registry/model_definitions.go).
 
 use std::collections::HashSet;
+use std::sync::LazyLock;
 
 use super::catalog::static_models;
 use super::devin::get_devin_models;
@@ -104,7 +105,12 @@ fn devin_static(
 
 /// Hard-coded Devin fallback list, used when neither devin_models.json nor models.json has Devin
 /// entries. Starts with the SWE-1.6 Slow built-in.
-pub(super) fn static_devin_models() -> Vec<ModelInfo> {
+pub(super) fn static_devin_models() -> &'static Vec<ModelInfo> {
+    static MODELS: LazyLock<Vec<ModelInfo>> = LazyLock::new(build_static_devin_models);
+    &MODELS
+}
+
+fn build_static_devin_models() -> Vec<ModelInfo> {
     let mut models = super::devin::with_devin_builtins(Vec::new());
     models.extend([
         devin_static(
@@ -408,7 +414,7 @@ pub fn lookup_static_model_info(model_id: &str) -> Option<ModelInfo> {
         &data.antigravity,
         &data.xai,
         &data.devin,
-        &hard_coded_devin,
+        hard_coded_devin,
         &data.meta,
     ]
     .into_iter()

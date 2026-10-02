@@ -1,0 +1,155 @@
+{
+  "id": "interactions.stream",
+  "desc": "streaming Interactions request",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/interactions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "input": "hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "interaction.created",
+              "data": {
+                "interaction": {
+                  "id": "interaction_<nanos>",
+                  "status": "in_progress",
+                  "object": "interaction",
+                  "model": "gemini-2.5-flash"
+                },
+                "event_type": "interaction.created"
+              }
+            },
+            {
+              "event": "interaction.status_update",
+              "data": {
+                "interaction_id": "interaction_<nanos>",
+                "status": "in_progress",
+                "event_type": "interaction.status_update"
+              }
+            },
+            {
+              "event": "step.start",
+              "data": {
+                "index": 0,
+                "step": {
+                  "type": "model_output"
+                },
+                "event_type": "step.start"
+              }
+            },
+            {
+              "event": "step.delta",
+              "data": {
+                "index": 0,
+                "delta": {
+                  "text": "Hello from ",
+                  "type": "text"
+                },
+                "event_type": "step.delta"
+              }
+            },
+            {
+              "event": "step.delta",
+              "data": {
+                "index": 0,
+                "delta": {
+                  "text": "mock",
+                  "type": "text"
+                },
+                "event_type": "step.delta"
+              }
+            },
+            {
+              "event": "step.stop",
+              "data": {
+                "index": 0,
+                "event_type": "step.stop"
+              }
+            },
+            {
+              "event": "interaction.completed",
+              "data": {
+                "interaction": {
+                  "id": "interaction_<nanos>",
+                  "status": "completed",
+                  "usage": {
+                    "total_tokens": 18,
+                    "total_input_tokens": 11,
+                    "input_tokens_by_modality": [
+                      {
+                        "modality": "text",
+                        "tokens": 11
+                      }
+                    ],
+                    "total_cached_tokens": 0,
+                    "total_output_tokens": 7,
+                    "total_tool_use_tokens": 0,
+                    "total_thought_tokens": 0
+                  },
+                  "created": "<now>",
+                  "updated": "<now>",
+                  "service_tier": "standard",
+                  "object": "interaction",
+                  "model": "gemini-2.5-flash"
+                },
+                "event_type": "interaction.completed"
+              }
+            },
+            {
+              "event": "done",
+              "data": "[DONE]"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "model": "gemini-2.5-flash",
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "hello"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

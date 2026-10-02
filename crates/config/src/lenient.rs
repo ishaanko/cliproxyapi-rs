@@ -11,7 +11,9 @@
 //! `deserialize_string`, so the coercions live in those methods; everything else behaves like
 //! the plain value deserializer.
 
-use serde::de::{self, DeserializeOwned, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{
+    self, DeserializeOwned, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor,
+};
 use serde_yaml_ng::{Error, Value};
 
 /// Decodes `value` into `T` with yaml.v3-style scalar coercions.
@@ -49,13 +51,20 @@ impl<'de> Deserializer<'de> for Lenient {
             }
             Value::String(s) => visitor.visit_string(s),
             Value::Sequence(items) => visitor.visit_seq(SeqDe(items.into_iter())),
-            Value::Mapping(map) => visitor.visit_map(MapDe { iter: map.into_iter(), value: None }),
-            Value::Tagged(tagged) => Lenient(tagged.value).deserialize_any(visitor),
+            Value::Mapping(map) => visitor.visit_map(MapDe {
+                iter: map.into_iter(),
+                value: None,
+            }),
+            raw @ Value::Tagged(_) => match crate::rawparse::resolved(&raw) {
+                Value::Tagged(tagged) => Lenient(tagged.value.clone()).deserialize_any(visitor),
+                resolved => Lenient(resolved.clone()).deserialize_any(visitor),
+            },
         }
     }
 
     fn deserialize_bool<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.0 {
+            Value::Null => visitor.visit_bool(false),
             Value::String(s) => match yaml11_bool(&s) {
                 Some(b) => visitor.visit_bool(b),
                 None => visitor.visit_string(s),
@@ -70,8 +79,16 @@ impl<'de> Deserializer<'de> for Lenient {
 
     fn deserialize_string<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.0 {
+            // Scalars keep their source text (`True`, `1.50`, `0o7`), as in yaml.v3.
+            ref raw @ Value::Tagged(_) if crate::rawparse::raw_text(raw).is_some() => visitor
+                .visit_string(
+                    crate::rawparse::raw_text(raw)
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
             Value::Number(n) => visitor.visit_string(n.to_string()),
             Value::Bool(b) => visitor.visit_string(b.to_string()),
+            Value::Null => visitor.visit_string(String::new()),
             other => Lenient(other).deserialize_any(visitor),
         }
     }
@@ -108,7 +125,11 @@ impl<'de> Deserializer<'de> for Lenient {
         }
     }
 
-    fn deserialize_newtype_struct<V: Visitor<'de>>(self, _name: &'static str, visitor: V) -> Result<V::Value, Error> {
+    fn deserialize_newtype_struct<V: Visitor<'de>>(
+        self,
+        _name: &'static str,
+        visitor: V,
+    ) -> Result<V::Value, Error> {
         visitor.visit_newtype_struct(self)
     }
 
@@ -124,7 +145,9 @@ impl<'de> Deserializer<'de> for Lenient {
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.0 {
-            Value::Null => Lenient(Value::Mapping(serde_yaml_ng::Mapping::new())).deserialize_any(visitor),
+            Value::Null => {
+                Lenient(Value::Mapping(serde_yaml_ng::Mapping::new())).deserialize_any(visitor)
+            }
             other => Lenient(other).deserialize_any(visitor),
         }
     }
@@ -144,13 +167,16 @@ impl<'de> Deserializer<'de> for Lenient {
 impl Lenient {
     /// Integer fields take integral numbers; a float is truncated toward zero when it fits.
     fn deserialize_int<'de, V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        match self.0 {
+        match crate::rawparse::resolved(&self.0).clone() {
+            Value::Null => visitor.visit_i64(0),
             Value::Number(n) if n.as_i64().is_none() && n.as_u64().is_none() => {
                 let f = n.as_f64().unwrap_or(f64::NAN);
                 if f.is_finite() && f.abs() < 9.2e18 {
                     visitor.visit_i64(f as i64)
                 } else {
-                    Err(<Error as de::Error>::custom(format!("number {f} does not fit an integer")))
+                    Err(<Error as de::Error>::custom(format!(
+                        "number {f} does not fit an integer"
+                    )))
                 }
             }
             other => Lenient(other).deserialize_any(visitor),
@@ -163,8 +189,14 @@ struct SeqDe(std::vec::IntoIter<Value>);
 impl<'de> SeqAccess<'de> for SeqDe {
     type Error = Error;
 
-    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, Error> {
-        self.0.next().map(|v| seed.deserialize(Lenient(v))).transpose()
+    fn next_element_seed<T: DeserializeSeed<'de>>(
+        &mut self,
+        seed: T,
+    ) -> Result<Option<T::Value>, Error> {
+        self.0
+            .next()
+            .map(|v| seed.deserialize(Lenient(v)))
+            .transpose()
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -180,7 +212,10 @@ struct MapDe {
 impl<'de> MapAccess<'de> for MapDe {
     type Error = Error;
 
-    fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, Error> {
+    fn next_key_seed<K: DeserializeSeed<'de>>(
+        &mut self,
+        seed: K,
+    ) -> Result<Option<K::Value>, Error> {
         match self.iter.next() {
             Some((key, value)) => {
                 self.value = Some(value);
@@ -191,7 +226,10 @@ impl<'de> MapAccess<'de> for MapDe {
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, Error> {
-        let value = self.value.take().ok_or_else(|| <Error as de::Error>::custom("map value requested before its key"))?;
+        let value = self
+            .value
+            .take()
+            .ok_or_else(|| <Error as de::Error>::custom("map value requested before its key"))?;
         seed.deserialize(Lenient(value))
     }
 

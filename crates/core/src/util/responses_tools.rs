@@ -410,7 +410,8 @@ pub fn unwrap_responses_custom_tool_input(arguments: &str) -> String {
     if arguments.is_empty() || arguments == "{}" {
         return String::new();
     }
-    if let Ok(parsed) = serde_json::from_str::<Value>(arguments) {
+    if cpa_json::valid(arguments.as_bytes()) {
+        let parsed = cpa_json::parse_str(arguments);
         if let Some(v) = parsed.get("input") {
             return match v {
                 Value::String(s) => s.clone(),

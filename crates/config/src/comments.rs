@@ -88,7 +88,11 @@ enum LineKind {
 
 impl Scanner {
     fn new() -> Self {
-        Self { stack: Vec::new(), block_scalar: None, flow_depth: 0 }
+        Self {
+            stack: Vec::new(),
+            block_scalar: None,
+            flow_depth: 0,
+        }
     }
 
     fn classify(&mut self, raw: &str) -> LineKind {
@@ -165,8 +169,16 @@ impl Scanner {
             return LineKind::Other;
         };
         let shallow = shallow.unwrap_or_else(|| deepest.clone());
-        let inline_comment = if self.flow_depth > 0 { None } else { inline_comment_start(raw) };
-        LineKind::Node(ScannedLine { shallow, deepest, inline_comment })
+        let inline_comment = if self.flow_depth > 0 {
+            None
+        } else {
+            inline_comment_start(raw)
+        };
+        LineKind::Node(ScannedLine {
+            shallow,
+            deepest,
+            inline_comment,
+        })
     }
 
     /// Frames deeper than a dash at `col` are finished; keys/items at `col` stay (a sequence may
@@ -327,10 +339,14 @@ impl Comments {
                     }
                     blank_before = false;
                     if !pending.is_empty() {
-                        out.head.entry(info.shallow.clone()).or_default().append(&mut pending);
+                        out.head
+                            .entry(info.shallow.clone())
+                            .or_default()
+                            .append(&mut pending);
                     }
                     if let Some(at) = info.inline_comment {
-                        out.line.insert(info.deepest, raw[at..].trim_end().to_string());
+                        out.line
+                            .insert(info.deepest, raw[at..].trim_end().to_string());
                     }
                 }
             }
@@ -353,26 +369,28 @@ impl Comments {
             match scanner.classify(raw) {
                 LineKind::Node(info) => {
                     if let Some(lines) = self.head.get(&info.shallow)
-                        && used_head.insert(info.shallow.clone()) {
-                            for l in lines {
-                                // No blank line at the very top, doubled up, or right after a
-                                // key that opens a block.
-                                if l.is_empty()
-                                    && (out.is_empty() || out.ends_with("\n\n") || opens_block(&out))
-                                {
-                                    continue;
-                                }
-                                out.push_str(l);
-                                out.push('\n');
+                        && used_head.insert(info.shallow.clone())
+                    {
+                        for l in lines {
+                            // No blank line at the very top, doubled up, or right after a
+                            // key that opens a block.
+                            if l.is_empty()
+                                && (out.is_empty() || out.ends_with("\n\n") || opens_block(&out))
+                            {
+                                continue;
                             }
+                            out.push_str(l);
+                            out.push('\n');
                         }
+                    }
                     out.push_str(raw);
                     if info.inline_comment.is_none()
                         && let Some(c) = self.line.get(&info.deepest)
-                            && used_line.insert(info.deepest.clone()) {
-                                out.push(' ');
-                                out.push_str(c);
-                            }
+                        && used_line.insert(info.deepest.clone())
+                    {
+                        out.push(' ');
+                        out.push_str(c);
+                    }
                     out.push('\n');
                 }
                 _ => {
@@ -384,6 +402,84 @@ impl Comments {
         out
     }
 
+    /// Removes and returns the comments of `prefix` and everything under it.
+    pub(crate) fn take_prefix(&mut self, prefix: &CPath) -> Comments {
+        let mut taken = Comments::default();
+        let head: Vec<CPath> = self
+            .head
+            .keys()
+            .filter(|p| p.starts_with(prefix))
+            .cloned()
+            .collect();
+        for path in head {
+            if let Some(v) = self.head.remove(&path) {
+                taken.head.insert(path, v);
+            }
+        }
+        let line: Vec<CPath> = self
+            .line
+            .keys()
+            .filter(|p| p.starts_with(prefix))
+            .cloned()
+            .collect();
+        for path in line {
+            if let Some(v) = self.line.remove(&path) {
+                taken.line.insert(path, v);
+            }
+        }
+        taken
+    }
+
+    /// Re-inserts every comment of `other` (existing ones at the same path are replaced).
+    pub(crate) fn merge(&mut self, other: Comments) {
+        self.head.extend(other.head);
+        self.line.extend(other.line);
+    }
+
+    /// Copies the comments of `from_path` (and below, minus entries `skip` rejects given the
+    /// path relative to `from_path`) from `source` to `to_path`. Head comments are appended to
+    /// any already present, so a group head and a key head can end up on one entry.
+    pub(crate) fn transplant(
+        &mut self,
+        source: &Comments,
+        from_path: &CPath,
+        to_path: &CPath,
+        skip: impl Fn(&[Seg]) -> bool,
+    ) {
+        let rebase = |path: &CPath| -> Option<CPath> {
+            let rest = path.strip_prefix(from_path.as_slice())?;
+            if skip(rest) {
+                return None;
+            }
+            let mut new = to_path.clone();
+            new.extend_from_slice(rest);
+            Some(new)
+        };
+        for (path, lines) in &source.head {
+            if let Some(new) = rebase(path) {
+                self.head
+                    .entry(new)
+                    .or_default()
+                    .extend(lines.iter().cloned());
+            }
+        }
+        for (path, text) in &source.line {
+            if let Some(new) = rebase(path) {
+                self.line.insert(new, text.clone());
+            }
+        }
+    }
+
+    /// Copies only the comments attached to the node at `from_path` itself.
+    pub(crate) fn transplant_exact(
+        &mut self,
+        source: &Comments,
+        from_path: &CPath,
+        to_path: &CPath,
+    ) {
+        self.transplant(source, from_path, to_path, |rest| !rest.is_empty());
+    }
+
     /// Moves the comments of `from` (and everything under it) to `to`.
     pub(crate) fn move_prefix(&mut self, from: &CPath, to: &CPath) {
         let rekey = |path: &CPath| -> Option<CPath> {
@@ -393,13 +489,23 @@ impl Comments {
                 new
             })
         };
-        let moved_head: Vec<_> = self.head.keys().filter(|p| p.starts_with(from)).cloned().collect();
+        let moved_head: Vec<_> = self
+            .head
+            .keys()
+            .filter(|p| p.starts_with(from))
+            .cloned()
+            .collect();
         for old in moved_head {
             if let (Some(new), Some(v)) = (rekey(&old), self.head.remove(&old)) {
                 self.head.insert(new, v);
             }
         }
-        let moved_line: Vec<_> = self.line.keys().filter(|p| p.starts_with(from)).cloned().collect();
+        let moved_line: Vec<_> = self
+            .line
+            .keys()
+            .filter(|p| p.starts_with(from))
+            .cloned()
+            .collect();
         for old in moved_line {
             if let (Some(new), Some(v)) = (rekey(&old), self.line.remove(&old)) {
                 self.line.insert(new, v);
@@ -426,7 +532,9 @@ impl Comments {
             if !path.starts_with(seq) || path.len() <= seq.len() {
                 return None;
             }
-            let Seg::Index(old) = path[seq.len()] else { return None };
+            let Seg::Index(old) = path[seq.len()] else {
+                return None;
+            };
             Some(old_to_new.get(&old).map(|new| {
                 let mut p = path.clone();
                 p[seq.len()] = Seg::Index(*new);
@@ -464,7 +572,10 @@ impl Comments {
 
 /// Whether the last line of `out` is a "key:" line whose value is the block that follows.
 fn opens_block(out: &str) -> bool {
-    out.trim_end_matches('\n').lines().last().is_some_and(|l| l.trim_end().ends_with(':'))
+    out.trim_end_matches('\n')
+        .lines()
+        .last()
+        .is_some_and(|l| l.trim_end().ends_with(':'))
 }
 
 /// Removes indentation from standalone comment lines so they stay left aligned
@@ -483,7 +594,11 @@ pub fn normalize_comment_indentation(data: &str) -> String {
             }
         })
         .collect();
-    if changed { lines.join("\n") } else { data.to_string() }
+    if changed {
+        lines.join("\n")
+    } else {
+        data.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -505,12 +620,16 @@ b:
     - name: second
 ";
         let comments = Comments::extract(original);
-        let rewritten = "b:\n  list:\n  - name: first\n  - name: second\n  c:\n  - x\n  - y\na: 1\n";
+        let rewritten =
+            "b:\n  list:\n  - name: first\n  - name: second\n  c:\n  - x\n  - y\na: 1\n";
         let out = comments.apply(rewritten);
         assert!(out.contains("# about b\nb:"), "{out}");
         assert!(out.contains("# about c\n  c:"), "{out}");
         assert!(out.contains("name: first # f"), "{out}");
-        assert!(out.contains("# top\n") && out.contains("a: 1 # one"), "{out}");
+        assert!(
+            out.contains("# top\n") && out.contains("a: 1 # one"),
+            "{out}"
+        );
     }
 
     #[test]

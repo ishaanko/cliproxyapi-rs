@@ -36,7 +36,10 @@ pub const DEFAULT_DISCOVERY_SUBTYPES: [&str; 5] = [
 ];
 
 fn default_discovery_subtypes() -> Vec<String> {
-    DEFAULT_DISCOVERY_SUBTYPES.iter().map(|s| (*s).to_string()).collect()
+    DEFAULT_DISCOVERY_SUBTYPES
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
 }
 
 // serde `skip_serializing_if` helpers (Go `omitempty`).
@@ -66,10 +69,16 @@ pub struct Config {
     #[serde(rename = "disable-image-generation")]
     pub disable_image_generation: DisableImageGenerationMode,
     /// Must start with "gpt-" (case-insensitive); otherwise the runtime default is used.
-    #[serde(rename = "gpt-image-2-base-model", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "gpt-image-2-base-model",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub gpt_image_2_base_model: String,
     /// Go duration string ("3h"); empty or invalid means the runtime default.
-    #[serde(rename = "video-result-auth-cache-ttl", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "video-result-auth-cache-ttl",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub video_result_auth_cache_ttl: String,
     #[serde(rename = "force-model-prefix")]
     pub force_model_prefix: bool,
@@ -86,7 +95,10 @@ pub struct Config {
     #[serde(rename = "passthrough-headers")]
     pub passthrough_headers: bool,
     pub streaming: StreamingConfig,
-    #[serde(rename = "nonstream-keepalive-interval", skip_serializing_if = "is_zero")]
+    #[serde(
+        rename = "nonstream-keepalive-interval",
+        skip_serializing_if = "is_zero"
+    )]
     pub nonstream_keepalive_interval: i64,
 
     // --- Config ---
@@ -145,9 +157,15 @@ pub struct Config {
     pub routing: RoutingConfig,
     #[serde(rename = "ws-auth")]
     pub websocket_auth: bool,
-    #[serde(rename = "antigravity-signature-cache-enabled", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "antigravity-signature-cache-enabled",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub antigravity_signature_cache_enabled: Option<bool>,
-    #[serde(rename = "antigravity-signature-bypass-strict", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "antigravity-signature-bypass-strict",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub antigravity_signature_bypass_strict: Option<bool>,
     pub antigravity: AntigravityConfig,
     pub devin: DevinConfig,
@@ -177,11 +195,20 @@ pub struct Config {
     pub openai_compatibility: Vec<OpenAiCompatibility>,
     #[serde(rename = "vertex-api-key")]
     pub vertex_compat_api_key: Vec<VertexCompatKey>,
-    #[serde(rename = "oauth-excluded-models", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        rename = "oauth-excluded-models",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub oauth_excluded_models: BTreeMap<String, Vec<String>>,
-    #[serde(rename = "oauth-model-alias", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        rename = "oauth-model-alias",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub oauth_model_alias: BTreeMap<String, Vec<OAuthModelAlias>>,
-    #[serde(rename = "oauth-request-scoped-errors", skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        rename = "oauth-request-scoped-errors",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub oauth_request_scoped_errors: BTreeMap<String, Vec<RequestScopedErrorRule>>,
     #[serde(rename = "oauth-settings", skip_serializing_if = "BTreeMap::is_empty")]
     pub oauth_settings: BTreeMap<String, Vec<OAuthModelSetting>>,
@@ -349,7 +376,10 @@ pub struct PprofConfig {
 
 impl PprofConfig {
     pub fn parse_defaults() -> Self {
-        Self { enable: false, addr: DEFAULT_PPROF_ADDR.to_string() }
+        Self {
+            enable: false,
+            addr: DEFAULT_PPROF_ADDR.to_string(),
+        }
     }
 }
 
@@ -462,10 +492,16 @@ pub struct RoutingConfig {
     #[serde(rename = "session-affinity", skip_serializing_if = "is_false")]
     pub session_affinity: bool,
     /// Go duration string; default 1h.
-    #[serde(rename = "session-affinity-ttl", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "session-affinity-ttl",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub session_affinity_ttl: String,
     /// Default true; ignored when session affinity is off.
-    #[serde(rename = "session-affinity-subagents", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "session-affinity-subagents",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub session_affinity_subagents: Option<bool>,
 }
 
@@ -540,7 +576,11 @@ pub struct PluginInstanceConfig {
 
 impl Default for PluginInstanceConfig {
     fn default() -> Self {
-        Self { enabled: None, priority: 0, raw: Value::Null }
+        Self {
+            enabled: None,
+            priority: 0,
+            raw: Value::Null,
+        }
     }
 }
 
@@ -550,17 +590,22 @@ impl PluginInstanceConfig {
         if value.is_null() {
             return Ok(Self::default());
         }
-        let mut out = Self { enabled: Some(false), priority: 0, raw: value };
+        let mut out = Self {
+            enabled: Some(false),
+            priority: 0,
+            raw: value,
+        };
         if let Value::Mapping(map) = &out.raw {
             // Null keeps the default (yaml.v3 skips null scalars); other scalars decode leniently.
             if let Some(v) = map.get("enabled").filter(|v| !v.is_null()) {
                 out.enabled = Some(
-                    crate::lenient::from_value::<bool>(v.clone()).map_err(|e| format!("parse plugin enabled: {e}"))?,
+                    crate::lenient::from_value::<bool>(v.clone())
+                        .map_err(|e| format!("parse plugin enabled: {e}"))?,
                 );
             }
             if let Some(v) = map.get("priority").filter(|v| !v.is_null()) {
-                out.priority =
-                    crate::lenient::from_value::<i64>(v.clone()).map_err(|e| format!("parse plugin priority: {e}"))?;
+                out.priority = crate::lenient::from_value::<i64>(v.clone())
+                    .map_err(|e| format!("parse plugin priority: {e}"))?;
             }
         }
         Ok(out)
@@ -605,7 +650,10 @@ pub struct ClaudeHeaderDefaults {
     pub arch: String,
     pub timeout: String,
     pub timezone: String,
-    #[serde(rename = "stabilize-device-profile", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "stabilize-device-profile",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub stabilize_device_profile: Option<bool>,
 }
 
@@ -638,7 +686,10 @@ pub struct DevinConfig {
 pub struct AntigravityConfig {
     #[serde(rename = "sensitive-words", skip_serializing_if = "Vec::is_empty")]
     pub sensitive_words: Vec<String>,
-    #[serde(rename = "connection-pool", skip_serializing_if = "AntigravityConnectionPoolConfig::is_empty")]
+    #[serde(
+        rename = "connection-pool",
+        skip_serializing_if = "AntigravityConnectionPoolConfig::is_empty"
+    )]
     pub connection_pool: AntigravityConnectionPoolConfig,
 }
 
@@ -651,13 +702,18 @@ pub struct AntigravityConnectionPoolConfig {
     #[serde(rename = "idle-conn-timeout", skip_serializing_if = "String::is_empty")]
     pub idle_conn_timeout: String,
     /// Default 2.
-    #[serde(rename = "max-idle-conns-per-host", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "max-idle-conns-per-host",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_idle_conns_per_host: Option<i64>,
 }
 
 impl AntigravityConnectionPoolConfig {
     pub fn is_empty(&self) -> bool {
-        self.enabled.is_none() && self.idle_conn_timeout.is_empty() && self.max_idle_conns_per_host.is_none()
+        self.enabled.is_none()
+            && self.idle_conn_timeout.is_empty()
+            && self.max_idle_conns_per_host.is_none()
     }
 }
 
@@ -670,7 +726,10 @@ pub struct CodexConfig {
     #[serde(rename = "stream-bootstrap-buffering")]
     pub stream_bootstrap_buffering: bool,
     /// "0" | "20s" | seconds | none/off/unlimited/disabled/never.
-    #[serde(rename = "stream-bootstrap-timeout", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "stream-bootstrap-timeout",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub stream_bootstrap_timeout: String,
     #[serde(rename = "orphan-delegation-compatibility")]
     pub orphan_delegation_compatibility: bool,
@@ -690,18 +749,23 @@ impl CodexConfig {
         let lowered = raw.to_ascii_lowercase();
         if raw.is_empty()
             || raw == "0"
-            || matches!(lowered.as_str(), "none" | "unlimited" | "disabled" | "off" | "never")
+            || matches!(
+                lowered.as_str(),
+                "none" | "unlimited" | "disabled" | "off" | "never"
+            )
         {
             return GoDuration(0);
         }
         if let Ok(d) = GoDuration::parse(raw)
-            && d.0 >= 0 {
-                return d;
-            }
+            && d.0 >= 0
+        {
+            return d;
+        }
         if let Ok(secs) = raw.parse::<i64>()
-            && (0..=i64::MAX / GoDuration::SECOND).contains(&secs) {
-                return GoDuration::from_secs(secs);
-            }
+            && (0..=i64::MAX / GoDuration::SECOND).contains(&secs)
+        {
+            return GoDuration::from_secs(secs);
+        }
         GoDuration(0)
     }
 }
@@ -755,25 +819,32 @@ impl<'de> Deserialize<'de> for CodexLiveMediaRelayConfig {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
         let value = Value::deserialize(deserializer)?;
-        let (mut allow, mut disable) = (None, None);
+        // Same order as Go: decode the plain fields first, then the two private-IP spellings.
+        let mut flags = Vec::new();
         if let Value::Mapping(map) = &value {
-            let flag = |key: &str| -> Result<Option<bool>, D::Error> {
-                map.get(key)
+            for key in ["allow-private-remote-ips", "disable-private-remote-ips"] {
+                // Presence counts even for null, which decodes to false.
+                let flag = map
+                    .get(key)
                     .map(|v| {
-                        v.as_bool()
-                            .ok_or_else(|| D::Error::custom(format!("decode codex.live-media-relay.{key}: not a boolean")))
+                        crate::lenient::from_value::<bool>(v.clone()).map_err(|e| {
+                            D::Error::custom(format!("decode codex.live-media-relay.{key}: {e}"))
+                        })
                     })
-                    .transpose()
-            };
-            allow = flag("allow-private-remote-ips")?;
-            disable = flag("disable-private-remote-ips")?;
+                    .transpose();
+                flags.push(flag);
+            }
         }
+        let plain: CodexLiveMediaRelayPlain =
+            crate::lenient::from_value(value).map_err(D::Error::custom)?;
+        let mut flags = flags.into_iter();
+        let allow = flags.next().transpose()?.flatten();
+        let disable = flags.next().transpose()?.flatten();
         if allow.is_some() && disable.is_some() {
             return Err(D::Error::custom(
                 "codex.live-media-relay cannot set both allow-private-remote-ips and disable-private-remote-ips",
             ));
         }
-        let plain: CodexLiveMediaRelayPlain = crate::lenient::from_value(value).map_err(D::Error::custom)?;
         let mut out = Self {
             enabled: plain.enabled,
             max_sessions: plain.max_sessions,
@@ -890,7 +961,8 @@ impl<'de> Deserialize<'de> for CredentialConcurrencyConfig {
             busy_retry_max: has("busy-retry-max"),
             max_limit: has("max-limit"),
         };
-        let raw: CredentialConcurrencyRaw = crate::lenient::from_value(value).map_err(serde::de::Error::custom)?;
+        let raw: CredentialConcurrencyRaw =
+            crate::lenient::from_value(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
             lifecycle_config_revision: raw.lifecycle_config_revision.unwrap_or(0),
             observation_barrier_revision: raw.observation_barrier_revision.unwrap_or(0),
@@ -1008,16 +1080,13 @@ impl Serialize for DisableImageGenerationMode {
 }
 
 impl<'de> Deserialize<'de> for DisableImageGenerationMode {
+    /// Parses the scalar's source text, like Go (a typed bool first, then the text of any other
+    /// scalar), so `true`, `chat`, `01`, `on` all go through [`Self::parse`].
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
-        match Value::deserialize(deserializer)? {
-            Value::Bool(true) => Ok(Self::All),
-            Value::Bool(false) | Value::Null => Ok(Self::Off),
-            Value::String(s) => Self::parse(&s).map_err(D::Error::custom),
-            // yaml.v3 decodes any other scalar into its text form before parsing.
-            Value::Number(n) => Self::parse(&n.to_string()).map_err(D::Error::custom),
-            _ => Err(D::Error::custom("invalid disable-image-generation value")),
-        }
+        let text = String::deserialize(deserializer)
+            .map_err(|_| D::Error::custom("invalid disable-image-generation value"))?;
+        Self::parse(&text).map_err(D::Error::custom)
     }
 }
 
@@ -1132,20 +1201,52 @@ pub struct PayloadModelRule {
 // Upstream API-key entries
 // ---------------------------------------------------------------------------------------------
 
-/// Thinking/reasoning capability of a configured model (`registry.ThinkingSupport`).
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct ThinkingSupport {
-    #[serde(skip_serializing_if = "is_zero")]
-    pub min: i64,
-    #[serde(skip_serializing_if = "is_zero")]
-    pub max: i64,
-    #[serde(rename = "zero-allowed", skip_serializing_if = "is_false")]
-    pub zero_allowed: bool,
-    #[serde(rename = "dynamic-allowed", skip_serializing_if = "is_false")]
-    pub dynamic_allowed: bool,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub levels: Vec<String>,
+/// Thinking/reasoning capability of a configured model (the registry type). In YAML the fields
+/// are kebab-case (`zero-allowed`); the registry type reads both spellings.
+pub use cpa_core::registry::ThinkingSupport;
+
+/// serde adapter writing `Option<ThinkingSupport>` with kebab-case YAML field names.
+mod thinking_yaml {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::{ThinkingSupport, is_false, is_zero};
+
+    #[derive(Serialize)]
+    struct Kebab<'a> {
+        #[serde(skip_serializing_if = "is_zero")]
+        min: i64,
+        #[serde(skip_serializing_if = "is_zero")]
+        max: i64,
+        #[serde(rename = "zero-allowed", skip_serializing_if = "is_false")]
+        zero_allowed: bool,
+        #[serde(rename = "dynamic-allowed", skip_serializing_if = "is_false")]
+        dynamic_allowed: bool,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        levels: &'a Vec<String>,
+    }
+
+    pub fn serialize<S: Serializer>(
+        value: &Option<ThinkingSupport>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(t) => Kebab {
+                min: t.min,
+                max: t.max,
+                zero_allowed: t.zero_allowed,
+                dynamic_allowed: t.dynamic_allowed,
+                levels: &t.levels,
+            }
+            .serialize(serializer),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<ThinkingSupport>, D::Error> {
+        Option::deserialize(deserializer)
+    }
 }
 
 /// Cloaking for non-Claude-Code clients ("auto" | "always" | "never").
@@ -1184,19 +1285,28 @@ pub struct ClaudeKey {
     pub headers: BTreeMap<String, String>,
     #[serde(rename = "excluded-models", skip_serializing_if = "Vec::is_empty")]
     pub excluded_models: Vec<String>,
-    #[serde(rename = "rebuild-mid-system-message", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "rebuild-mid-system-message",
+        skip_serializing_if = "is_false"
+    )]
     pub rebuild_mid_system_message: bool,
     #[serde(rename = "disable-cooling", skip_serializing_if = "Option::is_none")]
     pub disable_cooling: Option<bool>,
     /// Nil or negative means "use the global request-retry".
     #[serde(rename = "request-retry", skip_serializing_if = "Option::is_none")]
     pub request_retry: Option<i64>,
-    #[serde(rename = "request-scoped-errors", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "request-scoped-errors",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub request_scoped_errors: Vec<RequestScopedErrorRule>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cloak: Option<CloakConfig>,
     /// "" | "claude-code-cli" (legacy alias "oauth-cli").
-    #[serde(rename = "fingerprint-profile", skip_serializing_if = "String::is_empty")]
+    #[serde(
+        rename = "fingerprint-profile",
+        skip_serializing_if = "String::is_empty"
+    )]
     pub fingerprint_profile: String,
     /// Retained for configuration compatibility.
     #[serde(rename = "experimental-cch-signing", skip_serializing_if = "is_false")]
@@ -1216,7 +1326,11 @@ pub struct ClaudeModel {
     pub force_mapping: bool,
     #[serde(rename = "is-compat", skip_serializing_if = "is_false")]
     pub is_compat: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        with = "thinking_yaml",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub thinking: Option<ThinkingSupport>,
 }
 
@@ -1249,11 +1363,17 @@ pub struct CodexKey {
     #[serde(rename = "disable-cooling", skip_serializing_if = "Option::is_none")]
     pub disable_cooling: Option<bool>,
     /// Overrides `codex.disable-codex-cloaking` for this credential.
-    #[serde(rename = "disable-codex-cloaking", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "disable-codex-cloaking",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub disable_codex_cloaking: Option<bool>,
     #[serde(rename = "request-retry", skip_serializing_if = "Option::is_none")]
     pub request_retry: Option<i64>,
-    #[serde(rename = "request-scoped-errors", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "request-scoped-errors",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub request_scoped_errors: Vec<RequestScopedErrorRule>,
 }
 
@@ -1273,9 +1393,16 @@ pub struct CodexModel {
     pub force_mapping: bool,
     #[serde(rename = "is-compat", skip_serializing_if = "is_false")]
     pub is_compat: bool,
-    #[serde(rename = "support-configuration-update", skip_serializing_if = "is_false")]
+    #[serde(
+        rename = "support-configuration-update",
+        skip_serializing_if = "is_false"
+    )]
     pub support_configuration_update: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        with = "thinking_yaml",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub thinking: Option<ThinkingSupport>,
 }
 
@@ -1308,7 +1435,10 @@ pub struct GeminiKey {
     pub disable_cooling: Option<bool>,
     #[serde(rename = "request-retry", skip_serializing_if = "Option::is_none")]
     pub request_retry: Option<i64>,
-    #[serde(rename = "request-scoped-errors", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "request-scoped-errors",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub request_scoped_errors: Vec<RequestScopedErrorRule>,
 }
 
@@ -1325,7 +1455,11 @@ pub struct GeminiModel {
     pub force_mapping: bool,
     #[serde(rename = "is-compat", skip_serializing_if = "is_false")]
     pub is_compat: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        with = "thinking_yaml",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub thinking: Option<ThinkingSupport>,
 }
 
@@ -1353,7 +1487,10 @@ pub struct OpenAiCompatibility {
     pub disable_cooling: Option<bool>,
     #[serde(rename = "request-retry", skip_serializing_if = "Option::is_none")]
     pub request_retry: Option<i64>,
-    #[serde(rename = "request-scoped-errors", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "request-scoped-errors",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub request_scoped_errors: Vec<RequestScopedErrorRule>,
 }
 
@@ -1390,7 +1527,11 @@ pub struct OpenAiCompatibilityModel {
     pub is_compat: bool,
     #[serde(rename = "use-max-completion-tokens", skip_serializing_if = "is_false")]
     pub use_max_completion_tokens: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        with = "thinking_yaml",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub thinking: Option<ThinkingSupport>,
 }
 
@@ -1431,6 +1572,10 @@ pub struct VertexCompatModel {
     pub display_name: String,
     #[serde(rename = "force-mapping", skip_serializing_if = "is_false")]
     pub force_mapping: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        with = "thinking_yaml",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub thinking: Option<ThinkingSupport>,
 }

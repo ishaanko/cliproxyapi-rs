@@ -1,0 +1,437 @@
+package signature
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"os"
+	"strings"
+	"testing"
+)
+
+// Golden generator for the Rust port: runs the real Go functions over a pool of signatures and
+// JSON payloads and records the outputs. Run via `go test -overlay`; see crates/core/src/signature/testdata.
+
+type gcase map[string]any
+
+func errStr(err error) any {
+	if err == nil {
+		return nil
+	}
+	return err.Error()
+}
+
+func TestZZGolden(t *testing.T) {
+	outPath := os.Getenv("GOLDEN_OUT")
+	if outPath == "" {
+		t.Skip("GOLDEN_OUT not set")
+	}
+	f, err := os.Create(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriterSize(f, 1<<20)
+	defer w.Flush()
+
+	// ---- signature pool
+	base := map[string]string{}
+	add := func(name, sig string) { base[name] = sig }
+	add("claudeE", testClaudeThinkingSignature())
+	for _, n := range []int{0, 5, 35, 100} {
+		add(fmt.Sprintf("claudeEopaque%d", n), testClaudeThinkingSignatureWithOpaqueLen(n))
+	}
+	add("claudeRunpadded", testUnpaddedAntigravityClaudeThinkingSignature())
+	add("claudeR", base64.StdEncoding.EncodeToString([]byte(testClaudeThinkingSignature())))
+	add("claudeEsimple", base64.StdEncoding.EncodeToString([]byte{0x12, 0x34}))
+	add("claudeRsimple", base64.StdEncoding.EncodeToString([]byte(base64.StdEncoding.EncodeToString([]byte{0x12, 0x34}))))
+	add("claudeEfff", base64.StdEncoding.EncodeToString([]byte{0x12, 0xFF, 0xFE, 0xFD}))
+	add("cais_fable5", observedFable5Sample)
+	add("caqs_fable51", observedFable51CAQSSample)
+	add("caqs_narration", observedFable51CAQSNarrationSample)
+	add("cais_opus5", testClaudeCAISSignature("claude-opus-5"))
+	add("cais_unpadded", testUnpaddedClaudeCAISSignature())
+	cais := func(name string, mod func(p *claudeCAISParts)) {
+		p := defaultClaudeCAISParts("claude-opus-5")
+		mod(&p)
+		add("cais_"+name, p.encode())
+	}
+	cais("ch17", func(p *claudeCAISParts) { p.channelID = 17 })
+	cais("env3", func(p *claudeCAISParts) { p.topEnvelope = 3 })
+	cais("env4nokind", func(p *claudeCAISParts) { p.topEnvelope = 4; p.blockKind = "" })
+	cais("notrailer", func(p *claudeCAISParts) { p.includeTopTrailer = false })
+	cais("nochver", func(p *claudeCAISParts) { p.includeChannelVerion = false })
+	cais("long", func(p *claudeCAISParts) { p.signatureLen = 96 })
+	cais("nof7", func(p *claudeCAISParts) { p.includeField7 = false })
+	cais("kindredacted", func(p *claudeCAISParts) { p.blockKind = "redacted_thinking" })
+	cais("nokind", func(p *claudeCAISParts) { p.blockKind = "" })
+	cais("noctx", func(p *claudeCAISParts) { p.contextID = "" })
+	cais("model6", func(p *claudeCAISParts) { p.modelText = []byte("claude-opus-6-preview") })
+	cais("nocontainer", func(p *claudeCAISParts) { p.includeContainer = false })
+	cais("nochannel", func(p *claudeCAISParts) { p.includeChannelBlock = false })
+	cais("nochid", func(p *claudeCAISParts) { p.includeChannelID = false })
+	cais("chidbytes", func(p *claudeCAISParts) { p.channelIDAsBytes = true })
+	cais("nosig", func(p *claudeCAISParts) { p.includeSignature = false })
+	cais("emptysig", func(p *claudeCAISParts) { p.signatureLen = 0 })
+	cais("nomodel", func(p *claudeCAISParts) { p.includeModelText = false })
+	cais("foreignmodel", func(p *claudeCAISParts) { p.modelText = []byte("gemini-3-pro") })
+	cais("badutf8", func(p *claudeCAISParts) { p.modelText = []byte{'c', 'l', 'a', 'u', 'd', 'e', '-', 0xff, 0xfe} })
+	cais("baduuid", func(p *claudeCAISParts) { p.contextID = "not-a-canonical-uuid-value-000000000" })
+	add("cais_wrongmarker", base64.StdEncoding.EncodeToString([]byte{0x0a, 0x00}))
+	add("classic_ef00", base64.StdEncoding.EncodeToString([]byte{0x12, 0x00}))
+	// Gemini
+	add("gem_envelope", testGeminiThoughtSignatureEnvelope())
+	add("gem25_field1", testGemini25Field1ThoughtSignatureEnvelope())
+	add("gem_opaque3", testGeminiThoughtSignature([]byte{0x12, 0x34, 0x56}))
+	add("gem3_tink", testGemini3ThoughtSignature(append([]byte{0x01, 0x0c, 0x39, 0xd6, 0xc7}, []byte("ciphertext-bytes-0123456789")...)))
+	add("gem3_uuid", testGemini3ThoughtSignature([]byte("123e4567-e89b-12d3-a456-426614174000")))
+	add("gem3_nottink", testGemini3ThoughtSignature([]byte{0x02, 0x03, 0x04}))
+	add("gem3_empty", testGemini3ThoughtSignature(nil))
+	{
+		// tool invocation payload: varint field, bytes field with tink payload, fixed32, fixed64
+		var v []byte
+		v = append(v, 0x08, 0x05)                // field1 varint 5
+		v = append(v, 0x12, 0x04, 0x01, 1, 2, 3) // field2 bytes tink
+		v = append(v, 0x2d, 1, 2, 3, 4)          // field5 fixed32
+		v = append(v, 0x31, 1, 2, 3, 4, 5, 6, 7, 8)
+		add("gem3_toolinv", testGemini3ThoughtSignature(v))
+		add("gem3_toolinv_trunc", testGemini3ThoughtSignature(v[:len(v)-3]))
+		add("gem3_toolinv_group", testGemini3ThoughtSignature(append(append([]byte{}, v...), 0x0b)))
+	}
+	add("uuid_b64", base64.StdEncoding.EncodeToString([]byte("123e4567-e89b-12d3-a456-426614174000")))
+	add("uuid_raw", "123e4567-e89b-12d3-a456-426614174000")
+	add("skip", GeminiSkipThoughtSignatureValidator)
+	add("ctxeng", GeminiContextEngineeringBypass)
+	add("gpt", testGPTReasoningSignature())
+	{
+		payload := make([]byte, 1+8+16+16+32)
+		payload[0] = 0x81
+		add("gpt_badver", "gAAAA"+base64.RawURLEncoding.EncodeToString(payload)[5:])
+		p2 := make([]byte, 1+8+16+10+32)
+		p2[0] = 0x80
+		add("gpt_badcipher", base64.RawURLEncoding.EncodeToString(p2))
+		p3 := make([]byte, 20)
+		p3[0] = 0x80
+		add("gpt_short", base64.RawURLEncoding.EncodeToString(p3))
+		p4 := make([]byte, 1+8+16+16+32+1)
+		p4[0] = 0x80
+		add("gpt_padded", base64.URLEncoding.EncodeToString(p4))
+		sig := testGPTReasoningSignature()
+		add("gpt_ellipsis", sig[:20]+string(rune(0x2026))+sig[20:])
+	}
+	add("kimi_ns", synthesizeKimiSignature(t, 9709, 1))
+	add("kimi_s", synthesizeKimiSignature(t, 3255, 2))
+	add("kimi_wronglen", synthesizeKimiSignature(t, 3000, 3))
+	add("kimi_lowentropy", strings.Repeat("A", KimiThinkingSignatureStreamingLen))
+	{
+		g := synthesizeKimiSignature(t, 120, 7)
+		add("grok_ok", g)
+		g2 := synthesizeKimiSignature(t, 40, 8)
+		add("grok_40", g2)
+		add("grok_short", synthesizeKimiSignature(t, 20, 9))
+		add("grok_lowentropy", base64.RawStdEncoding.EncodeToString(make([]byte, 64)))
+		add("grok_padded", base64.StdEncoding.EncodeToString([]byte("x")))
+		add("grok_badchar", "ab$cdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOP")
+	}
+	add("sealed", "sealed.v1.abcdef")
+	for _, s := range []string{"", " ", "abc", "E", "R", "C", "g", "E!!!invalid!!!", "Ebad", "gAAAAABopenai-encrypted-content", "opaque-deepseek-id", "K1ZAIbzDbO", "jQDLUr+fD8RFP8nbkkfI", "E\r\nQUI=", "EQUI", "ñ", "R" + strings.Repeat("A", 8)} {
+		add("lit:"+s, s)
+	}
+
+	names := make([]string, 0, len(base))
+	for k := range base {
+		names = append(names, k)
+	}
+	sortStrings(names)
+	var pool []string
+	seen := map[string]int{}
+	push := func(s string) {
+		if _, ok := seen[s]; !ok {
+			seen[s] = len(pool)
+			pool = append(pool, s)
+		}
+	}
+	prefixes := []string{"", "claude#", "gemini#", "gpt#", "swe#", "foo#", "ccmax#", "modelGroup#"}
+	rng := rand.New(rand.NewSource(42))
+	for _, name := range names {
+		sig := base[name]
+		push(sig)
+		if len(sig) > 6000 { // keep the golden file small: no variants for huge signatures
+			push("claude#" + sig)
+			continue
+		}
+		for _, p := range prefixes[1:] {
+			push(p + sig)
+		}
+		push("  " + sig + "\n")
+		if len(sig) > 8 {
+			push(sig[:len(sig)/2])
+			push(sig[:len(sig)-1])
+			b := []byte(sig)
+			i := rng.Intn(len(b))
+			b[i] = 'A' + byte(rng.Intn(26))
+			push(string(b))
+		}
+	}
+	// also decoded-garbled strings: random base64 junk starting with each envelope char
+	for _, c := range "CERgAMNZ" {
+		b := make([]byte, 60)
+		rng.Read(b)
+		push(string(c) + base64.RawStdEncoding.EncodeToString(b)[1:])
+	}
+	idx := func(s string) int { return seen[s] }
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	// out values equal to a pool signature are replaced by a reference to keep the file small.
+	ref := func(v any) any {
+		if s, ok := v.(string); ok {
+			if i, ok := seen[s]; ok && len(s) > 64 {
+				return map[string]int{"$sig": i}
+			}
+		}
+		return v
+	}
+	emit := func(c gcase) {
+		if o, ok := c["out"].(gcase); ok {
+			for k, v := range o {
+				o[k] = ref(v)
+			}
+		}
+		if err := enc.Encode(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	emit(gcase{"fn": "pool", "sigs": pool})
+
+	kinds := []SignatureBlockKind{SignatureBlockKindUnknown, SignatureBlockKindClaudeThinking, SignatureBlockKindGeminiModelPart, SignatureBlockKindGeminiFunctionCall, SignatureBlockKindGPTReasoning}
+	targets := []SignatureProvider{SignatureProviderClaude, SignatureProviderGemini, SignatureProviderGeminiBypass, SignatureProviderGPT, SignatureProviderKimi, SignatureProviderGrok, SignatureProviderSWE, SignatureProviderUnknown}
+	claudeOpts := []ClaudeSignatureValidationOptions{{}, {Strict: true}, {PrefixOnly: true}, {Base64Only: true}}
+	for i, sig := range pool {
+		for _, k := range kinds {
+			emit(gcase{"fn": "detect", "sig": i, "kind": string(k), "out": gcase{"provider": string(DetectSignatureProviderForBlock(sig, k))}})
+		}
+		for _, tg := range targets {
+			for _, k := range []SignatureBlockKind{SignatureBlockKindUnknown, SignatureBlockKindClaudeThinking, SignatureBlockKindGeminiFunctionCall} {
+				d := DecideSignatureCompatibilityForModel(tg, "claude-opus-5", sig, k)
+				emit(gcase{"fn": "decide", "sig": i, "target": string(tg), "kind": string(k), "model": "claude-opus-5", "out": gcase{
+					"target": string(d.TargetProvider), "detected": string(d.DetectedProvider), "kind": string(d.BlockKind), "compatible": d.Compatible,
+					"action": string(d.Action), "replacement": d.ReplacementSignature, "normalized": d.NormalizedSignature, "reason": d.Reason}})
+			}
+		}
+		for oi, o := range claudeOpts {
+			n, e := NormalizeClaudeThinkingSignature(sig, o)
+			emit(gcase{"fn": "normalizeClaude", "sig": i, "opts": oi, "out": gcase{"value": n, "err": errStr(e)}})
+			emit(gcase{"fn": "isValidClaude", "sig": i, "opts": oi, "out": gcase{"ok": IsValidClaudeThinkingSignature(sig, o)}})
+			n2, e2 := NormalizeClaudeProviderNativeThinkingSignature(sig, o)
+			emit(gcase{"fn": "normalizeNative", "sig": i, "opts": oi, "out": gcase{"value": n2, "err": errStr(e2)}})
+		}
+		emit(gcase{"fn": "decodable", "sig": i, "out": gcase{"ok": HasDecodableClaudeThinkingSignature(sig), "prefix": HasClaudeThinkingSignaturePrefix(sig)}})
+		ci, ce := InspectClaudeCAISSignature(sig)
+		cout := gcase{"err": errStr(ce)}
+		if ci != nil {
+			cout["info"] = gcase{"first": int(ci.FirstByte), "env": ci.EnvelopeVersion, "chan": ci.ChannelID, "model": ci.ModelText, "kind": ci.BlockKind, "ctx": ci.ContextID, "siglen": ci.SignatureLen}
+		}
+		emit(gcase{"fn": "inspectCAIS", "sig": i, "out": cout})
+		for _, layer := range []struct {
+			name string
+			f    func(string) (*ClaudeSignatureTree, error)
+		}{{"inspectSingle", InspectClaudeSingleLayerSignature}, {"inspectDouble", InspectClaudeDoubleLayerSignature}} {
+			tr, te := layer.f(sig)
+			tout := gcase{"err": errStr(te)}
+			if tr != nil {
+				var f2 any
+				if tr.Field2 != nil {
+					f2 = *tr.Field2
+				}
+				tout["tree"] = gcase{"layers": tr.EncodingLayers, "chan": tr.ChannelID, "field2": f2, "routing": tr.RoutingClass, "infra": tr.InfrastructureClass, "schema": tr.SchemaFeatures, "model": tr.ModelText, "legacy": tr.LegacyRouteHint, "f7": tr.HasField7}
+			}
+			emit(gcase{"fn": layer.name, "sig": i, "out": tout})
+		}
+		for oi, o := range []GeminiThoughtSignatureValidationOptions{{}, {AllowBypassSentinel: true}, {RequireKnownEnvelope: true}, {RequireObservedMarker: true}, {AllowBypassSentinel: true, RequireKnownEnvelope: true, RequireObservedMarker: true}} {
+			gi, ge := InspectGeminiThoughtSignature(sig, o)
+			gout := gcase{"err": errStr(ge)}
+			if gi != nil {
+				gout["info"] = gcase{"bypass": gi.IsBypassSentinel, "sentinel": gi.BypassSentinel, "dlen": gi.DecodedLen, "first": int(gi.FirstByte), "marker": gi.HasObservedMarker, "known": gi.KnownEnvelope, "envelope": string(gi.Envelope), "records": gi.RecordCount, "opaque": gi.OpaquePayloadLen}
+			}
+			emit(gcase{"fn": "inspectGemini", "sig": i, "opts": oi, "out": gout})
+		}
+		gp, gpe := InspectGPTReasoningSignature(sig)
+		pout := gcase{"err": errStr(gpe)}
+		if gp != nil {
+			pout["info"] = gcase{"dlen": gp.DecodedLen, "clen": gp.CiphertextLen}
+		}
+		emit(gcase{"fn": "inspectGPT", "sig": i, "out": pout})
+		gk, gke := InspectGrokEncryptedContent(sig)
+		kout := gcase{"err": errStr(gke)}
+		if gk != nil {
+			kout["info"] = gcase{"raw": gk.RawLen, "dlen": gk.DecodedLen}
+		}
+		emit(gcase{"fn": "inspectGrok", "sig": i, "out": kout})
+		ki, kie := InspectKimiThinkingSignature(sig)
+		kiout := gcase{"err": errStr(kie)}
+		if ki != nil {
+			kiout["info"] = gcase{"raw": ki.RawLen, "dlen": ki.DecodedLen, "mode": string(ki.Mode)}
+		}
+		emit(gcase{"fn": "inspectKimi", "sig": i, "out": kiout})
+		ag, agok := CompatibleAntigravityClaudeThinkingSignature(sig)
+		emit(gcase{"fn": "compatAG", "sig": i, "out": gcase{"value": ag, "ok": agok}})
+		emit(gcase{"fn": "recognized", "sig": i, "out": gcase{"ok": IsRecognizedReasoningSignature(sig)}})
+		sp, sr, sok := SplitSignatureProviderPrefix(sig)
+		emit(gcase{"fn": "split", "sig": i, "out": gcase{"provider": string(sp), "rest": sr, "ok": sok, "payload": SignaturePayloadWithoutProviderPrefix(sig)}})
+		emit(gcase{"fn": "geminiReplay", "sig": i, "kind": "fc", "out": gcase{"value": GeminiReplaySignatureOrBypass(sig, SignatureBlockKindGeminiFunctionCall)}})
+		emit(gcase{"fn": "geminiReplay", "sig": i, "kind": "mp", "out": gcase{"value": GeminiReplaySignatureOrBypass(sig, SignatureBlockKindGeminiModelPart)}})
+	}
+	for _, m := range []string{"claude-3", "Gemini-3", "gpt-5", "o3-mini", "o4", "k2.5", "kimi", "moonshot", "grok-4", "swe-1.5", "deepseek-v4", "", " CLAUDE ", "openai-x", "codex", "xo1"} {
+		emit(gcase{"fn": "providerFromModel", "model": m, "out": gcase{"provider": string(SignatureProviderFromModelName(m))}})
+	}
+	for _, p := range []string{"claude", "Anthropic", " cais ", "claude-cais", "claude_cais", "ccmax", "claude-code-max", "claude_code_max", "gemini", "google", "openai", "gpt", "codex", "swe", "sealed", "foo", "", "claude-cache"} {
+		emit(gcase{"fn": "providerFromPrefix", "prefix": p, "out": gcase{"provider": string(SignatureProviderFromCachePrefix(p))}})
+	}
+
+	// ---- JSON payloads
+	sigPoolForJSON := []string{}
+	for _, name := range []string{"claudeE", "claudeR", "claudeEsimple", "claudeEfff", "cais_fable5", "caqs_narration", "gem_envelope", "gem3_tink", "gem3_uuid", "uuid_b64", "skip", "ctxeng", "gpt", "sealed", "lit:", "lit:Ebad", "lit:opaque-deepseek-id", "lit:E!!!invalid!!!", "lit:gAAAAABopenai-encrypted-content", "lit: "} {
+		sigPoolForJSON = append(sigPoolForJSON, base[name])
+	}
+	for _, p := range []string{"claude#", "gemini#", "foo#"} {
+		sigPoolForJSON = append(sigPoolForJSON, p+base["claudeE"], p+base["gem_envelope"], p+base["skip"])
+	}
+	jsq := func(s string) string { b, _ := json.Marshal(s); return string(b) }
+	// reference JSON signatures by pool index to keep payloads compact in the golden file.
+	var payloads []string
+	pstr := func(s string) string { return s }
+	_ = pstr
+	for _, s := range sigPoolForJSON {
+		q := jsq(s)
+		payloads = append(payloads,
+			`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":`+q+`},{"type":"text","text":"a"}]},{"role":"user","content":[{"type":"text","text":"n"}]}]}`,
+			`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":`+q+`}]},{"role":"user","content":"hello"}]}`,
+			`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":`+q+`},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"c":"pwd"},"signature":`+q+`,"thoughtSignature":`+q+`,"model":"claude-x","extra_content":{"google":{"thought_signature":`+q+`}}}]}]}`,
+			`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{},"extra_content":{"google":{"thought_signature":`+q+`}}}]}]}`,
+			`{"messages":[{"role":"assistant","content":[{"type":"thinking","text":"","signature":`+q+`},{"type":"thinking","thinking":{"text":""},"signature":""},{"type":"thinking","thinking":{"thinking":"x"},"signature":`+q+`}]}]}`,
+		)
+	}
+	payloads = append(payloads,
+		`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"","signature":""}]}]}`,
+		`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"   ","signature":" "},{"type":"thinking","text":"x","signature":""}]}]}`,
+		`{"messages":[{"role":"assistant","content":"just text"},{"role":"user","content":[]}]}`,
+		`{"messages":"nope"}`, `{"model":"x"}`, `[]`, `not json`, ``,
+		"{\n  \"messages\": [\n    {\"role\": \"assistant\", \"content\": [ {\"type\":\"thinking\",\"thinking\":\"t\",\"signature\":\"gAAAAABzz\"}, {\"type\":\"text\",\"text\":\"a\"} ]}\n  ],\n  \"model\": \"m\"\n}",
+	)
+	targetModels := []string{"claude-sonnet-4-6", "gpt-5", "gemini-3-pro", "kimi-k2", "grok-4", "deepseek-v4", "swe-1", ""}
+	for pi, p := range payloads {
+		for _, o := range claudeOpts {
+			emit(gcase{"fn": "stripInvalid", "payload": p, "opts": optIndex(claudeOpts, o), "out": gcase{"value": string(StripInvalidClaudeThinkingBlocks([]byte(p), o))}})
+			emit(gcase{"fn": "stripInvalidEmpty", "payload": p, "opts": optIndex(claudeOpts, o), "out": gcase{"value": string(StripInvalidClaudeThinkingBlocksAndEmptyMessages([]byte(p), o))}})
+			emit(gcase{"fn": "validateClaude", "payload": p, "opts": optIndex(claudeOpts, o), "out": gcase{"err": errStr(ValidateClaudeThinkingSignatures([]byte(p), o))}})
+		}
+		emit(gcase{"fn": "stripAllowEmpty", "payload": p, "out": gcase{"value": string(StripInvalidClaudeThinkingBlocks([]byte(p), ClaudeSignatureValidationOptions{Base64Only: true, AllowEmptySignatureWithEmptyText: true}))}})
+		for _, m := range targetModels {
+			out, rep := SanitizeClaudeMessagesSignaturesForModel([]byte(p), m)
+			emit(gcase{"fn": "sanitizeForModel", "payload": p, "model": m, "out": reportOut(out, rep)})
+			for _, preserve := range []bool{false, true} {
+				out, rep := SanitizeClaudeMessagesForClaudeUpstream([]byte(p), m, preserve)
+				emit(gcase{"fn": "sanitizeForClaudeUpstream", "payload": p, "model": m, "preserve": preserve, "out": reportOut(out, rep)})
+			}
+		}
+		_ = pi
+	}
+	// target-options variants
+	for _, p := range payloads[:40] {
+		for _, drop := range []bool{false, true} {
+			out, rep := SanitizeClaudeMessagesSignaturesForTarget([]byte(p), ClaudeMessagesSignatureSanitizeOptions{TargetProvider: SignatureProviderGemini, TargetModel: "gemini-3", DropEmptyMessages: drop, DropToolSignatures: false})
+			emit(gcase{"fn": "sanitizeForTargetGemini", "payload": p, "drop": drop, "out": reportOut(out, rep)})
+			out, rep = SanitizeClaudeMessagesSignaturesForTarget([]byte(p), ClaudeMessagesSignatureSanitizeOptions{TargetProvider: SignatureProviderClaude, TargetModel: "claude-x", DropEmptyMessages: drop, DropToolSignatures: false})
+			emit(gcase{"fn": "sanitizeForTargetClaudeKeepTools", "payload": p, "drop": drop, "out": reportOut(out, rep)})
+			out, rep = SanitizeClaudeMessagesSignaturesForTarget([]byte(p), ClaudeMessagesSignatureSanitizeOptions{TargetProvider: SignatureProviderGPT, DropEmptyMessages: drop})
+			emit(gcase{"fn": "sanitizeForTargetGPT", "payload": p, "drop": drop, "out": reportOut(out, rep)})
+			out, rep = SanitizeClaudeMessagesSignaturesForTarget([]byte(p), ClaudeMessagesSignatureSanitizeOptions{TargetProvider: SignatureProviderClaude, TargetModel: "claude-x", DropEmptyMessages: drop, DropEmptyThinkingPlaceholders: false})
+			emit(gcase{"fn": "sanitizeForTargetClaudePlaceholders", "payload": p, "drop": drop, "out": reportOut(out, rep)})
+		}
+	}
+
+	// Gemini payloads
+	gsigs := []string{}
+	for _, name := range []string{"gem_envelope", "gem3_tink", "gem3_uuid", "uuid_b64", "skip", "ctxeng", "claudeE", "cais_fable5", "gpt", "lit:", "lit:abc", "gem3_toolinv", "gem25_field1"} {
+		gsigs = append(gsigs, base[name])
+	}
+	gsigs = append(gsigs, "gemini#"+base["gem_envelope"], "gemini#"+base["skip"], "claude#"+base["claudeE"], " "+base["skip"]+" ")
+	var gpayloads []string
+	wrap := func(contents string) []string {
+		return []string{`{"contents":` + contents + `}`, `{"request":{"contents":` + contents + `},"model":"m"}`}
+	}
+	for _, s := range gsigs {
+		q := jsq(s)
+		for _, c := range []string{
+			`[{"role":"user","parts":[{"text":"hi"}]},{"role":"model","parts":[{"functionCall":{"id":"c1","name":"f","args":{}},"thoughtSignature":` + q + `}]},{"role":"user","parts":[{"functionResponse":{"id":"c1","name":"f","response":{}}}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"id":"c1","name":"f","args":{}}},{"functionCall":{"id":"c2","name":"g","args":{}},"thoughtSignature":` + q + `}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"name":"f","args":{}},"thought_signature":` + q + `},{"text":"x","thoughtSignature":` + q + `}]}]`,
+			`[{"role":"model","parts":[{"text":"x","thoughtSignature":` + q + `},{"thought":true,"text":"y"},{"functionCall":{"name":"f","args":{}}}]}]`,
+			`[{"role":"user","parts":[{"functionResponse":{"name":"f","response":{}},"thoughtSignature":` + q + `}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"name":"f","args":{},"thoughtSignature":` + q + `}}]}]`,
+			`[{"role":"model","parts":[{"toolCall":{"x":1},"thoughtSignature":` + q + `},{"toolResponse":{"x":1},"thoughtSignature":` + q + `},{"tool_call":{},"thought_signature":` + q + `},{"functionCall":{"name":"f","args":{}}}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"name":"f","args":{}},"thoughtSignature":` + q + `,"thought_signature":` + q + `,"extra_content":{"google":{"thought_signature":` + q + `}}}]}]`,
+			`[{"role":"MODEL","parts":[{"functionCall":{"name":"f","args":{}},"thoughtSignature":` + q + `}]},{"role":" model ","parts":[{"functionCall":{"name":"f","args":{}}}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"name":"f"},"extra_content":{"google":{"thought_signature":` + q + `}}}]}]`,
+			`[{"role":"model","parts":[{"functionCall":{"name":"f"},"thoughtSignature":123}]}]`,
+		} {
+			gpayloads = append(gpayloads, wrap(c)...)
+		}
+	}
+	gpayloads = append(gpayloads,
+		`{"contents":[{"role":"model","parts":[]},{"role":"user"},{"role":"model","parts":"x"}]}`,
+		`{"contents":"x"}`, `{}`, `[]`, ``, `nope`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}},{"functionCall":{"id":"b","name":"g"}}]},{"role":"user","parts":[{"functionResponse":{"id":"a","name":"f"}},{"functionResponse":{"id":"b","name":"g"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"text":"reminder"}]},{"role":"user","parts":[{"functionResponse":{"id":"a","name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"model","parts":[{"text":"x"}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"id":"z","name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"id":"a"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"id":"a","name":"g"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"id":"a","name":"f"}},{"functionResponse":{"id":"b","name":"g"}}]}]}`,
+		`{"contents":[{"role":"user","parts":[{"functionResponse":{"id":"a","name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"},"functionResponse":{"id":"a","name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"model","parts":[{"functionCall":{"id":"b","name":"f"}}]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"id":"a","name":"f"}}]},{"role":"user","parts":[]}]}`,
+		`{"contents":[{"role":"model","parts":[{"functionCall":{"name":"f"}}]},{"role":"user","parts":[{"functionResponse":{"name":"f"}}]}]}`,
+	)
+	gopts := []GeminiThoughtSignatureValidationOptions{{}, {AllowBypassSentinel: true}, {AllowBypassSentinel: true, RequireKnownEnvelope: true}, {RequireObservedMarker: true, AllowBypassSentinel: true}}
+	for _, p := range gpayloads {
+		for oi, o := range gopts {
+			emit(gcase{"fn": "validateGemini", "payload": p, "opts": oi, "out": gcase{"err": errStr(ValidateGeminiThoughtSignatures([]byte(p), o))}})
+		}
+		emit(gcase{"fn": "pairing", "payload": p, "out": gcase{"err": errStr(ValidateGeminiFunctionCallPairing([]byte(p)))}})
+		emit(gcase{"fn": "sanitizeGemini", "payload": p, "path": "contents", "out": gcase{"value": string(SanitizeGeminiRequestThoughtSignatures([]byte(p), "contents"))}})
+		emit(gcase{"fn": "sanitizeGemini", "payload": p, "path": "request.contents", "out": gcase{"value": string(SanitizeGeminiRequestThoughtSignatures([]byte(p), "request.contents"))}})
+		emit(gcase{"fn": "sanitizeGemini", "payload": p, "path": "  ", "out": gcase{"value": string(SanitizeGeminiRequestThoughtSignatures([]byte(p), "  "))}})
+	}
+	_ = idx
+}
+
+func optIndex(opts []ClaudeSignatureValidationOptions, o ClaudeSignatureValidationOptions) int {
+	for i, c := range opts {
+		if c == o {
+			return i
+		}
+	}
+	return -1
+}
+
+func reportOut(out []byte, rep SignatureSanitizeReport) gcase {
+	decs := []gcase{}
+	for _, d := range rep.Decisions {
+		decs = append(decs, gcase{"target": string(d.TargetProvider), "detected": string(d.DetectedProvider), "kind": string(d.BlockKind), "compatible": d.Compatible, "action": string(d.Action), "replacement": d.ReplacementSignature, "normalized": d.NormalizedSignature, "reason": d.Reason})
+	}
+	return gcase{"value": string(out), "target": string(rep.TargetProvider), "preserved": rep.Preserved, "droppedBlocks": rep.DroppedBlocks, "droppedSignatures": rep.DroppedSignatures, "replaced": rep.ReplacedSignatures, "decisions": decs}
+}
+
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}

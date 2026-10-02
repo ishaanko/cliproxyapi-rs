@@ -203,6 +203,16 @@ claude-api-key:
     "agy-p.json": json.dumps({"type": "antigravity", "prefix": "ag"}),
 }})
 
+# Catalog-only auths (no generated `created` timestamps) so the handler payloads are comparable
+# verbatim: plain, prefixed, aliased with fork, and Gemini-style models.
+S.append({"name": "listing", "dump_handlers": True, "config_yaml": "debug: false\n", "auth_files": {
+    "claude-l.json": json.dumps({"type": "claude", "email": "l@x", "prefix": "team", "model_aliases": [{"name": "claude-sonnet-4-5", "alias": "sonnet", "fork": True, "display-name": "Sonnet!"}]}),
+    "aistudio-l.json": json.dumps({"type": "aistudio", "email": "as@x", "excluded_models": ["gemini-1*"]}),
+    "vertex-l.json": json.dumps({"type": "vertex", "email": "v@x"}),
+    "agy-l.json": json.dumps({"type": "antigravity", "email": "a@x", "model_aliases": [{"name": "gemini-3-pro-preview", "alias": "g3"}]}),
+    "codex-l.json": json.dumps({"type": "codex", "plan_type": "plus"}),
+}})
+
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "fixtures", "service_scenarios.json")
 with open(out, "w") as f:
     json.dump(S, f, indent=1)

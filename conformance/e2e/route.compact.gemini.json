@@ -1,0 +1,39 @@
+{
+  "id": "route.compact.gemini",
+  "desc": "POST /v1/responses/compact",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses/compact",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "input": "Summarize"
+        }
+      },
+      "response": {
+        "status": 501,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "/responses/compact not supported",
+              "type": "server_error",
+              "code": "internal_server_error"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

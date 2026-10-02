@@ -16,4 +16,4 @@ Rules:
 - Verify continuously (`cargo build`, `cargo test`, `cargo run -p cpa-conformance -- --pair ... --show 3`). Do not write slop tests; the conformance corpus is the primary test.
 - Commit your work on your branch with conventional commit messages (`feat(translator): ...`). Never add Co-Authored-By trailers. Do not push.
 - Final report: what is done, conformance numbers, known gaps, any edits outside ownership.
-- Put scratch files, throwaway Go oracles and extra cargo target dirs under `/home/ishaan/box/cliproxyapirust/tmp/scratch/<your-slice>/` (big disk), never in `/tmp` (small tmpfs shared with other work). Delete your scratch when done.
+- Put scratch files, throwaway Go oracles and extra cargo target dirs under your worktree's gitignored `target/scratch/` (big disk), never in `/tmp` (small tmpfs shared with other work). For a throwaway copy of the Go repo, `cp -r` it there. Delete scratch when done.
