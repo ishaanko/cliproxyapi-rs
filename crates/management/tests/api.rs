@@ -1388,6 +1388,9 @@ async fn v0_unrouted_paths_pass_the_gate_before_the_404() {
 #[tokio::test]
 async fn usage_queue_pops_each_event_once() {
     let h = harness();
+    // The queue is process-wide; this is the only test in this binary that enables it.
+    cpa_runtime::usage_queue::install(&h.usage);
+    cpa_home::queue::set_enabled(true);
     for model in ["m1", "m2", "m3"] {
         h.usage.record(record(model, false));
     }
@@ -1411,4 +1414,5 @@ async fn usage_queue_pops_each_event_once() {
         (r.status.as_u16(), r.json()),
         (400, json!({"error": "count must be a positive integer"}))
     );
+    cpa_home::queue::set_enabled(false);
 }
