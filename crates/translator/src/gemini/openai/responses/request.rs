@@ -22,7 +22,7 @@ use super::signature_carrier::{
     normalize_gemini_responses_carriers, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_SIGNATURE_FIELD,
     CARRIER_SUMMARY_FIELD, CARRIER_TEXT,
 };
-use super::lenient::{collect_output_raws, parse_gjson, payload_text, restore_raw, RawTexts};
+use super::lenient::{collect_output_raws, parse_gjson, restore_raw, RawTexts};
 use super::trailing_signature::restore_gemini_responses_text_signatures;
 use super::web_search::{
     allows_responses_web_search_tool_choice, extract_responses_web_search_allowed_domains, has_responses_web_search_tool,
@@ -44,7 +44,7 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
     // Base Gemini template; thinkingConfig is only added when requested.
     let mut out = json!({"contents": []});
     let root = parse_gjson(input_raw_json).unwrap_or(Value::Null);
-    let raw_outputs = collect_output_raws(&payload_text(input_raw_json));
+    let raw_outputs = collect_output_raws(input_raw_json, &root);
 
     // Tools and the forward map are computed first so contents and declarations agree on names.
     let (function_declarations, forward_map, _) = build_gemini_function_declarations(&root);

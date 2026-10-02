@@ -40,3 +40,6 @@ pub fn register(r: &mut Registry) {
         },
     );
 }
+
+#[cfg(test)]
+mod tests;

@@ -14,7 +14,7 @@ use cpa_core::util::{
 };
 use cpa_json::{json, Res, Value, J};
 
-use super::lenient::{array_elements, gjson_valid, parse_gjson, payload_text, raw_path};
+use super::lenient::{gjson_valid, parse_gjson};
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::signature_carrier::{encode_gemini_responses_carrier, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_STANDALONE, CARRIER_TEXT};
 use super::trailing_signature::cache_gemini_responses_text_signatures;
@@ -392,9 +392,8 @@ pub fn convert_gemini_response_to_openai_responses(
 
     let Some(parsed) = parse_gjson(raw) else { return Vec::new() };
     let valid_json = gjson_valid(raw);
-    let text = payload_text(raw);
     let (root, wrapped) = unwrap_gemini_response_root(parsed);
-    let root_raw: &str = if wrapped { raw_path(&text, &["response"]).unwrap_or(&text) } else { &text };
+    let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw, "response").map(str::as_bytes).unwrap_or(raw) } else { raw };
 
     let req_value = req_json.map(cpa_json::parse);
     let out = {
@@ -795,7 +794,7 @@ impl Stream<'_> {
         self.push("response.failed", &failure);
     }
 
-    fn run(&mut self, root: &Value, root_raw: &str, valid_json: bool) {
+    fn run(&mut self, root: &Value, root_raw: &[u8], valid_json: bool) {
         // Initialize per-response fields and emit created/in_progress once.
         if !self.st.started {
             self.st.response_id = root.g("responseId").str();
@@ -871,9 +870,8 @@ impl Stream<'_> {
         // Parts (text / thought / functionCall).
         let parts = root.g("candidates.0.content.parts");
         if parts.exists() && parts.is_array() {
-            let parts_raw = raw_path(root_raw, &["candidates", "0", "content", "parts"]).map(array_elements).unwrap_or_default();
             for (part_idx_in_chunk, part) in parts.array().iter().enumerate() {
-                let args_raw = parts_raw.get(part_idx_in_chunk).and_then(|p| raw_path(p, &["functionCall", "args"]));
+                let args_raw = cpa_json::raw_at(root_raw, &format!("candidates.0.content.parts.{part_idx_in_chunk}.functionCall.args"));
                 if !self.process_part(part_idx_in_chunk as i64, part, args_raw, valid_json) {
                     break;
                 }
