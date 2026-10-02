@@ -7,7 +7,7 @@
 use cpa_json::{J, Value};
 
 use super::super::apply::is_user_defined_model;
-use super::super::json::{parse_or_empty_object, set, to_bytes};
+use super::super::json::parse_or_empty_object;
 use super::super::types::{ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode};
 use super::restore_include_thoughts;
 use crate::registry::ModelInfo;
@@ -88,26 +88,26 @@ fn apply_level_format(original: &Value, config: &ThinkingConfig) -> Vec<u8> {
             // Amount fully disabled: visibility is irrelevant and restoring includeThoughts alone
             // would recreate thinkingConfig and let a default-on model think again.
             cpa_json::delete(&mut result, PREFIX);
-            return to_bytes(&result);
+            return cpa_json::to_vec(&result);
         }
         if !config.level.is_empty() {
-            set(
+            cpa_json::set(
                 &mut result,
                 &format!("{PREFIX}.thinkingLevel"),
                 config.level.as_str(),
             );
         }
         restore_include_thoughts(&mut result, original, PREFIX);
-        return to_bytes(&result);
+        return cpa_json::to_vec(&result);
     }
 
-    set(
+    cpa_json::set(
         &mut result,
         &format!("{PREFIX}.thinkingLevel"),
         config.level.as_str(),
     );
     restore_include_thoughts(&mut result, original, PREFIX);
-    to_bytes(&result)
+    cpa_json::to_vec(&result)
 }
 
 fn apply_budget_format(
@@ -135,13 +135,13 @@ fn apply_budget_format(
         // includeThoughts control if present.
         if budget == BUDGET_REMOVED {
             restore_include_thoughts(&mut result, original, PREFIX);
-            return to_bytes(&result);
+            return cpa_json::to_vec(&result);
         }
     }
 
-    set(&mut result, &format!("{PREFIX}.thinkingBudget"), budget);
+    cpa_json::set(&mut result, &format!("{PREFIX}.thinkingBudget"), budget);
     restore_include_thoughts(&mut result, original, PREFIX);
-    to_bytes(&result)
+    cpa_json::to_vec(&result)
 }
 
 /// Claude constraints on the budget: below max tokens (budget >= max becomes max-1), and the whole
@@ -160,7 +160,7 @@ fn normalize_claude_budget(mut budget: i64, payload: &mut Value, info: &ModelInf
     }
 
     if set_default_max && effective_max > 0 {
-        set(
+        cpa_json::set(
             payload,
             "request.generationConfig.maxOutputTokens",
             effective_max,

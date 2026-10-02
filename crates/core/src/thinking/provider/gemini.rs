@@ -8,7 +8,7 @@
 use cpa_json::Value;
 
 use super::super::apply::is_user_defined_model;
-use super::super::json::{parse_or_empty_object, set, to_bytes};
+use super::super::json::parse_or_empty_object;
 use super::super::types::{ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode};
 use super::restore_include_thoughts;
 use crate::registry::ModelInfo;
@@ -75,27 +75,27 @@ fn apply_level_format(original: &Value, config: &ThinkingConfig) -> Vec<u8> {
     if config.mode == ThinkingMode::None {
         if config.budget == 0 && config.level.is_empty() {
             cpa_json::delete(&mut result, PREFIX);
-            return to_bytes(&result);
+            return cpa_json::to_vec(&result);
         }
         if !config.level.is_empty() {
-            set(
+            cpa_json::set(
                 &mut result,
                 &format!("{PREFIX}.thinkingLevel"),
                 config.level.as_str(),
             );
         }
         restore_include_thoughts(&mut result, original, PREFIX);
-        return to_bytes(&result);
+        return cpa_json::to_vec(&result);
     }
 
     // Only Level reaches here; budget conversion is the caller's job.
-    set(
+    cpa_json::set(
         &mut result,
         &format!("{PREFIX}.thinkingLevel"),
         config.level.as_str(),
     );
     restore_include_thoughts(&mut result, original, PREFIX);
-    to_bytes(&result)
+    cpa_json::to_vec(&result)
 }
 
 fn apply_budget_format(original: &Value, config: &ThinkingConfig) -> Vec<u8> {
@@ -109,11 +109,11 @@ fn apply_budget_format(original: &Value, config: &ThinkingConfig) -> Vec<u8> {
     ] {
         cpa_json::delete(&mut result, &format!("{PREFIX}.{key}"));
     }
-    set(
+    cpa_json::set(
         &mut result,
         &format!("{PREFIX}.thinkingBudget"),
         config.budget,
     );
     restore_include_thoughts(&mut result, original, PREFIX);
-    to_bytes(&result)
+    cpa_json::to_vec(&result)
 }

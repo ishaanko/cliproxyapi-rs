@@ -6,7 +6,7 @@
 use cpa_json::{J, Kind, Value};
 
 use super::super::convert::{convert_budget_to_level, eq_fold};
-use super::super::json::{parse_or_empty_object, set, to_bytes};
+use super::super::json::parse_or_empty_object;
 use super::super::types::{ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode, level};
 use crate::registry::ModelInfo;
 
@@ -29,7 +29,7 @@ impl ProviderApplier for InteractionsApplier {
             ThinkingMode::Auto => set_thinking_summaries(result, &original),
             ThinkingMode::None => apply_none(result, &original, config, model_info),
         };
-        Ok(to_bytes(&out))
+        Ok(cpa_json::to_vec(&out))
     }
 }
 
@@ -55,7 +55,7 @@ fn apply_level(
 ) -> Value {
     let lvl = normalize_interactions_level(lvl, model_info);
     if !lvl.is_empty() {
-        set(&mut result, "generation_config.thinking_level", lvl);
+        cpa_json::set(&mut result, "generation_config.thinking_level", lvl);
     }
     set_thinking_summaries(result, original)
 }
@@ -106,11 +106,11 @@ fn strip_interactions_thinking_fields(body: &Value) -> Value {
 /// derived from its `include_thoughts` boolean.
 fn set_thinking_summaries(mut result: Value, original: &Value) -> Value {
     if let Some(value) = original_thinking_summaries(original) {
-        set(&mut result, "generation_config.thinking_summaries", value);
+        cpa_json::set(&mut result, "generation_config.thinking_summaries", value);
         return result;
     }
     if let Some(include) = original_include_thoughts(original) {
-        set(
+        cpa_json::set(
             &mut result,
             "generation_config.thinking_summaries",
             if include { "auto" } else { "none" },

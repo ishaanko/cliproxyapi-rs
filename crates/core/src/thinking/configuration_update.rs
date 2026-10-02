@@ -2,7 +2,7 @@
 
 use cpa_json::{J, Value};
 
-use super::json::{delete_if_empty_object, parse_valid, to_bytes};
+use super::json::{delete_if_empty_object, parse_valid};
 use super::types::{ThinkingConfig, level};
 
 /// Whether `format` is a Responses-style source (`codex` or `openai-response`).
@@ -57,7 +57,7 @@ pub(crate) fn strip_configuration_updates(body: &[u8]) -> Vec<u8> {
     if items.len() == before {
         return body.to_vec();
     }
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }
 
 /// Deletes `reasoning.effort` (and an emptied `reasoning`), leaving summary and unrelated
@@ -71,5 +71,5 @@ pub(crate) fn strip_responses_effort(body: &[u8]) -> Vec<u8> {
     }
     cpa_json::delete(&mut v, "reasoning.effort");
     delete_if_empty_object(&mut v, "reasoning");
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }

@@ -1583,6 +1583,9 @@ fn matrix_models() -> Vec<ModelInfo> {
     ]
 }
 
+/// `testdata/conversion_matrix.jsonl` was recorded from Go: a copy of CLIProxyAPI whose
+/// `runThinkingTests` (test/thinking_conversion_test.go) appends one JSON line per case after the
+/// translators ran (`input`) and `thinking.ApplyThinking` returned (`output`, `err`, `errMsg`).
 /// Replays every case of the Go matrix (285 cases across suffix, body, provider-target,
 /// interactions and Claude adaptive tests) through `apply_thinking`. Each record holds the body the
 /// Go translators produced for the case plus Go's exact `ApplyThinking` result, so this checks the
@@ -1699,7 +1702,7 @@ fn thinking_mode_num(m: ThinkingMode) -> i64 {
 }
 
 /// Differential replay against a JSONL file recorded from the Go implementation by
-/// `testdata/oracle_gen.go.txt` (about 176k cases: `apply`, `applyInfo`, summary extraction and
+/// `testdata/oracle_gen.go.txt` (about 247k cases: `apply`, `applyInfo`, summary extraction and
 /// application, effort labels, strip and `validate` records). Run with
 /// `THINKING_ORACLE=/tmp/oracle_wide.jsonl cargo test -p cpa-core thinking_oracle -- --ignored`.
 #[test]
@@ -1714,10 +1717,6 @@ fn thinking_oracle_file_matches_go() {
     let mut count = 0usize;
     let mut fail = |line: &str, got: String| failures.push(format!("{line}\n  got {got}"));
     for line in data.lines().filter(|l| !l.trim().is_empty()) {
-        // Known divergence: gjson `Int()` wraps integers beyond i64 while `cpa_json` saturates.
-        if line.contains("99999999999999999999") {
-            continue;
-        }
         count += 1;
         let rec: Value = serde_json::from_str(line).expect("oracle line");
         let f = |k: &str| rec.g(k).str();
@@ -1878,6 +1877,10 @@ fn thinking_oracle_file_matches_go() {
         }
     }
     if let Ok(dump) = std::env::var("THINKING_ORACLE_DUMP") {
+        let dump = std::path::PathBuf::from(dump);
+        if let Some(dir) = dump.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir).expect("create dump dir");
+        }
         std::fs::write(dump, failures.join("\n")).expect("write failures");
     }
     assert!(
@@ -1891,4 +1894,37 @@ fn thinking_oracle_file_matches_go() {
             .collect::<Vec<_>>()
             .join("\n")
     );
+}
+
+#[test]
+fn go_quote_matches_go_percent_q() {
+    use super::validate::go_quote;
+    assert_eq!(go_quote("xhigh"), r#""xhigh""#);
+    assert_eq!(go_quote("a\"b\\c"), r#""a\"b\\c""#);
+    assert_eq!(
+        go_quote("\x07\x08\x0c\n\r\t\x0b\x01\x7f"),
+        r#""\a\b\f\n\r\t\v\x01\x7f""#
+    );
+    assert_eq!(
+        go_quote("caf\u{e9}\u{80}\u{a0}\u{200b}\u{1f600}"),
+        "\"caf\u{e9}\\u0080\\u00a0\\u200b\u{1f600}\""
+    );
+}
+
+/// Bodies nested deeper than serde_json's default 128 limit must not be wiped to `{}`.
+#[test]
+fn deeply_nested_body_survives() {
+    let depth = 300;
+    let deep = format!("{}1{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
+    let body = format!(r#"{{"deep":{deep},"thinking":{{"type":"enabled","budget_tokens":4096}}}}"#);
+    let out = apply_thinking(
+        body.as_bytes(),
+        "unknown-model",
+        "claude",
+        "claude",
+        "claude",
+    )
+    .expect("apply");
+    assert!(s(&out).contains(&deep), "deep value lost");
+    assert_eq!(val(&out).g("thinking.budget_tokens").int(), 4096);
 }

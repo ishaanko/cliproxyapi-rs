@@ -21,19 +21,17 @@ pub use xai::XaiApplier;
 
 use cpa_json::{J, Kind, Value};
 
-use super::json::set;
-
 /// Re-sets `<prefix>.includeThoughts` from the ORIGINAL body's `includeThoughts` /
 /// `include_thoughts` (first boolean found), so summary visibility survives effort rewriting.
 pub(crate) fn restore_include_thoughts(result: &mut Value, original: &Value, prefix: &str) {
     for key in ["includeThoughts", "include_thoughts"] {
         match original.g(&format!("{prefix}.{key}")).kind() {
             Kind::True => {
-                set(result, &format!("{prefix}.includeThoughts"), true);
+                cpa_json::set(result, &format!("{prefix}.includeThoughts"), true);
                 return;
             }
             Kind::False => {
-                set(result, &format!("{prefix}.includeThoughts"), false);
+                cpa_json::set(result, &format!("{prefix}.includeThoughts"), false);
                 return;
             }
             _ => {}

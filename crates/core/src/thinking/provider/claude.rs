@@ -7,9 +7,7 @@ use cpa_json::{J, Value};
 
 use super::super::apply::is_user_defined_model;
 use super::super::convert::convert_level_to_budget;
-use super::super::json::{
-    body_or_empty_object, delete_if_empty_object, parse_or_empty_object, set, to_bytes,
-};
+use super::super::json::{body_or_empty_object, delete_if_empty_object, parse_or_empty_object};
 use super::super::types::{ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode};
 use crate::registry::ModelInfo;
 
@@ -45,13 +43,13 @@ impl ProviderApplier for ClaudeApplier {
         match config.mode {
             ThinkingMode::None => {
                 set_disabled(&mut v, true);
-                Ok(to_bytes(&v))
+                Ok(cpa_json::to_vec(&v))
             }
             ThinkingMode::Level => {
                 // Adaptive effort is only valid when the model advertises discrete levels.
                 if supports_adaptive && !config.level.is_empty() {
                     set_adaptive(&mut v, Some(&config.level));
-                    return Ok(to_bytes(&v));
+                    return Ok(cpa_json::to_vec(&v));
                 }
                 // Non-adaptive Claude models: convert the level to budget_tokens.
                 match convert_level_to_budget(&config.level) {
@@ -66,11 +64,11 @@ impl ProviderApplier for ClaudeApplier {
                     set_adaptive(&mut v, None);
                 } else {
                     // Legacy fallback: enable thinking without budget_tokens.
-                    set(&mut v, "thinking.type", "enabled");
+                    cpa_json::set(&mut v, "thinking.type", "enabled");
                     cpa_json::delete(&mut v, "thinking.budget_tokens");
                     clear_effort(&mut v);
                 }
-                Ok(to_bytes(&v))
+                Ok(cpa_json::to_vec(&v))
             }
         }
     }
@@ -80,20 +78,20 @@ impl ProviderApplier for ClaudeApplier {
 fn apply_budget(mut v: Value, budget: i64, info: &ModelInfo) -> Vec<u8> {
     if budget == 0 {
         set_disabled(&mut v, false);
-        return to_bytes(&v);
+        return cpa_json::to_vec(&v);
     }
-    set(&mut v, "thinking.type", "enabled");
-    set(&mut v, "thinking.budget_tokens", budget);
+    cpa_json::set(&mut v, "thinking.type", "enabled");
+    cpa_json::set(&mut v, "thinking.budget_tokens", budget);
     clear_effort(&mut v);
     // Anthropic requires max_tokens > budget_tokens.
     normalize_claude_budget(&mut v, budget, info);
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }
 
 /// `thinking.type="disabled"` without budget or effort. `drop_display` also removes
 /// `thinking.display`, which only applies to an active thinking block.
 fn set_disabled(v: &mut Value, drop_display: bool) {
-    set(v, "thinking.type", "disabled");
+    cpa_json::set(v, "thinking.type", "disabled");
     cpa_json::delete(v, "thinking.budget_tokens");
     if drop_display {
         cpa_json::delete(v, "thinking.display");
@@ -104,10 +102,12 @@ fn set_disabled(v: &mut Value, drop_display: bool) {
 /// `thinking.type="adaptive"`, without budget; `effort` sets `output_config.effort`, `None`
 /// removes it (and an emptied `output_config`).
 fn set_adaptive(v: &mut Value, effort: Option<&str>) {
-    set(v, "thinking.type", "adaptive");
+    cpa_json::set(v, "thinking.type", "adaptive");
     cpa_json::delete(v, "thinking.budget_tokens");
     match effort {
-        Some(effort) => set(v, "output_config.effort", effort),
+        Some(effort) => {
+            cpa_json::set(v, "output_config.effort", effort);
+        }
         None => clear_effort(v),
     }
 }
@@ -128,7 +128,7 @@ fn normalize_claude_budget(v: &mut Value, budget_tokens: i64, info: &ModelInfo) 
 
     let (effective_max, set_default_max) = effective_max_tokens(v, info);
     if set_default_max && effective_max > 0 {
-        set(v, "max_tokens", effective_max);
+        cpa_json::set(v, "max_tokens", effective_max);
     }
 
     let mut adjusted = budget_tokens;
@@ -142,7 +142,7 @@ fn normalize_claude_budget(v: &mut Value, budget_tokens: i64, info: &ModelInfo) 
     }
 
     if adjusted != budget_tokens {
-        set(v, "thinking.budget_tokens", adjusted);
+        cpa_json::set(v, "thinking.budget_tokens", adjusted);
     }
 }
 
@@ -165,7 +165,7 @@ fn apply_compatible_claude(body: &[u8], config: &ThinkingConfig) -> Vec<u8> {
     match config.mode {
         ThinkingMode::None => set_disabled(&mut v, true),
         ThinkingMode::Auto => {
-            set(&mut v, "thinking.type", "enabled");
+            cpa_json::set(&mut v, "thinking.type", "enabled");
             cpa_json::delete(&mut v, "thinking.budget_tokens");
             clear_effort(&mut v);
         }
@@ -176,10 +176,10 @@ fn apply_compatible_claude(body: &[u8], config: &ThinkingConfig) -> Vec<u8> {
             set_adaptive(&mut v, Some(&config.level));
         }
         ThinkingMode::Budget => {
-            set(&mut v, "thinking.type", "enabled");
-            set(&mut v, "thinking.budget_tokens", config.budget);
+            cpa_json::set(&mut v, "thinking.type", "enabled");
+            cpa_json::set(&mut v, "thinking.budget_tokens", config.budget);
             clear_effort(&mut v);
         }
     }
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }

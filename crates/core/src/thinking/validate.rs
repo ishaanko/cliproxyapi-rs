@@ -20,25 +20,47 @@ const STANDARD_LEVEL_ORDER: [&str; 6] = [
     level::MAX,
 ];
 
-/// Go `%q` for the (lowercased) level names that end up in error messages.
-fn go_quote(s: &str) -> String {
+/// Go `%q` for the level names that end up in error messages (strconv.Quote: short escapes for
+/// \a \b \f \n \r \t \v, `\x..` for other ASCII controls, `\u....`/`\U........` for
+/// non-printable runes; printable text, including non-ASCII, is kept).
+pub(super) fn go_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {
         match c {
             '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
+            '\x07' => out.push_str("\\a"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
             '\n' => out.push_str("\\n"),
-            '\t' => out.push_str("\\t"),
             '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x0b' => out.push_str("\\v"),
             c if (c as u32) < 0x20 || c as u32 == 0x7f => {
                 out.push_str(&format!("\\x{:02x}", c as u32))
+            }
+            c if c.is_control() || is_unprintable(c) => {
+                let n = c as u32;
+                if n < 0x10000 {
+                    out.push_str(&format!("\\u{n:04x}"));
+                } else {
+                    out.push_str(&format!("\\U{n:08x}"));
+                }
             }
             c => out.push(c),
         }
     }
     out.push('"');
     out
+}
+
+/// Approximates Go's `unicode.IsPrint` for the non-control cases that matter: format characters,
+/// separators other than ASCII space, private use, and non-characters.
+fn is_unprintable(c: char) -> bool {
+    matches!(c as u32,
+        0x80..=0x9f | 0xa0 | 0xad | 0x1680 | 0x2000..=0x200f | 0x2028..=0x202f | 0x205f..=0x206f
+        | 0x3000 | 0xe000..=0xf8ff | 0xfeff | 0xfff0..=0xffff | 0xf0000..=0x10ffff)
 }
 
 /// Validates and normalizes `config` against `model_info`:

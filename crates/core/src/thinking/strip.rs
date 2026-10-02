@@ -1,6 +1,6 @@
 //! Removal of thinking fields for models without thinking support (Go: internal/thinking/strip.go).
 
-use super::json::{delete_if_empty_object, parse_valid, to_bytes};
+use super::json::{delete_if_empty_object, parse_valid};
 
 /// Removes the thinking configuration fields of `provider` from the body. Empty or invalid JSON
 /// and unknown providers return the body unchanged.
@@ -36,5 +36,5 @@ pub fn strip_thinking_config(body: &[u8], provider: &str) -> Vec<u8> {
     if provider == "claude" {
         delete_if_empty_object(&mut v, "output_config");
     }
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }
