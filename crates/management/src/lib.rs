@@ -49,37 +49,113 @@ pub use state::{AuthRegistry, BuildInfo, ManagementState, ReloadHook};
 const MAX_BODY_BYTES: usize = 100 * 1024 * 1024;
 
 async fn config_root(State(st): State<ManagementState>, method: Method, body: Bytes) -> Response {
-    config_v8::handle(&st, ConfigRequest { method, yaml: false, parts: Vec::new(), body }).await
+    config_v8::handle(
+        &st,
+        ConfigRequest {
+            method,
+            yaml: false,
+            parts: Vec::new(),
+            body,
+        },
+    )
+    .await
 }
 
 async fn config_yaml(State(st): State<ManagementState>, method: Method, body: Bytes) -> Response {
-    config_v8::handle(&st, ConfigRequest { method, yaml: true, parts: Vec::new(), body }).await
+    config_v8::handle(
+        &st,
+        ConfigRequest {
+            method,
+            yaml: true,
+            parts: Vec::new(),
+            body,
+        },
+    )
+    .await
 }
 
-async fn config_node(State(st): State<ManagementState>, method: Method, Path(path): Path<String>, body: Bytes) -> Response {
-    config_v8::handle(&st, ConfigRequest { method, yaml: false, parts: split_path(&path), body }).await
+async fn config_node(
+    State(st): State<ManagementState>,
+    method: Method,
+    Path(path): Path<String>,
+    body: Bytes,
+) -> Response {
+    config_v8::handle(
+        &st,
+        ConfigRequest {
+            method,
+            yaml: false,
+            parts: split_path(&path),
+            body,
+        },
+    )
+    .await
 }
 
 /// The management router. Mount it on the main server; see the crate docs for the serve call.
 pub fn router(state: ManagementState) -> Router {
     let v8 = Router::new()
-        .route("/config", get(config_root).put(config_root).patch(config_root))
+        .route(
+            "/config",
+            get(config_root).put(config_root).patch(config_root),
+        )
         .route("/config.yaml", get(config_yaml).put(config_yaml))
-        .route("/config/", get(config_node_empty).put(config_node_empty).patch(config_node_empty).delete(config_node_empty))
-        .route("/config/{*path}", get(config_node).put(config_node).patch(config_node).delete(config_node))
+        .route(
+            "/config/",
+            get(config_node_empty)
+                .put(config_node_empty)
+                .patch(config_node_empty)
+                .delete(config_node_empty),
+        )
+        .route(
+            "/config/{*path}",
+            get(config_node)
+                .put(config_node)
+                .patch(config_node)
+                .delete(config_node),
+        )
         .route("/server/latest-version", get(tools::latest_version))
         .route("/requests/api-call", post(tools::api_call))
         .route("/routing/cooldown/reset", post(routing::reset_cooldown))
-        .route("/routing/model-definitions/{channel}", get(routing::model_definitions))
-        .route("/observability/logs", get(logs::get_logs).delete(logs::delete_logs))
+        .route(
+            "/routing/model-definitions/{channel}",
+            get(routing::model_definitions),
+        )
+        .route(
+            "/observability/logs",
+            get(logs::get_logs).delete(logs::delete_logs),
+        )
         .route("/observability/logs/errors", get(logs::error_logs))
-        .route("/observability/logs/errors/{name}", get(logs::download_error_log))
-        .route("/observability/logs/requests/{id}", get(logs::request_log_by_id))
-        .route("/observability/usage/api-keys", get(observability::api_key_usage))
-        .route("/observability/usage/queue", get(observability::usage_queue))
-        .route("/observability/usage/summary", get(observability::usage_summary))
-        .route("/observability/requests", get(observability::usage_requests))
-        .route("/credentials", get(credentials::list).post(credentials::upload).delete(credentials::delete))
+        .route(
+            "/observability/logs/errors/{name}",
+            get(logs::download_error_log),
+        )
+        .route(
+            "/observability/logs/requests/{id}",
+            get(logs::request_log_by_id),
+        )
+        .route(
+            "/observability/usage/api-keys",
+            get(observability::api_key_usage),
+        )
+        .route(
+            "/observability/usage/queue",
+            get(observability::usage_queue),
+        )
+        .route(
+            "/observability/usage/summary",
+            get(observability::usage_summary),
+        )
+        .route(
+            "/observability/requests",
+            get(observability::usage_requests),
+        )
+        .route(
+            "/credentials",
+            get(credentials::list)
+                .post(credentials::upload)
+                .delete(credentials::delete),
+        )
         .route("/credentials/models", get(credentials::models))
         .route("/credentials/download", get(credentials::download))
         .route("/credentials/status", patch(credential_edit::patch_status))
@@ -92,17 +168,40 @@ pub fn router(state: ManagementState) -> Router {
         .route("/plugins", get(tools::list_plugins))
         .route("/plugins/{id}", delete(tools::plugins_unavailable))
         .route("/plugins/store", get(tools::plugins_unavailable))
-        .route("/plugins/store/{id}/install", post(tools::plugins_unavailable))
-        .route("/plugins/{id}/quota", get(tools::plugins_unavailable).post(tools::plugins_unavailable).delete(tools::plugins_unavailable))
+        .route(
+            "/plugins/store/{id}/install",
+            post(tools::plugins_unavailable),
+        )
+        .route(
+            "/plugins/{id}/quota",
+            get(tools::plugins_unavailable)
+                .post(tools::plugins_unavailable)
+                .delete(tools::plugins_unavailable),
+        )
         // Key check first, availability gate outside it.
-        .layer(middleware::from_fn_with_state(state.clone(), gate::authenticate))
-        .layer(middleware::from_fn_with_state(state.clone(), gate::availability));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            gate::authenticate,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            gate::availability,
+        ));
 
     // The callback endpoints validate a pending `state` instead of a key.
     let callbacks = Router::new()
-        .route("/v8/management/oauth/callback", get(oauth::callback).post(oauth::callback))
-        .route("/v0/management/oauth-callback", get(oauth::callback).post(oauth::callback))
-        .layer(middleware::from_fn_with_state(state.clone(), gate::availability));
+        .route(
+            "/v8/management/oauth/callback",
+            get(oauth::callback).post(oauth::callback),
+        )
+        .route(
+            "/v0/management/oauth-callback",
+            get(oauth::callback).post(oauth::callback),
+        )
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            gate::availability,
+        ));
 
     Router::new()
         .nest("/v8/management", v8)
@@ -112,6 +211,19 @@ pub fn router(state: ManagementState) -> Router {
         .with_state(state)
 }
 
-async fn config_node_empty(State(st): State<ManagementState>, method: Method, body: Bytes) -> Response {
-    config_v8::handle(&st, ConfigRequest { method, yaml: false, parts: Vec::new(), body }).await
+async fn config_node_empty(
+    State(st): State<ManagementState>,
+    method: Method,
+    body: Bytes,
+) -> Response {
+    config_v8::handle(
+        &st,
+        ConfigRequest {
+            method,
+            yaml: false,
+            parts: Vec::new(),
+            body,
+        },
+    )
+    .await
 }

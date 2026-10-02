@@ -29,7 +29,8 @@ fn parse_key(trimmed: &str) -> Option<String> {
     if first == b'"' || first == b'\'' {
         let end = trimmed[1..].find(first as char)? + 1;
         let rest = trimmed[end + 1..].trim_start();
-        return (rest == ":" || rest.starts_with(": ") || rest.starts_with(":\t")).then(|| trimmed[1..end].to_string());
+        return (rest == ":" || rest.starts_with(": ") || rest.starts_with(":\t"))
+            .then(|| trimmed[1..end].to_string());
     }
     let idx = trimmed.find(':')?;
     let after = &trimmed[idx + 1..];
@@ -37,7 +38,8 @@ fn parse_key(trimmed: &str) -> Option<String> {
         return None;
     }
     let key = trimmed[..idx].trim_end();
-    (!key.is_empty() && !key.starts_with('#') && !key.starts_with('[') && !key.starts_with('{')).then(|| key.to_string())
+    (!key.is_empty() && !key.starts_with('#') && !key.starts_with('[') && !key.starts_with('{'))
+        .then(|| key.to_string())
 }
 
 /// Position of an inline comment (`#` preceded by whitespace, outside quotes).
@@ -91,7 +93,9 @@ fn key_lines(text: &str) -> Vec<(usize, Vec<String>)> {
             seq_owner = stack.last().map(|(ind, _)| *ind).or(Some(0));
             continue;
         }
-        let Some(key) = parse_key(trimmed) else { continue };
+        let Some(key) = parse_key(trimmed) else {
+            continue;
+        };
         while stack.last().is_some_and(|(ind, _)| *ind >= indent) {
             stack.pop();
         }
@@ -115,18 +119,28 @@ fn scan(text: &str) -> Scan {
         }
         let leading: Vec<String> = lines[start..idx].iter().map(|l| (*l).to_string()).collect();
         let trailing = inline_comment(lines[idx]).map(|p| lines[idx][p..].to_string());
-        comments.entry(path).or_insert(KeyComments { leading, trailing });
+        comments
+            .entry(path)
+            .or_insert(KeyComments { leading, trailing });
     }
     let last_content = lines.iter().rposition(|l| !is_comment_or_blank(l));
     let footer_start = last_content.map_or(0, |i| i + 1);
-    let footer: Vec<String> = lines[footer_start..].iter().map(|l| (*l).to_string()).collect();
+    let footer: Vec<String> = lines[footer_start..]
+        .iter()
+        .map(|l| (*l).to_string())
+        .collect();
     Scan { comments, footer }
 }
 
 /// Re-attaches the comments of `old` to the matching keys of `new` (which has none).
 pub(crate) fn carry_comments(old: &str, new: &str) -> String {
     let scanned = scan(old);
-    if scanned.comments.values().all(|c| c.leading.is_empty() && c.trailing.is_none()) && scanned.footer.is_empty() {
+    if scanned
+        .comments
+        .values()
+        .all(|c| c.leading.is_empty() && c.trailing.is_none())
+        && scanned.footer.is_empty()
+    {
         return new.to_string();
     }
     let lines: Vec<&str> = new.lines().collect();
@@ -150,7 +164,11 @@ pub(crate) fn carry_comments(old: &str, new: &str) -> String {
         out.push('\n');
     }
     // Footer comments stay at the end of the file.
-    let footer_start = scanned.footer.iter().position(|l| !l.trim().is_empty()).unwrap_or(scanned.footer.len());
+    let footer_start = scanned
+        .footer
+        .iter()
+        .position(|l| !l.trim().is_empty())
+        .unwrap_or(scanned.footer.len());
     for l in &scanned.footer[footer_start..] {
         out.push_str(l);
         out.push('\n');

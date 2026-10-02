@@ -28,7 +28,11 @@ pub struct BuildInfo {
 
 impl Default for BuildInfo {
     fn default() -> Self {
-        Self { version: cpa_auth::client_version(), commit: "none".into(), build_date: "unknown".into() }
+        Self {
+            version: cpa_auth::client_version(),
+            commit: "none".into(),
+            build_date: "unknown".into(),
+        }
     }
 }
 
@@ -75,6 +79,8 @@ pub(crate) struct AttemptInfo {
 pub(crate) struct Shared {
     pub attempts: Mutex<HashMap<String, AttemptInfo>>,
     pub last_purge: Mutex<Option<Instant>>,
+    /// SHA-256 of the last management key that verified, with the bcrypt hash it matched.
+    pub verified: Mutex<Option<([u8; 32], String)>>,
     /// Serializes config file mutations (Go: `Handler.mu`).
     pub config_lock: tokio::sync::Mutex<()>,
 }
@@ -126,7 +132,11 @@ impl ManagementState {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
         let log_dir = log_dir.into();
-        let log_dir = if log_dir.is_absolute() { log_dir } else { std::path::absolute(&log_dir).unwrap_or(log_dir) };
+        let log_dir = if log_dir.is_absolute() {
+            log_dir
+        } else {
+            std::path::absolute(&log_dir).unwrap_or(log_dir)
+        };
         Self {
             config_path: config_path.into(),
             config,
@@ -153,7 +163,9 @@ impl ManagementState {
 
     /// Overrides `MANAGEMENT_PASSWORD` (None disables it).
     pub fn with_env_secret(mut self, secret: Option<String>) -> Self {
-        self.env_secret = secret.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        self.env_secret = secret
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         self
     }
 
@@ -189,7 +201,9 @@ impl ManagementState {
             return Some(dir);
         }
         let cfg = self.cfg();
-        cpa_config::resolve_auth_dir(&cfg.auth_dir).ok().filter(|d| !d.as_os_str().is_empty())
+        cpa_config::resolve_auth_dir(&cfg.auth_dir)
+            .ok()
+            .filter(|d| !d.as_os_str().is_empty())
     }
 
     /// Port the server listens on (Go falls back to 8317 where it needs one).
@@ -200,7 +214,11 @@ impl ManagementState {
 
     /// `http(s)://127.0.0.1:<port><path>`: where provider redirects land on this server.
     pub(crate) fn loopback_url(&self, path: &str) -> String {
-        let scheme = if self.cfg().tls.enable { "https" } else { "http" };
+        let scheme = if self.cfg().tls.enable {
+            "https"
+        } else {
+            "http"
+        };
         format!("{scheme}://127.0.0.1:{}{path}", self.server_port())
     }
 }

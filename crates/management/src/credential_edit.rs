@@ -30,7 +30,8 @@ struct StatusRequest {
 
 /// `PATCH /credentials/status`.
 pub(crate) async fn patch_status(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
-    let req: StatusRequest = serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid request body"))?;
+    let req: StatusRequest =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid request body"))?;
     let name = req.name.trim();
     if name.is_empty() {
         return Err(ApiError::bad_request("name is required"));
@@ -64,7 +65,10 @@ pub(crate) async fn patch_status(State(st): State<ManagementState>, body: Bytes)
     }
 
     apply_disabled_state(&mut target, disabled);
-    st.registry.update(target).await.map_err(|e| ApiError::new(500, format!("failed to update auth: {e}")))?;
+    st.registry
+        .update(target)
+        .await
+        .map_err(|e| ApiError::new(500, format!("failed to update auth: {e}")))?;
     Ok(ok_json(&json!({"status": "ok", "disabled": disabled})))
 }
 
@@ -78,7 +82,8 @@ fn apply_disabled_state(auth: &mut Auth, disabled: bool) {
         auth.status_message.clear();
     }
     auth.updated_at = Some(Utc::now());
-    auth.metadata.insert("disabled".into(), Value::Bool(disabled));
+    auth.metadata
+        .insert("disabled".into(), Value::Bool(disabled));
 }
 
 // ---- config API-key credentials ----
@@ -86,7 +91,10 @@ fn apply_disabled_state(auth: &mut Auth, disabled: bool) {
 fn set_excluded_all(models: &[String], disable: bool) -> Vec<String> {
     let mut list = models.to_vec();
     if disable {
-        if !list.iter().any(|m| m.trim() == CONFIG_API_KEY_DISABLE_PATTERN) {
+        if !list
+            .iter()
+            .any(|m| m.trim() == CONFIG_API_KEY_DISABLE_PATTERN)
+        {
             list.push(CONFIG_API_KEY_DISABLE_PATTERN.into());
         }
     } else {
@@ -99,12 +107,18 @@ fn set_excluded_all(models: &[String], disable: bool) -> Vec<String> {
 /// API-key credential. Entries are matched on provider, API key, base URL and, when several
 /// entries share those, proxy URL and prefix (Go matches the synthesized stable auth id).
 /// Returns whether an entry was found.
-fn toggle_config_api_key_excluded_all(cfg: &mut cpa_config::Config, auth: &Auth, disable: bool) -> bool {
+fn toggle_config_api_key_excluded_all(
+    cfg: &mut cpa_config::Config,
+    auth: &Auth,
+    disable: bool,
+) -> bool {
     let key = auth.attr("api_key");
     let base = auth.attr("base_url");
     let proxy = auth.proxy_url.trim().to_string();
     let prefix = auth.prefix.trim().to_string();
-    let matches = |k: &str, b: &str, p: &str, x: &str| k.trim() == key && b.trim() == base && (p.trim() == proxy) && (x.trim() == prefix);
+    let matches = |k: &str, b: &str, p: &str, x: &str| {
+        k.trim() == key && b.trim() == base && (p.trim() == proxy) && (x.trim() == prefix)
+    };
     let matches_loose = |k: &str, b: &str| k.trim() == key && b.trim() == base;
 
     macro_rules! toggle {
@@ -113,7 +127,10 @@ fn toggle_config_api_key_excluded_all(cfg: &mut cpa_config::Config, auth: &Auth,
             let idx = list
                 .iter()
                 .position(|e| matches(&e.api_key, &e.base_url, &e.proxy_url, &e.prefix))
-                .or_else(|| list.iter().position(|e| matches_loose(&e.api_key, &e.base_url)));
+                .or_else(|| {
+                    list.iter()
+                        .position(|e| matches_loose(&e.api_key, &e.base_url))
+                });
             match idx {
                 Some(i) => {
                     list[i].excluded_models = set_excluded_all(&list[i].excluded_models, disable);
@@ -145,7 +162,11 @@ fn normalize_patch_fields(fields: Fields) -> Result<Fields, String> {
     let mut out: BTreeMap<String, (Value, String, bool)> = BTreeMap::new();
     let mut order: Vec<String> = Vec::new();
     for (key, value) in fields {
-        let mut parts: Vec<String> = key.trim().split('.').map(|p| p.trim().to_string()).collect();
+        let mut parts: Vec<String> = key
+            .trim()
+            .split('.')
+            .map(|p| p.trim().to_string())
+            .collect();
         let original_root = parts[0].clone();
         parts[0] = credmeta::canonical_credential_metadata_key(&original_root).to_string();
         let canonical_path = parts.join(".");
@@ -157,12 +178,17 @@ fn normalize_patch_fields(fields: Fields) -> Result<Fields, String> {
                 }
                 continue;
             }
-            return Err(format!("auth file fields {original:?} and {key:?} refer to the same field"));
+            return Err(format!(
+                "auth file fields {original:?} and {key:?} refer to the same field"
+            ));
         }
         order.push(canonical_path.clone());
         out.insert(canonical_path, (value, key, current_canonical));
     }
-    Ok(order.into_iter().filter_map(|p| out.remove(&p).map(|(v, _, _)| (p, v))).collect())
+    Ok(order
+        .into_iter()
+        .filter_map(|p| out.remove(&p).map(|(v, _, _)| (p, v)))
+        .collect())
 }
 
 fn root_field(path: &str) -> &str {
@@ -195,7 +221,11 @@ fn decode_request_retry(fields: &Fields) -> Result<Option<Option<i64>>, String> 
 }
 
 /// `setAuthFileMetadataValue`: dotted path into nested objects, creating them.
-fn set_metadata_value(metadata: &mut Map<String, Value>, path: &str, value: Value) -> Result<(), String> {
+fn set_metadata_value(
+    metadata: &mut Map<String, Value>,
+    path: &str,
+    value: Value,
+) -> Result<(), String> {
     let parts: Vec<&str> = path.split('.').map(str::trim).collect();
     let mut current = metadata;
     for (i, part) in parts.iter().enumerate() {
@@ -206,11 +236,15 @@ fn set_metadata_value(metadata: &mut Map<String, Value>, path: &str, value: Valu
             current.insert((*part).to_string(), value);
             return Ok(());
         }
-        let entry = current.entry((*part).to_string()).or_insert_with(|| Value::Object(Map::new()));
+        let entry = current
+            .entry((*part).to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
         if !entry.is_object() {
             *entry = Value::Object(Map::new());
         }
-        let Value::Object(next) = entry else { return Ok(()) };
+        let Value::Object(next) = entry else {
+            return Ok(());
+        };
         current = next;
     }
     Ok(())
@@ -251,13 +285,24 @@ fn apply_headers_patch(auth: &mut Auth, value: Value) {
     if next.is_empty() {
         auth.metadata.shift_remove("headers");
     } else {
-        auth.metadata.insert("headers".into(), Value::Object(next.into_iter().map(|(k, v)| (k, Value::String(v))).collect()));
+        auth.metadata.insert(
+            "headers".into(),
+            Value::Object(
+                next.into_iter()
+                    .map(|(k, v)| (k, Value::String(v)))
+                    .collect(),
+            ),
+        );
     }
 }
 
 fn int_value(v: Option<&Value>) -> Option<i64> {
     match v? {
-        Value::Number(n) => n.to_string().parse().ok().or_else(|| n.as_f64().map(|f| f as i64)),
+        Value::Number(n) => n
+            .to_string()
+            .parse()
+            .ok()
+            .or_else(|| n.as_f64().map(|f| f as i64)),
         Value::String(s) => s.trim().parse().ok(),
         _ => None,
     }
@@ -296,21 +341,33 @@ fn sync_metadata_fields(auth: &mut Auth, touched: &BTreeSet<String>) {
                 auth.attributes.remove(ATTRIBUTE_FILE_PRIORITY);
             }
             Some(priority) => {
-                if auth.attributes.get(ATTRIBUTE_SOURCE_BACKEND).map(String::as_str) == Some(AUTH_SOURCE_FILE) {
-                    auth.attributes.insert(ATTRIBUTE_FILE_PRIORITY.into(), "true".into());
+                if auth
+                    .attributes
+                    .get(ATTRIBUTE_SOURCE_BACKEND)
+                    .map(String::as_str)
+                    == Some(AUTH_SOURCE_FILE)
+                {
+                    auth.attributes
+                        .insert(ATTRIBUTE_FILE_PRIORITY.into(), "true".into());
                 }
                 if priority == 0 {
                     auth.attributes.remove("priority");
                 } else {
-                    auth.attributes.insert("priority".into(), priority.to_string());
+                    auth.attributes
+                        .insert("priority".into(), priority.to_string());
                 }
             }
         }
     }
     if touched.contains(ATTRIBUTE_WEIGHT) {
-        match auth.metadata.get(ATTRIBUTE_WEIGHT).map(credmeta::parse_weight_value) {
+        match auth
+            .metadata
+            .get(ATTRIBUTE_WEIGHT)
+            .map(credmeta::parse_weight_value)
+        {
             Some(Ok(w)) => {
-                auth.attributes.insert(ATTRIBUTE_WEIGHT.into(), w.to_string());
+                auth.attributes
+                    .insert(ATTRIBUTE_WEIGHT.into(), w.to_string());
             }
             _ => {
                 auth.attributes.remove(ATTRIBUTE_WEIGHT);
@@ -351,12 +408,19 @@ fn sync_metadata_fields(auth: &mut Auth, touched: &BTreeSet<String>) {
             auth.status_message.clear();
         }
     }
-    if (touched.contains("plan_type") || touched.contains("id_token")) && auth.provider.trim().eq_ignore_ascii_case("codex") {
-        let plan = match (auth.metadata.get("plan_type"), auth.metadata.get("id_token")) {
+    if (touched.contains("plan_type") || touched.contains("id_token"))
+        && auth.provider.trim().eq_ignore_ascii_case("codex")
+    {
+        let plan = match (
+            auth.metadata.get("plan_type"),
+            auth.metadata.get("id_token"),
+        ) {
             (Some(Value::String(p)), _) if !p.trim().is_empty() => p.trim().to_string(),
-            (_, Some(Value::String(t))) if !t.trim().is_empty() => cpa_auth::jwt::parse_codex_id_token(t)
-                .map(|c| c.plan_type())
-                .unwrap_or_else(|_| cpa_auth::jwt::DEFAULT_PLAN_TYPE.to_string()),
+            (_, Some(Value::String(t))) if !t.trim().is_empty() => {
+                cpa_auth::jwt::parse_codex_id_token(t)
+                    .map(|c| c.plan_type())
+                    .unwrap_or_else(|_| cpa_auth::jwt::DEFAULT_PLAN_TYPE.to_string())
+            }
             _ => String::new(),
         };
         if plan.is_empty() {
@@ -376,9 +440,13 @@ pub(crate) async fn patch_fields(State(st): State<ManagementState>, body: Bytes)
         Some(Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
         _ => return Err(ApiError::bad_request("name is required")),
     };
-    let fields = normalize_patch_fields(req.into_iter().collect()).map_err(ApiError::bad_request)?;
+    let fields =
+        normalize_patch_fields(req.into_iter().collect()).map_err(ApiError::bad_request)?;
     let retry_patch = decode_request_retry(&fields).map_err(ApiError::bad_request)?;
-    let fields: Fields = fields.into_iter().filter(|(k, _)| k.trim() != "request_retry").collect();
+    let fields: Fields = fields
+        .into_iter()
+        .filter(|(k, _)| k.trim() != "request_retry")
+        .collect();
 
     let target = st
         .registry
@@ -406,15 +474,21 @@ pub(crate) async fn patch_fields(State(st): State<ManagementState>, body: Bytes)
                 if !value.is_number() {
                     return Err(ApiError::bad_request("weight must be an integer"));
                 }
-                let weight = credmeta::parse_weight_value(&value).map_err(|e| ApiError::bad_request(e.to_string()))?;
-                target.metadata.insert(ATTRIBUTE_WEIGHT.into(), weight.into());
+                let weight = credmeta::parse_weight_value(&value)
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+                target
+                    .metadata
+                    .insert(ATTRIBUTE_WEIGHT.into(), weight.into());
             }
         } else if root_field(&path) == ATTRIBUTE_WEIGHT {
-            return Err(ApiError::bad_request("weight does not support nested fields"));
+            return Err(ApiError::bad_request(
+                "weight does not support nested fields",
+            ));
         } else if path == "headers" {
             apply_headers_patch(&mut target, value);
         } else {
-            set_metadata_value(&mut target.metadata, &path, value).map_err(ApiError::bad_request)?;
+            set_metadata_value(&mut target.metadata, &path, value)
+                .map_err(ApiError::bad_request)?;
         }
         let root = root_field(&path);
         if !root.is_empty() {
@@ -438,7 +512,10 @@ pub(crate) async fn patch_fields(State(st): State<ManagementState>, body: Bytes)
     }
     sync_metadata_fields(&mut target, &touched);
     target.updated_at = Some(Utc::now());
-    st.registry.update(target).await.map_err(|e| ApiError::new(500, format!("failed to update auth: {e}")))?;
+    st.registry
+        .update(target)
+        .await
+        .map_err(|e| ApiError::new(500, format!("failed to update auth: {e}")))?;
     Ok(ok_json(&json!({"status": "ok"})))
 }
 
@@ -448,9 +525,14 @@ mod tests {
 
     #[test]
     fn legacy_and_canonical_spellings_collide_unless_one_is_canonical() {
-        let ok = normalize_patch_fields(vec![("proxy-url".into(), json!("a")), ("proxy_url".into(), json!("b"))]).unwrap();
+        let ok = normalize_patch_fields(vec![
+            ("proxy-url".into(), json!("a")),
+            ("proxy_url".into(), json!("b")),
+        ])
+        .unwrap();
         assert_eq!(ok, vec![("proxy_url".to_string(), json!("b"))]);
-        let err = normalize_patch_fields(vec![("note".into(), json!(1)), ("note".into(), json!(2))]);
+        let err =
+            normalize_patch_fields(vec![("note".into(), json!(1)), ("note".into(), json!(2))]);
         assert!(err.is_err());
     }
 
@@ -467,7 +549,8 @@ mod tests {
     #[test]
     fn headers_merge_and_empty_value_deletes() {
         let mut a = Auth::new("a.json", "claude");
-        a.metadata.insert("headers".into(), json!({"X-A": "1", "X-B": "2"}));
+        a.metadata
+            .insert("headers".into(), json!({"X-A": "1", "X-B": "2"}));
         apply_headers_patch(&mut a, json!({"X-B": "", "X-C": " 3 "}));
         assert_eq!(a.metadata["headers"], json!({"X-A": "1", "X-C": "3"}));
         apply_headers_patch(&mut a, json!({"X-A": "", "X-C": ""}));
@@ -480,7 +563,10 @@ mod tests {
         a.metadata.insert("priority".into(), json!(7));
         a.metadata.insert("note".into(), json!(" hi "));
         a.metadata.insert("disabled".into(), json!(true));
-        let touched: BTreeSet<String> = ["priority", "note", "disabled"].iter().map(|s| s.to_string()).collect();
+        let touched: BTreeSet<String> = ["priority", "note", "disabled"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         sync_metadata_fields(&mut a, &touched);
         assert_eq!(a.attributes.get("priority").map(String::as_str), Some("7"));
         assert_eq!(a.attributes.get("note").map(String::as_str), Some("hi"));

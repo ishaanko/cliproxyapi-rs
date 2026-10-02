@@ -102,7 +102,11 @@ pub struct UsageEvent {
 
 /// UTC RFC 3339 without a fraction when it is zero, else milliseconds.
 fn format_ts(t: DateTime<Utc>) -> String {
-    let fmt = if t.timestamp_subsec_nanos() == 0 { SecondsFormat::Secs } else { SecondsFormat::Millis };
+    let fmt = if t.timestamp_subsec_nanos() == 0 {
+        SecondsFormat::Secs
+    } else {
+        SecondsFormat::Millis
+    };
     t.to_rfc3339_opts(fmt, true)
 }
 
@@ -223,8 +227,15 @@ fn or_unknown(s: &str) -> &str {
 }
 
 /// Aggregates sorted by request count, busiest first (ties by key for stable output).
-fn sorted_by_requests<T>(mut rows: Vec<(String, T)>, requests: impl Fn(&T) -> u64) -> Vec<(String, T)> {
-    rows.sort_by(|a, b| requests(&b.1).cmp(&requests(&a.1)).then_with(|| a.0.cmp(&b.0)));
+fn sorted_by_requests<T>(
+    mut rows: Vec<(String, T)>,
+    requests: impl Fn(&T) -> u64,
+) -> Vec<(String, T)> {
+    rows.sort_by(|a, b| {
+        requests(&b.1)
+            .cmp(&requests(&a.1))
+            .then_with(|| a.0.cmp(&b.0))
+    });
     rows
 }
 
@@ -241,7 +252,11 @@ fn truncate_utf8(s: &mut String, max: usize) {
 
 impl UsageTracker {
     pub fn new() -> Self {
-        Self { enabled: AtomicBool::new(true), started_at: Utc::now(), state: Mutex::new(State::default()) }
+        Self {
+            enabled: AtomicBool::new(true),
+            started_at: Utc::now(),
+            state: Mutex::new(State::default()),
+        }
     }
 
     /// Process start time; doubles as the instance id of the request feed.
@@ -268,9 +283,19 @@ impl UsageTracker {
         let mut st = self.state.lock();
 
         st.totals.bump(&record);
-        let model = if !record.alias.is_empty() { &record.alias } else { &record.model };
-        st.models.entry(or_unknown(model).to_string()).or_default().bump(&record);
-        let cred = st.credentials.entry(or_unknown(&record.auth_index).to_string()).or_default();
+        let model = if !record.alias.is_empty() {
+            &record.alias
+        } else {
+            &record.model
+        };
+        st.models
+            .entry(or_unknown(model).to_string())
+            .or_default()
+            .bump(&record);
+        let cred = st
+            .credentials
+            .entry(or_unknown(&record.auth_index).to_string())
+            .or_default();
         cred.agg.bump(&record);
         if !record.provider.is_empty() {
             cred.provider.clone_from(&record.provider);
@@ -278,10 +303,18 @@ impl UsageTracker {
         if !record.source.is_empty() {
             cred.source.clone_from(&record.source);
         }
-        st.api_keys.entry(or_unknown(&record.api_key).to_string()).or_default().bump(&record);
+        st.api_keys
+            .entry(or_unknown(&record.api_key).to_string())
+            .or_default()
+            .bump(&record);
         st.hourly.entry(hour).or_default().bump(&record);
-        let cutoff = Utc::now().timestamp().div_euclid(HOUR_SECS) * HOUR_SECS - HOURLY_RETAIN * HOUR_SECS;
-        while st.hourly.first_key_value().is_some_and(|(h, _)| *h < cutoff) {
+        let cutoff =
+            Utc::now().timestamp().div_euclid(HOUR_SECS) * HOUR_SECS - HOURLY_RETAIN * HOUR_SECS;
+        while st
+            .hourly
+            .first_key_value()
+            .is_some_and(|(h, _)| *h < cutoff)
+        {
             st.hourly.pop_first();
         }
 
@@ -319,35 +352,69 @@ impl UsageTracker {
 
     fn summary_at(&self, now: DateTime<Utc>) -> UsageSummary {
         let st = self.state.lock();
-        let models = sorted_by_requests(st.models.iter().map(|(k, v)| (k.clone(), v.clone())).collect(), |a| a.requests)
-            .into_iter()
-            .map(|(model, agg)| ModelUsage { model, agg })
-            .collect();
+        let models = sorted_by_requests(
+            st.models
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            |a| a.requests,
+        )
+        .into_iter()
+        .map(|(model, agg)| ModelUsage { model, agg })
+        .collect();
         let credentials = sorted_by_requests(
             st.credentials
                 .iter()
-                .map(|(k, v)| (k.clone(), (v.agg.clone(), v.provider.clone(), v.source.clone())))
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        (v.agg.clone(), v.provider.clone(), v.source.clone()),
+                    )
+                })
                 .collect(),
             |v| v.0.requests,
         )
         .into_iter()
-        .map(|(auth_index, (agg, provider, source))| CredentialUsage { auth_index, provider, source, agg })
+        .map(|(auth_index, (agg, provider, source))| CredentialUsage {
+            auth_index,
+            provider,
+            source,
+            agg,
+        })
         .collect();
-        let api_keys = sorted_by_requests(st.api_keys.iter().map(|(k, v)| (k.clone(), v.clone())).collect(), |a| a.requests)
-            .into_iter()
-            .map(|(api_key, agg)| ApiKeyUsage { api_key, agg })
-            .collect();
+        let api_keys = sorted_by_requests(
+            st.api_keys
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+            |a| a.requests,
+        )
+        .into_iter()
+        .map(|(api_key, agg)| ApiKeyUsage { api_key, agg })
+        .collect();
 
         let now_hour = now.timestamp().div_euclid(HOUR_SECS) * HOUR_SECS;
         let hourly = (0..HOURLY_BUCKETS)
             .map(|i| {
                 let start = now_hour - (HOURLY_BUCKETS - 1 - i) * HOUR_SECS;
-                let hour = DateTime::from_timestamp(start, 0).map(format_ts).unwrap_or_default();
-                HourlyUsage { hour, agg: st.hourly.get(&start).cloned().unwrap_or_default() }
+                let hour = DateTime::from_timestamp(start, 0)
+                    .map(format_ts)
+                    .unwrap_or_default();
+                HourlyUsage {
+                    hour,
+                    agg: st.hourly.get(&start).cloned().unwrap_or_default(),
+                }
             })
             .collect();
 
-        UsageSummary { since: format_ts(self.started_at), totals: st.totals.clone(), models, credentials, api_keys, hourly }
+        UsageSummary {
+            since: format_ts(self.started_at),
+            totals: st.totals.clone(),
+            models,
+            credentials,
+            api_keys,
+            hourly,
+        }
     }
 
     /// Ring buffer view. `limit` is clamped to `1..=capacity`.
@@ -368,7 +435,10 @@ impl UsageTracker {
                 // The ring is ordered by seq.
                 let start = st.ring.partition_point(|e| e.seq <= after);
                 let newer = st.ring.len() - start;
-                (st.ring.iter().skip(start).take(limit).cloned().collect(), newer > limit)
+                (
+                    st.ring.iter().skip(start).take(limit).cloned().collect(),
+                    newer > limit,
+                )
             }
         };
         RequestsPage {
@@ -403,7 +473,12 @@ mod tests {
             failed,
             stream: false,
             fail: UsageFailure::default(),
-            tokens: TokenUsage { input_tokens: 3, output_tokens: 2, total_tokens: 5, ..Default::default() },
+            tokens: TokenUsage {
+                input_tokens: 3,
+                output_tokens: 2,
+                total_tokens: 5,
+                ..Default::default()
+            },
         }
     }
 
@@ -418,7 +493,10 @@ mod tests {
             t.record(rec("m", false));
         }
         let p = t.requests(4, None);
-        assert_eq!((seqs(&p), p.has_more, p.seq), (vec![7, 8, 9, 10], false, 10));
+        assert_eq!(
+            (seqs(&p), p.has_more, p.seq),
+            (vec![7, 8, 9, 10], false, 10)
+        );
 
         // Oldest `limit` after the cursor, then follow the last returned seq.
         let p = t.requests(4, Some(0));
@@ -459,10 +537,25 @@ mod tests {
         t.record(b);
 
         let s = t.summary();
-        assert_eq!((s.totals.requests, s.totals.failed, s.totals.tokens.total_tokens), (3, 1, 15));
-        let models: Vec<_> = s.models.iter().map(|m| (m.model.as_str(), m.agg.requests)).collect();
+        assert_eq!(
+            (
+                s.totals.requests,
+                s.totals.failed,
+                s.totals.tokens.total_tokens
+            ),
+            (3, 1, 15)
+        );
+        let models: Vec<_> = s
+            .models
+            .iter()
+            .map(|m| (m.model.as_str(), m.agg.requests))
+            .collect();
         assert_eq!(models.len(), 3);
-        assert!(models.contains(&("my-alias", 1)) && models.contains(&("gpt-5", 1)) && models.contains(&("unknown", 1)));
+        assert!(
+            models.contains(&("my-alias", 1))
+                && models.contains(&("gpt-5", 1))
+                && models.contains(&("unknown", 1))
+        );
         assert_eq!(s.credentials[0].auth_index, "idx1");
         assert_eq!(s.credentials[0].provider, "codex");
         assert!(s.api_keys.iter().any(|k| k.api_key == "unknown"));
@@ -476,7 +569,10 @@ mod tests {
     fn failure_body_truncates_on_char_boundary() {
         let t = UsageTracker::new();
         let mut r = rec("m", true);
-        r.fail = UsageFailure { status_code: 500, body: "é".repeat(2000) };
+        r.fail = UsageFailure {
+            status_code: 500,
+            body: "é".repeat(2000),
+        };
         t.record(r);
         let body = &t.requests(1, None).events[0].fail.body;
         assert!(body.len() <= FAIL_BODY_MAX_BYTES && body.chars().all(|c| c == 'é'));

@@ -23,7 +23,10 @@ const CODEX_DEVICE_EXPIRES_IN_SECS: u64 = 900;
 const OAUTH_CALLBACK_SUCCESS_HTML: &str = "<html><head><meta charset=\"utf-8\"><title>Authentication successful</title><script>setTimeout(function(){window.close();},5000);</script></head><body><h1>Authentication successful!</h1><p>You can close this window.</p><p>This window will close automatically in 5 seconds.</p></body></html>";
 
 fn is_webui(uri: &Uri) -> bool {
-    matches!(query_trim(uri, "is_webui").to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+        query_trim(uri, "is_webui").to_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 /// v8 provider names exactly as `StartOAuthV8` switches on them (no aliases).
@@ -45,7 +48,9 @@ fn v8_provider(name: &str) -> Option<Provider> {
 fn start_error(provider: Provider, device: bool, err: &AuthFlowError) -> ApiError {
     tracing::error!("failed to start {} login: {err}", provider.key());
     let text = err.to_string();
-    let msg = if text.starts_with("failed to start callback server") || text.starts_with("failed to listen") {
+    let msg = if text.starts_with("failed to start callback server")
+        || text.starts_with("failed to listen")
+    {
         "failed to start callback server"
     } else if text.starts_with("callback server unavailable") {
         "callback server unavailable"
@@ -71,12 +76,18 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
     };
     let cfg = st.cfg();
     let mut opts = LoginOptions::management(cfg.proxy_url.trim());
-    let codex_device = provider == Provider::Codex && query_trim(uri, "flow").eq_ignore_ascii_case("device");
+    let codex_device =
+        provider == Provider::Codex && query_trim(uri, "flow").eq_ignore_ascii_case("device");
     if codex_device {
-        opts.metadata.insert(cpa_auth::codex::LOGIN_MODE_METADATA_KEY.into(), cpa_auth::codex::LOGIN_MODE_DEVICE.into());
+        opts.metadata.insert(
+            cpa_auth::codex::LOGIN_MODE_METADATA_KEY.into(),
+            cpa_auth::codex::LOGIN_MODE_DEVICE.into(),
+        );
     }
     match provider {
-        Provider::Claude | Provider::Codex | Provider::Antigravity if is_webui(uri) && !codex_device => {
+        Provider::Claude | Provider::Codex | Provider::Antigravity
+            if is_webui(uri) && !codex_device =>
+        {
             let route = match provider {
                 Provider::Claude => "anthropic",
                 Provider::Codex => "codex",
@@ -85,17 +96,25 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
             opts.webui_callback_target = Some(st.loopback_url(&format!("/{route}/callback")));
         }
         Provider::Kimi => {
-            let domain = ["domain", "channel"].iter().map(|k| query_trim(uri, k)).find(|d| !d.is_empty());
+            let domain = ["domain", "channel"]
+                .iter()
+                .map(|k| query_trim(uri, k))
+                .find(|d| !d.is_empty());
             opts.kimi_domain = domain;
         }
         Provider::Devin => {
             // Devin validates the redirect strictly: http, 127.0.0.1 and /callback.
-            opts.devin_redirect_uri = Some(format!("http://127.0.0.1:{}/callback", st.server_port()));
+            opts.devin_redirect_uri =
+                Some(format!("http://127.0.0.1:{}/callback", st.server_port()));
         }
         _ => {}
     }
 
-    let session = st.login.start_login(provider, opts).await.map_err(|e| start_error(provider, codex_device, &e))?;
+    let session = st
+        .login
+        .start_login(provider, opts)
+        .await
+        .map_err(|e| start_error(provider, codex_device, &e))?;
     let start = session.start_info();
     let mut body = start.to_json();
     if codex_device && start.flow == FlowKind::Device && start.expires_in.is_none() {
@@ -119,14 +138,24 @@ pub(crate) async fn cancel_session(State(st): State<ManagementState>, req: Reque
 /// `GET|POST /oauth/callback` (no management key; the pending `state` is the credential).
 pub(crate) async fn callback(State(st): State<ManagementState>, req: Request) -> Response {
     let cb = if req.method() == Method::POST {
-        let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap_or_default();
+        let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+            .await
+            .unwrap_or_default();
         match serde_json::from_slice::<CallbackRequest>(&body) {
             Ok(cb) => cb,
-            Err(_) => return json_response(400, &json!({"status": "error", "error": "invalid body"})),
+            Err(_) => {
+                return json_response(400, &json!({"status": "error", "error": "invalid body"}));
+            }
         }
     } else {
         let uri = req.uri();
-        let error = [query_trim(uri, "error"), query_trim(uri, "error_description")].into_iter().find(|e| !e.is_empty()).unwrap_or_default();
+        let error = [
+            query_trim(uri, "error"),
+            query_trim(uri, "error_description"),
+        ]
+        .into_iter()
+        .find(|e| !e.is_empty())
+        .unwrap_or_default();
         CallbackRequest {
             provider: query_trim(uri, "provider"),
             code: query_trim(uri, "code"),
@@ -159,35 +188,54 @@ async fn import_vertex(st: &ManagementState, req: Request) -> ApiResult {
     if !content_type_is(req.headers(), "multipart/form-data") {
         return Err(ApiError::bad_request("file required"));
     }
-    let mut multipart = Multipart::from_request(req, &()).await.map_err(|_| ApiError::bad_request("file required"))?;
+    let mut multipart = Multipart::from_request(req, &())
+        .await
+        .map_err(|_| ApiError::bad_request("file required"))?;
     let mut file: Option<Bytes> = None;
     let mut form_location = String::new();
     while let Ok(Some(field)) = multipart.next_field().await {
-        match (field.name().unwrap_or("").to_string(), field.file_name().is_some()) {
+        match (
+            field.name().unwrap_or("").to_string(),
+            field.file_name().is_some(),
+        ) {
             (name, true) if name == "file" && file.is_none() => {
-                file = Some(field.bytes().await.map_err(|e| ApiError::bad_request(format!("failed to read file: {e}")))?);
+                file = Some(
+                    field
+                        .bytes()
+                        .await
+                        .map_err(|e| ApiError::bad_request(format!("failed to read file: {e}")))?,
+                );
             }
-            (name, false) if name == "location" => form_location = field.text().await.unwrap_or_default(),
+            (name, false) if name == "location" => {
+                form_location = field.text().await.unwrap_or_default()
+            }
             _ => {}
         }
     }
     let Some(data) = file else {
         return Err(ApiError::bad_request("file required"));
     };
-    let location = [form_location.trim().to_string(), query_location].into_iter().find(|l| !l.is_empty()).unwrap_or_default();
+    let location = [form_location.trim().to_string(), query_location]
+        .into_iter()
+        .find(|l| !l.is_empty())
+        .unwrap_or_default();
 
-    let imported = cpa_auth::vertex::import_service_account(&data, &location, None).map_err(|e| {
-        let text = e.to_string();
-        if let Some(msg) = text.strip_prefix("invalid json: ") {
-            ApiError::with_message(400, "invalid json", msg)
-        } else if let Some(msg) = text.strip_prefix("invalid service account: ") {
-            ApiError::with_message(400, "invalid service account", msg)
-        } else {
-            ApiError::bad_request(text)
-        }
-    })?;
+    let imported =
+        cpa_auth::vertex::import_service_account(&data, &location, None).map_err(|e| {
+            let text = e.to_string();
+            if let Some(msg) = text.strip_prefix("invalid json: ") {
+                ApiError::with_message(400, "invalid json", msg)
+            } else if let Some(msg) = text.strip_prefix("invalid service account: ") {
+                ApiError::with_message(400, "invalid service account", msg)
+            } else {
+                ApiError::bad_request(text)
+            }
+        })?;
     let mut auth = imported.auth;
-    let saved = st.login.save_record(&mut auth).map_err(|e| ApiError::with_message(500, "save_failed", e.to_string()))?;
+    let saved = st
+        .login
+        .save_record(&mut auth)
+        .map_err(|e| ApiError::with_message(500, "save_failed", e.to_string()))?;
     Ok(ok_json(&json!({
         "status": "ok",
         "auth-file": saved.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -202,17 +250,28 @@ async fn import_vertex(st: &ManagementState, req: Request) -> ApiResult {
 async fn provider_redirect(st: ManagementState, provider: &'static str, uri: Uri) -> Response {
     let code = query_trim(&uri, "code");
     let state = query_trim(&uri, "state");
-    let error = [query_trim(&uri, "error"), query_trim(&uri, "error_description")].into_iter().find(|e| !e.is_empty()).unwrap_or_default();
+    let error = [
+        query_trim(&uri, "error"),
+        query_trim(&uri, "error_description"),
+    ]
+    .into_iter()
+    .find(|e| !e.is_empty())
+    .unwrap_or_default();
     if !state.is_empty() {
         // A redirect for an unknown or finished session is swallowed; the page is the same.
-        let _ = st.oauth.submit_callback(st.auth_dir().as_deref(), provider, &state, &code, &error);
+        let _ = st
+            .oauth
+            .submit_callback(st.auth_dir().as_deref(), provider, &state, &code, &error);
     }
     html_ok()
 }
 
 fn html_ok() -> Response {
     let mut resp = Response::new(axum::body::Body::from(OAUTH_CALLBACK_SUCCESS_HTML));
-    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
     resp
 }
 
@@ -220,15 +279,26 @@ fn html_ok() -> Response {
 async fn devin_redirect(State(st): State<ManagementState>, uri: Uri) -> Response {
     let code = query_trim(&uri, "code");
     let state = query_trim(&uri, "state");
-    let error = [query_trim(&uri, "error"), query_trim(&uri, "error_description")].into_iter().find(|e| !e.is_empty()).unwrap_or_default();
+    let error = [
+        query_trim(&uri, "error"),
+        query_trim(&uri, "error_description"),
+    ]
+    .into_iter()
+    .find(|e| !e.is_empty())
+    .unwrap_or_default();
     let mut resp = if code.is_empty() && error.is_empty() {
         json_response(400, &json!({"error": "code or error is required"}))
-    } else if st.oauth.submit_callback(st.auth_dir().as_deref(), "devin", &state, &code, &error).is_err() {
+    } else if st
+        .oauth
+        .submit_callback(st.auth_dir().as_deref(), "devin", &state, &code, &error)
+        .is_err()
+    {
         json_response(400, &json!({"error": "invalid or expired OAuth callback"}))
     } else {
         html_ok()
     };
-    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     resp
 }
 

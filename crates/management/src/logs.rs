@@ -40,7 +40,10 @@ fn invalid_input(msg: &str) -> std::io::Error {
 /// `main.log.<N>` (numeric rotation) or `main-<local timestamp>[.n].log[.gz]`; the order puts
 /// larger values first in age (older), timestamps as `i64::MAX - unix`.
 fn rotation_order(name: &str) -> Option<i64> {
-    if let Some(n) = name.strip_prefix("main.log.").and_then(|s| s.parse::<i64>().ok()) {
+    if let Some(n) = name
+        .strip_prefix("main.log.")
+        .and_then(|s| s.parse::<i64>().ok())
+    {
         return Some(n);
     }
     let rest = name.strip_prefix("main-")?;
@@ -92,7 +95,11 @@ fn collect_log_files(dir: &Path) -> IoResult<Vec<PathBuf>> {
 // ---- parameters ----
 
 fn parse_cutoff(raw: &str) -> i64 {
-    raw.trim().parse::<i64>().ok().filter(|t| *t > 0).unwrap_or(0)
+    raw.trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|t| *t > 0)
+        .unwrap_or(0)
 }
 
 /// `0` means unlimited.
@@ -111,7 +118,9 @@ fn parse_limit(raw: &str) -> Result<usize, &'static str> {
 /// Unix time of a log line's `YYYY-MM-DD HH:MM:SS` prefix (local time, optional leading `[`).
 fn parse_timestamp(line: &str) -> i64 {
     let line = line.strip_prefix('[').unwrap_or(line);
-    let Some(candidate) = line.get(..19) else { return 0 };
+    let Some(candidate) = line.get(..19) else {
+        return 0;
+    };
     NaiveDateTime::parse_from_str(candidate, "%Y-%m-%d %H:%M:%S")
         .ok()
         .and_then(|n| Local.from_local_datetime(&n).earliest())
@@ -146,11 +155,19 @@ fn is_zero(v: &i64) -> bool {
 
 impl LogCursor {
     fn mod_time_nanos(&self) -> i64 {
-        if self.mod_time_unix_nano > 0 { self.mod_time_unix_nano } else { self.mod_time * 1_000_000_000 }
+        if self.mod_time_unix_nano > 0 {
+            self.mod_time_unix_nano
+        } else {
+            self.mod_time * 1_000_000_000
+        }
     }
 
     fn fingerprint_boundary(&self) -> i64 {
-        if self.offset == 0 && self.size > 0 { self.size } else { self.offset }
+        if self.offset == 0 && self.size > 0 {
+            self.size
+        } else {
+            self.offset
+        }
     }
 }
 
@@ -159,7 +176,10 @@ fn decode_cursor(raw: &str) -> Option<LogCursor> {
     if value.is_empty() {
         return None;
     }
-    let data = URL_SAFE_NO_PAD.decode(value).or_else(|_| URL_SAFE.decode(value)).ok()?;
+    let data = URL_SAFE_NO_PAD
+        .decode(value)
+        .or_else(|_| URL_SAFE.decode(value))
+        .ok()?;
     let cursor: LogCursor = serde_json::from_slice(&data).ok()?;
     let valid = cursor.version == CURSOR_VERSION
         && is_allowed_cursor_file(&cursor.file)
@@ -172,7 +192,10 @@ fn decode_cursor(raw: &str) -> Option<LogCursor> {
 }
 
 fn mod_nanos(meta: &fs::Metadata) -> i64 {
-    meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos() as i64)
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as i64)
 }
 
 fn read_range(file: &mut File, start: i64, len: i64, sink: &mut impl FnMut(&[u8])) -> IoResult<()> {
@@ -227,12 +250,19 @@ fn new_cursor(path: &Path, offset: i64, latest: i64) -> IoResult<String> {
     if offset < 0 || offset > size {
         return Err(invalid_input("invalid cursor offset"));
     }
-    let probe = LogCursor { offset, size, ..Default::default() };
+    let probe = LogCursor {
+        offset,
+        size,
+        ..Default::default()
+    };
     let fingerprint = file_fingerprint(path, probe.fingerprint_boundary())?;
     let nanos = mod_nanos(&meta);
     let cursor = LogCursor {
         version: CURSOR_VERSION,
-        file: path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        file: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
         offset,
         size,
         mod_time: nanos.div_euclid(1_000_000_000),
@@ -263,7 +293,12 @@ struct ReadResult {
 
 /// Complete lines in `[offset, max_offset)` (`max_offset < 0`: end of file), at most `limit`
 /// (`0`: unlimited). A trailing partial line is left for the next read.
-fn read_complete_lines(path: &Path, offset: i64, max_offset: i64, limit: usize) -> IoResult<CompleteRead> {
+fn read_complete_lines(
+    path: &Path,
+    offset: i64,
+    max_offset: i64,
+    limit: usize,
+) -> IoResult<CompleteRead> {
     if offset < 0 {
         return Err(invalid_input("invalid log offset"));
     }
@@ -273,13 +308,21 @@ fn read_complete_lines(path: &Path, offset: i64, max_offset: i64, limit: usize) 
         return Err(invalid_input("invalid log file"));
     }
     let size = meta.len() as i64;
-    let max_offset = if max_offset < 0 || max_offset > size { size } else { max_offset };
+    let max_offset = if max_offset < 0 || max_offset > size {
+        size
+    } else {
+        max_offset
+    };
     if offset > max_offset {
         return Err(invalid_input("invalid log offset"));
     }
     file.seek(SeekFrom::Start(offset as u64))?;
-    let mut reader = std::io::BufReader::with_capacity(32 * 1024, file.take((max_offset - offset) as u64));
-    let mut result = CompleteRead { end_offset: offset, ..Default::default() };
+    let mut reader =
+        std::io::BufReader::with_capacity(32 * 1024, file.take((max_offset - offset) as u64));
+    let mut result = CompleteRead {
+        end_offset: offset,
+        ..Default::default()
+    };
     let mut current = offset;
     let mut line = Vec::new();
     loop {
@@ -289,13 +332,17 @@ fn read_complete_lines(path: &Path, offset: i64, max_offset: i64, limit: usize) 
             break;
         }
         if line.len() > LOG_LINE_MAX {
-            return Err(invalid_input(&format!("log line exceeds {LOG_LINE_MAX} bytes")));
+            return Err(invalid_input(&format!(
+                "log line exceeds {LOG_LINE_MAX} bytes"
+            )));
         }
         if line.last() != Some(&b'\n') {
             break;
         }
         current += n as i64;
-        let text = String::from_utf8_lossy(&line[..line.len() - 1]).trim_end_matches('\r').to_string();
+        let text = String::from_utf8_lossy(&line[..line.len() - 1])
+            .trim_end_matches('\r')
+            .to_string();
         result.latest = result.latest.max(parse_timestamp(&text));
         result.lines.push(text);
         result.end_offset = current;
@@ -382,7 +429,10 @@ fn cursor_for_latest(files: &[PathBuf], latest: i64) -> IoResult<String> {
 
 /// The last `limit` complete lines across files (newest files first, prepended).
 fn tail_files(files: &[PathBuf], limit: usize, fallback_latest: i64) -> IoResult<ReadResult> {
-    let mut result = ReadResult { latest: fallback_latest, ..Default::default() };
+    let mut result = ReadResult {
+        latest: fallback_latest,
+        ..Default::default()
+    };
     for path in files.iter().rev() {
         let remaining = if limit > 0 {
             let r = limit.saturating_sub(result.lines.len());
@@ -423,11 +473,15 @@ fn file_matches_cursor(path: &Path, cursor: &LogCursor) -> IoResult<(bool, bool)
     if size < boundary {
         return Ok((false, true));
     }
-    Ok((file_fingerprint(path, boundary)? == cursor.fingerprint, false))
+    Ok((
+        file_fingerprint(path, boundary)? == cursor.fingerprint,
+        false,
+    ))
 }
 
 fn changed_after_cursor(path: &Path, cursor: &LogCursor) -> bool {
-    fs::metadata(path).is_ok_and(|m| !m.is_dir() && m.len() > 0 && mod_nanos(&m) > cursor.mod_time_nanos())
+    fs::metadata(path)
+        .is_ok_and(|m| !m.is_dir() && m.len() > 0 && mod_nanos(&m) > cursor.mod_time_nanos())
 }
 
 fn base_name(p: &Path) -> &str {
@@ -440,15 +494,26 @@ fn is_empty_main_cursor(cursor: &LogCursor) -> bool {
 
 fn should_defer_empty_main_to_rotated(files: &[PathBuf], cursor: &LogCursor) -> bool {
     is_empty_main_cursor(cursor)
-        && files.iter().filter(|f| base_name(f) != DEFAULT_LOG_FILE).any(|f| changed_after_cursor(f, cursor))
+        && files
+            .iter()
+            .filter(|f| base_name(f) != DEFAULT_LOG_FILE)
+            .any(|f| changed_after_cursor(f, cursor))
 }
 
-fn should_reset_ambiguous_empty_main(files: &[PathBuf], main_index: usize, cursor: &LogCursor) -> bool {
+fn should_reset_ambiguous_empty_main(
+    files: &[PathBuf],
+    main_index: usize,
+    cursor: &LogCursor,
+) -> bool {
     if !is_empty_main_cursor(cursor) {
         return false;
     }
-    let Ok(info) = fs::metadata(&files[main_index]) else { return false };
-    if info.is_dir() || (info.len() as i64 == cursor.size && mod_nanos(&info) == cursor.mod_time_nanos()) {
+    let Ok(info) = fs::metadata(&files[main_index]) else {
+        return false;
+    };
+    if info.is_dir()
+        || (info.len() as i64 == cursor.size && mod_nanos(&info) == cursor.mod_time_nanos())
+    {
         return false;
     }
     files.iter().enumerate().any(|(i, f)| {
@@ -478,7 +543,9 @@ fn locate_cursor_file(files: &[PathBuf], cursor: &LogCursor) -> IoResult<Option<
             Ok(_) => {}
         }
     }
-    if cursor.file != DEFAULT_LOG_FILE || (cursor.offset == 0 && cursor.size == 0 && !defer_empty_main) {
+    if cursor.file != DEFAULT_LOG_FILE
+        || (cursor.offset == 0 && cursor.size == 0 && !defer_empty_main)
+    {
         return Ok(None);
     }
     let rotated = |i: usize| base_name(&files[i]) != DEFAULT_LOG_FILE;
@@ -506,11 +573,20 @@ fn locate_cursor_file(files: &[PathBuf], cursor: &LogCursor) -> IoResult<Option<
 }
 
 /// Reads complete lines after the cursor through later files. The bool is "cursor reset".
-fn read_from_cursor(log_dir: &Path, files: &[PathBuf], raw: &str, limit: usize) -> IoResult<(ReadResult, bool)> {
+fn read_from_cursor(
+    log_dir: &Path,
+    files: &[PathBuf],
+    raw: &str,
+    limit: usize,
+) -> IoResult<(ReadResult, bool)> {
     let Some(cursor) = decode_cursor(raw) else {
         return Ok((ReadResult::default(), true));
     };
-    let mut result = ReadResult { latest: cursor.latest_timestamp, next_cursor: raw.to_string(), ..Default::default() };
+    let mut result = ReadResult {
+        latest: cursor.latest_timestamp,
+        next_cursor: raw.to_string(),
+        ..Default::default()
+    };
     if safe_log_file_path(log_dir, &cursor.file).is_err() {
         return Ok((result, true));
     }
@@ -621,7 +697,13 @@ impl Accumulator {
 
 // ---- handlers ----
 
-fn logs_response(lines: Vec<String>, line_count: usize, latest: i64, next_cursor: String, reset: bool) -> Response {
+fn logs_response(
+    lines: Vec<String>,
+    line_count: usize,
+    latest: i64,
+    next_cursor: String,
+    reset: bool,
+) -> Response {
     let mut payload = json!({"lines": lines, "line-count": line_count, "latest-timestamp": latest, "next-cursor": next_cursor});
     if reset {
         payload["cursor-reset"] = true.into();
@@ -668,11 +750,18 @@ fn get_logs_blocking(dir: &Path, raw_cursor: &str, limit_raw: &str, cutoff: i64)
             {
                 latest = latest.max(c.latest_timestamp);
             }
-            return Ok(logs_response(Vec::new(), 0, latest, String::new(), !raw_cursor.is_empty()));
+            return Ok(logs_response(
+                Vec::new(),
+                0,
+                latest,
+                String::new(),
+                !raw_cursor.is_empty(),
+            ));
         }
         Err(e) => return Err(read_error(e, "list log files")),
     };
-    let limit = parse_limit(limit_raw).map_err(|e| ApiError::bad_request(format!("invalid limit: {e}")))?;
+    let limit =
+        parse_limit(limit_raw).map_err(|e| ApiError::bad_request(format!("invalid limit: {e}")))?;
     let read_err = |e| read_error(e, "read log files");
 
     if !raw_cursor.is_empty() {
@@ -680,24 +769,61 @@ fn get_logs_blocking(dir: &Path, raw_cursor: &str, limit_raw: &str, cutoff: i64)
         if reset {
             let tail = tail_files(&files, limit, result.latest).map_err(read_err)?;
             let n = tail.lines.len();
-            return Ok(logs_response(tail.lines, n, tail.latest, tail.next_cursor, true));
+            return Ok(logs_response(
+                tail.lines,
+                n,
+                tail.latest,
+                tail.next_cursor,
+                true,
+            ));
         }
         let n = result.lines.len();
-        return Ok(logs_response(result.lines, n, result.latest, result.next_cursor, false));
+        return Ok(logs_response(
+            result.lines,
+            n,
+            result.latest,
+            result.next_cursor,
+            false,
+        ));
     }
     if cutoff == 0 && limit > 0 {
         let tail = tail_files(&files, limit, 0).map_err(read_err)?;
         let n = tail.lines.len();
-        return Ok(logs_response(tail.lines, n, tail.latest, tail.next_cursor, false));
+        return Ok(logs_response(
+            tail.lines,
+            n,
+            tail.latest,
+            tail.next_cursor,
+            false,
+        ));
     }
 
-    let mut acc = Accumulator { cutoff, limit, lines: Default::default(), total: 0, latest: 0, include: false };
+    let mut acc = Accumulator {
+        cutoff,
+        limit,
+        lines: Default::default(),
+        total: 0,
+        latest: 0,
+        include: false,
+    };
     for f in &files {
-        acc.consume_file(f).map_err(|e| read_error(e, "read log file"))?;
+        acc.consume_file(f)
+            .map_err(|e| read_error(e, "read log file"))?;
     }
-    let latest = if acc.latest == 0 || acc.latest < cutoff { cutoff } else { acc.latest };
-    let next_cursor = cursor_for_latest(&files, latest).map_err(|e| read_error(e, "prepare log cursor"))?;
-    Ok(logs_response(acc.lines.into_iter().collect(), acc.total, latest, next_cursor, false))
+    let latest = if acc.latest == 0 || acc.latest < cutoff {
+        cutoff
+    } else {
+        acc.latest
+    };
+    let next_cursor =
+        cursor_for_latest(&files, latest).map_err(|e| read_error(e, "prepare log cursor"))?;
+    Ok(logs_response(
+        acc.lines.into_iter().collect(),
+        acc.total,
+        latest,
+        next_cursor,
+        false,
+    ))
 }
 
 /// `DELETE /observability/logs`: truncates `main.log` and removes rotated files.
@@ -716,18 +842,31 @@ pub(crate) async fn delete_logs(State(st): State<ManagementState>) -> ApiResult 
         let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
         if name == DEFAULT_LOG_FILE {
-            match File::options().write(true).open(&path).and_then(|f| f.set_len(0)) {
-                Err(e) if !not_found(&e) => return Err(ApiError::new(500, format!("failed to truncate log file: {e}"))),
+            match File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|f| f.set_len(0))
+            {
+                Err(e) if !not_found(&e) => {
+                    return Err(ApiError::new(
+                        500,
+                        format!("failed to truncate log file: {e}"),
+                    ));
+                }
                 _ => {}
             }
         } else if is_rotated_log_file(&name) {
             match fs::remove_file(&path) {
-                Err(e) if !not_found(&e) => return Err(ApiError::new(500, format!("failed to remove {name}: {e}"))),
+                Err(e) if !not_found(&e) => {
+                    return Err(ApiError::new(500, format!("failed to remove {name}: {e}")));
+                }
                 _ => removed += 1,
             }
         }
     }
-    Ok(ok_json(&json!({"success": true, "message": "Logs cleared successfully", "removed": removed})))
+    Ok(ok_json(
+        &json!({"success": true, "message": "Logs cleared successfully", "removed": removed}),
+    ))
 }
 
 /// `GET /observability/logs/errors`: `error-*.log` files, newest first (empty while request
@@ -751,9 +890,14 @@ pub(crate) async fn error_logs(State(st): State<ManagementState>) -> ApiResult {
         if !name.starts_with("error-") || !name.ends_with(".log") {
             continue;
         }
-        let meta = entry.metadata().map_err(|e| ApiError::new(500, format!("failed to read log info for {name}: {e}")))?;
+        let meta = entry
+            .metadata()
+            .map_err(|e| ApiError::new(500, format!("failed to read log info for {name}: {e}")))?;
         let modified = mod_nanos(&meta).div_euclid(1_000_000_000);
-        files.push((modified, json!({"name": name, "size": meta.len(), "modified": modified})));
+        files.push((
+            modified,
+            json!({"name": name, "size": meta.len(), "modified": modified}),
+        ));
     }
     files.sort_by_key(|f| std::cmp::Reverse(f.0));
     let files: Vec<_> = files.into_iter().map(|(_, v)| v).collect();
@@ -761,10 +905,17 @@ pub(crate) async fn error_logs(State(st): State<ManagementState>) -> ApiResult {
 }
 
 fn attachment(path: &Path, name: &str) -> ApiResult {
-    let data = fs::read(path).map_err(|e| ApiError::new(500, format!("failed to read log file: {e}")))?;
+    let data =
+        fs::read(path).map_err(|e| ApiError::new(500, format!("failed to read log file: {e}")))?;
     let mut resp = Response::new(axum::body::Body::from(data));
-    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
-    if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{}\"", name.replace('"', "\\\""))) {
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    if let Ok(v) = HeaderValue::from_str(&format!(
+        "attachment; filename=\"{}\"",
+        name.replace('"', "\\\"")
+    )) {
         resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(resp)
@@ -786,7 +937,10 @@ fn resolve_log_file(dir: &Path, name: &str) -> ApiResult<PathBuf> {
 }
 
 /// `GET /observability/logs/errors/{name}`.
-pub(crate) async fn download_error_log(State(st): State<ManagementState>, UrlPath(name): UrlPath<String>) -> ApiResult {
+pub(crate) async fn download_error_log(
+    State(st): State<ManagementState>,
+    UrlPath(name): UrlPath<String>,
+) -> ApiResult {
     let dir = log_dir(&st)?;
     let name = name.trim().to_string();
     if name.is_empty() || name.contains(['/', '\\']) {
@@ -802,7 +956,11 @@ pub(crate) async fn download_error_log(State(st): State<ManagementState>, UrlPat
 /// `ShortRequestID`: the last 8 characters of a request id.
 fn short_request_id(id: &str) -> &str {
     let id = id.trim();
-    if id.len() > 8 { id.get(id.len() - 8..).unwrap_or(id) } else { id }
+    if id.len() > 8 {
+        id.get(id.len() - 8..).unwrap_or(id)
+    } else {
+        id
+    }
 }
 
 struct LogMeta {
@@ -813,9 +971,16 @@ struct LogMeta {
 
 /// Splits `<prefix>-<timestamp>[_<seq>]-<id>.log` (timestamp `YYYY-MM-DDTHHMMSS`).
 fn parse_log_metadata(filename: &str) -> LogMeta {
-    let base = Path::new(filename).file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    let base = Path::new(filename)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(filename);
     let Some(last_hyphen) = base.rfind('-').filter(|i| *i > 0) else {
-        return LogMeta { prefix: base.to_string(), time: None, seq: 0 };
+        return LogMeta {
+            prefix: base.to_string(),
+            time: None,
+            seq: 0,
+        };
     };
     let before_id = &base[..last_hyphen];
     let (mut seq, mut before_seq) = (0, before_id);
@@ -831,16 +996,30 @@ fn parse_log_metadata(filename: &str) -> LogMeta {
         && let Ok(t) = NaiveDateTime::parse_from_str(ts, "%Y-%m-%dT%H%M%S")
     {
         let mut prefix = before_seq;
-        if before_seq.len() > TS_LEN && before_seq.as_bytes()[before_seq.len() - TS_LEN - 1] == b'-' {
+        if before_seq.len() > TS_LEN && before_seq.as_bytes()[before_seq.len() - TS_LEN - 1] == b'-'
+        {
             prefix = &before_seq[..before_seq.len() - TS_LEN - 1];
         }
-        return LogMeta { prefix: prefix.to_string(), time: Some(t), seq };
+        return LogMeta {
+            prefix: prefix.to_string(),
+            time: Some(t),
+            seq,
+        };
     }
-    LogMeta { prefix: before_seq.to_string(), time: None, seq }
+    LogMeta {
+        prefix: before_seq.to_string(),
+        time: None,
+        seq,
+    }
 }
 
 /// Newer by modification time; ties by embedded timestamp and collision sequence, then name.
-fn log_file_is_newer(cand: &str, cand_mod: std::time::SystemTime, cur: &str, cur_mod: std::time::SystemTime) -> bool {
+fn log_file_is_newer(
+    cand: &str,
+    cand_mod: std::time::SystemTime,
+    cur: &str,
+    cur_mod: std::time::SystemTime,
+) -> bool {
     if cand_mod > cur_mod {
         return true;
     }
@@ -860,7 +1039,10 @@ fn log_file_is_newer(cand: &str, cand_mod: std::time::SystemTime, cur: &str, cur
 }
 
 /// `GET /observability/logs/requests/{id}`: the newest log file named `*-<short id>.log`.
-pub(crate) async fn request_log_by_id(State(st): State<ManagementState>, UrlPath(id): UrlPath<String>) -> ApiResult {
+pub(crate) async fn request_log_by_id(
+    State(st): State<ManagementState>,
+    UrlPath(id): UrlPath<String>,
+) -> ApiResult {
     let dir = log_dir(&st)?;
     let id = id.trim().to_string();
     if id.is_empty() {
@@ -891,7 +1073,9 @@ pub(crate) async fn request_log_by_id(State(st): State<ManagementState>, UrlPath
                 }
             }
             Ok(modified) => {
-                let newer = matched.as_ref().is_none_or(|(cur, cur_mod)| log_file_is_newer(&name, modified, cur, *cur_mod));
+                let newer = matched
+                    .as_ref()
+                    .is_none_or(|(cur, cur_mod)| log_file_is_newer(&name, modified, cur, *cur_mod));
                 if newer {
                     matched = Some((name, modified));
                 }
@@ -899,7 +1083,10 @@ pub(crate) async fn request_log_by_id(State(st): State<ManagementState>, UrlPath
         }
     }
     let Some((name, _)) = matched else {
-        return Err(ApiError::new(404, "log file not found for the given request ID"));
+        return Err(ApiError::new(
+            404,
+            "log file not found for the given request ID",
+        ));
     };
     let full = resolve_log_file(&dir, &name)?;
     attachment(&full, &name)
@@ -925,8 +1112,19 @@ mod tests {
         write(d.path(), "main.log.1", "b\n");
         write(d.path(), "main-2026-01-02T03-04-05.log.gz", "t\n");
         write(d.path(), "error-x.log", "e\n");
-        let names: Vec<String> = files(d.path()).iter().map(|p| base_name(p).to_string()).collect();
-        assert_eq!(names, ["main-2026-01-02T03-04-05.log.gz", "main.log.2", "main.log.1", "main.log"]);
+        let names: Vec<String> = files(d.path())
+            .iter()
+            .map(|p| base_name(p).to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "main-2026-01-02T03-04-05.log.gz",
+                "main.log.2",
+                "main.log.1",
+                "main.log"
+            ]
+        );
         assert_eq!(base_name(files(d.path()).last().unwrap()), "main.log");
         assert!(is_rotated_log_file("main-2026-01-02T03-04-05.1.log"));
         assert!(!is_rotated_log_file("error-1.log"));
@@ -935,10 +1133,17 @@ mod tests {
     #[test]
     fn tail_returns_last_complete_lines_and_cursor_resumes_without_replay() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), "main.log", "2026-01-01 10:00:00 one\n2026-01-01 10:00:01 two\n2026-01-01 10:00:02 three\npartial");
+        write(
+            d.path(),
+            "main.log",
+            "2026-01-01 10:00:00 one\n2026-01-01 10:00:01 two\n2026-01-01 10:00:02 three\npartial",
+        );
         let fs_ = files(d.path());
         let tail = tail_files(&fs_, 2, 0).unwrap();
-        assert_eq!(tail.lines, vec!["2026-01-01 10:00:01 two", "2026-01-01 10:00:02 three"]);
+        assert_eq!(
+            tail.lines,
+            vec!["2026-01-01 10:00:01 two", "2026-01-01 10:00:02 three"]
+        );
         assert!(!tail.next_cursor.is_empty());
 
         // Nothing new: same cursor, no lines.
@@ -946,7 +1151,11 @@ mod tests {
         assert!(!reset && r.lines.is_empty() && r.next_cursor == tail.next_cursor);
 
         // The partial line completes and a new one arrives.
-        write(d.path(), "main.log", "2026-01-01 10:00:00 one\n2026-01-01 10:00:01 two\n2026-01-01 10:00:02 three\npartial done\nfour\n");
+        write(
+            d.path(),
+            "main.log",
+            "2026-01-01 10:00:00 one\n2026-01-01 10:00:01 two\n2026-01-01 10:00:02 three\npartial done\nfour\n",
+        );
         let (r, reset) = read_from_cursor(d.path(), &fs_, &tail.next_cursor, 0).unwrap();
         assert!(!reset);
         assert_eq!(r.lines, vec!["partial done", "four"]);
@@ -968,18 +1177,42 @@ mod tests {
     #[test]
     fn legacy_scan_keeps_continuation_lines_of_included_entries() {
         let d = tempfile::tempdir().unwrap();
-        write(d.path(), "main.log", "2000-01-01 00:00:00 old\n  cont old\n2999-01-01 00:00:00 new\n  cont new\n");
-        let mut acc = Accumulator { cutoff: 1_700_000_000, limit: 0, lines: Default::default(), total: 0, latest: 0, include: false };
+        write(
+            d.path(),
+            "main.log",
+            "2000-01-01 00:00:00 old\n  cont old\n2999-01-01 00:00:00 new\n  cont new\n",
+        );
+        let mut acc = Accumulator {
+            cutoff: 1_700_000_000,
+            limit: 0,
+            lines: Default::default(),
+            total: 0,
+            latest: 0,
+            include: false,
+        };
         acc.consume_file(&d.path().join("main.log")).unwrap();
-        assert_eq!(acc.lines.iter().cloned().collect::<Vec<_>>(), vec!["2999-01-01 00:00:00 new", "  cont new"]);
+        assert_eq!(
+            acc.lines.iter().cloned().collect::<Vec<_>>(),
+            vec!["2999-01-01 00:00:00 new", "  cont new"]
+        );
         assert_eq!(acc.total, 4);
     }
 
     #[test]
     fn request_log_ties_prefer_embedded_timestamp_then_sequence() {
         let t = UNIX_EPOCH;
-        assert!(log_file_is_newer("v1-chat-2026-01-02T030405-abcd1234.log", t, "v1-chat-2026-01-02T030404-abcd1234.log", t));
-        assert!(log_file_is_newer("v1-chat-2026-01-02T030405_2-abcd1234.log", t, "v1-chat-2026-01-02T030405_1-abcd1234.log", t));
+        assert!(log_file_is_newer(
+            "v1-chat-2026-01-02T030405-abcd1234.log",
+            t,
+            "v1-chat-2026-01-02T030404-abcd1234.log",
+            t
+        ));
+        assert!(log_file_is_newer(
+            "v1-chat-2026-01-02T030405_2-abcd1234.log",
+            t,
+            "v1-chat-2026-01-02T030405_1-abcd1234.log",
+            t
+        ));
         assert_eq!(short_request_id("0123456789abcdef"), "89abcdef");
         assert_eq!(short_request_id("abc"), "abc");
     }

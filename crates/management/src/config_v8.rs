@@ -20,7 +20,13 @@ use crate::state::ManagementState;
 use crate::yaml_comments::carry_comments;
 
 /// v8 path of the Codex live-media TURN servers (secrets are redacted on JSON reads).
-const ICE_SERVERS_PATH: [&str; 5] = ["oauth", "providers", "codex", "live-media-relay", "ice-servers"];
+const ICE_SERVERS_PATH: [&str; 5] = [
+    "oauth",
+    "providers",
+    "codex",
+    "live-media-relay",
+    "ice-servers",
+];
 
 /// Fields owned by Home that clients may not change.
 const READ_ONLY_FIELDS: [&str; 3] = [
@@ -42,7 +48,11 @@ pub(crate) struct ConfigRequest {
 /// `Trim(path, "/")` split on `/`.
 pub(crate) fn split_path(path: &str) -> Vec<String> {
     let trimmed = path.trim_matches('/');
-    if trimmed.is_empty() { Vec::new() } else { trimmed.split('/').map(str::to_string).collect() }
+    if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        trimmed.split('/').map(str::to_string).collect()
+    }
 }
 
 pub(crate) async fn handle(st: &ManagementState, req: ConfigRequest) -> Response {
@@ -73,7 +83,10 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
     let (normalized, _) = cpa_config::normalize_config_layout(&raw, true)
         .map_err(|e| ApiError::with_message(500, "invalid_config", e.to_string()))?;
     let text = String::from_utf8(normalized).map_err(|_| ApiError::new(500, "invalid_config"))?;
-    let mut root = parse_yaml(&text).ok().flatten().ok_or_else(|| ApiError::new(500, "invalid_config"))?;
+    let mut root = parse_yaml(&text)
+        .ok()
+        .flatten()
+        .ok_or_else(|| ApiError::new(500, "invalid_config"))?;
 
     if req.method == Method::GET {
         return read(&mut root, &text, req).map(Outcome::Read);
@@ -107,7 +120,10 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
     for field in READ_ONLY_FIELDS {
         let p = split_path(field);
         if node(&before, &p) != node(&root, &p) {
-            return Err(ApiError::from_body(400, json!({"error": "read_only_field", "field": field})));
+            return Err(ApiError::from_body(
+                400,
+                json!({"error": "read_only_field", "field": field}),
+            ));
         }
     }
 
@@ -116,7 +132,8 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
     let data = if req.yaml && parts.is_empty() && req.method != Method::DELETE {
         String::from_utf8_lossy(&req.body).into_owned()
     } else {
-        let rendered = serde_yaml_ng::to_string(&root).map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
+        let rendered = serde_yaml_ng::to_string(&root)
+            .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
         carry_comments(&text, &rendered)
     };
     let mut next = cpa_config::parse_config_bytes(data.as_bytes())
@@ -125,20 +142,27 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
         .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
 
     // Prepare the normalized document before touching the live file.
-    let write_failed = |e: &dyn std::fmt::Display| ApiError::with_message(500, "write_failed", e.to_string());
-    let dir = config_path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let write_failed =
+        |e: &dyn std::fmt::Display| ApiError::with_message(500, "write_failed", e.to_string());
+    let dir = config_path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let mut tmp = tempfile::Builder::new()
         .prefix(".config-v8-")
         .suffix(".yaml")
         .tempfile_in(dir)
         .map_err(|_| ApiError::new(500, "write_failed"))?;
-    tmp.write_all(data.as_bytes()).and_then(|()| tmp.as_file().sync_all()).map_err(|e| write_failed(&e))?;
+    tmp.write_all(data.as_bytes())
+        .and_then(|()| tmp.as_file().sync_all())
+        .map_err(|e| write_failed(&e))?;
     // DELETE already has a normalized, validated document: persist that tree as is. The typed
     // saver would materialize absent defaults and can change explicit nulls and empty maps.
     let final_text = if req.method == Method::DELETE {
         data
     } else {
-        cpa_config::save_config_preserve_comments(tmp.path(), &mut next, true).map_err(|e| write_failed(&e))?;
+        cpa_config::save_config_preserve_comments(tmp.path(), &mut next, true)
+            .map_err(|e| write_failed(&e))?;
         std::fs::read_to_string(tmp.path()).map_err(|e| write_failed(&e))?
     };
     write_config(config_path, &final_text).map_err(|e| write_failed(&e))?;
@@ -154,18 +178,29 @@ fn read(root: &mut Value, text: &str, req: &ConfigRequest) -> ApiResult<Response
     };
     if req.yaml {
         let mut resp = Response::new(Body::from(text.to_string()));
-        resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/yaml; charset=utf-8"));
+        resp.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/yaml; charset=utf-8"),
+        );
         return Ok(no_store(resp));
     }
     // Go marshals decoded maps with sorted keys.
-    let json: Json = serde_json::to_value(value).map_err(|_| ApiError::new(500, "decode_failed"))?;
-    Ok(no_store(json_response(200, &cpa_auth::util::sort_json(&json))))
+    let json: Json =
+        serde_json::to_value(value).map_err(|_| ApiError::new(500, "decode_failed"))?;
+    Ok(no_store(json_response(
+        200,
+        &cpa_auth::util::sort_json(&json),
+    )))
 }
 
 /// Overwrites the file in place (same inode, `O_TRUNC`, fsync); comment indentation normalized.
 fn write_config(path: &Path, data: &str) -> std::io::Result<()> {
     let data = cpa_config::normalize_comment_indentation(data);
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)?;
     f.write_all(data.as_bytes())?;
     f.sync_all()
 }
@@ -197,7 +232,9 @@ fn parse_update(body: &[u8], yaml: bool) -> ApiResult<Value> {
 
 /// The node at a key path (mapping keys only).
 fn node<'a>(root: &'a Value, parts: &[String]) -> Option<&'a Value> {
-    parts.iter().try_fold(root, |cur, part| cur.as_mapping()?.get(part.as_str()))
+    parts
+        .iter()
+        .try_fold(root, |cur, part| cur.as_mapping()?.get(part.as_str()))
 }
 
 /// The node at a key path, creating missing mappings. Fails when an intermediate is not a mapping.
@@ -210,7 +247,9 @@ fn navigate<'a>(root: &'a mut Value, parts: &[String]) -> ApiResult<&'a mut Valu
         if part.is_empty() {
             return Err(ApiError::new(400, "invalid_path"));
         }
-        dst = map.entry(Value::String(part.clone())).or_insert_with(|| Value::Mapping(Mapping::new()));
+        dst = map
+            .entry(Value::String(part.clone()))
+            .or_insert_with(|| Value::Mapping(Mapping::new()));
     }
     Ok(dst)
 }
@@ -279,20 +318,26 @@ fn redact_turn_secrets(root: &mut Value) {
 /// secret; YAML writes keep full replacement semantics.
 fn preserve_turn_secrets(root: &mut Value, before: &Value) {
     let prev_path: Vec<String> = ICE_SERVERS_PATH.iter().map(|s| (*s).to_string()).collect();
-    let Some(Value::Sequence(previous)) = node(before, &prev_path) else { return };
-    let Some(next) = ice_servers_mut(root) else { return };
+    let Some(Value::Sequence(previous)) = node(before, &prev_path) else {
+        return;
+    };
+    let Some(next) = ice_servers_mut(root) else {
+        return;
+    };
     let mut matched = vec![false; previous.len()];
     for server in next {
-        let Some(urls) = server.as_mapping().and_then(|m| m.get("urls")).cloned() else { continue };
-        let Some(i) = previous
-            .iter()
-            .enumerate()
-            .position(|(i, old)| !matched[i] && old.as_mapping().and_then(|m| m.get("urls")) == Some(&urls))
-        else {
+        let Some(urls) = server.as_mapping().and_then(|m| m.get("urls")).cloned() else {
+            continue;
+        };
+        let Some(i) = previous.iter().enumerate().position(|(i, old)| {
+            !matched[i] && old.as_mapping().and_then(|m| m.get("urls")) == Some(&urls)
+        }) else {
             continue;
         };
         matched[i] = true;
-        let (Some(map), Some(old)) = (server.as_mapping_mut(), previous[i].as_mapping()) else { continue };
+        let (Some(map), Some(old)) = (server.as_mapping_mut(), previous[i].as_mapping()) else {
+            continue;
+        };
         for name in ["username", "credential"] {
             if !map.contains_key(name)
                 && let Some(secret) = old.get(name)
@@ -350,10 +395,16 @@ mod tests {
         // The client writes the redacted JSON back with the second server's URL changed.
         let mut write = read;
         let servers = ice_servers_mut(&mut write).unwrap();
-        servers[1].as_mapping_mut().unwrap().insert("urls".into(), y("[turn:c]"));
+        servers[1]
+            .as_mapping_mut()
+            .unwrap()
+            .insert("urls".into(), y("[turn:c]"));
         preserve_turn_secrets(&mut write, &before);
         let servers = ice_servers_mut(&mut write).unwrap();
-        assert_eq!(servers[0].as_mapping().unwrap().get("credential"), Some(&Value::String("c".into())));
+        assert_eq!(
+            servers[0].as_mapping().unwrap().get("credential"),
+            Some(&Value::String("c".into()))
+        );
         assert!(servers[1].as_mapping().unwrap().get("username").is_none());
     }
 }

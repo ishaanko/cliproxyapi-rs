@@ -79,22 +79,36 @@ fn token_for_auth(auth: &Auth) -> String {
     if !m.is_empty() {
         return m;
     }
-    ["api_key", "session_token"].iter().map(|k| auth.attr(k)).find(|v| !v.is_empty()).unwrap_or_default()
+    ["api_key", "session_token"]
+        .iter()
+        .map(|k| auth.attr(k))
+        .find(|v| !v.is_empty())
+        .unwrap_or_default()
 }
 
 fn meta_token(auth: &Auth) -> String {
     let usable = |v: String| (!v.is_empty() && !v.starts_with("dca:")).then_some(v);
-    [auth.meta_str("api_key"), auth.meta_str("access_token"), auth.attr("api_key"), auth.attr("access_token")]
-        .into_iter()
-        .find_map(usable)
-        .unwrap_or_default()
+    [
+        auth.meta_str("api_key"),
+        auth.meta_str("access_token"),
+        auth.attr("api_key"),
+        auth.attr("access_token"),
+    ]
+    .into_iter()
+    .find_map(usable)
+    .unwrap_or_default()
 }
 
 fn xai_token(auth: &Auth) -> String {
-    [auth.attr("api_key"), auth.meta_str("api_key"), auth.meta_str("access_token"), auth.meta_str("accessToken")]
-        .into_iter()
-        .find(|v| !v.is_empty())
-        .unwrap_or_default()
+    [
+        auth.attr("api_key"),
+        auth.meta_str("api_key"),
+        auth.meta_str("access_token"),
+        auth.meta_str("accessToken"),
+    ]
+    .into_iter()
+    .find(|v| !v.is_empty())
+    .unwrap_or_default()
 }
 
 fn antigravity_needs_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
@@ -104,10 +118,19 @@ fn antigravity_needs_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
     {
         return t.with_timezone(&Utc) <= now + skew;
     }
-    let int = |k: &str| auth.metadata.get(k).and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))).unwrap_or(0);
+    let int = |k: &str| {
+        auth.metadata
+            .get(k)
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            })
+            .unwrap_or(0)
+    };
     let (expires_in, ts_ms) = (int("expires_in"), int("timestamp"));
     if expires_in > 0 && ts_ms > 0 {
-        let exp = DateTime::from_timestamp_millis(ts_ms).map(|t| t + chrono::Duration::seconds(expires_in));
+        let exp = DateTime::from_timestamp_millis(ts_ms)
+            .map(|t| t + chrono::Duration::seconds(expires_in));
         return exp.is_none_or(|e| e <= now + skew);
     }
     true
@@ -115,7 +138,11 @@ fn antigravity_needs_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
 
 /// Refreshes `auth` with the request proxy applied to the exchange only, and stores the result.
 /// Returns the refreshed auth.
-async fn refresh_for_call(st: &ManagementState, auth: &Auth, request_proxy: &str) -> Result<Auth, AuthFlowError> {
+async fn refresh_for_call(
+    st: &ManagementState,
+    auth: &Auth,
+    request_proxy: &str,
+) -> Result<Auth, AuthFlowError> {
     let mut input = auth.clone();
     if !request_proxy.is_empty() {
         input.proxy_url = request_proxy.to_string();
@@ -134,7 +161,11 @@ async fn refresh_for_call(st: &ManagementState, auth: &Auth, request_proxy: &str
 
 /// `resolveTokenForAuth`: the credential's token, refreshing OAuth tokens of providers whose
 /// tokens are short-lived (antigravity, xai) or minted on demand (meta).
-async fn resolve_token(st: &ManagementState, auth: &Auth, request_proxy: &str) -> Result<String, AuthFlowError> {
+async fn resolve_token(
+    st: &ManagementState,
+    auth: &Auth,
+    request_proxy: &str,
+) -> Result<String, AuthFlowError> {
     let now = Utc::now();
     match auth.provider.trim().to_lowercase().as_str() {
         "antigravity" => {
@@ -151,7 +182,9 @@ async fn resolve_token(st: &ManagementState, auth: &Auth, request_proxy: &str) -
             let refreshed = refresh_for_call(st, auth, request_proxy).await?;
             let token = token_from_metadata(&refreshed.metadata);
             if token.is_empty() {
-                return Err(AuthFlowError::other("antigravity oauth token refresh returned empty access_token"));
+                return Err(AuthFlowError::other(
+                    "antigravity oauth token refresh returned empty access_token",
+                ));
             }
             Ok(token)
         }
@@ -175,7 +208,9 @@ async fn resolve_token(st: &ManagementState, auth: &Auth, request_proxy: &str) -
             let refreshed = refresh_for_call(st, auth, request_proxy).await?;
             let token = xai_token(&refreshed);
             if token.is_empty() {
-                return Err(AuthFlowError::other("xai oauth token refresh returned empty access_token"));
+                return Err(AuthFlowError::other(
+                    "xai oauth token refresh returned empty access_token",
+                ));
             }
             Ok(token)
         }
@@ -199,7 +234,10 @@ fn resolve_api_key_entry(entries: &[(&str, &str, &str)], auth: &Auth) -> Option<
             }
             continue;
         }
-        if !attr_key.is_empty() && eq_ci(key, &attr_key) && (base.trim().is_empty() || eq_ci(base, &attr_base)) {
+        if !attr_key.is_empty()
+            && eq_ci(key, &attr_key)
+            && (base.trim().is_empty() || eq_ci(base, &attr_base))
+        {
             return Some(i);
         }
         if attr_key.is_empty() && !attr_base.is_empty() && eq_ci(base, &attr_base) {
@@ -225,9 +263,16 @@ fn proxy_from_api_key_config(cfg: &Config, auth: &Auth) -> String {
         if account.is_empty() {
             return String::new();
         }
-        let candidates = [compat_name, auth.attr("provider_key"), auth.provider.trim().to_string()];
+        let candidates = [
+            compat_name,
+            auth.attr("provider_key"),
+            auth.provider.trim().to_string(),
+        ];
         for compat in cfg.openai_compatibility.iter().filter(|c| !c.disabled) {
-            if candidates.iter().any(|c| !c.is_empty() && eq_ci(c, &compat.name)) {
+            if candidates
+                .iter()
+                .any(|c| !c.is_empty() && eq_ci(c, &compat.name))
+            {
                 return compat
                     .api_key_entries
                     .iter()
@@ -240,8 +285,19 @@ fn proxy_from_api_key_config(cfg: &Config, auth: &Auth) -> String {
     }
     macro_rules! entry_proxy {
         ($list:expr) => {{
-            let view: Vec<(&str, &str, &str)> = $list.iter().map(|e| (e.api_key.as_str(), e.base_url.as_str(), e.proxy_url.as_str())).collect();
-            resolve_api_key_entry(&view, auth).map(|i| view[i].2.trim().to_string()).unwrap_or_default()
+            let view: Vec<(&str, &str, &str)> = $list
+                .iter()
+                .map(|e| {
+                    (
+                        e.api_key.as_str(),
+                        e.base_url.as_str(),
+                        e.proxy_url.as_str(),
+                    )
+                })
+                .collect();
+            resolve_api_key_entry(&view, auth)
+                .map(|i| view[i].2.trim().to_string())
+                .unwrap_or_default()
         }};
     }
     match provider.as_str() {
@@ -258,7 +314,10 @@ fn proxy_from_api_key_config(cfg: &Config, auth: &Auth) -> String {
 /// A client without environment proxies (Go: the cloned default transport with `Proxy = nil`),
 /// routed through `proxy` when it is a real proxy URL.
 fn build_client(proxy: &ProxySetting) -> reqwest::Client {
-    let mut builder = reqwest::Client::builder().use_rustls_tls().timeout(API_CALL_TIMEOUT).no_proxy();
+    let mut builder = reqwest::Client::builder()
+        .use_rustls_tls()
+        .timeout(API_CALL_TIMEOUT)
+        .no_proxy();
     if let ProxySetting::Proxy(p) = proxy
         && let Ok(proxy) = reqwest::Proxy::all(p)
     {
@@ -295,7 +354,8 @@ fn select_proxy(cfg: &Config, auth: Option<&Auth>, request_proxy: &str) -> Proxy
 /// replaced by the selected credential's token. The result is always `200` with
 /// `{status_code, header, body}`; upstream failures do not change the status.
 pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
-    let mut req: ApiCallRequest = serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid body"))?;
+    let mut req: ApiCallRequest =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid body"))?;
     let method = req.method.trim().to_uppercase();
     if method.is_empty() {
         return Err(ApiError::bad_request("missing method"));
@@ -313,17 +373,22 @@ pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> 
         return Err(ApiError::bad_request("invalid proxy_url"));
     }
 
-    let auth_index = [&req.auth_index, &req.auth_index_camel, &req.auth_index_pascal]
-        .into_iter()
-        .flatten()
-        .find_map(|v| non_empty(v))
-        .unwrap_or_default();
+    let auth_index = [
+        &req.auth_index,
+        &req.auth_index_camel,
+        &req.auth_index_pascal,
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|v| non_empty(v))
+    .unwrap_or_default();
     let auth = auth_by_index(&st, &auth_index);
     let mut headers = req.header.take().unwrap_or_default();
 
     let mut token: Option<(String, bool)> = None;
     // Token resolution is async, so it is done up front when a placeholder is present.
-    let needs_token = headers.values().any(|v| v.contains("$TOKEN$")) || req.data.contains("$TOKEN$");
+    let needs_token =
+        headers.values().any(|v| v.contains("$TOKEN$")) || req.data.contains("$TOKEN$");
     if needs_token {
         let resolved = match &auth {
             Some(a) => match resolve_token(&st, a, &request_proxy).await {
@@ -357,16 +422,22 @@ pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> 
     }
     if req.data.contains("$TOKEN$") {
         let t = token_value(&token)?;
-        let replacement = if serde_json::from_str::<serde::de::IgnoredAny>(&req.data).is_ok() && t.contains(['"', '\\', '\r', '\n', '\t']) {
+        let replacement = if serde_json::from_str::<serde::de::IgnoredAny>(&req.data).is_ok()
+            && t.contains(['"', '\\', '\r', '\n', '\t'])
+        {
             let quoted = serde_json::to_string(&t).unwrap_or_default();
-            quoted.get(1..quoted.len().saturating_sub(1)).unwrap_or("").to_string()
+            quoted
+                .get(1..quoted.len().saturating_sub(1))
+                .unwrap_or("")
+                .to_string()
         } else {
             t
         };
         req.data = req.data.replace("$TOKEN$", &replacement);
     }
 
-    let http_method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|_| ApiError::bad_request("failed to build request"))?;
+    let http_method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|_| ApiError::bad_request("failed to build request"))?;
     let client = build_client(&select_proxy(&st.cfg(), auth.as_ref(), &request_proxy));
     let mut builder = client.request(http_method, &url_str);
     for (key, value) in &headers {
@@ -382,7 +453,9 @@ pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> 
     if !req.data.is_empty() {
         builder = builder.body(req.data.clone());
     }
-    let built = builder.build().map_err(|_| ApiError::bad_request("failed to build request"))?;
+    let built = builder
+        .build()
+        .map_err(|_| ApiError::bad_request("failed to build request"))?;
     let resp = client.execute(built).await.map_err(|e| {
         tracing::debug!("management APICall request failed: {}", e.without_url());
         ApiError::new(502, "request failed")
@@ -390,10 +463,18 @@ pub(crate) async fn api_call(State(st): State<ManagementState>, body: Bytes) -> 
     let status = resp.status().as_u16();
     let mut header: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (name, value) in resp.headers() {
-        header.entry(canonical_header_name(name.as_str())).or_default().push(String::from_utf8_lossy(value.as_bytes()).into_owned());
+        header
+            .entry(canonical_header_name(name.as_str()))
+            .or_default()
+            .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
     }
-    let bytes = resp.bytes().await.map_err(|_| ApiError::new(502, "failed to read response"))?;
-    Ok(ok_json(&json!({"status_code": status, "header": header, "body": String::from_utf8_lossy(&bytes)})))
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|_| ApiError::new(502, "failed to read response"))?;
+    Ok(ok_json(
+        &json!({"status_code": status, "header": header, "body": String::from_utf8_lossy(&bytes)}),
+    ))
 }
 
 /// Go canonical header form (`content-type` -> `Content-Type`).
@@ -401,7 +482,9 @@ fn canonical_header_name(name: &str) -> String {
     name.split('-')
         .map(|part| {
             let mut c = part.chars();
-            c.next().map(|f| f.to_ascii_uppercase().to_string() + &c.as_str().to_ascii_lowercase()).unwrap_or_default()
+            c.next()
+                .map(|f| f.to_ascii_uppercase().to_string() + &c.as_str().to_ascii_lowercase())
+                .unwrap_or_default()
         })
         .collect::<Vec<_>>()
         .join("-")
@@ -413,11 +496,16 @@ fn github_token() -> String {
             return t;
         }
     }
-    let git_url = std::env::var("GITSTORE_GIT_URL").unwrap_or_default().to_lowercase();
+    let git_url = std::env::var("GITSTORE_GIT_URL")
+        .unwrap_or_default()
+        .to_lowercase();
     if !git_url.contains("github.com") {
         return String::new();
     }
-    std::env::var("GITSTORE_GIT_TOKEN").ok().and_then(|v| non_empty(&v)).unwrap_or_default()
+    std::env::var("GITSTORE_GIT_TOKEN")
+        .ok()
+        .and_then(|v| non_empty(&v))
+        .unwrap_or_default()
 }
 
 /// `GET /server/latest-version`: tag of the latest GitHub release.
@@ -426,17 +514,27 @@ pub(crate) async fn latest_version(State(st): State<ManagementState>) -> ApiResu
     let proxy = st.cfg().proxy_url.trim().to_string();
     let client = cpa_auth::http::build_client(&proxy, Some(Duration::from_secs(10)))
         .map_err(|e| ApiError::with_message(500, "request_create_failed", e.to_string()))?;
-    let mut req = client.get(URL).header("Accept", "application/vnd.github+json").header("User-Agent", "CLIProxyAPI");
+    let mut req = client
+        .get(URL)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "CLIProxyAPI");
     let token = github_token();
     if !token.is_empty() {
         req = req.header("Authorization", format!("Bearer {token}"));
     }
-    let resp = req.send().await.map_err(|e| ApiError::with_message(502, "request_failed", e.without_url().to_string()))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ApiError::with_message(502, "request_failed", e.without_url().to_string()))?;
     let status = resp.status();
     if status.as_u16() != 200 {
         let text = resp.text().await.unwrap_or_default();
         let snippet: String = text.chars().take(1024).collect();
-        return Err(ApiError::with_message(502, "unexpected_status", format!("status {}: {}", status.as_u16(), snippet.trim())));
+        return Err(ApiError::with_message(
+            502,
+            "unexpected_status",
+            format!("status {}: {}", status.as_u16(), snippet.trim()),
+        ));
     }
     #[derive(Deserialize, Default)]
     #[serde(default)]
@@ -444,11 +542,21 @@ pub(crate) async fn latest_version(State(st): State<ManagementState>) -> ApiResu
         tag_name: String,
         name: String,
     }
-    let info: Release = resp.json().await.map_err(|e| ApiError::with_message(502, "decode_failed", e.without_url().to_string()))?;
-    let version = [info.tag_name, info.name].into_iter().map(|v| v.trim().to_string()).find(|v| !v.is_empty());
+    let info: Release = resp
+        .json()
+        .await
+        .map_err(|e| ApiError::with_message(502, "decode_failed", e.without_url().to_string()))?;
+    let version = [info.tag_name, info.name]
+        .into_iter()
+        .map(|v| v.trim().to_string())
+        .find(|v| !v.is_empty());
     match version {
         Some(v) => Ok(ok_json(&json!({"latest-version": v}))),
-        None => Err(ApiError::with_message(502, "invalid_response", "missing release version")),
+        None => Err(ApiError::with_message(
+            502,
+            "invalid_response",
+            "missing release version",
+        )),
     }
 }
 
@@ -457,10 +565,15 @@ pub(crate) async fn latest_version(State(st): State<ManagementState>) -> ApiResu
 /// `GET /plugins`: the shape Go returns when no plugin is installed.
 pub(crate) async fn list_plugins(State(st): State<ManagementState>) -> ApiResult {
     let cfg = st.cfg();
-    Ok(ok_json(&json!({"plugins_enabled": false, "plugins_dir": cfg.plugins.dir, "plugins": []})))
+    Ok(ok_json(
+        &json!({"plugins_enabled": false, "plugins_dir": cfg.plugins.dir, "plugins": []}),
+    ))
 }
 
 /// Plugin install, store, quota and delete endpoints answer like a disabled feature.
 pub(crate) async fn plugins_unavailable() -> Response {
-    crate::http::json_response(501, &json!({"error": "plugins_not_supported", "message": "plugins are not supported by this server"}))
+    crate::http::json_response(
+        501,
+        &json!({"error": "plugins_not_supported", "message": "plugins are not supported by this server"}),
+    )
 }

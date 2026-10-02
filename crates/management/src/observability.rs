@@ -37,11 +37,22 @@ pub(crate) async fn api_key_usage(State(st): State<ManagementState>) -> ApiResul
         if !kind.eq_ignore_ascii_case("api_key") || api_key.is_empty() {
             continue;
         }
-        let base_url = [auth.attr("base_url"), auth.attr("base-url")].into_iter().find(|b| !b.is_empty()).unwrap_or_default();
+        let base_url = [auth.attr("base_url"), auth.attr("base-url")]
+            .into_iter()
+            .find(|b| !b.is_empty())
+            .unwrap_or_default();
         let composite = format!("{base_url}|{api_key}");
         let compat = auth.attr("compat_name");
-        let provider = if compat.is_empty() { auth.provider.trim().to_lowercase() } else { compat.to_lowercase() };
-        let provider = if provider.is_empty() { "unknown".to_string() } else { provider };
+        let provider = if compat.is_empty() {
+            auth.provider.trim().to_lowercase()
+        } else {
+            compat.to_lowercase()
+        };
+        let provider = if provider.is_empty() {
+            "unknown".to_string()
+        } else {
+            provider
+        };
         let recent = auth.recent_requests_snapshot(now);
         match out.entry(provider).or_default().entry(composite) {
             std::collections::btree_map::Entry::Occupied(mut e) => {
@@ -51,7 +62,11 @@ pub(crate) async fn api_key_usage(State(st): State<ManagementState>) -> ApiResul
                 merge_buckets(&mut e.recent_requests, &recent);
             }
             std::collections::btree_map::Entry::Vacant(e) => {
-                e.insert(ApiKeyUsageEntry { success: auth.success, failed: auth.failed, recent_requests: recent });
+                e.insert(ApiKeyUsageEntry {
+                    success: auth.success,
+                    failed: auth.failed,
+                    recent_requests: recent,
+                });
             }
         }
     }
@@ -91,7 +106,10 @@ pub(crate) async fn usage_requests(State(st): State<ManagementState>, req: Reque
     require_usage_statistics(&st)?;
     let after = match query_get(req.uri(), "after") {
         None => None,
-        Some(raw) => Some(raw.parse::<u64>().map_err(|_| ApiError::bad_request("invalid_after"))?),
+        Some(raw) => Some(
+            raw.parse::<u64>()
+                .map_err(|_| ApiError::bad_request("invalid_after"))?,
+        ),
     };
     let limit = parse_limit(query_get(req.uri(), "limit"));
     Ok(no_store(ok_json(&st.usage.requests(limit, after))))
@@ -100,5 +118,8 @@ pub(crate) async fn usage_requests(State(st): State<ManagementState>, req: Reque
 /// `GET /observability/usage/queue` pops events from the Redis usage queue, which this server
 /// does not implement. The read-only feeds above replace it.
 pub(crate) async fn usage_queue() -> ApiResult {
-    Err(ApiError::from_body(501, json!({"error": "usage_queue_not_supported"})))
+    Err(ApiError::from_body(
+        501,
+        json!({"error": "usage_queue_not_supported"}),
+    ))
 }

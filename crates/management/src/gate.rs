@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::http::{empty, json_response};
@@ -26,17 +27,37 @@ X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE
 /// Global CORS: wildcard origin, `OPTIONS` answered with 204 (Go: `corsMiddleware`).
 pub(crate) async fn cors(req: Request, next: Next) -> Response {
     let preflight = req.method() == Method::OPTIONS;
-    let mut resp = if preflight { empty(204) } else { next.run(req).await };
+    let mut resp = if preflight {
+        empty(204)
+    } else {
+        next.run(req).await
+    };
     let h = resp.headers_mut();
-    h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, HeaderValue::from_static("*"));
-    h.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"));
-    h.insert(header::ACCESS_CONTROL_ALLOW_HEADERS, HeaderValue::from_static("*"));
-    h.insert(header::ACCESS_CONTROL_EXPOSE_HEADERS, HeaderValue::from_static(CORS_EXPOSED_HEADERS));
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+    );
+    h.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("*"),
+    );
+    h.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static(CORS_EXPOSED_HEADERS),
+    );
     resp
 }
 
 /// Bare 404 when management is disabled: Home mode, or no secret configured anywhere.
-pub(crate) async fn availability(State(st): State<ManagementState>, req: Request, next: Next) -> Response {
+pub(crate) async fn availability(
+    State(st): State<ManagementState>,
+    req: Request,
+    next: Next,
+) -> Response {
     if !management_available(&st) {
         return empty(404);
     }
@@ -48,11 +69,17 @@ fn management_available(st: &ManagementState) -> bool {
     if cfg.home.enabled {
         return false;
     }
-    !cfg.remote_management.secret_key.is_empty() || st.env_secret.is_some() || st.local_password.is_some()
+    !cfg.remote_management.secret_key.is_empty()
+        || st.env_secret.is_some()
+        || st.local_password.is_some()
 }
 
 /// Management key check. Sets the `X-CPA-*` headers on every response, authenticated or not.
-pub(crate) async fn authenticate(State(st): State<ManagementState>, req: Request, next: Next) -> Response {
+pub(crate) async fn authenticate(
+    State(st): State<ManagementState>,
+    req: Request,
+    next: Next,
+) -> Response {
     let ip = client_ip(&st, &req);
     let local = ip == "127.0.0.1" || ip == "::1";
     let provided = provided_key(req.headers());
@@ -84,20 +111,33 @@ fn set_cpa_headers(st: &ManagementState, h: &mut HeaderMap) {
 /// `X-Management-Key`.
 fn provided_key(headers: &HeaderMap) -> String {
     let mut provided = String::new();
-    if let Some(ah) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()).filter(|v| !v.is_empty()) {
+    if let Some(ah) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+    {
         provided = match ah.split_once(' ') {
             Some((scheme, rest)) if scheme.eq_ignore_ascii_case("bearer") => rest.to_string(),
             _ => ah.to_string(),
         };
     }
     if provided.is_empty() {
-        provided = headers.get("x-management-key").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        provided = headers
+            .get("x-management-key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
     }
     provided
 }
 
 /// Returns `Some((status, message))` when the request is refused.
-async fn authenticate_key(st: &ManagementState, ip: &str, local: bool, provided: &str) -> Option<(u16, String)> {
+async fn authenticate_key(
+    st: &ManagementState,
+    ip: &str,
+    local: bool,
+    provided: &str,
+) -> Option<(u16, String)> {
     let cfg = st.cfg();
     let allow_remote = cfg.remote_management.allow_remote || st.env_secret.is_some();
     let secret_hash = cfg.remote_management.secret_key.clone();
@@ -110,7 +150,13 @@ async fn authenticate_key(st: &ManagementState, ip: &str, local: bool, provided:
         {
             if now < until {
                 let remaining = until - now;
-                return Some((403, format!("IP banned due to too many failed attempts. Try again in {}", go_duration(remaining))));
+                return Some((
+                    403,
+                    format!(
+                        "IP banned due to too many failed attempts. Try again in {}",
+                        go_duration(remaining)
+                    ),
+                ));
             }
             ai.blocked_until = None;
             ai.count = 0;
@@ -129,9 +175,16 @@ async fn authenticate_key(st: &ManagementState, ip: &str, local: bool, provided:
     }
 
     let ct_eq = |a: &str, b: &str| a.as_bytes().ct_eq(b.as_bytes()).unwrap_u8() == 1;
-    let accepted = (local && st.local_password.as_deref().is_some_and(|lp| ct_eq(provided, lp)))
-        || st.env_secret.as_deref().is_some_and(|es| ct_eq(provided, es))
-        || (!secret_hash.is_empty() && bcrypt_matches(provided, &secret_hash).await);
+    let accepted = (local
+        && st
+            .local_password
+            .as_deref()
+            .is_some_and(|lp| ct_eq(provided, lp)))
+        || st
+            .env_secret
+            .as_deref()
+            .is_some_and(|es| ct_eq(provided, es))
+        || (!secret_hash.is_empty() && bcrypt_matches(st, provided, &secret_hash).await);
     if accepted {
         reset_failures(st, ip);
         return None;
@@ -140,12 +193,27 @@ async fn authenticate_key(st: &ManagementState, ip: &str, local: bool, provided:
     Some((401, "invalid management key".into()))
 }
 
-/// bcrypt at cost 10 takes tens of milliseconds; keep it off the async workers.
-async fn bcrypt_matches(provided: &str, hash: &str) -> bool {
-    let (provided, hash) = (provided.to_string(), hash.to_string());
-    tokio::task::spawn_blocking(move || bcrypt::non_truncating_verify(provided, &hash).unwrap_or(false))
-        .await
-        .unwrap_or(false)
+/// Verifies `provided` against the bcrypt `hash`. bcrypt at cost 10 takes tens of milliseconds
+/// and the UI polls every few seconds, so the last key that verified is remembered (as a SHA-256
+/// digest next to the hash it matched) and compared in constant time. Failures always run bcrypt.
+async fn bcrypt_matches(st: &ManagementState, provided: &str, hash: &str) -> bool {
+    let digest: [u8; 32] = Sha256::digest(provided.as_bytes()).into();
+    if let Some((known, known_hash)) = st.shared.verified.lock().as_ref()
+        && known_hash == hash
+        && known.ct_eq(&digest).unwrap_u8() == 1
+    {
+        return true;
+    }
+    let (owned, hash_owned) = (provided.to_string(), hash.to_string());
+    let ok = tokio::task::spawn_blocking(move || {
+        bcrypt::non_truncating_verify(owned, &hash_owned).unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false);
+    if ok {
+        *st.shared.verified.lock() = Some((digest, hash.to_string()));
+    }
+    ok
 }
 
 fn record_failure(st: &ManagementState, ip: &str) {
@@ -169,7 +237,11 @@ fn reset_failures(st: &ManagementState, ip: &str) {
 }
 
 /// Drops entries that are not banned and idle for 2h, at most hourly (Go: a cleanup goroutine).
-fn purge_stale(st: &ManagementState, attempts: &mut std::collections::HashMap<String, AttemptInfo>, now: Instant) {
+fn purge_stale(
+    st: &ManagementState,
+    attempts: &mut std::collections::HashMap<String, AttemptInfo>,
+    now: Instant,
+) {
     let mut last = st.shared.last_purge.lock();
     if last.is_some_and(|t| now.duration_since(t) < ATTEMPT_CLEANUP_INTERVAL) {
         return;
@@ -177,7 +249,9 @@ fn purge_stale(st: &ManagementState, attempts: &mut std::collections::HashMap<St
     *last = Some(now);
     attempts.retain(|_, ai| {
         ai.blocked_until.is_some_and(|until| now < until)
-            || ai.last_activity.is_some_and(|t| now.duration_since(t) <= ATTEMPT_MAX_IDLE)
+            || ai
+                .last_activity
+                .is_some_and(|t| now.duration_since(t) <= ATTEMPT_MAX_IDLE)
     });
 }
 
@@ -198,14 +272,24 @@ fn go_duration(d: Duration) -> String {
 /// forwarded address (`X-Forwarded-For`, then `X-Real-IP`) only when the peer is a trusted proxy.
 /// Requests without connection info (no `ConnectInfo<SocketAddr>` layer) have an unknown IP.
 fn client_ip(st: &ManagementState, req: &Request) -> String {
-    let Some(peer) = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip().to_canonical()) else {
+    let Some(peer) = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip().to_canonical())
+    else {
         return "unknown".into();
     };
     let cfg = st.cfg();
     let proxies = parse_trusted(&cfg.trusted_proxies);
     if is_trusted(peer, &proxies) {
         for name in ["x-forwarded-for", "x-real-ip"] {
-            if let Some(ip) = forwarded_client(req.headers().get(name).and_then(|v| v.to_str().ok()).unwrap_or(""), &proxies) {
+            if let Some(ip) = forwarded_client(
+                req.headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or(""),
+                &proxies,
+            ) {
                 return ip;
             }
         }
@@ -240,10 +324,16 @@ fn parse_trusted(entries: &[String]) -> Vec<Cidr> {
         .filter_map(|e| {
             let e = e.trim();
             match e.split_once('/') {
-                Some((ip, prefix)) => Some(Cidr { net: ip.parse().ok()?, prefix: prefix.parse().ok()? }),
+                Some((ip, prefix)) => Some(Cidr {
+                    net: ip.parse().ok()?,
+                    prefix: prefix.parse().ok()?,
+                }),
                 None => {
                     let ip: IpAddr = e.parse().ok()?;
-                    Some(Cidr { net: ip, prefix: if ip.is_ipv4() { 32 } else { 128 } })
+                    Some(Cidr {
+                        net: ip,
+                        prefix: if ip.is_ipv4() { 32 } else { 128 },
+                    })
                 }
             }
         })
@@ -282,8 +372,14 @@ mod tests {
     #[test]
     fn forwarded_for_skips_trusted_proxies_from_the_right() {
         let proxies = parse_trusted(&["10.0.0.0/8".into()]);
-        assert_eq!(forwarded_client("203.0.113.9, 10.1.1.1", &proxies).as_deref(), Some("203.0.113.9"));
-        assert_eq!(forwarded_client("198.51.100.1, 203.0.113.9, 10.1.1.1", &proxies).as_deref(), Some("203.0.113.9"));
+        assert_eq!(
+            forwarded_client("203.0.113.9, 10.1.1.1", &proxies).as_deref(),
+            Some("203.0.113.9")
+        );
+        assert_eq!(
+            forwarded_client("198.51.100.1, 203.0.113.9, 10.1.1.1", &proxies).as_deref(),
+            Some("203.0.113.9")
+        );
         assert_eq!(forwarded_client("garbage", &proxies), None);
         assert!(is_trusted("10.200.0.1".parse().unwrap(), &proxies));
         assert!(!is_trusted("11.0.0.1".parse().unwrap(), &proxies));

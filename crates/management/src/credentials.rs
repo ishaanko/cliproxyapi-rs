@@ -11,18 +11,24 @@ use axum::response::Response;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cpa_auth::credmeta::{self, ATTRIBUTE_WEIGHT, Metadata};
-use cpa_auth::types::{ATTRIBUTE_PATH, ATTRIBUTE_RUNTIME_ONLY, ATTRIBUTE_VIRTUAL_SOURCE, QuotaState};
+use cpa_auth::types::{
+    ATTRIBUTE_PATH, ATTRIBUTE_RUNTIME_ONLY, ATTRIBUTE_VIRTUAL_SOURCE, QuotaState,
+};
 use cpa_auth::{Auth, Status};
 use serde_json::{Map, Value, json};
 
 use crate::cooldown::{cooldown_snapshot, reconcile_cooldown_state};
-use crate::http::{ApiError, ApiResult, content_type_is, json_response, ok_json, query_get, query_pairs, query_trim, rfc3339};
+use crate::http::{
+    ApiError, ApiResult, content_type_is, json_response, ok_json, query_get, query_pairs,
+    query_trim, rfc3339,
+};
 use crate::state::{ManagementState, abs_path};
 
 pub(crate) const DEFAULT_PAGE_SIZE: usize = 50;
 
 pub(crate) const ERR_NOT_FOUND: &str = "auth file not found";
-pub(crate) const ERR_PLUGIN_VIRTUAL: &str = "plugin virtual auth cannot be modified directly; edit or delete the source auth file";
+pub(crate) const ERR_PLUGIN_VIRTUAL: &str =
+    "plugin virtual auth cannot be modified directly; edit or delete the source auth file";
 
 /// `isUnsafeAuthFileName`: empty, or containing a path separator.
 pub(crate) fn is_unsafe_name(name: &str) -> bool {
@@ -30,7 +36,10 @@ pub(crate) fn is_unsafe_name(name: &str) -> bool {
 }
 
 fn base_name(name: &str) -> String {
-    Path::new(name.trim()).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+    Path::new(name.trim())
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn has_json_suffix(name: &str) -> bool {
@@ -38,7 +47,8 @@ fn has_json_suffix(name: &str) -> bool {
 }
 
 fn is_runtime_only(auth: &Auth) -> bool {
-    auth.attr(ATTRIBUTE_RUNTIME_ONLY).eq_ignore_ascii_case("true")
+    auth.attr(ATTRIBUTE_RUNTIME_ONLY)
+        .eq_ignore_ascii_case("true")
 }
 
 /// Raw (untrimmed) attribute, like Go's `authAttribute`.
@@ -48,7 +58,11 @@ fn attribute(auth: &Auth, key: &str) -> String {
 
 fn auth_list_name(auth: &Auth) -> String {
     let name = auth.file_name.trim();
-    if name.is_empty() { auth.id.trim().to_string() } else { name.to_string() }
+    if name.is_empty() {
+        auth.id.trim().to_string()
+    } else {
+        name.to_string()
+    }
 }
 
 fn compare_list_order(a: &Auth, b: &Auth) -> std::cmp::Ordering {
@@ -72,11 +86,15 @@ fn is_listable(auth: &Auth) -> bool {
         return runtime_only;
     }
     let missing = !Path::new(path).exists();
-    !(missing && !runtime_only && (auth.disabled || auth.status == Status::Disabled || removed_via_management(auth)))
+    !(missing
+        && !runtime_only
+        && (auth.disabled || auth.status == Status::Disabled || removed_via_management(auth)))
 }
 
 fn removed_via_management(auth: &Auth) -> bool {
-    auth.status_message.trim().eq_ignore_ascii_case("removed via management api")
+    auth.status_message
+        .trim()
+        .eq_ignore_ascii_case("removed via management api")
 }
 
 fn matches_lookup(auth: &mut Auth, name: &str, auth_index: &str) -> bool {
@@ -96,9 +114,16 @@ pub(crate) fn lookup_auth_file(st: &ManagementState, name: &str, auth_index: &st
         if let Some(a) = st.registry.get(name) {
             return Some(a);
         }
-        return st.registry.list().into_iter().find(|a| a.file_name.trim() == name);
+        return st
+            .registry
+            .list()
+            .into_iter()
+            .find(|a| a.file_name.trim() == name);
     }
-    st.registry.list().into_iter().find_map(|mut a| matches_lookup(&mut a, name, auth_index).then_some(a))
+    st.registry
+        .list()
+        .into_iter()
+        .find_map(|mut a| matches_lookup(&mut a, name, auth_index).then_some(a))
 }
 
 /// `authByIndex`.
@@ -107,7 +132,10 @@ pub(crate) fn auth_by_index(st: &ManagementState, auth_index: &str) -> Option<Au
     if auth_index.is_empty() {
         return None;
     }
-    st.registry.list().into_iter().find_map(|mut a| (a.ensure_index() == auth_index).then_some(a))
+    st.registry
+        .list()
+        .into_iter()
+        .find_map(|mut a| (a.ensure_index() == auth_index).then_some(a))
 }
 
 // ---- list ----
@@ -125,11 +153,13 @@ fn parse_pagination(uri: &Uri) -> ApiResult<Option<Pagination>> {
     }
     let positive = |raw: &str| raw.trim().parse::<usize>().ok().filter(|n| *n > 0);
     let page = match page_raw {
-        Some(raw) => positive(&raw).ok_or_else(|| ApiError::bad_request("page must be a positive integer"))?,
+        Some(raw) => positive(&raw)
+            .ok_or_else(|| ApiError::bad_request("page must be a positive integer"))?,
         None => 1,
     };
     let page_size = match size_raw {
-        Some(raw) => positive(&raw).ok_or_else(|| ApiError::bad_request("page_size must be a positive integer"))?,
+        Some(raw) => positive(&raw)
+            .ok_or_else(|| ApiError::bad_request("page_size must be a positive integer"))?,
         None => DEFAULT_PAGE_SIZE,
     };
     Ok(Some(Pagination { page, page_size }))
@@ -149,7 +179,11 @@ impl Pagination {
             return (total, total);
         }
         let remaining = total - start;
-        if self.page_size >= remaining { (start, total) } else { (start, start + self.page_size) }
+        if self.page_size >= remaining {
+            (start, total)
+        } else {
+            (start, start + self.page_size)
+        }
     }
 }
 
@@ -164,7 +198,11 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
 
     let entry = |auth: &mut Auth| -> Option<Value> {
         let mut entry = build_entry(auth, observed_at)?;
-        let cooldowns = if cooldowns_known { serde_json::to_value(cooldown_snapshot(auth, observed_at)).unwrap_or(Value::Null) } else { Value::Null };
+        let cooldowns = if cooldowns_known {
+            serde_json::to_value(cooldown_snapshot(auth, observed_at)).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
         entry.insert("cooldowns".into(), cooldowns);
         Some(Value::Object(entry))
     };
@@ -172,7 +210,10 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
     if let Some(p) = pagination {
         let mut matching: Vec<Auth> = auths
             .into_iter()
-            .filter_map(|mut a| (matches_lookup(&mut a, &name_filter, &index_filter) && is_listable(&a)).then_some(a))
+            .filter_map(|mut a| {
+                (matches_lookup(&mut a, &name_filter, &index_filter) && is_listable(&a))
+                    .then_some(a)
+            })
             .collect();
         for a in &mut matching {
             a.ensure_index();
@@ -193,26 +234,53 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
 
     let mut files: Vec<Value> = auths
         .iter_mut()
-        .filter_map(|a| if matches_lookup(a, &name_filter, &index_filter) { entry(a) } else { None })
+        .filter_map(|a| {
+            if matches_lookup(a, &name_filter, &index_filter) {
+                entry(a)
+            } else {
+                None
+            }
+        })
         .collect();
-    files.sort_by_key(|f| f.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase());
-    Ok(ok_json(&json!({"observed_at": rfc3339(observed_at), "files": files})))
+    files.sort_by_key(|f| {
+        f.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase()
+    });
+    Ok(ok_json(
+        &json!({"observed_at": rfc3339(observed_at), "files": files}),
+    ))
 }
 
 fn quota_observation(provider: &str, quota: &QuotaState) -> Value {
-    let supported = matches!(provider.trim().to_lowercase().as_str(), "claude" | "codex" | "devin");
+    let supported = matches!(
+        provider.trim().to_lowercase().as_str(),
+        "claude" | "codex" | "devin"
+    );
     let mut observed = Map::new();
-    let signals: BTreeMap<&String, &String> = if supported { quota.signals.iter().collect() } else { BTreeMap::new() };
+    let signals: BTreeMap<&String, &String> = if supported {
+        quota.signals.iter().collect()
+    } else {
+        BTreeMap::new()
+    };
     if supported && let Some(t) = quota.observed_at {
         observed.insert("observed_at".into(), rfc3339(t).into());
     }
-    observed.insert("signals".into(), serde_json::to_value(signals).unwrap_or_default());
+    observed.insert(
+        "signals".into(),
+        serde_json::to_value(signals).unwrap_or_default(),
+    );
     Value::Object(observed)
 }
 
 fn project_id(auth: &Auth) -> String {
     let m = auth.meta_str("project_id");
-    if !m.is_empty() { m } else { auth.attr("project_id") }
+    if !m.is_empty() {
+        m
+    } else {
+        auth.attr("project_id")
+    }
 }
 
 fn email(auth: &Auth) -> String {
@@ -220,7 +288,11 @@ fn email(auth: &Auth) -> String {
         return v.trim().to_string();
     }
     let e = auth.attr("email");
-    if !e.is_empty() { e } else { auth.attr("account_email") }
+    if !e.is_empty() {
+        e
+    } else {
+        auth.attr("account_email")
+    }
 }
 
 fn weight_value(auth: &Auth) -> Option<i64> {
@@ -279,16 +351,25 @@ fn codex_id_token_claims(auth: &Auth) -> Option<Value> {
     let info = &claims.codex_auth_info;
     let mut out = Map::new();
     if !info.chatgpt_account_id.trim().is_empty() {
-        out.insert("chatgpt_account_id".into(), info.chatgpt_account_id.trim().into());
+        out.insert(
+            "chatgpt_account_id".into(),
+            info.chatgpt_account_id.trim().into(),
+        );
     }
     if !info.chatgpt_plan_type.trim().is_empty() {
         out.insert("plan_type".into(), info.chatgpt_plan_type.trim().into());
     }
     if !info.chatgpt_subscription_active_start.is_null() {
-        out.insert("chatgpt_subscription_active_start".into(), info.chatgpt_subscription_active_start.clone());
+        out.insert(
+            "chatgpt_subscription_active_start".into(),
+            info.chatgpt_subscription_active_start.clone(),
+        );
     }
     if !info.chatgpt_subscription_active_until.is_null() {
-        out.insert("chatgpt_subscription_active_until".into(), info.chatgpt_subscription_active_until.clone());
+        out.insert(
+            "chatgpt_subscription_active_until".into(),
+            info.chatgpt_subscription_active_until.clone(),
+        );
     }
     (!out.is_empty()).then_some(Value::Object(out))
 }
@@ -315,7 +396,10 @@ pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<Str
     e.insert("type".into(), provider.clone().into());
     e.insert("provider".into(), provider.clone().into());
     e.insert("label".into(), auth.label.clone().into());
-    e.insert("status".into(), serde_json::to_value(rec.status).unwrap_or_default());
+    e.insert(
+        "status".into(),
+        serde_json::to_value(rec.status).unwrap_or_default(),
+    );
     e.insert("status_message".into(), rec.status_message.into());
     e.insert("disabled".into(), auth.disabled.into());
     e.insert("unavailable".into(), rec.unavailable.into());
@@ -324,7 +408,10 @@ pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<Str
     e.insert("size".into(), 0.into());
     e.insert("success".into(), auth.success.into());
     e.insert("failed".into(), auth.failed.into());
-    e.insert("recent_requests".into(), serde_json::to_value(auth.recent_requests_snapshot(Utc::now())).unwrap_or_default());
+    e.insert(
+        "recent_requests".into(),
+        serde_json::to_value(auth.recent_requests_snapshot(Utc::now())).unwrap_or_default(),
+    );
     e.insert("quota".into(), quota_observation(&provider, &auth.quota));
     let mut model_quotas = Map::new();
     for (model, state) in &auth.model_states {
@@ -333,7 +420,11 @@ pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<Str
         }
         model_quotas.insert(model.clone(), quota_observation(&provider, &state.quota));
     }
-    if matches!(provider.to_lowercase().as_str(), "claude" | "codex" | "devin") && !model_quotas.is_empty() {
+    if matches!(
+        provider.to_lowercase().as_str(),
+        "claude" | "codex" | "devin"
+    ) && !model_quotas.is_empty()
+    {
         e.insert("model_quotas".into(), Value::Object(model_quotas));
     }
     if let Some(probe) = auth.metadata.get("quota_probe").filter(|p| !p.is_null()) {
@@ -380,7 +471,11 @@ pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<Str
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 // Hide credentials removed from disk but still lingering in memory.
-                if !runtime_only && (auth.disabled || auth.status == Status::Disabled || removed_via_management(auth)) {
+                if !runtime_only
+                    && (auth.disabled
+                        || auth.status == Status::Disabled
+                        || removed_via_management(auth))
+                {
                     return None;
                 }
                 e.insert("source".into(), "memory".into());
@@ -456,14 +551,21 @@ pub(crate) async fn download(State(st): State<ManagementState>, req: Request) ->
     if !has_json_suffix(&name) {
         return Err(ApiError::bad_request("name must end with .json"));
     }
-    let dir = st.auth_dir().ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
+    let dir = st
+        .auth_dir()
+        .ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
     let data = match std::fs::read(dir.join(&name)) {
         Ok(d) => d,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(ApiError::new(404, "file not found")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(ApiError::new(404, "file not found"));
+        }
         Err(e) => return Err(ApiError::new(500, format!("failed to read file: {e}"))),
     };
     let mut resp = Response::new(axum::body::Body::from(data));
-    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
     if let Ok(v) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
         resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
     }
@@ -480,13 +582,20 @@ struct UploadedFile {
 /// All file parts of a multipart body, grouped by field name in sorted order (each field keeps
 /// its part order).
 async fn multipart_files(req: Request) -> Result<Vec<UploadedFile>, String> {
-    let mut multipart = Multipart::from_request(req, &()).await.map_err(|e| e.to_string())?;
+    let mut multipart = Multipart::from_request(req, &())
+        .await
+        .map_err(|e| e.to_string())?;
     let mut by_field: BTreeMap<String, Vec<UploadedFile>> = BTreeMap::new();
     while let Some(field) = multipart.next_field().await.map_err(|e| e.to_string())? {
-        let Some(filename) = field.file_name().map(str::to_string) else { continue };
+        let Some(filename) = field.file_name().map(str::to_string) else {
+            continue;
+        };
         let key = field.name().unwrap_or("").to_string();
         let data = field.bytes().await.map_err(|e| e.to_string())?;
-        by_field.entry(key).or_default().push(UploadedFile { filename, data });
+        by_field
+            .entry(key)
+            .or_default()
+            .push(UploadedFile { filename, data });
     }
     Ok(by_field.into_values().flatten().collect())
 }
@@ -496,9 +605,13 @@ pub(crate) async fn upload(State(st): State<ManagementState>, req: Request) -> A
     let is_multipart = content_type_is(req.headers(), "multipart/form-data");
     let uri = req.uri().clone();
     let files = if is_multipart {
-        multipart_files(req).await.map_err(|e| ApiError::bad_request(format!("invalid multipart form: {e}")))?
+        multipart_files(req)
+            .await
+            .map_err(|e| ApiError::bad_request(format!("invalid multipart form: {e}")))?
     } else {
-        let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.map_err(|_| ApiError::bad_request("failed to read body"));
+        let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+            .await
+            .map_err(|_| ApiError::bad_request("failed to read body"));
         return upload_raw(&st, &uri, body).await;
     };
 
@@ -525,9 +638,14 @@ pub(crate) async fn upload(State(st): State<ManagementState>, req: Request) -> A
                 }
             }
             if failed.is_empty() {
-                Ok(ok_json(&json!({"status": "ok", "uploaded": uploaded.len(), "files": uploaded})))
+                Ok(ok_json(
+                    &json!({"status": "ok", "uploaded": uploaded.len(), "files": uploaded}),
+                ))
             } else {
-                Ok(json_response(207, &json!({"status": "partial", "uploaded": uploaded.len(), "files": uploaded, "failed": failed})))
+                Ok(json_response(
+                    207,
+                    &json!({"status": "partial", "uploaded": uploaded.len(), "files": uploaded, "failed": failed}),
+                ))
             }
         }
     }
@@ -542,7 +660,9 @@ async fn upload_raw(st: &ManagementState, uri: &Uri, body: ApiResult<Bytes>) -> 
         return Err(ApiError::bad_request("name must end with .json"));
     }
     let data = body?;
-    write_auth_file(st, &base_name(&name), &data).await.map_err(|e| ApiError::new(500, e))?;
+    write_auth_file(st, &base_name(&name), &data)
+        .await
+        .map_err(|e| ApiError::new(500, e))?;
     Ok(ok_json(&json!({"status": "ok"})))
 }
 
@@ -556,7 +676,9 @@ async fn store_uploaded(st: &ManagementState, file: &UploadedFile) -> Result<Str
     if !has_json_suffix(&name) {
         return Err(UploadError::NotJson);
     }
-    write_auth_file(st, &name, &file.data).await.map_err(UploadError::Other)?;
+    write_auth_file(st, &name, &file.data)
+        .await
+        .map_err(UploadError::Other)?;
     Ok(name)
 }
 
@@ -574,8 +696,11 @@ fn write_private_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 /// `writeAuthFile`: validate, write `auth-dir/<name>` and register the credential.
 async fn write_auth_file(st: &ManagementState, name: &str, data: &[u8]) -> Result<(), String> {
-    let dir = st.auth_dir().ok_or_else(|| "auth directory not configured".to_string())?;
-    let dst = abs_path(&dir.join(name));
+    let dir = st
+        .auth_dir()
+        .ok_or_else(|| "auth directory not configured".to_string())?;
+    let dir = abs_path(&dir);
+    let dst = dir.join(name);
     let metadata = parse_auth_metadata(data)?;
     // Create the directory so a fresh install can take its first upload.
     std::fs::create_dir_all(&dir).map_err(|e| format!("failed to write file: {e}"))?;
@@ -585,7 +710,8 @@ async fn write_auth_file(st: &ManagementState, name: &str, data: &[u8]) -> Resul
 }
 
 fn parse_auth_metadata(data: &[u8]) -> Result<Metadata, String> {
-    let parsed: Value = serde_json::from_slice(data).map_err(|e| format!("invalid auth file: {e}"))?;
+    let parsed: Value =
+        serde_json::from_slice(data).map_err(|e| format!("invalid auth file: {e}"))?;
     let Value::Object(mut metadata) = parsed else {
         return Err("invalid auth file: json: cannot unmarshal into Go value of type map[string]interface {}".into());
     };
@@ -596,7 +722,12 @@ fn parse_auth_metadata(data: &[u8]) -> Result<Metadata, String> {
 
 /// `extractLastRefreshTimestamp`.
 fn last_refresh_timestamp(meta: &Metadata) -> Option<DateTime<Utc>> {
-    for key in ["last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt"] {
+    for key in [
+        "last_refresh",
+        "lastRefresh",
+        "last_refreshed_at",
+        "lastRefreshedAt",
+    ] {
         let Some(v) = meta.get(key) else { continue };
         let ts = match v {
             Value::String(s) => {
@@ -605,9 +736,16 @@ fn last_refresh_timestamp(meta: &Metadata) -> Option<DateTime<Utc>> {
                     .map(|t| t.with_timezone(&Utc))
                     .ok()
                     .or_else(|| {
-                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok().map(|t| t.and_utc())
+                        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                            .ok()
+                            .map(|t| t.and_utc())
                     })
-                    .or_else(|| s.parse::<i64>().ok().filter(|u| *u > 0).and_then(|u| DateTime::from_timestamp(u, 0)))
+                    .or_else(|| {
+                        s.parse::<i64>()
+                            .ok()
+                            .filter(|u| *u > 0)
+                            .and_then(|u| DateTime::from_timestamp(u, 0))
+                    })
             }
             Value::Number(n) => n
                 .as_i64()
@@ -628,8 +766,18 @@ fn build_auth_from_file(st: &ManagementState, path: &Path, dir: &Path, metadata:
     let mut auth = match st.store.read_auth_file(path, dir) {
         Ok(Some(a)) => a,
         _ => {
-            let provider = metadata.get("type").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or("unknown").to_string();
-            let label = metadata.get("email").and_then(Value::as_str).filter(|s| !s.is_empty()).unwrap_or(&provider).to_string();
+            let provider = metadata
+                .get("type")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("unknown")
+                .to_string();
+            let label = metadata
+                .get("email")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&provider)
+                .to_string();
             let mut a = Auth::default();
             a.provider = provider;
             a.label = label;
@@ -646,7 +794,10 @@ fn build_auth_from_file(st: &ManagementState, path: &Path, dir: &Path, metadata:
         }
     };
     auth.id = cpa_auth::store::id_for(path, dir);
-    auth.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    auth.file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let last_refresh = last_refresh_timestamp(&metadata);
     if let Some(t) = last_refresh {
         auth.last_refreshed_at = Some(t);
@@ -673,7 +824,11 @@ async fn upsert_auth(st: &ManagementState, mut auth: Auth) -> Result<(), String>
 
 /// Names to delete: repeated `?name=`, else a JSON body `{"name"}`, `{"names"}` or `["a","b"]`.
 fn requested_delete_names(uri: &Uri, body: &[u8]) -> Result<Vec<String>, String> {
-    let from_query: Vec<String> = query_pairs(uri).into_iter().filter(|(k, _)| k == "name").map(|(_, v)| v).collect();
+    let from_query: Vec<String> = query_pairs(uri)
+        .into_iter()
+        .filter(|(k, _)| k == "name")
+        .map(|(_, v)| v)
+        .collect();
     let names = unique_names(from_query);
     if !names.is_empty() {
         return Ok(names);
@@ -683,7 +838,8 @@ fn requested_delete_names(uri: &Uri, body: &[u8]) -> Result<Vec<String>, String>
         return Ok(Vec::new());
     }
     if body[0] == b'[' {
-        let list: Vec<String> = serde_json::from_slice(body).map_err(|_| "invalid request body".to_string())?;
+        let list: Vec<String> =
+            serde_json::from_slice(body).map_err(|_| "invalid request body".to_string())?;
         return Ok(unique_names(list));
     }
     #[derive(serde::Deserialize, Default)]
@@ -693,7 +849,8 @@ fn requested_delete_names(uri: &Uri, body: &[u8]) -> Result<Vec<String>, String>
         #[serde(default)]
         names: Vec<String>,
     }
-    let parsed: Body = serde_json::from_slice(body).map_err(|_| "invalid request body".to_string())?;
+    let parsed: Body =
+        serde_json::from_slice(body).map_err(|_| "invalid request body".to_string())?;
     let mut out = Vec::new();
     if !parsed.name.trim().is_empty() {
         out.push(parsed.name);
@@ -714,11 +871,16 @@ fn unique_names(names: Vec<String>) -> Vec<String> {
 /// `DELETE /credentials`: `?all=true|1|*`, or one or more names.
 pub(crate) async fn delete(State(st): State<ManagementState>, req: Request) -> ApiResult {
     let uri = req.uri().clone();
-    let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.map_err(|_| ApiError::bad_request("failed to read body"));
-    let dir = st.auth_dir().ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
+    let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map_err(|_| ApiError::bad_request("failed to read body"));
+    let dir = st
+        .auth_dir()
+        .ok_or_else(|| ApiError::new(500, "auth directory not configured"))?;
 
     if matches!(query_get(&uri, "all").as_deref(), Some("true" | "1" | "*")) {
-        let entries = std::fs::read_dir(&dir).map_err(|e| ApiError::new(500, format!("failed to read auth dir: {e}")))?;
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| ApiError::new(500, format!("failed to read auth dir: {e}")))?;
         let mut deleted = 0;
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -752,9 +914,14 @@ pub(crate) async fn delete(State(st): State<ManagementState>, req: Request) -> A
                 }
             }
             if failed.is_empty() {
-                Ok(ok_json(&json!({"status": "ok", "deleted": deleted.len(), "files": deleted})))
+                Ok(ok_json(
+                    &json!({"status": "ok", "deleted": deleted.len(), "files": deleted}),
+                ))
             } else {
-                Ok(json_response(207, &json!({"status": "partial", "deleted": deleted.len(), "files": deleted, "failed": failed})))
+                Ok(json_response(
+                    207,
+                    &json!({"status": "partial", "deleted": deleted.len(), "files": deleted, "failed": failed}),
+                ))
             }
         }
     }
@@ -780,7 +947,10 @@ fn find_auth_for_delete(st: &ManagementState, name: &str) -> Option<Auth> {
     if let Some(a) = st.registry.get(name) {
         return Some(a);
     }
-    st.registry.list().into_iter().find(|a| a.file_name.trim() == name || base_name(&attribute(a, ATTRIBUTE_PATH)) == name)
+    st.registry
+        .list()
+        .into_iter()
+        .find(|a| a.file_name.trim() == name || base_name(&attribute(a, ATTRIBUTE_PATH)) == name)
 }
 
 fn same_path(a: &str, b: &str) -> bool {
@@ -816,7 +986,9 @@ async fn remove_auth(st: &ManagementState, id: &str) {
 async fn remove_auths_for_path(st: &ManagementState, path: &str, fallback_id: &str) {
     let mut removed = false;
     for a in st.registry.list() {
-        if same_path(&attribute(&a, ATTRIBUTE_PATH), path) || same_path(&attribute(&a, ATTRIBUTE_VIRTUAL_SOURCE), path) {
+        if same_path(&attribute(&a, ATTRIBUTE_PATH), path)
+            || same_path(&attribute(&a, ATTRIBUTE_VIRTUAL_SOURCE), path)
+        {
             remove_auth(st, &a.id).await;
             removed = true;
         }
@@ -832,7 +1004,11 @@ async fn remove_auths_for_path(st: &ManagementState, path: &str, fallback_id: &s
 }
 
 /// `deleteAuthFileByName`: `(deleted file name)` or `(status, message)`.
-async fn delete_by_name(st: &ManagementState, dir: &Path, name: &str) -> Result<String, (u16, String)> {
+async fn delete_by_name(
+    st: &ManagementState,
+    dir: &Path,
+    name: &str,
+) -> Result<String, (u16, String)> {
     let name = name.trim();
     if is_unsafe_name(name) {
         return Err((400, "invalid name".into()));

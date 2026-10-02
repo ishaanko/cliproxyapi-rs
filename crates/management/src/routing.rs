@@ -26,9 +26,14 @@ struct RefreshRequest {
 
 /// `ForceRefreshAuth`: exchange the credential's refresh token now and store the result.
 async fn force_refresh_auth(st: &ManagementState, id: &str) -> Result<Auth, String> {
-    let auth = st.registry.get(id).ok_or_else(|| format!("auth not found: {id}"))?;
+    let auth = st
+        .registry
+        .get(id)
+        .ok_or_else(|| format!("auth not found: {id}"))?;
     let global_proxy = st.cfg().proxy_url.trim().to_string();
-    let mut refreshed = cpa_auth::refresh_auth(&auth, &global_proxy).await.map_err(|e| e.to_string())?;
+    let mut refreshed = cpa_auth::refresh_auth(&auth, &global_proxy)
+        .await
+        .map_err(|e| e.to_string())?;
     let now = Utc::now();
     refreshed.last_refreshed_at = Some(now);
     refreshed.updated_at = Some(now);
@@ -43,10 +48,13 @@ fn has_refresh_credential(auth: &Auth) -> bool {
 /// `POST /credentials/refresh`: `?all=true`, `?name=`, or a JSON body `{"name","auth_index","all"}`.
 pub(crate) async fn refresh(State(st): State<ManagementState>, req: Request) -> ApiResult {
     let uri = req.uri().clone();
-    let body = axum::body::to_bytes(req.into_body(), usize::MAX).await.unwrap_or_default();
+    let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
     let mut parsed = RefreshRequest::default();
     if !body.trim_ascii().is_empty() {
-        parsed = serde_json::from_slice(&body).map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
+        parsed = serde_json::from_slice(&body)
+            .map_err(|e| ApiError::bad_request(format!("invalid request body: {e}")))?;
     }
     if query_get(&uri, "all").as_deref() == Some("true") {
         parsed.all = true;
@@ -85,8 +93,12 @@ pub(crate) async fn refresh(State(st): State<ManagementState>, req: Request) -> 
     let Some(target) = lookup_auth_file(&st, name, &parsed.auth_index) else {
         return Err(ApiError::new(404, ERR_NOT_FOUND));
     };
-    let refreshed = force_refresh_auth(&st, &target.id).await.map_err(|e| ApiError::new(500, e))?;
-    Ok(ok_json(&json!({"ok": true, "auth": serde_json::to_value(&refreshed).unwrap_or(Value::Null)})))
+    let refreshed = force_refresh_auth(&st, &target.id)
+        .await
+        .map_err(|e| ApiError::new(500, e))?;
+    Ok(ok_json(
+        &json!({"ok": true, "auth": serde_json::to_value(&refreshed).unwrap_or(Value::Null)}),
+    ))
 }
 
 /// `POST /routing/cooldown/reset` with `{"auth_index": "..."}`.
@@ -96,7 +108,8 @@ pub(crate) async fn reset_cooldown(State(st): State<ManagementState>, body: Byte
         #[serde(default)]
         auth_index: String,
     }
-    let req: Body = serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid request body"))?;
+    let req: Body =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid request body"))?;
     let index = req.auth_index.trim();
     if index.is_empty() {
         return Err(ApiError::bad_request("auth_index is required"));
@@ -113,7 +126,9 @@ pub(crate) async fn reset_cooldown(State(st): State<ManagementState>, body: Byte
         .update(auth)
         .await
         .map_err(|e| ApiError::new(500, format!("failed to reset quota: {e}")))?;
-    Ok(ok_json(&json!({"status": "ok", "auth_index": stored.ensure_index(), "models": models})))
+    Ok(ok_json(
+        &json!({"status": "ok", "auth_index": stored.ensure_index(), "models": models}),
+    ))
 }
 
 /// Models the registry currently serves for a credential (used when it has no per-model state).
@@ -136,7 +151,12 @@ pub(crate) async fn model_definitions(Path(channel): Path<String>) -> ApiResult 
         return Err(ApiError::bad_request("channel is required"));
     }
     let Some(models) = cpa_core::registry::get_static_model_definitions_by_channel(&channel) else {
-        return Err(ApiError::from_body(400, json!({"error": "unknown channel", "channel": channel})));
+        return Err(ApiError::from_body(
+            400,
+            json!({"error": "unknown channel", "channel": channel}),
+        ));
     };
-    Ok(ok_json(&json!({"channel": channel.to_lowercase(), "models": models})))
+    Ok(ok_json(
+        &json!({"channel": channel.to_lowercase(), "models": models}),
+    ))
 }

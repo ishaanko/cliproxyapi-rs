@@ -16,7 +16,10 @@ pub(crate) struct ApiError {
 
 impl ApiError {
     pub fn new(status: u16, error: impl Into<String>) -> Self {
-        Self { status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body: json!({"error": error.into()}) }
+        Self {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            body: json!({"error": error.into()}),
+        }
     }
 
     /// `{"error": code, "message": detail}`.
@@ -32,7 +35,10 @@ impl ApiError {
     }
 
     pub fn from_body(status: u16, body: Value) -> Self {
-        Self { status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR), body }
+        Self {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            body,
+        }
     }
 }
 
@@ -49,7 +55,10 @@ pub(crate) fn json_response<T: Serialize>(status: u16, body: &T) -> Response {
     let bytes = serde_json::to_vec(body).unwrap_or_else(|_| b"null".to_vec());
     let mut resp = Response::new(Body::from(bytes));
     *resp.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json; charset=utf-8"),
+    );
     resp
 }
 
@@ -58,7 +67,8 @@ pub(crate) fn ok_json<T: Serialize>(body: &T) -> Response {
 }
 
 pub(crate) fn no_store(mut resp: Response) -> Response {
-    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     resp
 }
 
@@ -72,18 +82,27 @@ pub(crate) fn empty(status: u16) -> Response {
 /// Query pairs in order, repeats preserved (Go: `c.QueryArray`).
 pub(crate) fn query_pairs(uri: &Uri) -> Vec<(String, String)> {
     uri.query()
-        .map(|q| url::form_urlencoded::parse(q.as_bytes()).map(|(k, v)| (k.into_owned(), v.into_owned())).collect())
+        .map(|q| {
+            url::form_urlencoded::parse(q.as_bytes())
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 /// First value of a query key, `None` when absent (Go: `c.GetQuery`).
 pub(crate) fn query_get(uri: &Uri, key: &str) -> Option<String> {
-    query_pairs(uri).into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    query_pairs(uri)
+        .into_iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v)
 }
 
 /// Trimmed first value, empty when absent (Go: `strings.TrimSpace(c.Query(key))`).
 pub(crate) fn query_trim(uri: &Uri, key: &str) -> String {
-    query_get(uri, key).map(|v| v.trim().to_string()).unwrap_or_default()
+    query_get(uri, key)
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Go's `time.Time` JSON: RFC 3339 with the fraction trimmed to what is needed.
@@ -95,5 +114,11 @@ pub(crate) fn content_type_is(headers: &axum::http::HeaderMap, essence: &str) ->
     headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.split(';').next().unwrap_or("").trim().eq_ignore_ascii_case(essence))
+        .is_some_and(|v| {
+            v.split(';')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .eq_ignore_ascii_case(essence)
+        })
 }
