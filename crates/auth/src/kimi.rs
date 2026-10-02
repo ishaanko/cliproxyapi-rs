@@ -321,11 +321,12 @@ impl DeviceFlowClient {
         device: &DeviceCodeResponse,
         min_interval: Duration,
     ) -> Result<KimiTokenData> {
-        let interval = Duration::from_secs(device.interval.max(0) as u64).max(min_interval);
-        let mut deadline = tokio::time::Instant::now() + MAX_POLL_DURATION;
+        let interval = crate::util::secs_to_duration(device.interval).max(min_interval);
+        let mut deadline = crate::util::deadline_after(MAX_POLL_DURATION);
         if device.expires_in > 0 {
-            deadline = deadline
-                .min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
+            deadline = deadline.min(crate::util::deadline_after(crate::util::secs_to_duration(
+                device.expires_in,
+            )));
         }
         loop {
             tokio::time::sleep(interval).await;
@@ -450,12 +451,14 @@ impl DeviceFlowClient {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("kimi: refresh token rejected (status {status})"),
+                retry_after: None,
             });
         }
         if status != 200 {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("kimi: refresh failed with status {status}: {body}"),
+                retry_after: None,
             });
         }
         #[derive(Deserialize, Default)]
@@ -491,7 +494,7 @@ impl DeviceFlowClient {
 
 fn expires_at(expires_in: f64) -> i64 {
     if expires_in > 0.0 {
-        Utc::now().timestamp() + expires_in as i64
+        crate::util::unix_now_plus(expires_in as i64)
     } else {
         0
     }

@@ -225,7 +225,9 @@ async fn management_claude_login_via_callback_endpoint_saves_file() {
         ..Default::default()
     };
     assert_eq!(
-        mgr.sessions().handle_oauth_callback(Some(dir.path()), &req),
+        mgr.sessions()
+            .handle_oauth_callback(Some(dir.path()), &req)
+            .await,
         (200, json!({"status": "ok"}))
     );
 
@@ -277,7 +279,10 @@ async fn management_exchange_failure_surfaces_in_poll_and_saves_nothing() {
         code: "c".into(),
         ..Default::default()
     };
-    assert_eq!(mgr.sessions().handle_oauth_callback(None, &req).0, 200);
+    assert_eq!(
+        mgr.sessions().handle_oauth_callback(None, &req).await.0,
+        200
+    );
 
     let status = wait_status(&session, |s| matches!(s, LoginStatus::Failed(_))).await;
     assert_eq!(
@@ -305,7 +310,10 @@ async fn management_provider_error_callback_sets_bad_request() {
         error: "access_denied".into(),
         ..Default::default()
     };
-    assert_eq!(mgr.sessions().handle_oauth_callback(None, &req).0, 200);
+    assert_eq!(
+        mgr.sessions().handle_oauth_callback(None, &req).await.0,
+        200
+    );
     let status = wait_status(&session, |s| matches!(s, LoginStatus::Failed(_))).await;
     assert_eq!(status, LoginStatus::Failed("Bad request".into()));
 }
@@ -338,7 +346,10 @@ async fn cancelling_a_pending_login_stops_it_without_saving() {
         code: "c".into(),
         ..Default::default()
     };
-    assert_eq!(mgr.sessions().handle_oauth_callback(None, &req).0, 404);
+    assert_eq!(
+        mgr.sessions().handle_oauth_callback(None, &req).await.0,
+        404
+    );
 }
 
 fn codex_id_token() -> String {
@@ -434,6 +445,7 @@ async fn cli_login_accepts_a_pasted_callback_when_the_browser_cannot_reach_the_s
             state: session.state().into(),
             error: String::new(),
         })
+        .await
         .unwrap();
     let outcome = session.wait().await.unwrap();
     assert_eq!(outcome.auth.provider, "claude");

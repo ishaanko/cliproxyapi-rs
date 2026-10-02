@@ -302,6 +302,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand 0.9.5",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

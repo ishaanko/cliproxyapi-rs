@@ -271,7 +271,7 @@ impl MetaAuth {
                     ));
                 }
                 if token.expires_in > 0 {
-                    token.expires_at = Utc::now().timestamp() + token.expires_in;
+                    token.expires_at = crate::util::unix_now_plus(token.expires_in);
                 }
                 let mut bundle = MetaAuthBundle {
                     token_data: token.clone(),
@@ -297,7 +297,7 @@ impl MetaAuth {
             let err: TokenData = serde_json::from_str(&body).unwrap_or_default();
             match err.error.as_str() {
                 "authorization_pending" => {}
-                "slow_down" => interval += Duration::from_secs(5),
+                "slow_down" => interval = interval.saturating_add(Duration::from_secs(5)),
                 "access_denied" => {
                     return Err(AuthFlowError::other("meta auth: access was denied by user"));
                 }

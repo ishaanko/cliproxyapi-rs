@@ -43,9 +43,54 @@ pub fn now_rfc3339_utc() -> String {
     format_rfc3339_utc(Utc::now())
 }
 
+/// `t + secs`, saturating at year 9999 / year 1 (the RFC3339 range) instead of panicking or
+/// producing an unparseable 6-digit year from hostile values.
+pub fn add_secs(t: DateTime<Utc>, secs: i64) -> DateTime<Utc> {
+    let max = NaiveDate::from_ymd_opt(9999, 12, 31)
+        .and_then(|d| d.and_hms_opt(23, 59, 59))
+        .map(|dt| dt.and_utc())
+        .unwrap_or(DateTime::<Utc>::MAX_UTC);
+    let min = zero_time();
+    let Some(delta) = chrono::TimeDelta::try_seconds(secs) else {
+        return if secs < 0 { min } else { max };
+    };
+    match t.checked_add_signed(delta) {
+        Some(r) => r.clamp(min, max),
+        None => {
+            if secs < 0 {
+                min
+            } else {
+                max
+            }
+        }
+    }
+}
+
+/// `now + secs` (saturating).
+pub fn now_plus_secs(secs: i64) -> DateTime<Utc> {
+    add_secs(Utc::now(), secs)
+}
+
+/// Unix seconds of `now + secs`, saturating.
+pub fn unix_now_plus(secs: i64) -> i64 {
+    Utc::now().timestamp().saturating_add(secs)
+}
+
+/// `Instant::now() + d`, clamped to 30 years out so absurd server-provided durations cannot panic.
+pub fn deadline_after(d: std::time::Duration) -> tokio::time::Instant {
+    const FAR: std::time::Duration = std::time::Duration::from_secs(30 * 365 * 24 * 3600);
+    let now = tokio::time::Instant::now();
+    now.checked_add(d.min(FAR)).unwrap_or(now)
+}
+
+/// A server-provided seconds value as a `Duration` (negative becomes zero).
+pub fn secs_to_duration(secs: i64) -> std::time::Duration {
+    std::time::Duration::from_secs(secs.max(0) as u64)
+}
+
 /// `now + seconds` formatted like Go's `time.Now().Add(...).Format(time.RFC3339)` (local offset).
 pub fn expiry_local(expires_in_secs: i64) -> String {
-    format_rfc3339_local(Utc::now() + chrono::Duration::seconds(expires_in_secs))
+    format_rfc3339_local(now_plus_secs(expires_in_secs))
 }
 
 /// Recursively sorts object keys. Go marshals `map[string]any` with sorted keys at every level, and

@@ -649,7 +649,7 @@ fn expiration_from_map(meta: &Metadata) -> Option<DateTime<Utc>> {
     if let Some(expires_in) = relative_expiry_seconds(meta)
         && let Some(ts) = relative_expiry_timestamp(meta)
     {
-        return Some(ts + chrono::Duration::seconds(expires_in));
+        return Some(crate::util::add_secs(ts, expires_in));
     }
     for nested in ["token", "Token"] {
         if let Some(Value::Object(m)) = meta.get(nested)

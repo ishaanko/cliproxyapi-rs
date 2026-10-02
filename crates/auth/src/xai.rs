@@ -279,14 +279,15 @@ impl XaiAuth {
             token_endpoint = self.discover().await?.token_endpoint;
         }
         let min_interval = self.min_poll_interval.unwrap_or(DEFAULT_POLL_INTERVAL);
-        let mut interval = Duration::from_secs(device.interval.max(0) as u64);
+        let mut interval = crate::util::secs_to_duration(device.interval);
         if interval < min_interval {
             interval = min_interval;
         }
-        let mut deadline = tokio::time::Instant::now() + MAX_POLL_DURATION;
+        let mut deadline = crate::util::deadline_after(MAX_POLL_DURATION);
         if device.expires_in > 0 {
-            deadline = deadline
-                .min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
+            deadline = deadline.min(crate::util::deadline_after(crate::util::secs_to_duration(
+                device.expires_in,
+            )));
         }
 
         let mut first = true;
@@ -304,7 +305,7 @@ impl XaiAuth {
             {
                 PollOutcome::Token(t) => return Ok(t),
                 PollOutcome::Pending => {}
-                PollOutcome::SlowDown => interval += min_interval,
+                PollOutcome::SlowDown => interval = interval.saturating_add(min_interval),
             }
         }
     }
@@ -459,6 +460,7 @@ impl XaiAuth {
                     "xai token request failed with status {status}: {}",
                     body.trim()
                 ),
+                retry_after: None,
             });
         }
         #[derive(Deserialize, Default)]
@@ -534,7 +536,7 @@ fn build_token_data(
     subject: String,
 ) -> TokenData {
     let expire = if expires_in > 0 {
-        format_rfc3339_utc(chrono::Utc::now() + chrono::Duration::seconds(expires_in))
+        format_rfc3339_utc(crate::util::now_plus_secs(expires_in))
     } else {
         String::new()
     };
