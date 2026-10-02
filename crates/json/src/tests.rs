@@ -107,3 +107,26 @@ fn array_and_foreach() {
     });
     assert_eq!(keys, ["a", "n", "arr"]);
 }
+
+#[test]
+fn sjson_refuses_named_key_into_array() {
+    let mut x = parse_str(r#"{"a":[1]}"#);
+    assert!(!set(&mut x, "a.b", json!(2)));
+    assert!(!set(&mut x, "a.b.c", json!(2)));
+    assert_eq!(to_string(&x), r#"{"a":[1]}"#);
+    assert_eq!(s(r#"{"a":[{"x":1}]}"#, "a.0.b", json!(2)), r#"{"a":[{"x":1,"b":2}]}"#);
+    assert_eq!(s(r#"{"a":{}}"#, "a.-1", json!(2)), r#"{"a":{"-1":2}}"#);
+}
+
+#[test]
+fn gjson_big_integers_wrap_like_go() {
+    let w = |j: &str| parse_str(&format!(r#"{{"a":{j}}}"#));
+    assert_eq!(w("99999999999999999999").g("a").int(), 7766279631452241919);
+    assert_eq!(w("-99999999999999999999").g("a").int(), -7766279631452241919);
+    assert_eq!(w("-99999999999999999999").g("a").uint(), 9223372036854775808);
+    assert_eq!(w("18446744073709551615").g("a").int(), -1);
+    assert_eq!(w("18446744073709551615").g("a").uint(), 18446744073709551615);
+    assert_eq!(w("1e30").g("a").int(), i64::MIN);
+    assert_eq!(w("1e30").g("a").uint(), 9223372036854775808);
+    assert_eq!(w(r#""99999999999999999999""#).g("a").int(), 7766279631452241919);
+}

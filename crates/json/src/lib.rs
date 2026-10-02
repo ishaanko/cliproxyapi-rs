@@ -110,18 +110,19 @@ impl<'a> Res<'a> {
         }
     }
 
-    /// gjson `Int()`.
+    /// gjson `Int()`: safe-float fast path, then wrapping integer parse of the raw text,
+    /// then Go's float->int conversion (out of range -> i64::MIN on amd64).
     pub fn int(&self) -> i64 {
         match self.v() {
             Some(Value::Bool(true)) => 1,
-            Some(Value::String(s)) => s.parse::<i64>().unwrap_or(0),
+            Some(Value::String(s)) => go_parse_int(s).unwrap_or(0),
             Some(Value::Number(n)) => {
                 let raw = n.to_string();
-                if let Ok(i) = raw.parse::<i64>() {
-                    return i;
-                }
                 let f = raw.parse::<f64>().unwrap_or(0.0);
-                f as i64
+                if f.abs() <= MAX_SAFE {
+                    return f as i64;
+                }
+                go_parse_int(&raw).unwrap_or_else(|| go_f64_to_i64(f))
             }
             _ => 0,
         }
@@ -131,14 +132,14 @@ impl<'a> Res<'a> {
     pub fn uint(&self) -> u64 {
         match self.v() {
             Some(Value::Bool(true)) => 1,
-            Some(Value::String(s)) => s.parse::<u64>().unwrap_or(0),
+            Some(Value::String(s)) => go_parse_uint(s).unwrap_or(0),
             Some(Value::Number(n)) => {
                 let raw = n.to_string();
-                if let Ok(i) = raw.parse::<u64>() {
-                    return i;
-                }
                 let f = raw.parse::<f64>().unwrap_or(0.0);
-                if f < 0.0 { 0 } else { f as u64 }
+                if f.abs() <= MAX_SAFE && f >= 0.0 {
+                    return f as u64;
+                }
+                go_parse_uint(&raw).unwrap_or_else(|| go_f64_to_u64(f))
             }
             _ => 0,
         }
@@ -236,6 +237,40 @@ impl<'a> Res<'a> {
     pub fn g(&self, path: &str) -> Res<'_> {
         self.get(path)
     }
+}
+
+/// Largest integer exactly representable in f64 (gjson `safeInt` bound).
+const MAX_SAFE: f64 = 9007199254740991.0;
+
+/// gjson `parseInt`: optional '-', digits only, wrapping on overflow.
+fn go_parse_int(s: &str) -> Option<i64> {
+    let (neg, digits) = match s.strip_prefix('-') {
+        Some(d) => (true, d),
+        None => (false, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n = digits.bytes().fold(0i64, |n, b| n.wrapping_mul(10).wrapping_add(i64::from(b - b'0')));
+    Some(if neg { n.wrapping_neg() } else { n })
+}
+
+/// gjson `parseUint`: digits only, wrapping on overflow.
+fn go_parse_uint(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(s.bytes().fold(0u64, |n, b| n.wrapping_mul(10).wrapping_add(u64::from(b - b'0'))))
+}
+
+/// Go `int64(f)` on amd64: truncation, out-of-range/NaN -> i64::MIN.
+fn go_f64_to_i64(f: f64) -> i64 {
+    if f.is_nan() || f >= 9.223372036854775807e18 || f < -9.223372036854775808e18 { i64::MIN } else { f as i64 }
+}
+
+/// Go `uint64(f)` on amd64 for values gjson can reach: out-of-range/negative -> 1<<63.
+fn go_f64_to_u64(f: f64) -> u64 {
+    if f.is_nan() || f < 0.0 || f >= 1.8446744073709552e19 { 1 << 63 } else { f as u64 }
 }
 
 /// gjson number `String()`: integer literals verbatim, everything else via shortest float.
@@ -587,9 +622,30 @@ fn is_index(k: &str) -> bool {
 
 /// sjson `Set`: creates intermediate containers (arrays for numeric keys, objects
 /// otherwise), pads arrays with nulls, appends on `-1`, keeps existing key positions.
-pub fn set(v: &mut Value, path: &str, val: impl Into<Value>) {
+/// Returns `false` and leaves `v` unchanged where sjson errors (a non-numeric key into an
+/// existing array); most Go callers ignore that error, so the result can be ignored too.
+pub fn set(v: &mut Value, path: &str, val: impl Into<Value>) -> bool {
     let keys = set_keys(path);
+    if !settable(v, &keys) {
+        return false;
+    }
     set_at(v, &keys, val.into());
+    true
+}
+
+/// Walk the existing part of the path; fails on a non-numeric key into an array.
+fn settable(v: &Value, keys: &[String]) -> bool {
+    let Some((k, rest)) = keys.split_first() else { return true };
+    match v {
+        Value::Object(m) => m.get(k).is_none_or(|c| settable(c, rest)),
+        Value::Array(a) => {
+            if !is_index(k) {
+                return false;
+            }
+            k == "-1" || k.parse::<usize>().ok().and_then(|i| a.get(i)).is_none_or(|c| settable(c, rest))
+        }
+        _ => true,
+    }
 }
 
 /// sjson `SetRaw`: parse `raw` as JSON and set it. Invalid raw JSON is stored as a string
