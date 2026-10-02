@@ -1,0 +1,814 @@
+[
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k3[1m]",
+  "output": "k3"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k3[1m]",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k3",
+  "output": "k3"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k3",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "Kimi-K3[1M]",
+  "output": "k3"
+ },
+ {
+  "fn": "replay_family",
+  "input": "Kimi-K3[1M]",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "k3[1m]",
+  "output": "k3"
+ },
+ {
+  "fn": "replay_family",
+  "input": "k3[1m]",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "k3",
+  "output": "k3"
+ },
+ {
+  "fn": "replay_family",
+  "input": "k3",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.6",
+  "output": "k2.6"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.6",
+  "output": "k2.6"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k3(1024)",
+  "output": "k3(1024)"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k3(1024)",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k3[1m](1024)",
+  "output": "k3(1024)"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k3[1m](1024)",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.6[1m](high)",
+  "output": "k2.6(high)"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.6[1m](high)",
+  "output": "k2.6"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.7-code",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.7-code",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.7-code-highspeed",
+  "output": "kimi-for-coding-highspeed"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.7-code-highspeed",
+  "output": "kimi-for-coding-highspeed"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "Kimi-K2.7-Code",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "replay_family",
+  "input": "Kimi-K2.7-Code",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.7-code[1m](high)",
+  "output": "kimi-for-coding(high)"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.7-code[1m](high)",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "k2.8",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "replay_family",
+  "input": "k2.8",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.8-preview",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.8-preview",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k2.8(max)",
+  "output": "kimi-for-coding(max)"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k2.8(max)",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-for-coding[1m]",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-for-coding[1m]",
+  "output": "kimi-for-coding"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "for-coding-highspeed",
+  "output": "kimi-for-coding-highspeed"
+ },
+ {
+  "fn": "replay_family",
+  "input": "for-coding-highspeed",
+  "output": "kimi-for-coding-highspeed"
+ },
+ {
+  "fn": "upstream_model",
+  "input": " kimi-x ",
+  "output": "x"
+ },
+ {
+  "fn": "replay_family",
+  "input": " kimi-x ",
+  "output": "x"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "",
+  "output": ""
+ },
+ {
+  "fn": "replay_family",
+  "input": "",
+  "output": ""
+ },
+ {
+  "fn": "upstream_model",
+  "input": "KIMI-",
+  "output": ""
+ },
+ {
+  "fn": "replay_family",
+  "input": "KIMI-",
+  "output": ""
+ },
+ {
+  "fn": "upstream_model",
+  "input": "kimi-k3-256k",
+  "output": "k3-256k"
+ },
+ {
+  "fn": "replay_family",
+  "input": "kimi-k3-256k",
+  "output": "k3"
+ },
+ {
+  "fn": "upstream_model",
+  "input": "other(",
+  "output": "other("
+ },
+ {
+  "fn": "replay_family",
+  "input": "other(",
+  "output": "other("
+ },
+ {
+  "fn": "upstream_model",
+  "input": "ünï-kimi",
+  "output": "ünï-kimi"
+ },
+ {
+  "fn": "replay_family",
+  "input": "ünï-kimi",
+  "output": "ünï-kimi"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"list_directory:1\",\"type\":\"function\",\"function\":{\"name\":\"list_directory\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"call_id\":\"list_directory:1\",\"content\":\"[]\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"list_directory:1\",\"type\":\"function\",\"function\":{\"name\":\"list_directory\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"tool\",\"call_id\":\"list_directory:1\",\"content\":\"[]\",\"tool_call_id\":\"list_directory:1\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_123\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"content\":\"file-content\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_123\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"tool\",\"content\":\"file-content\",\"tool_call_id\":\"call_123\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}},{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"b\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"content\":\"result-without-id\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}},{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"b\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"tool\",\"content\":\"result-without-id\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"call_1\",\"call_id\":\"different-id\",\"content\":\"result\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"tool\",\"tool_call_id\":\"call_1\",\"call_id\":\"different-id\",\"content\":\"result\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"plan\",\"reasoning_content\":\"previous reasoning\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"plan\",\"reasoning_content\":\"previous reasoning\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"previous reasoning\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"assistant\",\"content\":\"current summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"assistant\",\"content\":\"current summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"current summary\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"reasoning_content\":\"real reasoning\"},{\"role\":\"assistant\",\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"reasoning_content\":\"real reasoning\"},{\"role\":\"assistant\",\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"real reasoning\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"assistant summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"assistant summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"assistant summary\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first line\"},{\"type\":\"text\",\"text\":\"second line\"}],\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"first line\"},{\"type\":\"text\",\"text\":\"second line\"}],\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"first line\\nsecond line\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"assistant summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"assistant summary\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"assistant summary\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"keep me\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"keep me\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"r1\"},{\"role\":\"tool\",\"call_id\":\"call_1\",\"content\":\"[]\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"b\",\"arguments\":\"{}\"}}]},{\"role\":\"tool\",\"call_id\":\"call_2\",\"content\":\"file\"}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"r1\"},{\"role\":\"tool\",\"call_id\":\"call_1\",\"content\":\"[]\",\"tool_call_id\":\"call_1\"},{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_2\",\"type\":\"function\",\"function\":{\"name\":\"b\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"r1\"},{\"role\":\"tool\",\"call_id\":\"call_2\",\"content\":\"file\",\"tool_call_id\":\"call_2\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"user\",\"content\":\"start\"},{\"role\":\"assistant\",\"content\":\"\"},{\"role\":\"assistant\",\"content\":\"   \"},{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":null},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"  \"}]},{\"role\":\"assistant\"},{\"role\":\"assistant\",\"content\":\"keep\"},{\"role\":\"user\",\"content\":\"next\"}]}",
+  "output": "{\"messages\":[{\"role\":\"user\",\"content\":\"start\"},{\"role\":\"assistant\",\"content\":\"keep\"},{\"role\":\"user\",\"content\":\"next\"}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}]},{\"role\":\"assistant\",\"content\":\"\",\"function_call\":{\"name\":\"legacy_call\",\"arguments\":\"{}\"}},{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"thought\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\" visible \"}]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"\",\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"a\",\"arguments\":\"{}\"}}],\"reasoning_content\":\"[reasoning unavailable]\"},{\"role\":\"assistant\",\"content\":\"\",\"function_call\":{\"name\":\"legacy_call\",\"arguments\":\"{}\"}},{\"role\":\"assistant\",\"content\":\"\",\"reasoning_content\":\"thought\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\" visible \"}]}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"image_url\"},{\"type\":\"text\"}]},{\"role\":\"assistant\",\"content\":{\"a\":1}},{\"role\":\"assistant\",\"content\":\"\",\"function_call\":{}},{\"role\":\"assistant\",\"content\":\"\",\"function_call\":null},{\"role\":\"assistant\",\"content\":[{}]},{\"role\":\"assistant\",\"content\":[5]},{\"role\":\"assistant\",\"content\":[null,\"\"]}]}",
+  "output": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"image_url\"},{\"type\":\"text\"}]},{\"role\":\"assistant\",\"content\":{\"a\":1}},{\"role\":\"assistant\",\"content\":[5]}]}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"model\":\"x\"}",
+  "output": "{\"model\":\"x\"}"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "not json",
+  "output": "not json"
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "",
+  "output": ""
+ },
+ {
+  "fn": "tool_message_links",
+  "input": "{\"messages\":\"nope\"}",
+  "output": "{\"messages\":\"nope\"}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"test_fn\",\"parameters\":{\"definitions\":{\"prop\":{\"type\":\"number\"}},\"properties\":{\"count\":{\"$ref\":\"#/definitions/prop\",\"description\":\"item count\"}}}}}],\"functions\":[{\"name\":\"legacy_fn\",\"parameters\":{\"properties\":{\"name\":{\"type\":\"string\"}}}}]}",
+  "output": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"test_fn\",\"parameters\":{\"properties\":{\"count\":{\"description\":\"item count\",\"type\":\"number\"}},\"type\":\"object\"}}}],\"functions\":[{\"name\":\"legacy_fn\",\"parameters\":{\"properties\":{\"name\":{\"type\":\"string\"}},\"type\":\"object\"}}]}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"ok\",\"parameters\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}}}]}",
+  "output": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"ok\",\"parameters\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}}}]}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"d\",\"parameters\":{\"$defs\":{\"X\":{\"type\":\"string\"}},\"type\":\"object\",\"properties\":{\"a\":{\"$ref\":\"#/$defs/X\"}}}}},{\"type\":\"function\",\"function\":{\"name\":\"e\"}}]}",
+  "output": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"d\",\"parameters\":{\"properties\":{\"a\":{\"type\":\"string\"}},\"type\":\"object\"}}},{\"type\":\"function\",\"function\":{\"name\":\"e\"}}]}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[{\"name\":\"flat\",\"parameters\":{\"properties\":{}}}]}",
+  "output": "{\"tools\":[{\"name\":\"flat\",\"parameters\":{\"properties\":{},\"type\":\"object\"}}]}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[]}",
+  "output": "{\"tools\":[]}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"model\":\"m\"}",
+  "output": "{\"model\":\"m\"}"
+ },
+ {
+  "fn": "tools",
+  "input": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"s\",\"parameters\":\"str\"}}]}",
+  "output": "{\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"s\",\"parameters\":\"str\"}}]}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"model\":\"kimi-for-coding\"}",
+  "output": "{\"model\":\"kimi-for-coding\"}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"thinking\":{\"type\":\"enabled\",\"effort\":\"high\"},\"temperature\":1.0}",
+  "output": "{\"thinking\":{\"type\":\"enabled\",\"effort\":\"high\"},\"temperature\":1.0}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"thinking\":{\"type\":\"enabled\"},\"temperature\":0.7}",
+  "output": "{\"thinking\":{\"type\":\"enabled\"}}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"thinking\":{\"type\":\"disabled\"},\"temperature\":0.6}",
+  "output": "{\"thinking\":{\"type\":\"disabled\"},\"temperature\":0.6}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"thinking\":{\"type\":\"Disabled\"},\"temperature\":1.0}",
+  "output": "{\"thinking\":{\"type\":\"Disabled\"}}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"temperature\":0.5}",
+  "output": "{}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"temperature\":\"1\"}",
+  "output": "{\"temperature\":\"1\"}"
+ },
+ {
+  "fn": "temperature",
+  "input": "{\"temperature\":1}",
+  "output": "{\"temperature\":1}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"view_image:31\",\"name\":\"view_image\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"view_image:32\",\"name\":\"view_image\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"view_image:31\",\"output\":\"ok31\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"keep following instructions\"}]},{\"type\":\"function_call_output\",\"call_id\":\"view_image:32\",\"output\":\"ok32\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"view_image:31\",\"name\":\"view_image\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"view_image:32\",\"name\":\"view_image\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"view_image:31\",\"output\":\"ok31\"},{\"type\":\"function_call_output\",\"call_id\":\"view_image:32\",\"output\":\"ok32\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"keep following instructions\"}]}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"call_2\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"status reminder\"}]},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"res1\"},{\"type\":\"function_call_output\",\"call_id\":\"call_2\",\"output\":\"res2\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"call_2\",\"name\":\"lookup\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"res1\"},{\"type\":\"function_call_output\",\"call_id\":\"call_2\",\"output\":\"res2\"},{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"status reminder\"}]}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"ok\"},{\"type\":\"message\",\"role\":\"developer\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"ok\"},{\"type\":\"message\",\"role\":\"developer\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t\"},{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"t\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"ok\"},{\"type\":\"message\",\"role\":\"developer\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t\"},{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"t\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"ok\"},{\"type\":\"message\",\"role\":\"developer\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":\"hi\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"b1_c1\",\"name\":\"t1\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"b1_c2\",\"name\":\"t2\",\"arguments\":\"{}\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"dev1\"}]},{\"type\":\"function_call_output\",\"call_id\":\"b1_c1\",\"output\":\"out1\"},{\"type\":\"function_call_output\",\"call_id\":\"b1_c2\",\"output\":\"out2\"},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done batch 1\"}]},{\"type\":\"function_call\",\"call_id\":\"b2_c1\",\"name\":\"t3\",\"arguments\":\"{}\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"dev2\"}]},{\"type\":\"function_call_output\",\"call_id\":\"b2_c1\",\"output\":\"out3\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"b1_c1\",\"name\":\"t1\",\"arguments\":\"{}\"},{\"type\":\"function_call\",\"call_id\":\"b1_c2\",\"name\":\"t2\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"b1_c1\",\"output\":\"out1\"},{\"type\":\"function_call_output\",\"call_id\":\"b1_c2\",\"output\":\"out2\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"dev1\"}]},{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done batch 1\"}]},{\"type\":\"function_call\",\"call_id\":\"b2_c1\",\"name\":\"t3\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"b2_c1\",\"output\":\"out3\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":[{\"type\":\"input_text\",\"text\":\"dev2\"}]}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t1\"},{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"t2\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"o1\"},{\"type\":\"function_call_output\",\"call_id\":\"c2\",\"output\":\"o2\"},{\"type\":\"message\",\"role\":\"developer\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"t1\"},{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"t2\"},{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"o1\"},{\"type\":\"function_call_output\",\"call_id\":\"c2\",\"output\":\"o2\"},{\"type\":\"message\",\"role\":\"developer\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"custom_tool_call\",\"call_id\":\"ctc_1\",\"name\":\"custom_lookup\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":\"note\"},{\"type\":\"custom_tool_call_output\",\"call_id\":\"ctc_1\",\"output\":\"lookup_result\"}]}",
+  "output": "{\"model\":\"kimi-k3\",\"input\":[{\"type\":\"custom_tool_call\",\"call_id\":\"ctc_1\",\"name\":\"custom_lookup\"},{\"type\":\"custom_tool_call_output\",\"call_id\":\"ctc_1\",\"output\":\"lookup_result\"},{\"type\":\"message\",\"role\":\"developer\",\"content\":\"note\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"model\":\"m\",\"input\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"t\"},{\"type\":\"message\",\"role\":\"user\",\"content\":\"x\"},{\"type\":\"function_call_output\",\"id\":\"fc_1\",\"output\":\"o\"}]}",
+  "output": "{\"model\":\"m\",\"input\":[{\"type\":\"function_call\",\"id\":\"fc_1\",\"name\":\"t\"},{\"type\":\"function_call_output\",\"id\":\"fc_1\",\"output\":\"o\"},{\"type\":\"message\",\"role\":\"user\",\"content\":\"x\"}]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"input\":[]}",
+  "output": "{\"input\":[]}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "{\"input\":\"x\"}",
+  "output": "{\"input\":\"x\"}"
+ },
+ {
+  "fn": "responses_input",
+  "input": "x",
+  "output": "x"
+ },
+ {
+  "fn": "urls",
+  "input": {},
+  "output": {
+   "base": "https://api.kimi.com/coding",
+   "chat": "https://api.kimi.com/coding/v1/chat/completions",
+   "claude": "https://api.kimi.com/coding",
+   "responses": "https://api.kimi.com/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "provider": "kimi-ai"
+  },
+  "output": {
+   "base": "https://api.kimi.ai/coding",
+   "chat": "https://api.kimi.ai/coding/v1/chat/completions",
+   "claude": "https://api.kimi.ai/coding",
+   "responses": "https://api.kimi.ai/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "attributes": {
+    "base_url": "https://x.example/coding/"
+   }
+  },
+  "output": {
+   "base": "https://x.example/coding",
+   "chat": "https://x.example/coding/v1/chat/completions",
+   "claude": "https://x.example/coding",
+   "responses": "https://x.example/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "attributes": {
+    "base_url": " https://x.example/v1 "
+   }
+  },
+  "output": {
+   "base": "https://x.example/v1",
+   "chat": "https://x.example/v1/chat/completions",
+   "claude": "https://x.example",
+   "responses": "https://x.example/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "metadata": {
+    "base_url": "https://m.example/coding///"
+   }
+  },
+  "output": {
+   "base": "https://m.example/coding",
+   "chat": "https://m.example/coding/v1/chat/completions",
+   "claude": "https://m.example/coding",
+   "responses": "https://m.example/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "metadata": {
+    "domain": "kimi.ai"
+   }
+  },
+  "output": {
+   "base": "https://api.kimi.ai/coding",
+   "chat": "https://api.kimi.ai/coding/v1/chat/completions",
+   "claude": "https://api.kimi.ai/coding",
+   "responses": "https://api.kimi.ai/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "metadata": {
+    "type": "kimi-ai"
+   }
+  },
+  "output": {
+   "base": "https://api.kimi.ai/coding",
+   "chat": "https://api.kimi.ai/coding/v1/chat/completions",
+   "claude": "https://api.kimi.ai/coding",
+   "responses": "https://api.kimi.ai/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "id": "kimi-ai-123.json"
+  },
+  "output": {
+   "base": "https://api.kimi.com/coding",
+   "chat": "https://api.kimi.com/coding/v1/chat/completions",
+   "claude": "https://api.kimi.com/coding",
+   "responses": "https://api.kimi.com/coding/v1/responses"
+  }
+ },
+ {
+  "fn": "urls",
+  "input": {
+   "attributes": {
+    "base_url": "https://x.example/v1"
+   },
+   "provider": "kimi"
+  },
+  "output": {
+   "base": "https://x.example/v1",
+   "chat": "https://x.example/v1/chat/completions",
+   "claude": "https://x.example",
+   "responses": "https://x.example/v1/responses"
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"ok\"}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]},{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"content\":\"ok\"}]}]}",
+   "restored": true
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"other\",\"signature\":\"s\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"other\",\"signature\":\"s\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Different\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Different\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"Calling.\",\"type\":\"text\"},{\"input\":{\"q\":\"x\"},\"name\":\"lookup\",\"id\":\"toolu_1\",\"type\":\"tool_use\"}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]}]}",
+   "restored": true
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"plain\"}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":\"plain\"}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Calling.\"}]}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"p\",\"signature\":\"s\"},{\"type\":\"text\",\"text\":\"Calling.\"}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Calling.\"}]}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "restore",
+  "input": {
+   "body": "{\"model\":\"x\"}",
+   "cached": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]"
+  },
+  "output": {
+   "body": "{\"model\":\"x\"}",
+   "restored": false
+  }
+ },
+ {
+  "fn": "replayable",
+  "input": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]",
+  "output": true
+ },
+ {
+  "fn": "replayable",
+  "input": "[{\"type\":\"thinking\",\"thinking\":\"p\",\"signature\":\"s\"}]",
+  "output": false
+ },
+ {
+  "fn": "replayable",
+  "input": "[{\"type\":\"tool_use\",\"id\":\"t\"}]",
+  "output": false
+ },
+ {
+  "fn": "replayable",
+  "input": "[{\"type\":\"thinking\",\"signature\":\" \"},{\"type\":\"tool_use\",\"id\":\"t\"}]",
+  "output": false
+ },
+ {
+  "fn": "replayable",
+  "input": "{}",
+  "output": false
+ },
+ {
+  "fn": "replayable",
+  "input": "[]",
+  "output": false
+ },
+ {
+  "fn": "replayable",
+  "input": "[{\"type\":\"thinking\",\"signature\":\"s\"},{\"type\":\"tool_use\",\"id\":\" \"}]",
+  "output": false
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m1\"}}\n\n",
+   "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n",
+   "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"plan \"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"more\"}}\n\n",
+   "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig-\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"1\"}}\n\n",
+   "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+   "data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"Calling.\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\n",
+   "data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"q\\\":\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"x\\\"}\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":2}\n\n",
+   "data: {\"type\":\"message_stop\"}\n\n"
+  ],
+  "output": {
+   "content": "[{\"type\":\"thinking\",\"thinking\":\"plan more\",\"signature\":\"sig-1\"},{\"type\":\"text\",\"text\":\"Calling.\"},{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"lookup\",\"input\":{\"q\":\"x\"}}]",
+   "ok": true,
+   "upstream_error": false
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"unknown_delta\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+  ],
+  "output": {
+   "content": "",
+   "ok": false,
+   "upstream_error": false
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"a\"}}\n\ndata: {\"type\":\"error\",\"error\":{}}\n\n"
+  ],
+  "output": {
+   "content": "",
+   "ok": false,
+   "upstream_error": true
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"a\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+  ],
+  "output": {
+   "content": "",
+   "ok": false,
+   "upstream_error": false
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"a\"}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"b\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: not-json\n\ndata: {\"type\":\"message_stop\"}\n\ndata: [DONE]\n\n"
+  ],
+  "output": {
+   "content": "",
+   "ok": false,
+   "upstream_error": false
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"n\",\"input\":{}}}\n\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{bad\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+  ],
+  "output": {
+   "content": "",
+   "ok": false,
+   "upstream_error": false
+  }
+ },
+ {
+  "fn": "stream_accumulator",
+  "input": [
+   "data: {\"type\":\"message_start\"}\n\ndata: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"second\"}}\n\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"first\"}}\n\ndata: {\"type\":\"content_block_stop\",\"index\":1}\n\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\ndata: {\"type\":\"message_stop\"}\n\n"
+  ],
+  "output": {
+   "content": "[{\"type\":\"text\",\"text\":\"first\"},{\"type\":\"text\",\"text\":\"second\"}]",
+   "ok": true,
+   "upstream_error": false
+  }
+ }
+]

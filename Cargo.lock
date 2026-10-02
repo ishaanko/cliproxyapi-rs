@@ -622,6 +622,8 @@ dependencies = [
 name = "cpa-executors"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "axum",
  "bytes",
  "chrono",
  "cpa-auth",
