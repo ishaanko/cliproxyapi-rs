@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -14,11 +15,11 @@ use cpa_config::watcher::ConfigWatcher;
 use cpa_config::{Config, ConfigError, load_config, load_dotenv, resolve_auth_dir};
 use cpa_core::registry::{ModelRegistry, global_registry};
 use parking_lot::Mutex;
-use tokio::sync::watch;
+use tokio::sync::{MutexGuard, watch};
 use tokio::task::JoinHandle;
 
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
-use super::models::{apply_registration, openai_compat_info_from_auth, resolve_models_for_auth};
+use super::models::{ModelRegistration, apply_registration, openai_compat_info_from_auth, resolve_models_for_auth};
 use super::sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 use crate::conductor::{Manager, SharedManager};
 use crate::executor::{DynExecutor, ExecError};
@@ -42,6 +43,8 @@ pub enum ServiceError {
     Watcher(String),
     #[error("cliproxy: service already started")]
     AlreadyStarted,
+    #[error("cliproxy: background task failed: {0}")]
+    Task(String),
 }
 
 /// The conductor operations the service drives. [`Manager`] implements it by delegation; the
@@ -50,8 +53,11 @@ pub enum ServiceError {
 #[async_trait]
 pub trait ManagerPort: Send + Sync {
     fn register_executor(&self, executor: DynExecutor);
-    /// Insert or update (Go: `Manager.Register` / `Manager.Update`).
-    async fn update(&self, auth: Auth) -> Result<Auth, ExecError>;
+    /// Insert or update (Go: `Manager.Register` / `Manager.Update`). `persist` says whether the
+    /// manager may write the credential to the auth store. The service always passes `false`
+    /// (Go: `WithSkipPersist` for watcher, config synthesis and store loads): the file on disk is
+    /// the source of truth and synthesized config auths must never be written out.
+    async fn update(&self, auth: Auth, persist: bool) -> Result<Auth, ExecError>;
     async fn remove(&self, id: &str);
     fn list(&self) -> Vec<Auth>;
     fn get(&self, id: &str) -> Option<Auth>;
@@ -67,6 +73,10 @@ pub trait ManagerPort: Send + Sync {
 
     /// A batch of auth updates finished. TODO(conductor): Go calls `RefreshAPIKeyModelAlias()`.
     fn auth_batch_applied(&self) {}
+
+    /// An auth was removed. TODO(executor): Go closes the Codex / xAI websocket sessions of
+    /// `auth_id` here when `provider` is `codex` or `xai` (reason `auth_removed`).
+    async fn auth_removed(&self, _auth_id: &str, _provider: &str) {}
 }
 
 #[async_trait]
@@ -74,7 +84,9 @@ impl ManagerPort for Manager {
     fn register_executor(&self, executor: DynExecutor) {
         Manager::register_executor(self, executor);
     }
-    async fn update(&self, auth: Auth) -> Result<Auth, ExecError> {
+    async fn update(&self, auth: Auth, _persist: bool) -> Result<Auth, ExecError> {
+        // TODO(conductor): `Manager::update` has no skip-persist switch yet; pass `_persist`
+        // through once it persists.
         Manager::update(self, auth).await
     }
     async fn remove(&self, id: &str) {
@@ -198,16 +210,17 @@ impl ServiceBuilder {
         let registered: HashSet<String> = self.executors.iter().map(|e| e.identifier().to_string()).collect();
         let config = Arc::new(config);
         let (config_tx, _) = watch::channel(config.clone());
-        let (applied_tx, _) = watch::channel(0u64);
+        let (applied_tx, _) = watch::channel(Applied::default());
         let inner = Inner {
             config_path,
             config_tx,
             applied_tx,
+            started: AtomicBool::new(false),
             store,
             manager,
             port,
             registry: self.registry,
-            sync: Mutex::new(AuthSync::new(config.clone(), config.auth_dir.clone())),
+            sync: Arc::new(Mutex::new(AuthSync::new(config.clone(), config.auth_dir.clone()))),
             apply_lock: tokio::sync::Mutex::new(()),
             pending_executors: Mutex::new(self.executors),
             registered_executors: Mutex::new(registered),
@@ -226,14 +239,17 @@ struct Inner {
     config_path: PathBuf,
     /// The committed config; `send_replace`d on every accepted reload.
     config_tx: watch::Sender<Arc<Config>>,
-    /// Counts fully applied config reloads (lets `reload_config` wait for the background apply).
-    applied_tx: watch::Sender<u64>,
+    /// Outcome of the latest config reload (lets `reload_config` wait for the background apply).
+    applied_tx: watch::Sender<Applied>,
+    started: AtomicBool,
     store: Arc<FileTokenStore>,
     manager: SharedManager,
     port: Arc<dyn ManagerPort>,
     registry: &'static ModelRegistry,
-    sync: Mutex<AuthSync>,
-    /// Serializes application of auth updates (Go: `authUpdateMu`).
+    /// Only touched inside `spawn_blocking` (it scans files) and under `apply_lock`.
+    sync: Arc<Mutex<AuthSync>>,
+    /// Serializes computing and applying auth updates, so they reach the manager in the order the
+    /// state changed (Go: `authUpdateMu` plus revision stamping).
     apply_lock: tokio::sync::Mutex<()>,
     pending_executors: Mutex<Vec<DynExecutor>>,
     registered_executors: Mutex<HashSet<String>>,
@@ -243,6 +259,28 @@ struct Inner {
     watch: bool,
     config_watcher: Mutex<Option<Arc<ConfigWatcher>>>,
     task: Mutex<Option<JoinHandle<()>>>,
+}
+
+/// Result of the most recent config reload.
+#[derive(Debug, Clone, Copy, Default)]
+struct Applied {
+    seq: u64,
+    /// False when the new config was rejected (invalid weights, apply failure).
+    accepted: bool,
+}
+
+/// What `apply_config` tells the run loop.
+struct ConfigOutcome {
+    accepted: bool,
+    /// Set when the auth directory changed: the watcher for the new directory (started before the
+    /// rescan so deletions in between are seen), `None` if it could not be started.
+    new_watcher: Option<Option<AuthWatcher>>,
+}
+
+impl ConfigOutcome {
+    fn rejected() -> Self {
+        Self { accepted: false, new_watcher: None }
+    }
 }
 
 /// A running (or startable) proxy core: config, auth store, manager and model registry wired
@@ -284,16 +322,26 @@ impl Service {
         self.inner.register_executor(executor);
     }
 
-    /// Go `Service.Run` up to the watcher: creates the auth dir, registers executors, loads the
-    /// store into the manager, synthesizes config and file auths, registers their models, then
-    /// (unless disabled) starts watching the config file and auth dir in a background task.
+    /// Go `Service.Run` up to the watcher: creates the auth dir, registers executors, starts the
+    /// watchers (before the scan, so changes in between are not missed), loads the store into the
+    /// manager, synthesizes config and file auths and registers their models. Then (unless
+    /// disabled) a background task applies config and auth-dir changes.
     pub async fn start(&self) -> Result<(), ServiceError> {
-        let inner = &self.inner;
-        if inner.task.lock().is_some() || inner.config_watcher.lock().is_some() {
+        if self.inner.started.swap(true, Ordering::SeqCst) {
             return Err(ServiceError::AlreadyStarted);
         }
+        let result = self.start_inner().await;
+        if result.is_err() {
+            self.inner.started.store(false, Ordering::SeqCst);
+        }
+        result
+    }
+
+    async fn start_inner(&self) -> Result<(), ServiceError> {
+        let inner = &self.inner;
         let cfg = self.config();
-        ensure_auth_dir(&cfg.auth_dir)?;
+        let dir = cfg.auth_dir.clone();
+        blocking(move || ensure_auth_dir(&dir)).await??;
         inner.store.set_base_dir(&cfg.auth_dir);
         inner.port.config_changed(&cfg);
 
@@ -302,13 +350,16 @@ impl Service {
             inner.port.register_executor(executor);
         }
 
+        let watchers = if inner.watch { Some(self.open_watchers(&cfg)?) } else { None };
+
         // Go `Manager.Load`: the store's auths enter the manager first (with file mtimes as
         // `created_at`); synthesized auths then update them.
-        match inner.store.list() {
+        let store = inner.store.clone();
+        match blocking(move || store.list()).await? {
             Ok(auths) => {
                 for auth in auths {
                     let id = auth.id.clone();
-                    if let Err(err) = inner.port.update(auth).await {
+                    if let Err(err) = inner.port.update(auth, false).await {
                         tracing::warn!("failed to load auth {id} from store: {err}");
                     }
                 }
@@ -316,16 +367,21 @@ impl Service {
             Err(err) => tracing::warn!("failed to load auth store: {err}"),
         }
 
-        let updates = inner.sync.lock().reload_clients(true, &[], false);
-        inner.apply_updates(updates).await;
+        {
+            let guard = inner.apply_lock.lock().await;
+            let updates = inner.with_sync(|sync| sync.reload_clients(true, &[], false)).await;
+            inner.apply_updates_locked(&guard, updates).await;
+        }
 
-        if inner.watch {
-            self.start_watchers(&cfg)?;
+        if let Some((config_rx, auth_watcher)) = watchers {
+            let task = tokio::spawn(run_loop(Arc::downgrade(inner), config_rx, Some(auth_watcher)));
+            *inner.task.lock() = Some(task);
+            tracing::info!("file watcher started for config and auth directory changes");
         }
         Ok(())
     }
 
-    fn start_watchers(&self, cfg: &Arc<Config>) -> Result<(), ServiceError> {
+    fn open_watchers(&self, cfg: &Arc<Config>) -> Result<(watch::Receiver<Arc<Config>>, AuthWatcher), ServiceError> {
         let inner = &self.inner;
         let watcher = Arc::new(
             ConfigWatcher::start(&inner.config_path, cfg.clone(), None).map_err(|e| ServiceError::Watcher(e.to_string()))?,
@@ -333,10 +389,7 @@ impl Service {
         let config_rx = watcher.subscribe();
         *inner.config_watcher.lock() = Some(watcher);
         let auth_watcher = start_auth_watcher(&inner.store, &cfg.auth_dir)?;
-        let task = tokio::spawn(run_loop(Arc::downgrade(inner), config_rx, Some(auth_watcher)));
-        *inner.task.lock() = Some(task);
-        tracing::info!("file watcher started for config and auth directory changes");
-        Ok(())
+        Ok((config_rx, auth_watcher))
     }
 
     /// Re-reads the config file now and waits until the new snapshot has been applied (Go:
@@ -348,23 +401,27 @@ impl Service {
             return false;
         };
         let mut applied = inner.applied_tx.subscribe();
-        applied.mark_unchanged();
         if !watcher.reload_now().await {
             return false;
         }
-        applied.changed().await.is_ok()
+        match applied.changed().await {
+            Ok(()) => applied.borrow().accepted,
+            Err(_) => false,
+        }
     }
 
     /// Go `runtimeAuthSyncHook` / `DispatchPersistedAuthUpdate`: registers an auth that a login or
     /// management call just persisted, without waiting for the file event.
     pub async fn sync_persisted_auth(&self, auth: Auth) {
         let inner = &self.inner;
+        let guard = inner.apply_lock.lock().await;
+        // No file access: safe to run on the async thread.
         if !inner.sync.lock().note_persisted(&auth) {
             return;
         }
         let action = if inner.port.get(&auth.id).is_some() { AuthUpdateAction::Modify } else { AuthUpdateAction::Add };
         let update = AuthUpdate { action, id: auth.id.clone(), auth: Some(auth) };
-        inner.apply_updates(vec![update]).await;
+        inner.apply_updates_locked(&guard, vec![update]).await;
     }
 
     /// Waits for in-flight Antigravity capability probes (Go: `WaitAntigravityProbes`).
@@ -406,6 +463,11 @@ fn ensure_auth_dir(dir: &str) -> Result<(), ServiceError> {
     }
 }
 
+/// Runs blocking filesystem work off the async threads.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, ServiceError> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| ServiceError::Task(e.to_string()))
+}
+
 fn start_auth_watcher(store: &Arc<FileTokenStore>, dir: &str) -> Result<AuthWatcher, ServiceError> {
     // The initial scan is replayed so removals of files present at start are recognized; the sync
     // state's content hashes turn those replayed events into no-ops.
@@ -413,7 +475,9 @@ fn start_auth_watcher(store: &Arc<FileTokenStore>, dir: &str) -> Result<AuthWatc
         .map_err(|e| ServiceError::Watcher(e.to_string()))
 }
 
-/// Background loop: applies committed config reloads and auth-dir file events in order.
+/// Background loop: applies committed config reloads and auth-dir file events in order. Each
+/// event is handled in its own task so a panic is logged instead of killing the loop (and
+/// leaving `reload_config` waiting).
 async fn run_loop(inner: Weak<Inner>, mut config_rx: watch::Receiver<Arc<Config>>, mut auth_watcher: Option<AuthWatcher>) {
     loop {
         enum Event {
@@ -433,23 +497,30 @@ async fn run_loop(inner: Weak<Inner>, mut config_rx: watch::Receiver<Arc<Config>
             } => Event::Auth(event.map(Box::new)),
         };
         let Some(inner) = inner.upgrade() else { return };
+        let task_inner = inner.clone();
         match event {
             Event::Config => {
                 let cfg = config_rx.borrow_and_update().clone();
-                if inner.apply_config(cfg.clone()).await {
-                    // The auth dir moved: watch the new one.
-                    match start_auth_watcher(&inner.store, &cfg.auth_dir) {
-                        Ok(watcher) => auth_watcher = Some(watcher),
-                        Err(err) => {
-                            tracing::error!("{err}");
-                            auth_watcher = None;
-                        }
-                    }
+                let outcome = tokio::spawn(async move { task_inner.apply_config(cfg).await })
+                    .await
+                    .unwrap_or_else(|err| {
+                        tracing::error!("config update failed: {err}");
+                        ConfigOutcome::rejected()
+                    });
+                if let Some(watcher) = outcome.new_watcher {
+                    auth_watcher = watcher;
                 }
-                inner.applied_tx.send_modify(|n| *n += 1);
+                inner.applied_tx.send_modify(|applied| {
+                    applied.seq += 1;
+                    applied.accepted = outcome.accepted;
+                });
             }
             Event::Auth(None) => auth_watcher = None,
-            Event::Auth(Some(event)) => inner.handle_auth_file_event(*event).await,
+            Event::Auth(Some(event)) => {
+                if let Err(err) = tokio::spawn(async move { task_inner.handle_auth_file_event(*event).await }).await {
+                    tracing::error!("auth update failed: {err}");
+                }
+            }
         }
     }
 }
@@ -480,7 +551,21 @@ impl Inner {
         }
     }
 
+    /// Runs `f` against the sync state on the blocking pool (it reads and scans files). Callers
+    /// hold `apply_lock`, so state changes and their application stay ordered. Empty on panic.
+    async fn with_sync<T: Default + Send + 'static>(&self, f: impl FnOnce(&mut AuthSync) -> T + Send + 'static) -> T {
+        let sync = self.sync.clone();
+        match tokio::task::spawn_blocking(move || f(&mut sync.lock())).await {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::error!("auth sync failed: {err}");
+                T::default()
+            }
+        }
+    }
+
     async fn handle_auth_file_event(&self, event: AuthFileEvent) {
+        let guard = self.apply_lock.lock().await;
         let updates = match event {
             AuthFileEvent::Added(auth) | AuthFileEvent::Updated(auth) => {
                 let path = auth.attr(ATTRIBUTE_PATH);
@@ -488,51 +573,66 @@ impl Inner {
                 if path.is_empty() {
                     return;
                 }
-                self.sync.lock().file_changed(Path::new(&path))
+                self.with_sync(move |sync| sync.file_changed(Path::new(&path))).await
             }
-            AuthFileEvent::Removed { path, .. } => self.sync.lock().file_removed(&path),
+            AuthFileEvent::Removed { path, .. } => self.with_sync(move |sync| sync.file_removed(&path)).await,
         };
-        self.apply_updates(updates).await;
+        self.apply_updates_locked(&guard, updates).await;
     }
 
     /// Go `applyConfigUpdateWithAuthSynthesis` (watcher path) plus the watcher's `reloadConfig`
     /// decisions: commits `new`, diffs it against the previous config and republishes the
-    /// affected auths. Returns whether the auth directory changed. Configs with invalid
-    /// credential weights are rejected.
-    async fn apply_config(&self, new: Arc<Config>) -> bool {
+    /// affected auths. Configs with invalid credential weights are rejected.
+    async fn apply_config(&self, new: Arc<Config>) -> ConfigOutcome {
+        let guard = self.apply_lock.lock().await;
         if let Err(err) = new.validate_credential_weights() {
             tracing::warn!("rejected config update with invalid credential weights: {err}");
-            return false;
+            return ConfigOutcome::rejected();
         }
         let old = self.config();
         let plan = ReloadPlan::between(Some(&old), &new);
         self.config_tx.send_replace(new.clone());
         self.port.config_changed(&new);
+        let mut new_watcher = None;
         if plan.auth_dir_changed {
             self.store.set_base_dir(&new.auth_dir);
-            if let Err(err) = ensure_auth_dir(&new.auth_dir) {
-                tracing::error!("{err}");
+            let dir = new.auth_dir.clone();
+            match blocking(move || ensure_auth_dir(&dir)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) | Err(err) => tracing::error!("{err}"),
+            }
+            // Watch the new directory before rescanning it.
+            if self.watch {
+                new_watcher = Some(match start_auth_watcher(&self.store, &new.auth_dir) {
+                    Ok(watcher) => Some(watcher),
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        None
+                    }
+                });
             }
         }
-        let updates = {
-            let mut sync = self.sync.lock();
-            sync.set_config(new.clone());
-            if plan.auth_dir_changed {
-                sync.set_auth_dir(new.auth_dir.clone());
-            }
-            sync.reload_clients(plan.auth_dir_changed, &plan.affected_oauth_providers, plan.force_auth_refresh)
-        };
-        self.apply_updates(updates).await;
-        plan.auth_dir_changed
+        let cfg = new.clone();
+        let updates = self
+            .with_sync(move |sync| {
+                sync.set_config(cfg.clone());
+                if plan.auth_dir_changed {
+                    sync.set_auth_dir(cfg.auth_dir.clone());
+                }
+                sync.reload_clients(plan.auth_dir_changed, &plan.affected_oauth_providers, plan.force_auth_refresh)
+            })
+            .await;
+        self.apply_updates_locked(&guard, updates).await;
+        ConfigOutcome { accepted: true, new_watcher }
     }
 
     /// Go `handleAuthUpdates`: add/modify updates the manager and re-registers models, delete
-    /// unregisters and removes. Updates apply in order, one batch at a time.
-    async fn apply_updates(&self, updates: Vec<AuthUpdate>) {
+    /// unregisters and removes. Updates apply in order. The guard proves the caller holds
+    /// `apply_lock`.
+    async fn apply_updates_locked(&self, _held: &MutexGuard<'_, ()>, updates: Vec<AuthUpdate>) {
         if updates.is_empty() {
             return;
         }
-        let _guard = self.apply_lock.lock().await;
         let cfg = self.config();
         for update in updates {
             match update.action {
@@ -553,8 +653,12 @@ impl Inner {
 
     /// Go `applyCoreAuthRemoval`.
     async fn apply_removal(&self, id: &str) {
+        let provider = self.port.get(id).map(|a| a.provider);
         self.registry.unregister_client(id);
         self.port.remove(id).await;
+        if let Some(provider) = provider {
+            self.port.auth_removed(id, &provider).await;
+        }
     }
 
     /// Go `prepareCoreAuthForModelRegistration` + `completeModelRegistrationForAuth`.
@@ -582,7 +686,7 @@ impl Inner {
                 }
             }
         }
-        if let Err(err) = self.port.update(auth.clone()).await {
+        if let Err(err) = self.port.update(auth.clone(), false).await {
             tracing::error!("failed to update auth {}: {err}", auth.id);
             match self.port.get(&auth.id) {
                 Some(current) if !current.disabled => auth = current,
@@ -619,8 +723,12 @@ impl Inner {
         if self.port.get(&auth.id).is_none_or(|c| c.disabled) {
             return;
         }
-        apply_registration(self.registry, &auth.id, resolve_models_for_auth(cfg, auth));
-        self.probe_antigravity(cfg, auth);
+        let registration = resolve_models_for_auth(cfg, auth);
+        let registered = matches!(registration, ModelRegistration::Register { .. });
+        apply_registration(self.registry, &auth.id, registration);
+        if registered {
+            self.probe_antigravity(cfg, auth);
+        }
         self.port.models_registered(&auth.id).await;
     }
 

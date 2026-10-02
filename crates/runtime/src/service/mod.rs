@@ -39,5 +39,5 @@ pub use listing::{
 };
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
 pub use lifecycle::{ExecutorFactory, ManagerPort, Service, ServiceBuilder, ServiceError};
-pub use sync::{ApiKeyClientCounts, AuthSync, AuthUpdate, AuthUpdateAction};
+pub use sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 pub use synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_dir, synthesize_auth_file, synthesize_config_auths};

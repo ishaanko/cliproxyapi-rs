@@ -13,7 +13,10 @@ use cpa_auth::Auth;
 use cpa_config::load_config;
 use cpa_core::registry::{ModelInfo, ModelRegistry};
 use cpa_runtime::service::synth::{StableIdGenerator, SynthesisContext, synthesize_auth_file, synthesize_config_auths};
-use cpa_runtime::service::register_models_for_auth;
+use cpa_runtime::service::{
+    claude_models_response, gemini_model_response, gemini_models_response, openai_models_response,
+    register_models_for_auth,
+};
 use serde_json::{Map, Value, json};
 
 const AUTH_DIR: &str = "/golden/auths";
@@ -239,6 +242,41 @@ fn synthesis_and_model_registration_match_go() {
                 let only_rust: Vec<_> = got.difference(&want).collect();
                 problems.push(format!("{name}: {handler} list only-go={only_go:?} only-rust={only_rust:?}"));
             }
+        }
+
+        // The real handlers' response bodies (key order included): re-serializing the Go body
+        // through `Value` keeps its key order, so string equality checks order too.
+        if let Some(handlers) = gold["handlers"].as_object() {
+            let canon = |raw: &Value| serde_json::to_string(&serde_json::from_str::<Value>(raw["body"].as_str().unwrap()).unwrap()).unwrap();
+            let mut check = |what: &str, want: String, got: String| {
+                if want != got {
+                    problems.push(format!("{name}: {what} body differs\n  go  ={want:.300}\n  rust={got:.300}"));
+                }
+            };
+            // Go builds the openai and gemini lists in map-iteration order; ours is sorted by id.
+            let unordered = |mut v: Value, key: &str| {
+                v[key].as_array_mut().unwrap().sort_by_key(Value::to_string);
+                v.to_string()
+            };
+            let parsed = |raw: &Value| serde_json::from_str::<Value>(raw["body"].as_str().unwrap()).unwrap();
+            check("openai", unordered(parsed(&handlers["openai"]), "data"), unordered(openai_models_response(&registry), "data"));
+            check("claude", canon(&handlers["claude"]), claude_models_response(&registry, false).to_string());
+            check("gemini", unordered(parsed(&handlers["gemini"]), "models"), unordered(gemini_models_response(&registry), "models"));
+            let hit = gold["handlers"]["gemini_name"].as_str().unwrap();
+            // Registry names are bare, so Go answers 404 for the `models/`-prefixed form.
+            for (what, key, action) in [
+                ("gemini get prefixed", "gemini_get_prefixed", hit.to_string()),
+                ("gemini get bare", "gemini_get_bare", hit.trim_start_matches("models/").to_string()),
+            ] {
+                let got = gemini_model_response(&registry, &format!("/{action}"));
+                if handlers[key]["status"] == 200 {
+                    check(what, canon(&handlers[key]), got.expect("gemini model hit").to_string());
+                } else if got.is_some() {
+                    check(what, "404".into(), "found".into());
+                }
+            }
+            assert_eq!(handlers["gemini_get_missing"]["status"], 404);
+            assert!(gemini_model_response(&registry, "/models/no-such-model").is_none());
         }
     }
     assert!(problems.is_empty(), "{} differences vs Go:\n{}", problems.len(), problems.iter().take(60).cloned().collect::<Vec<_>>().join("\n"));

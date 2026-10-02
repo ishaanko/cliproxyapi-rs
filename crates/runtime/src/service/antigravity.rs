@@ -19,8 +19,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use tokio::task::JoinSet;
 
-use super::models::oauth_model_alias_channel;
-use super::synth::oauth_model_aliases_from_attributes;
+use super::models::{oauth_model_alias_channel, oauth_model_aliases_for_auth};
 
 const BASE_URL_DAILY: &str = "https://daily-cloudcode-pa.googleapis.com";
 const MODELS_PATH: &str = "/v1internal:fetchAvailableModels";
@@ -80,9 +79,20 @@ fn normalize_model_id(id: &str) -> String {
 }
 
 /// Go `parseAntigravityModelCapabilityHints`: the `webSearchModelIds` of a response body.
+/// Mirrors `json.Unmarshal` into `struct{ WebSearchModelIDs []string }`: the body must be an
+/// object (or `null`), the field (matched case-insensitively) an array of strings or `null`.
 pub fn parse_hints(body: &[u8]) -> Option<WebSearchHints> {
     let parsed: Value = serde_json::from_slice(body).ok()?;
-    let ids = match parsed.get("webSearchModelIds") {
+    let ids = match &parsed {
+        Value::Null => None,
+        Value::Object(map) => map
+            .iter()
+            .rev()
+            .find(|(k, _)| k.eq_ignore_ascii_case("webSearchModelIds"))
+            .map(|(_, v)| v),
+        _ => return None,
+    };
+    let ids = match ids {
         Some(Value::Array(ids)) => ids.as_slice(),
         Some(Value::Null) | None => &[],
         Some(_) => return None,
@@ -126,16 +136,7 @@ pub fn model_base_urls(auth: &Auth) -> Vec<String> {
 /// Go `buildAntigravityReverseAliasMap`: lowercased alias -> upstream name for the auth.
 pub fn reverse_alias_map(cfg: &Config, auth: &Auth) -> HashMap<String, String> {
     let channel = oauth_model_alias_channel(&auth.provider, auth.auth_kind());
-    let mut aliases = oauth_model_aliases_from_attributes(&auth.attributes);
-    if let Some(global) = cfg.oauth_model_alias.get(&channel) {
-        // Per-auth aliases win; global entries only fill unseen aliases.
-        for entry in global {
-            if !aliases.iter().any(|a| a.alias.trim().eq_ignore_ascii_case(entry.alias.trim())) {
-                aliases.push(entry.clone());
-            }
-        }
-    }
-    aliases
+    oauth_model_aliases_for_auth(cfg, &channel, &auth.attributes)
         .iter()
         .filter_map(|a| {
             let alias = a.alias.trim().to_lowercase();
@@ -311,6 +312,9 @@ mod tests {
         assert!(parse_hints(b"{}").unwrap().is_empty());
         assert!(parse_hints(b"not json").is_none());
         assert!(parse_hints(br#"{"webSearchModelIds":"x"}"#).is_none());
+        assert!(parse_hints(b"[1]").is_none());
+        assert!(parse_hints(br#"{"webSearchModelIds":[1]}"#).is_none());
+        assert!(parse_hints(b"null").unwrap().is_empty());
     }
 
     #[test]
