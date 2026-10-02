@@ -42,6 +42,6 @@ pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     // executors.push(xai::new(cfg.clone()));
     executors.push(kimi::new(cfg.clone()));
     // executors.push(devin::new(cfg.clone()));
-    // executors.push(meta::new(cfg.clone()));
+    executors.push(meta::new(cfg.clone()));
     executors
 }

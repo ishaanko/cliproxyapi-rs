@@ -27,8 +27,16 @@ fn cfg_rx() -> crate::ConfigRx {
     watch::channel(Arc::new(Config::default())).1
 }
 
-/// Same JSON structure and key order, ignoring whitespace; non-JSON compares as text.
+/// Wall-clock fields the translators stamp into responses.
+fn mask_volatile(s: &str) -> String {
+    regex::Regex::new(r#""(created|created_at)":\s*[0-9]+"#).unwrap().replace_all(s, r#""$1":0"#).into_owned()
+}
+
+/// Same JSON structure and key order, ignoring whitespace and wall-clock stamps; non-JSON
+/// compares as text.
 fn same_json(a: &str, b: &str) -> bool {
+    let (a, b) = (mask_volatile(a), mask_volatile(b));
+    let (a, b) = (a.as_str(), b.as_str());
     if cpa_json::valid(a.as_bytes()) && cpa_json::valid(b.as_bytes()) {
         return cpa_json::to_string(&cpa_json::parse(a.as_bytes())) == cpa_json::to_string(&cpa_json::parse(b.as_bytes()));
     }
@@ -295,6 +303,8 @@ async fn executor_matches_go_recordings() {
 
 /// SSE chunks compare exactly except that JSON `data:` payloads compare structurally.
 fn same_json_sse(a: &str, b: &str) -> bool {
+    let (a, b) = (mask_volatile(a), mask_volatile(b));
+    let (a, b) = (a.as_str(), b.as_str());
     if a == b {
         return true;
     }

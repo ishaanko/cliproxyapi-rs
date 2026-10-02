@@ -289,16 +289,8 @@ pub(super) fn content_is_replayable(content: &[u8]) -> bool {
     for part in parts {
         let part = Res::of(part);
         match part.g("type").str().trim() {
-            "thinking" => {
-                if !part.g("signature").str().trim().is_empty() {
-                    has_signed_thinking = true;
-                }
-            }
-            "tool_use" => {
-                if !part.g("id").str().trim().is_empty() {
-                    has_tool_use = true;
-                }
-            }
+            "thinking" => has_signed_thinking |= !part.g("signature").str().trim().is_empty(),
+            "tool_use" => has_tool_use |= !part.g("id").str().trim().is_empty(),
             _ => {}
         }
     }
