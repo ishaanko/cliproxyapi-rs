@@ -544,7 +544,54 @@ pub fn raw_at<'a>(src: &'a [u8], path: &str) -> Option<&'a str> {
     std::str::from_utf8(&src[start..end]).ok()
 }
 
+/// Original text of every element of the array (or every member value of the object) at
+/// `path`, in one pass. Use this instead of calling [`raw_at`] per element: `raw_at` scans
+/// from the start of `src`, so per-element calls on large bodies are quadratic.
+pub fn raw_children<'a>(src: &'a [u8], path: &str) -> Vec<&'a str> {
+    let mut start = raw::skip_ws(src, 0);
+    if !path.is_empty() {
+        for seg in set_keys(path) {
+            match raw::child_start(src, start, &seg) {
+                Some(s) => start = s,
+                None => return vec![],
+            }
+        }
+    }
+    raw::children(src, start).unwrap_or_default()
+}
+
 mod raw {
+    /// Raw slices of all children of the container at `start`.
+    pub(super) fn children(json: &[u8], start: usize) -> Option<Vec<&str>> {
+        let is_object = match *json.get(start)? {
+            b'{' => true,
+            b'[' => false,
+            _ => return None,
+        };
+        let mut out = Vec::new();
+        let mut i = skip_ws(json, start + 1);
+        loop {
+            if matches!(*json.get(i)?, b'}' | b']') {
+                return Some(out);
+            }
+            if is_object {
+                i = skip_ws(json, string_end(json, i)?);
+                if *json.get(i)? != b':' {
+                    return None;
+                }
+                i = skip_ws(json, i + 1);
+            }
+            let end = value_end(json, i)?;
+            out.push(std::str::from_utf8(&json[i..end]).ok()?);
+            i = skip_ws(json, end);
+            match *json.get(i)? {
+                b',' => i = skip_ws(json, i + 1),
+                b'}' | b']' => return Some(out),
+                _ => return None,
+            }
+        }
+    }
+
     pub(super) fn skip_ws(json: &[u8], mut i: usize) -> usize {
         while json.get(i).is_some_and(|b| b.is_ascii_whitespace()) {
             i += 1;

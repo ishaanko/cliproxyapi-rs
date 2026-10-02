@@ -167,3 +167,15 @@ fn lone_surrogates_and_raw_at() {
     assert_eq!(raw_at(src, "a.zz"), None);
     assert_eq!(raw_at(b"[1,2", "5"), None);
 }
+
+#[test]
+fn raw_children_and_deep_malformed_input() {
+    let src = br#"{"a":[ {"x": 1} , [ 2 ],"s" ], "o": {"k" : 1, "j": [ ]}}"#;
+    assert_eq!(raw_children(src, "a"), vec![r#"{"x": 1}"#, "[ 2 ]", r#""s""#]);
+    assert_eq!(raw_children(src, "o"), vec!["1", "[ ]"]);
+    assert!(raw_children(src, "missing").is_empty());
+    // Malformed and very deep: must not overflow the stack (tolerant fallback is depth-checked).
+    let mut evil = br#"{"input":"#.to_vec();
+    evil.extend(std::iter::repeat_n(b'[', 200_000));
+    assert!(parse(&evil).is_null());
+}
