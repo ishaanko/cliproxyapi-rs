@@ -1,0 +1,253 @@
+{
+  "id": "rich.responses.codex.json",
+  "desc": "multi-turn request with system prompt, image, tool round trip and sampling options: responses -> codex",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "stream": false,
+          "instructions": "You are a terse weather bot.",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "What does this look like and what is the weather in Paris?"
+                },
+                {
+                  "type": "input_image",
+                  "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_abc123",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_abc123",
+              "output": "18C and sunny"
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Thanks. And in Rome?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "description": "Get the weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "c",
+                      "f"
+                    ]
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            },
+            {
+              "type": "function",
+              "name": "get_time",
+              "description": "Get the time",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          ],
+          "tool_choice": "auto",
+          "parallel_tool_calls": false,
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "max_output_tokens": 300,
+          "metadata": {
+            "k": "v"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "resp_mock01",
+            "object": "response",
+            "created_at": 1700000000,
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [
+              {
+                "id": "msg_mock01",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "text": "Hello from mock"
+                  }
+                ]
+              }
+            ],
+            "parallel_tool_calls": true,
+            "store": false,
+            "usage": {
+              "input_tokens": 11,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 7,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "total_tokens": 18
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "authorization": "Bearer sk-codex-2",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "<uuid:1>",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "stream": true,
+        "instructions": "You are a terse weather bot.",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What does this look like and what is the weather in Paris?"
+              },
+              {
+                "type": "input_image",
+                "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+              }
+            ]
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_abc123",
+            "output": "18C and sunny"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Thanks. And in Rome?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "get_weather",
+            "description": "Get the weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                },
+                "unit": {
+                  "type": "string",
+                  "enum": [
+                    "c",
+                    "f"
+                  ]
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          },
+          {
+            "type": "function",
+            "name": "get_time",
+            "description": "Get the time",
+            "parameters": {
+              "type": "object",
+              "properties": {}
+            }
+          },
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "tool_choice": "auto",
+        "parallel_tool_calls": true,
+        "metadata": {
+          "k": "v"
+        },
+        "store": false,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "prompt_cache_key": "<uuid:1>"
+      }
+    }
+  ]
+}

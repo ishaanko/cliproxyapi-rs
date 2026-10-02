@@ -5,7 +5,7 @@
 //! are read from catalog JSON only. Go `int` is `i64` here. JSON `null` for any field behaves like
 //! an absent key (Go keeps the zero value).
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -92,9 +92,9 @@ pub struct ModelConfig {
     #[serde(
         default,
         deserialize_with = "null_default",
-        skip_serializing_if = "HashMap::is_empty"
+        skip_serializing_if = "BTreeMap::is_empty"
     )]
-    pub override_header: HashMap<String, String>,
+    pub override_header: BTreeMap<String, String>,
 }
 
 /// Information about an available model.

@@ -242,6 +242,7 @@ impl CodexAuth {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("token refresh failed with status {status}: {text}"),
+                retry_after: None,
             });
         }
         let token: TokenResponse = serde_json::from_str(&text)
@@ -279,10 +280,15 @@ impl CodexAuth {
                 }
             }
         }
-        let cause = last_err.map(|e| e.to_string()).unwrap_or_default();
-        Err(AuthFlowError::Other(format!(
-            "token refresh failed after {max_retries} attempts: {cause}"
-        )))
+        match last_err {
+            Some(source) => Err(AuthFlowError::RetriesExhausted {
+                attempts: max_retries,
+                source: Box::new(source),
+            }),
+            None => Err(AuthFlowError::other(format!(
+                "token refresh failed after {max_retries} attempts"
+            ))),
+        }
     }
 
     pub fn create_token_storage(&self, bundle: &CodexAuthBundle) -> CodexTokenStorage {

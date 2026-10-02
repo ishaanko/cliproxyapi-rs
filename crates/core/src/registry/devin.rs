@@ -84,7 +84,7 @@ pub fn get_devin_models() -> Vec<ModelInfo> {
     if !from_catalog.is_empty() {
         return with_devin_builtins(from_catalog);
     }
-    with_devin_builtins(static_devin_models())
+    with_devin_builtins(static_devin_models().clone())
 }
 
 fn strip_devin_prefix(id: &str) -> &str {

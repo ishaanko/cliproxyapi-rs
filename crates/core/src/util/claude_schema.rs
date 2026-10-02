@@ -16,7 +16,7 @@ pub fn normalize_claude_tool_input_schema(schema: &[u8]) -> Vec<u8> {
     if schema.is_empty() {
         return fallback();
     }
-    let Ok(Value::Object(mut root)) = serde_json::from_slice::<Value>(schema) else {
+    let Value::Object(mut root) = cpa_json::parse(schema) else {
         return fallback();
     };
 

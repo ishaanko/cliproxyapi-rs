@@ -52,7 +52,10 @@ pub fn go_json_string(s: &str) -> String {
 /// by `json.Marshal` would produce it (sorted keys, float64 numbers, HTML escaping). `None` when
 /// the text is not a single valid JSON value.
 pub fn go_json_canonicalize(raw: &str) -> Option<String> {
-    let v: Value = serde_json::from_str(raw).ok()?;
+    if !cpa_json::valid(raw.as_bytes()) {
+        return None;
+    }
+    let v: Value = cpa_json::parse_str(raw);
     go_json_sorted(&v, GoJsonStyle::MARSHAL_ANY)
 }
 

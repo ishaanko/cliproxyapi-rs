@@ -1,0 +1,373 @@
+{
+  "id": "responses.gemini.stream.thinking",
+  "desc": "responses client -> gemini upstream, stream, thinking",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "input": "What is the weather in Paris?",
+          "stream": true,
+          "reasoning": {
+            "effort": "high"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "response.created",
+              "data": {
+                "type": "response.created",
+                "sequence_number": 1,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "in_progress",
+                  "background": false,
+                  "error": null,
+                  "output": [],
+                  "model": "gemini-2.5-flash"
+                }
+              }
+            },
+            {
+              "event": "response.in_progress",
+              "data": {
+                "type": "response.in_progress",
+                "sequence_number": 2,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "in_progress",
+                  "output": [],
+                  "model": "gemini-2.5-flash"
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 3,
+                "output_index": 0,
+                "item": {
+                  "id": "rs_resp_mockresp01_0",
+                  "type": "reasoning",
+                  "status": "in_progress",
+                  "encrypted_content": "",
+                  "summary": []
+                }
+              }
+            },
+            {
+              "event": "response.reasoning_summary_part.added",
+              "data": {
+                "type": "response.reasoning_summary_part.added",
+                "sequence_number": 4,
+                "item_id": "rs_resp_mockresp01_0",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": {
+                  "type": "summary_text",
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.delta",
+              "data": {
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 5,
+                "item_id": "rs_resp_mockresp01_0",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "Let me "
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.delta",
+              "data": {
+                "type": "response.reasoning_summary_text.delta",
+                "sequence_number": 6,
+                "item_id": "rs_resp_mockresp01_0",
+                "output_index": 0,
+                "summary_index": 0,
+                "delta": "think."
+              }
+            },
+            {
+              "event": "response.reasoning_summary_text.done",
+              "data": {
+                "type": "response.reasoning_summary_text.done",
+                "sequence_number": 7,
+                "item_id": "rs_resp_mockresp01_0",
+                "output_index": 0,
+                "summary_index": 0,
+                "text": "Let me think."
+              }
+            },
+            {
+              "event": "response.reasoning_summary_part.done",
+              "data": {
+                "type": "response.reasoning_summary_part.done",
+                "sequence_number": 8,
+                "item_id": "rs_resp_mockresp01_0",
+                "output_index": 0,
+                "summary_index": 0,
+                "part": {
+                  "type": "summary_text",
+                  "text": "Let me think."
+                }
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 9,
+                "output_index": 0,
+                "item": {
+                  "id": "rs_resp_mockresp01_0",
+                  "type": "reasoning",
+                  "encrypted_content": "",
+                  "summary": [
+                    {
+                      "type": "summary_text",
+                      "text": "Let me think."
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "event": "response.output_item.added",
+              "data": {
+                "type": "response.output_item.added",
+                "sequence_number": 10,
+                "output_index": 1,
+                "item": {
+                  "id": "msg_resp_mockresp01_1",
+                  "type": "message",
+                  "status": "in_progress",
+                  "content": [],
+                  "role": "assistant"
+                }
+              }
+            },
+            {
+              "event": "response.content_part.added",
+              "data": {
+                "type": "response.content_part.added",
+                "sequence_number": 11,
+                "item_id": "msg_resp_mockresp01_1",
+                "output_index": 1,
+                "content_index": 0,
+                "part": {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "response.output_text.delta",
+              "data": {
+                "type": "response.output_text.delta",
+                "sequence_number": 12,
+                "item_id": "msg_resp_mockresp01_1",
+                "output_index": 1,
+                "content_index": 0,
+                "delta": "Hello from mock",
+                "logprobs": []
+              }
+            },
+            {
+              "event": "response.output_text.done",
+              "data": {
+                "type": "response.output_text.done",
+                "sequence_number": 13,
+                "item_id": "msg_resp_mockresp01_1",
+                "output_index": 1,
+                "content_index": 0,
+                "text": "Hello from mock",
+                "logprobs": []
+              }
+            },
+            {
+              "event": "response.content_part.done",
+              "data": {
+                "type": "response.content_part.done",
+                "sequence_number": 14,
+                "item_id": "msg_resp_mockresp01_1",
+                "output_index": 1,
+                "content_index": 0,
+                "part": {
+                  "type": "output_text",
+                  "annotations": [],
+                  "logprobs": [],
+                  "text": "Hello from mock"
+                }
+              }
+            },
+            {
+              "event": "response.output_item.done",
+              "data": {
+                "type": "response.output_item.done",
+                "sequence_number": 15,
+                "output_index": 1,
+                "item": {
+                  "id": "msg_resp_mockresp01_1",
+                  "type": "message",
+                  "status": "completed",
+                  "content": [
+                    {
+                      "type": "output_text",
+                      "annotations": [],
+                      "logprobs": [],
+                      "text": "Hello from mock"
+                    }
+                  ],
+                  "role": "assistant"
+                }
+              }
+            },
+            {
+              "event": "response.completed",
+              "data": {
+                "type": "response.completed",
+                "sequence_number": 16,
+                "response": {
+                  "id": "resp_mockresp01",
+                  "object": "response",
+                  "created_at": "<now>",
+                  "status": "completed",
+                  "background": false,
+                  "error": null,
+                  "model": "gemini-2.5-flash",
+                  "reasoning": {
+                    "effort": "high"
+                  },
+                  "output": [
+                    {
+                      "id": "rs_resp_mockresp01_0",
+                      "type": "reasoning",
+                      "encrypted_content": "",
+                      "summary": [
+                        {
+                          "type": "summary_text",
+                          "text": "Let me think."
+                        }
+                      ]
+                    },
+                    {
+                      "id": "msg_resp_mockresp01_1",
+                      "type": "message",
+                      "status": "completed",
+                      "content": [
+                        {
+                          "type": "output_text",
+                          "annotations": [],
+                          "logprobs": [],
+                          "text": "Hello from mock"
+                        }
+                      ],
+                      "role": "assistant"
+                    }
+                  ],
+                  "usage": {
+                    "input_tokens": 11,
+                    "input_tokens_details": {
+                      "cached_tokens": 0
+                    },
+                    "output_tokens": 10,
+                    "output_tokens_details": {
+                      "reasoning_tokens": 3
+                    },
+                    "total_tokens": 21
+                  }
+                }
+              }
+            },
+            {
+              "trailing_whitespace": "\n"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 24576
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ],
+        "model": "gemini-2.5-flash"
+      }
+    }
+  ]
+}

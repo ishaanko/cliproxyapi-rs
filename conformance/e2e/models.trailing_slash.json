@@ -1,0 +1,27 @@
+{
+  "id": "models.trailing_slash",
+  "desc": "GET /v1/models/ redirects",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/models/",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 301,
+        "headers": {
+          "content-type": "text/html; charset=utf-8",
+          "location": "/v1/models"
+        },
+        "body": {
+          "type": "text",
+          "value": "<a href=\"/v1/models\">Moved Permanently</a>.\n\n"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

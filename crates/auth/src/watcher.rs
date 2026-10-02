@@ -147,29 +147,22 @@ async fn run(
     // path -> (content hash, auth id) of files we have announced.
     let mut known: HashMap<PathBuf, ([u8; 32], String)> = HashMap::new();
 
-    if opts.emit_initial
-        && let Ok(entries) = std::fs::read_dir(&base)
-    {
-        let mut paths: Vec<PathBuf> = entries
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| is_auth_json_path(p))
-            .collect();
-        paths.sort();
-        for path in paths {
-            handle_touched(&store, &base, &path, &mut known, &event_tx);
+    if opts.emit_initial {
+        for path in list_initial(&base).await {
+            handle_touched(&store, &base, &path, &mut known, &event_tx).await;
         }
     }
 
     while let Some(msg) = msg_rx.recv().await {
         match msg {
-            Msg::Touched(path) => handle_touched(&store, &base, &path, &mut known, &event_tx),
+            Msg::Touched(path) => handle_touched(&store, &base, &path, &mut known, &event_tx).await,
             Msg::GoneMaybe(path) => {
                 let tx = msg_tx.clone();
                 let delay = opts.stat_delay;
                 let debounce = opts.remove_debounce;
                 tokio::spawn(async move {
                     tokio::time::sleep(delay).await;
-                    if path.exists() {
+                    if tokio::fs::try_exists(&path).await.unwrap_or(false) {
                         // Atomic replace: the file is back, treat as a write.
                         let _ = tx.send(Msg::Touched(path));
                         return;
@@ -179,8 +172,8 @@ async fn run(
                 });
             }
             Msg::ConfirmGone(path) => {
-                if path.exists() {
-                    handle_touched(&store, &base, &path, &mut known, &event_tx);
+                if tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                    handle_touched(&store, &base, &path, &mut known, &event_tx).await;
                 } else if let Some((_, id)) = known.remove(&path) {
                     let _ = event_tx.send(AuthFileEvent::Removed { id, path });
                 }
@@ -189,25 +182,48 @@ async fn run(
     }
 }
 
-/// Reads, hash-gates and announces one file.
-fn handle_touched(
-    store: &FileTokenStore,
+/// Credential files directly under `base`, sorted.
+async fn list_initial(base: &Path) -> Vec<PathBuf> {
+    let Ok(mut dir) = tokio::fs::read_dir(base).await else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let path = entry.path();
+        if is_auth_json_path(&path) {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    paths
+}
+
+/// Reads, hash-gates and announces one file. The file read and JSON parse run on the blocking pool.
+async fn handle_touched(
+    store: &Arc<FileTokenStore>,
     base: &Path,
     path: &Path,
     known: &mut HashMap<PathBuf, ([u8; 32], String)>,
     tx: &mpsc::UnboundedSender<AuthFileEvent>,
 ) {
-    let Ok(bytes) = std::fs::read(path) else {
-        return;
-    };
-    if bytes.is_empty() {
-        return;
-    }
-    let digest = hash(&bytes);
-    if known.get(path).is_some_and(|(h, _)| *h == digest) {
-        return;
-    }
-    let Ok(Some(auth)) = store.read_auth_file(path, base) else {
+    let known_hash = known.get(path).map(|(h, _)| *h);
+    let (store, base_owned, path_owned) = (store.clone(), base.to_path_buf(), path.to_path_buf());
+    let loaded = tokio::task::spawn_blocking(move || {
+        let bytes = std::fs::read(&path_owned).ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        let digest = hash(&bytes);
+        if known_hash == Some(digest) {
+            return None;
+        }
+        let auth = store.read_auth_file(&path_owned, &base_owned).ok()??;
+        Some((digest, auth))
+    })
+    .await
+    .ok()
+    .flatten();
+    let Some((digest, auth)) = loaded else {
         return;
     };
     let id = id_for(path, base);

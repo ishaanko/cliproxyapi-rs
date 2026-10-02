@@ -19,11 +19,17 @@ fn snapshot(cfg: &Config) -> Json {
 /// A file's first YAML document as JSON (merge keys applied, like yaml.v3 decoding into `any`).
 fn file_json(path: &Path) -> Json {
     let text = std::fs::read_to_string(path).expect("readable file");
-    let Some(doc) = serde_yaml_ng::Deserializer::from_str(&text).next() else { return json!({}) };
+    let Some(doc) = serde_yaml_ng::Deserializer::from_str(&text).next() else {
+        return json!({});
+    };
     match serde_yaml_ng::Value::deserialize(doc) {
         Ok(mut value) => {
             let _ = value.apply_merge();
-            if value.is_null() { json!({}) } else { serde_json::to_value(value).expect("json value") }
+            if value.is_null() {
+                json!({})
+            } else {
+                serde_json::to_value(value).expect("json value")
+            }
         }
         Err(_) => json!({"__error": true}),
     }
@@ -42,11 +48,23 @@ fn dump_oracle_records() {
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
         let raw = std::fs::read(&path).unwrap();
         let mut record = serde_json::Map::new();
-        record.insert("parse".into(), parse_config_bytes(&raw).map(|c| snapshot(&c)).unwrap_or_else(|_| error.clone()));
+        let parsed = parse_config_bytes(&raw);
+        if let Ok(cfg) = &parsed {
+            record.insert("json".into(), cfg.to_json_value().expect("json view"));
+        }
+        record.insert(
+            "parse".into(),
+            parsed
+                .map(|c| snapshot(&c))
+                .unwrap_or_else(|_| error.clone()),
+        );
         record.insert("validate".into(), validate_v8_config(&raw).is_ok().into());
         match normalize_config_layout(&raw, true) {
             Ok((migrated, _)) => {
-                record.insert("migrated_validate".into(), validate_v8_config(&migrated).is_ok().into());
+                record.insert(
+                    "migrated_validate".into(),
+                    validate_v8_config(&migrated).is_ok().into(),
+                );
                 let parsed = parse_config_bytes(&migrated).map(|c| snapshot(&c));
                 record.insert("migrated".into(), parsed.unwrap_or_else(|_| error.clone()));
             }
@@ -70,9 +88,15 @@ fn dump_oracle_records() {
                 continue;
             }
             record.insert(key.into(), file_json(&file));
-            let reloaded = load_config(&file).map(|c| snapshot(&c)).unwrap_or_else(|_| error.clone());
+            let reloaded = load_config(&file)
+                .map(|c| snapshot(&c))
+                .unwrap_or_else(|_| error.clone());
             record.insert(format!("{key}_reload"), reloaded);
         }
-        std::fs::write(out.join(format!("{name}.json")), serde_json::to_vec(&record).unwrap()).unwrap();
+        std::fs::write(
+            out.join(format!("{name}.json")),
+            serde_json::to_vec(&record).unwrap(),
+        )
+        .unwrap();
     }
 }

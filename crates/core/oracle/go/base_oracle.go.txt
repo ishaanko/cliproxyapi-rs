@@ -1,0 +1,333 @@
+// Temporary differential oracle for the Rust base-layer port (internal/util, registry, applypatch, misc).
+package main
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+
+	applypatch "github.com/router-for-me/CLIProxyAPI/v8/internal/client/codex/apply-patch"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/misc"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v8/internal/util"
+	"github.com/tidwall/gjson"
+)
+
+type op struct {
+	Op    string            `json:"op"`
+	In    string            `json:"in"`
+	In2   string            `json:"in2"`
+	In3   string            `json:"in3"`
+	Flag  bool              `json:"flag"`
+	Steps []json.RawMessage `json:"steps"`
+}
+
+func main() {
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 1<<20), 1<<28)
+	w := bufio.NewWriter(os.Stdout)
+	defer w.Flush()
+	for sc.Scan() {
+		var o op
+		if err := json.Unmarshal(sc.Bytes(), &o); err != nil {
+			fmt.Fprintf(w, "{\"error\":%q}\n", err.Error())
+			continue
+		}
+		out := run(o)
+		b, _ := json.Marshal(out)
+		w.Write(b)
+		w.WriteString("\n")
+	}
+}
+
+func run(o op) (res any) {
+	defer func() {
+		if r := recover(); r != nil {
+			res = map[string]any{"panic": fmt.Sprint(r)}
+		}
+	}()
+	switch o.Op {
+	case "clean_gemini":
+		return util.CleanJSONSchemaForGemini(o.In)
+	case "clean_gemini_json_schema":
+		return util.CleanJSONSchemaForGeminiJSONSchema(o.In)
+	case "clean_antigravity":
+		return util.CleanJSONSchemaForAntigravity(o.In)
+	case "clean_antigravity_tool":
+		return util.CleanJSONSchemaForAntigravityTool(o.In, o.Flag)
+	case "clean_antigravity_response":
+		return util.CleanJSONSchemaForAntigravityResponse(o.In)
+	case "inline_local_refs":
+		return util.InlineLocalRefs(o.In)
+	case "normalize_claude_schema":
+		return string(util.NormalizeClaudeToolInputSchema([]byte(o.In)))
+	case "unicode_escape":
+		return util.HasUnsupportedUnicodePropertyEscape(o.In)
+	case "fix_json":
+		return util.FixJSON(o.In)
+	case "sanitize_function_name":
+		return util.SanitizeFunctionName(o.In)
+	case "sanitize_claude_function_name":
+		return util.SanitizeClaudeFunctionName(o.In)
+	case "sanitize_claude_tool_id":
+		return util.SanitizeClaudeToolID(o.In)
+	case "gemini_claude_tool_use_id":
+		return util.GeminiClaudeToolUseID(o.In, o.In2, o.In3)
+	case "is_gemini_claude_tool_use_id":
+		return util.IsGeminiClaudeToolUseID(o.In)
+	case "tool_maps":
+		return map[string]any{
+			"claude":         util.ToolNameMapFromClaudeRequest([]byte(o.In)),
+			"sanitized_fn":   util.SanitizedFunctionNameMap([]byte(o.In)),
+			"disambiguated":  util.DisambiguatedToolNameMap([]byte(o.In)),
+			"sanitized_tool": util.SanitizedToolNameMap([]byte(o.In)),
+		}
+	case "dedupe":
+		return string(util.DeduplicateFunctionDeclarations([]byte(o.In)))
+	case "unwrap_custom":
+		return util.UnwrapResponsesCustomToolInput(o.In)
+	case "strip_attribution":
+		return string(util.StripClaudeCodeAttributionSystem([]byte(o.In)))
+	case "tool_result":
+		r := util.ConvertClaudeToolResultContent(gjson.Parse(o.In))
+		type img struct{ MimeType, Data string }
+		imgs := []img{}
+		for _, i := range r.Images {
+			imgs = append(imgs, img{i.MimeType, i.Data})
+		}
+		return map[string]any{"result": r.Result, "raw": r.ResultIsRaw, "images": imgs}
+	case "responses_tools":
+		root := gjson.Parse(o.In)
+		decls, fwd, rev := util.BuildGeminiFunctionDeclarations(root)
+		ds := []string{}
+		for _, d := range decls {
+			ds = append(ds, string(d))
+		}
+		revOut := map[string]any{}
+		for k, v := range rev {
+			revOut[k] = map[string]any{"name": v.Name, "namespace": v.Namespace, "custom": v.Custom, "apply_patch": v.ApplyPatch}
+		}
+		var winners []string
+		for k, v := range util.CollectResponsesToolWinners(root) {
+			winners = append(winners, fmt.Sprintf("%s|%s|%s|%s|%d|%v|%d", k, v.LocalName, v.Namespace, v.ToolType, v.SourcePriority, v.Direct, v.Order))
+		}
+		sort.Strings(winners)
+		return map[string]any{"decls": ds, "forward": fwd, "reverse": revOut, "winners": winners, "reverse_from_raw": len(util.ResponsesToolReverseIdentityMap([]byte(o.In)))}
+	case "tool_choice":
+		var fwd map[string]string
+		_ = json.Unmarshal([]byte(o.In2), &fwd)
+		cfg, ok := util.ConvertResponsesToolChoiceToGemini(gjson.Parse(o.In), fwd)
+		return map[string]any{"cfg": string(cfg), "ok": ok}
+	case "qualify":
+		return util.QualifyResponsesNamespaceToolName(o.In, o.In2)
+	case "hide_api_key":
+		return util.HideAPIKey(o.In)
+	case "mask_query":
+		return util.MaskSensitiveQuery(o.In)
+	case "mask_header":
+		return util.MaskSensitiveHeaderValue(o.In, o.In2)
+	case "openai_compat_key":
+		return util.OpenAICompatibleProviderKey(o.In)
+	case "applypatch":
+		tool := gjson.Parse(o.In)
+		un, err := applypatch.UnwrapInput(o.In2)
+		errs := ""
+		if err != nil {
+			errs = "err"
+		}
+		return map[string]any{
+			"is_custom":  applypatch.IsCustomTool(tool),
+			"desc":       applypatch.Description(tool),
+			"wrap":       applypatch.WrapInput(o.In3),
+			"escape":     applypatch.EscapeInputFragment(o.In3),
+			"unwrap":     un,
+			"unwrap_err": errs,
+			"params":     string(applypatch.Parameters()),
+		}
+	case "oauth_callback":
+		cb, err := misc.ParseOAuthCallback(o.In)
+		if err != nil {
+			return map[string]any{"err": err.Error()}
+		}
+		if cb == nil {
+			return map[string]any{"nil": true}
+		}
+		return map[string]any{"code": cb.Code, "state": cb.State, "error": cb.Error, "desc": cb.ErrorDescription}
+	case "antigravity_ua":
+		return map[string]any{
+			"req":     misc.AntigravityRequestUserAgent(o.In),
+			"onboard": misc.AntigravityOnboardUserUserAgent(o.In),
+			"version": misc.AntigravityVersionFromUserAgent(o.In),
+		}
+	case "mime":
+		v, ok := misc.MimeTypes[o.In]
+		return map[string]any{"v": v, "ok": ok}
+	case "catalogs":
+		return map[string]any{
+			"claude": registry.GetClaudeModels(), "gemini": registry.GetGeminiModels(), "vertex": registry.GetGeminiVertexModels(),
+			"aistudio": registry.GetAIStudioModels(), "codex_free": registry.GetCodexFreeModels(), "codex_team": registry.GetCodexTeamModels(),
+			"codex_plus": registry.GetCodexPlusModels(), "codex_pro": registry.GetCodexProModels(), "kimi": registry.GetKimiModels(),
+			"antigravity": registry.GetAntigravityModels(), "xai": registry.GetXAIModels(), "meta": registry.GetMetaModels(),
+			"devin": registry.GetDevinModels(),
+		}
+	case "lookup_static":
+		return registry.LookupStaticModelInfo(o.In)
+	case "lookup_devin":
+		return registry.LookupDevinModel(o.In)
+	case "lookup_static_channel":
+		return registry.LookupStaticModelInfoByChannel(o.In, o.In2)
+	case "native_flags":
+		type nf struct {
+			ID         string
+			NativeCaps *registry.NativeCapabilities
+			ConfigUpd  bool
+		}
+		var out []nf
+		for _, m := range registry.GetCodexProModels() {
+			out = append(out, nf{m.ID, m.NativeCapabilities, m.SupportConfigurationUpdate})
+		}
+		for _, m := range registry.GetClaudeModels() {
+			out = append(out, nf{m.ID, m.NativeCapabilities, m.SupportConfigurationUpdate})
+		}
+		return out
+	case "codex_client":
+		d, rev := registry.GetCodexClientModelsSnapshot()
+		return map[string]any{"len": len(d), "rev": rev, "devin_rev": registry.GetDevinModelsRevision()}
+	case "registry_scenario":
+		return scenario(o)
+	}
+	return map[string]any{"unknown_op": o.Op}
+}
+
+type step struct {
+	Op       string                `json:"op"`
+	Client   string                `json:"client"`
+	Provider string                `json:"provider"`
+	Model    string                `json:"model"`
+	Reason   string                `json:"reason"`
+	Models   []*registry.ModelInfo `json:"models"`
+	Epoch    int                   `json:"epoch_offset"`
+	Gen      uint64                `json:"generation"`
+	Projs    []struct {
+		Model         string `json:"model"`
+		Suspended     bool   `json:"suspended"`
+		SuspendReason string `json:"reason"`
+		Quota         bool   `json:"quota"`
+	} `json:"projections"`
+	WebSearch bool     `json:"web_search"`
+	Clients   []string `json:"clients"`
+	ModelIDs  []string `json:"model_ids"`
+	Providers []string `json:"providers"`
+}
+
+func scenario(o op) any {
+	reg := registry.GetGlobalRegistry()
+	var outs []any
+	touched := map[string]bool{}
+	for _, raw := range o.Steps {
+		var s step
+		if err := json.Unmarshal(raw, &s); err != nil {
+			outs = append(outs, map[string]any{"decode_error": err.Error()})
+			continue
+		}
+		switch s.Op {
+		case "register":
+			touched[s.Client] = true
+			reg.RegisterClient(s.Client, s.Provider, s.Models)
+			outs = append(outs, nil)
+		case "unregister":
+			reg.UnregisterClient(s.Client)
+			outs = append(outs, nil)
+		case "suspend":
+			reg.SuspendClientModel(s.Client, s.Model, s.Reason)
+			outs = append(outs, nil)
+		case "resume":
+			reg.ResumeClientModel(s.Client, s.Model)
+			outs = append(outs, nil)
+		case "quota":
+			reg.SetModelQuotaExceeded(s.Client, s.Model)
+			outs = append(outs, nil)
+		case "clear_quota":
+			reg.ClearModelQuotaExceeded(s.Client, s.Model)
+			outs = append(outs, nil)
+		case "project":
+			epoch := reg.ClientRegistrationEpoch(s.Client)
+			e := uint64(int64(epoch) + int64(s.Epoch))
+			var projs []registry.ClientModelProjection
+			for _, p := range s.Projs {
+				projs = append(projs, registry.ClientModelProjection{ModelID: p.Model, Suspended: p.Suspended, SuspendReason: p.SuspendReason, QuotaExceeded: p.Quota})
+			}
+			outs = append(outs, reg.ApplyClientModelProjections(s.Client, e, s.Gen, projs))
+		case "capabilities":
+			epoch := reg.ClientRegistrationEpoch(s.Client)
+			e := uint64(int64(epoch) + int64(s.Epoch))
+			ws := s.WebSearch
+			outs = append(outs, reg.ApplyClientModelCapabilities(s.Client, e, func(id string, info *registry.ModelInfo) { info.SupportsWebSearch = ws }))
+		case "cleanup":
+			reg.CleanupExpiredQuotas()
+			outs = append(outs, nil)
+		case "query":
+			outs = append(outs, snapshot(reg, s))
+		}
+	}
+	for c := range touched {
+		reg.UnregisterClient(c)
+	}
+	return outs
+}
+
+func snapshot(reg *registry.ModelRegistry, s step) any {
+	q := map[string]any{}
+	for _, h := range []string{"openai", "claude", "gemini", ""} {
+		list := reg.GetAvailableModels(h)
+		key := func(m map[string]any) string {
+			if id, ok := m["id"].(string); ok {
+				return id
+			}
+			n, _ := m["name"].(string)
+			return n
+		}
+		sort.Slice(list, func(i, j int) bool { return key(list[i]) < key(list[j]) })
+		q["avail_"+h] = list
+	}
+	q["avail_infos"] = reg.GetAvailableModelInfos()
+	counts := map[string]any{}
+	provs := map[string]any{}
+	infoBy := map[string]any{}
+	for _, m := range s.ModelIDs {
+		counts[m] = reg.GetModelCount(m)
+		provs[m] = reg.GetModelProviders(m)
+		infoBy[m+"|"] = reg.GetModelInfo(m, "")
+		for _, p := range s.Providers {
+			infoBy[m+"|"+p] = reg.GetModelInfo(m, p)
+		}
+		q["ws_"+m] = reg.GetResponsesWebSearchCapability(m)
+	}
+	q["counts"] = counts
+	q["providers"] = provs
+	q["info_by"] = infoBy
+	byProv := map[string]any{}
+	for _, p := range s.Providers {
+		l := reg.GetAvailableModelsByProvider(p)
+		sort.Slice(l, func(i, j int) bool { return l[i].ID < l[j].ID })
+		byProv[p] = l
+	}
+	q["by_provider"] = byProv
+	cl := map[string]any{}
+	for _, c := range s.Clients {
+		models, epoch := reg.GetModelsAndEpochForClient(c)
+		cl[c] = map[string]any{"models": models, "epoch": epoch}
+		for _, m := range s.ModelIDs {
+			cl[c+"|"+m] = []bool{reg.ClientSupportsModel(c, m), reg.IsModelSuspendedForClient(c, m), reg.IsModelQuotaExceededForClient(c, m)}
+		}
+	}
+	q["clients"] = cl
+	first, err := reg.GetFirstAvailableModel("openai")
+	if err != nil {
+		first = "ERR"
+	}
+	q["first"] = first
+	return q
+}

@@ -6,7 +6,9 @@ use std::path::Path;
 use serde_yaml_ng::Value;
 
 use crate::error::{ConfigError, Result};
-use crate::layout::{flatten_v8, normalize_config_layout, oauth_only_fields, validate_credential_weight_yaml};
+use crate::layout::{
+    flatten_v8, normalize_config_layout, oauth_only_fields, validate_credential_weight_yaml,
+};
 use crate::save::{save_config_update_nested_scalar, write_private};
 use crate::types::*;
 use crate::validate::validate_trusted_proxies;
@@ -30,7 +32,10 @@ pub fn load_config_optional(path: impl AsRef<Path>, optional: bool) -> Result<Co
     let data = match std::fs::read(path) {
         Ok(data) => data,
         Err(err) => {
-            let standby = matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::IsADirectory);
+            let standby = matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::IsADirectory
+            );
             if optional && standby {
                 return Ok(Config::empty_optional());
             }
@@ -44,25 +49,41 @@ pub fn load_config_optional(path: impl AsRef<Path>, optional: bool) -> Result<Co
     let text = match String::from_utf8(data) {
         Ok(text) => text,
         Err(_) if optional => return Ok(Config::empty_optional()),
-        Err(_) => return Err(ConfigError::invalid("failed to parse config file: config is not valid UTF-8")),
+        Err(_) => {
+            return Err(ConfigError::invalid(
+                "failed to parse config file: config is not valid UTF-8",
+            ));
+        }
     };
     if let Err(err) = validate_credential_weight_yaml(&text) {
-        return if optional { Ok(Config::empty_optional()) } else { Err(err) };
+        return if optional {
+            Ok(Config::empty_optional())
+        } else {
+            Err(err)
+        };
     }
     let root = match parse_yaml(&text) {
         Ok(root) => root,
         Err(_) if optional => return Ok(Config::empty_optional()),
-        Err(err) => return Err(ConfigError::invalid(format!("failed to parse config file: {err}"))),
+        Err(err) => {
+            return Err(ConfigError::invalid(format!(
+                "failed to parse config file: {err}"
+            )));
+        }
     };
     let mut cfg = match &root {
         Some(root) => match decode_config(root) {
             Ok(cfg) => cfg,
             Err(_) if optional => return Ok(Config::empty_optional()),
-            Err(err) => return Err(ConfigError::invalid(format!("failed to parse config file: {err}"))),
+            Err(err) => {
+                return Err(ConfigError::invalid(format!(
+                    "failed to parse config file: {err}"
+                )));
+            }
         },
         None => Config::parse_defaults(),
     };
-    finalize(&mut cfg, |hashed| {
+    finalize(&mut cfg, true, |hashed| {
         // Persist the hash so the secret is not re-hashed on every start. Comments and ordering
         // are preserved; only the nested key changes.
         let prefix = match &root {
@@ -92,14 +113,14 @@ pub fn parse_config_bytes(data: &[u8]) -> Result<Config> {
     let text = std::str::from_utf8(data)
         .map_err(|_| ConfigError::invalid("parse config payload: config is not valid UTF-8"))?;
     validate_credential_weight_yaml(text)?;
-    let root = parse_yaml(text).map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?;
+    let root =
+        parse_yaml(text).map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?;
     let mut cfg = match &root {
-        Some(root) => {
-            decode_config(root).map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?
-        }
+        Some(root) => decode_config(root)
+            .map_err(|e| ConfigError::invalid(format!("parse config payload: {e}")))?,
         None => Config::parse_defaults(),
     };
-    finalize(&mut cfg, |_| {})?;
+    finalize(&mut cfg, false, |_| {})?;
     Ok(cfg)
 }
 
@@ -109,15 +130,26 @@ pub fn parse_config_bytes(data: &[u8]) -> Result<Config> {
 pub(crate) fn decode_config(root: &Value) -> Result<Config> {
     let mut flat = flatten_v8(root)?;
     strip_nulls(&mut flat);
+    let raw_plugin_configs = yaml_path(&flat, "plugins.configs").cloned();
     let mut cfg: Config = crate::lenient::from_value(flat)?;
+    // Plugin options are opaque and written back as is, including the written form of scalars
+    // (`1.10`, `True`) that the typed decode resolves.
+    if let Some(Value::Mapping(raw)) = raw_plugin_configs {
+        for (id, instance) in &mut cfg.plugins.configs {
+            if let Some(tree) = raw.get(id.as_str()).filter(|v| !v.is_null()) {
+                instance.raw = tree.clone();
+            }
+        }
+    }
     cfg.oauth_only_fields = oauth_only_fields(root).into_iter().collect();
     Ok(cfg)
 }
 
 /// Post-decode steps shared by `load_config` and `parse_config_bytes`: defaults, validation,
-/// secret hashing, clamps and sanitisers, in the same order as Go. `persist_secret` receives the
+/// secret hashing, clamps and sanitisers, in the same order as Go (`file_load` selects the file
+/// loader's order). `persist_secret` receives the
 /// bcrypt hash when a plaintext management secret was hashed.
-fn finalize(cfg: &mut Config, persist_secret: impl FnOnce(&str)) -> Result<()> {
+fn finalize(cfg: &mut Config, file_load: bool, persist_secret: impl FnOnce(&str)) -> Result<()> {
     validate_trusted_proxies(&cfg.trusted_proxies)?;
 
     cfg.credential_concurrency = std::mem::take(&mut cfg.credential_concurrency).with_defaults();
@@ -126,15 +158,28 @@ fn finalize(cfg: &mut Config, persist_secret: impl FnOnce(&str)) -> Result<()> {
         cfg.discovery.service_type = DEFAULT_DISCOVERY_SERVICE_TYPE.to_string();
     }
     if cfg.discovery.subtypes.is_empty() {
-        cfg.discovery.subtypes = DEFAULT_DISCOVERY_SUBTYPES.iter().map(|s| (*s).to_string()).collect();
+        cfg.discovery.subtypes = DEFAULT_DISCOVERY_SUBTYPES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
     }
-    cfg.codex.live_media_relay.validate()?;
-    cfg.validate_credential_weights()?;
+    // Go validates in a different order on the two paths (only visible when both are invalid).
+    if file_load {
+        cfg.codex.live_media_relay.validate()?;
+        cfg.validate_credential_weights()?;
+    } else {
+        cfg.validate_credential_weights()?;
+        cfg.codex.live_media_relay.validate()?;
+    }
 
     // Hash the management key if plaintext is detected (a bcrypt hash has a $2a$/$2b$/$2y$ prefix).
-    if !cfg.remote_management.secret_key.is_empty() && !looks_like_bcrypt(&cfg.remote_management.secret_key) {
+    if !cfg.remote_management.secret_key.is_empty()
+        && !looks_like_bcrypt(&cfg.remote_management.secret_key)
+    {
         let hashed = bcrypt::non_truncating_hash(&cfg.remote_management.secret_key, BCRYPT_COST)
-            .map_err(|e| ConfigError::invalid(format!("failed to hash remote management key: {e}")))?;
+            .map_err(|e| {
+                ConfigError::invalid(format!("failed to hash remote management key: {e}"))
+            })?;
         cfg.remote_management.secret_key = hashed;
         persist_secret(&cfg.remote_management.secret_key);
     }
@@ -169,9 +214,10 @@ fn finalize(cfg: &mut Config, persist_secret: impl FnOnce(&str)) -> Result<()> {
 
     cfg.normalize_plugins_config();
     if let Err(err) = cfg.resolve_plugins_dir()
-        && cfg.plugins.enabled {
-            return Err(err);
-        }
+        && cfg.plugins.enabled
+    {
+        return Err(err);
+    }
 
     cfg.sanitize_gemini_keys();
     cfg.sanitize_interactions_keys();
@@ -183,7 +229,8 @@ fn finalize(cfg: &mut Config, persist_secret: impl FnOnce(&str)) -> Result<()> {
     cfg.sanitize_claude_header_defaults();
     cfg.sanitize_claude_keys();
     cfg.sanitize_openai_compatibility();
-    cfg.oauth_excluded_models = crate::normalize::normalize_oauth_excluded_models(&cfg.oauth_excluded_models);
+    cfg.oauth_excluded_models =
+        crate::normalize::normalize_oauth_excluded_models(&cfg.oauth_excluded_models);
     cfg.sanitize_oauth_model_alias();
     cfg.sanitize_oauth_settings();
     cfg.sanitize_oauth_request_scoped_errors();

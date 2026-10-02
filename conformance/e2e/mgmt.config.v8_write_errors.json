@@ -1,0 +1,183 @@
+{
+  "id": "mgmt.config.v8_write_errors",
+  "desc": "invalid v8 config writes",
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/routing/retry/request-retry",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "many"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "parse config payload: yaml: unmarshal errors:\n  line 6: cannot unmarshal !!str `many` into int"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": [
+          1,
+          2
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "config_must_be_object"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/routing/retry",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "{not json"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_json"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "location": "/v8/management/config/"
+        },
+        "body": {
+          "type": "empty"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v8/management/config/no/such",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "not_found"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v8/management/config/credentials/concurrency/lifecycle-config-revision",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": 9
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "read_only_field",
+            "field": "credentials/concurrency/lifecycle-config-revision"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/nonsense-root",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "a": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "unknown v8 configuration section nonsense-root"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

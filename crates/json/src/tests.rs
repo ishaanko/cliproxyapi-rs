@@ -107,3 +107,49 @@ fn array_and_foreach() {
     });
     assert_eq!(keys, ["a", "n", "arr"]);
 }
+
+#[test]
+fn sjson_refuses_named_key_into_array() {
+    let mut x = parse_str(r#"{"a":[1]}"#);
+    assert!(!set(&mut x, "a.b", json!(2)));
+    assert!(!set(&mut x, "a.b.c", json!(2)));
+    assert_eq!(to_string(&x), r#"{"a":[1]}"#);
+    assert_eq!(s(r#"{"a":[{"x":1}]}"#, "a.0.b", json!(2)), r#"{"a":[{"x":1,"b":2}]}"#);
+    assert_eq!(s(r#"{"a":{}}"#, "a.-1", json!(2)), r#"{"a":{"-1":2}}"#);
+}
+
+#[test]
+fn gjson_big_integers_wrap_like_go() {
+    let w = |j: &str| parse_str(&format!(r#"{{"a":{j}}}"#));
+    assert_eq!(w("99999999999999999999").g("a").int(), 7766279631452241919);
+    assert_eq!(w("-99999999999999999999").g("a").int(), -7766279631452241919);
+    assert_eq!(w("-99999999999999999999").g("a").uint(), 9223372036854775808);
+    assert_eq!(w("18446744073709551615").g("a").int(), -1);
+    assert_eq!(w("18446744073709551615").g("a").uint(), 18446744073709551615);
+    assert_eq!(w("1e30").g("a").int(), i64::MIN);
+    assert_eq!(w("1e30").g("a").uint(), 9223372036854775808);
+    assert_eq!(w(r#""99999999999999999999""#).g("a").int(), 7766279631452241919);
+}
+
+#[test]
+fn judge_regressions() {
+    // Non-ASCII query keys must not panic.
+    let j = parse_str(r#"{"a":[{"nämé":1,"x":2}]}"#);
+    assert_eq!(j.g("a.#(nämé==1).x").int(), 2);
+    assert!(!j.g(r"a.#(\é==1)").exists());
+    // `@type` is a key, `@this` a modifier.
+    let j = parse_str(r#"{"properties":{"@type":{"type":"string"}}}"#);
+    assert_eq!(j.g("properties.@type.type").str(), "string");
+    let mut m = j.clone();
+    set(&mut m, "properties.@type.description", json!("d"));
+    assert_eq!(m.g("properties.@type.description").str(), "d");
+    // Parentheses outside #(...) are ordinary key characters.
+    let j = parse_str(r#"{"p":{"a(b":{"c":1}}}"#);
+    assert_eq!(j.g("p.a(b.c").int(), 1);
+    // Deep documents within MAX_DEPTH parse; beyond it they are rejected.
+    let deep = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+    assert!(parse_str(&deep(500)).is_array());
+    assert!(parse_str(&deep(MAX_DEPTH + 1)).is_null());
+    assert!(valid(deep(500).as_bytes()));
+    assert!(!valid(b"{} trailing"));
+}

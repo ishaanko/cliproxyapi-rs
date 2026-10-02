@@ -1,0 +1,241 @@
+{
+  "id": "mgmt.auth_files.errors",
+  "desc": "invalid credential file requests",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/auth-files?name=notjson.txt",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "type": "claude"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "name must end with .json"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/auth-files",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "type": "claude"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid name"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/auth-files?name=bad.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "{broken"
+      },
+      "response": {
+        "status": 500,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid auth file: invalid character 'b' looking for beginning of object key string"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files/download?name=missing.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "file not found"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files/download?name=../etc/passwd",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid name"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files/models",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "name is required"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v0/management/auth-files?name=missing.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "auth file not found"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v0/management/auth-files/status",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "name": "missing.json",
+          "disabled": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "auth file not found"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v0/management/auth-files/fields",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "note": "x"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "name is required"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

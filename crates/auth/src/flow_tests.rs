@@ -894,3 +894,141 @@ async fn meta_mint_failure_falls_back_to_dca_token() {
         "{err}"
     );
 }
+
+// ---------------- Hostile server values and error semantics ----------------
+
+#[tokio::test]
+async fn hostile_expires_in_never_panics() {
+    // Claude / Codex / Antigravity tokens with absurd lifetimes.
+    let srv = MockServer::start(|req| match req.path() {
+        "/profile" => MockResponse::json(200, json!({"account": {"uuid": "a", "email": "e"}})),
+        _ => MockResponse::json(
+            200,
+            json!({"access_token": "at", "refresh_token": "rt", "expires_in": i64::MAX}),
+        ),
+    })
+    .await;
+    let svc = ClaudeAuth::with_client(http()).with_endpoints(claude_endpoints(&srv.url));
+    let td = svc.refresh_tokens("rt-hostile").await.unwrap();
+    assert!(
+        chrono::DateTime::parse_from_rfc3339(&td.expire).is_ok(),
+        "{}",
+        td.expire
+    );
+
+    let ag = AntigravityAuth::with_client(http())
+        .with_client_secret("s")
+        .with_endpoints(ag_endpoints(&srv.url));
+    let t = ag.refresh_tokens("rt").await.unwrap();
+    let auth = {
+        let mut a = crate::types::Auth::new("a.json", "antigravity");
+        crate::antigravity::apply_refresh_to_auth(&mut a, &t);
+        a
+    };
+    assert!(auth.metadata["expired"].is_string());
+    // A huge relative expiry in a credential file saturates instead of panicking.
+    let mut file = crate::types::Auth::new("f.json", "x");
+    file.metadata.insert("expires_in".into(), json!(i64::MAX));
+    file.metadata
+        .insert("timestamp".into(), json!(1_700_000_000_000i64));
+    assert!(file.expiration_time().is_some());
+}
+
+#[tokio::test]
+async fn xai_and_kimi_device_codes_with_absurd_timings_do_not_panic() {
+    let srv = MockServer::start(|_| {
+        MockResponse::json(200, json!({"access_token": "at", "expires_in": 1e30}))
+    })
+    .await;
+    let client = DeviceFlowClient::with_client(http(), "kimi.com", "d").with_oauth_host(&srv.url);
+    let device = kimi::DeviceCodeResponse {
+        device_code: "dc".into(),
+        expires_in: i64::MAX,
+        interval: 0,
+        ..Default::default()
+    };
+    let token = client
+        .poll_for_token_with_min_interval(&device, Duration::from_millis(5))
+        .await
+        .unwrap();
+    assert!(token.expires_at > 0);
+
+    let srv = MockServer::start(|_| {
+        MockResponse::json(200, json!({"access_token": "at", "expires_in": i64::MAX}))
+    })
+    .await;
+    let svc = xai_for(&srv.url);
+    let device = xai::DeviceCodeResponse {
+        device_code: "dc".into(),
+        expires_in: i64::MAX,
+        interval: i64::MAX,
+        token_endpoint: format!("{}/token", srv.url),
+        ..Default::default()
+    };
+    // First attempt is immediate, so the absurd interval is never slept on.
+    let td = svc.poll_for_token(&device).await.unwrap();
+    assert!(chrono::DateTime::parse_from_rfc3339(&td.expire).is_ok());
+}
+
+#[tokio::test]
+async fn antigravity_refresh_429_carries_the_parsed_retry_delay() {
+    let srv = MockServer::start(|_| {
+        MockResponse::json(
+            429,
+            json!({"error": {"code": 429, "message": "quota", "details": [
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "17s"}]}}),
+        )
+    })
+    .await;
+    let svc = AntigravityAuth::with_client(http())
+        .with_client_secret("s")
+        .with_endpoints(ag_endpoints(&srv.url));
+    let err = svc.refresh_tokens("rt-429").await.unwrap_err();
+    assert_eq!(err.status_code(), Some(429));
+    assert_eq!(err.retry_after(), Some(Duration::from_secs(17)));
+}
+
+#[tokio::test]
+async fn exhausted_retries_keep_the_last_error_semantics_and_block_message_has_a_time() {
+    let srv = MockServer::start(|_| MockResponse::raw(502, b"bad gateway".to_vec())).await;
+    // Codex with 1 attempt is enough to observe the wrapper (no sleeping between attempts).
+    let svc = CodexAuth::with_client(http()).with_endpoints(codex_endpoints(&srv.url));
+    let err = svc
+        .refresh_tokens_with_retry("rt-502", 1)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, AuthFlowError::RetriesExhausted { attempts: 1, .. }),
+        "{err:?}"
+    );
+    assert_eq!(err.status_code(), Some(502));
+    assert!(err.to_string().starts_with(
+        "token refresh failed after 1 attempts: token refresh failed with status 502"
+    ));
+
+    let srv =
+        MockServer::start(|_| MockResponse::raw(429, vec![]).with_header("Retry-After", "30"))
+            .await;
+    let svc = ClaudeAuth::with_client(http()).with_endpoints(claude_endpoints(&srv.url));
+    let _ = svc.refresh_tokens("rt-blocked-msg").await;
+    let blocked = svc
+        .refresh_tokens("rt-blocked-msg")
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(
+        blocked.contains("refresh temporarily blocked until 20"),
+        "{blocked}"
+    );
+}
+
+#[test]
+fn antigravity_missing_secret_warning_only_when_credentials_exist() {
+    if std::env::var(crate::antigravity::CLIENT_SECRET_ENV).is_ok() {
+        return;
+    }
+    let none = [crate::types::Auth::new("c.json", "claude")];
+    assert!(!crate::antigravity::warn_if_client_secret_missing(&none));
+    let some = [crate::types::Auth::new("antigravity-a.json", "Antigravity")];
+    assert!(crate::antigravity::warn_if_client_secret_missing(&some));
+}

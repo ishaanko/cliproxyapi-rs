@@ -1,0 +1,367 @@
+{
+  "id": "mgmt.auth_files.lifecycle",
+  "desc": "upload a disabled credential file, inspect, patch and delete it",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v0/management/auth-files?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "type": "claude",
+          "email": "e2e@example.com",
+          "disabled": true,
+          "access_token": "sk-ant-oat-fake",
+          "priority": 3
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "files": [
+              {
+                "account": "e2e@example.com",
+                "account_type": "oauth",
+                "auth_index": "6861dcd0e608c7dd",
+                "cooldowns": [],
+                "created_at": "<now>",
+                "disabled": true,
+                "email": "e2e@example.com",
+                "failed": 0,
+                "id": "e2e-claude.json",
+                "label": "e2e@example.com",
+                "last_refresh": "<now>",
+                "modtime": "<now>",
+                "name": "e2e-claude.json",
+                "path": "<work>/mgmt.auth_files.lifecycle/auth/e2e-claude.json",
+                "priority": 3,
+                "provider": "claude",
+                "quota": {
+                  "signals": {}
+                },
+                "recent_requests": [
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  }
+                ],
+                "runtime_only": false,
+                "size": 105,
+                "source": "file",
+                "status": "disabled",
+                "status_message": "",
+                "success": 0,
+                "type": "claude",
+                "unavailable": false,
+                "updated_at": "<now>"
+              }
+            ],
+            "observed_at": "<now>"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files/download?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-disposition": "attachment; filename=\"e2e-claude.json\"",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "type": "claude",
+            "email": "e2e@example.com",
+            "disabled": true,
+            "access_token": "sk-ant-oat-fake",
+            "priority": 3
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v0/management/auth-files/fields",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "name": "e2e-claude.json",
+          "note": "hello",
+          "priority": 7
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files/download?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-disposition": "attachment; filename=\"e2e-claude.json\"",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "access_token": "sk-ant-oat-fake",
+            "disabled": true,
+            "email": "e2e@example.com",
+            "note": "hello",
+            "priority": 7,
+            "type": "claude"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v0/management/auth-files/status",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "name": "e2e-claude.json",
+          "disabled": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "disabled": false,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v0/management/auth-files?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files?name=e2e-claude.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "files": [],
+            "observed_at": "<now>"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

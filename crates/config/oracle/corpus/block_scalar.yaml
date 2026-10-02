@@ -1,0 +1,5 @@
+gemini-api-key:
+  - api-key: |
+      line1
+      # not a comment
+    prefix: p

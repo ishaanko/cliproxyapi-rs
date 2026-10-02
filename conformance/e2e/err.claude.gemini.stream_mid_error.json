@@ -1,0 +1,141 @@
+{
+  "id": "err.claude.gemini.stream_mid_error",
+  "desc": "claude client -> gemini upstream: stream_mid_error",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "message_start",
+              "data": {
+                "type": "message_start",
+                "message": {
+                  "id": "mockresp01",
+                  "type": "message",
+                  "role": "assistant",
+                  "content": [],
+                  "model": "gemini-2.5-flash",
+                  "stop_reason": null,
+                  "stop_sequence": null,
+                  "usage": {
+                    "input_tokens": 9,
+                    "output_tokens": 0
+                  }
+                }
+              }
+            },
+            {
+              "event": "content_block_start",
+              "data": {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                  "type": "text",
+                  "text": ""
+                }
+              }
+            },
+            {
+              "event": "content_block_delta",
+              "data": {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                  "type": "text_delta",
+                  "text": "Hello from "
+                }
+              }
+            },
+            {
+              "event": "message_stop",
+              "data": {
+                "type": "message_stop"
+              }
+            },
+            {
+              "trailing_whitespace": "\n"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "model": "gemini-2.5-flash",
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ]
+      }
+    }
+  ]
+}

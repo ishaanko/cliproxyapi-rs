@@ -110,18 +110,19 @@ impl<'a> Res<'a> {
         }
     }
 
-    /// gjson `Int()`.
+    /// gjson `Int()`: safe-float fast path, then wrapping integer parse of the raw text,
+    /// then Go's float->int conversion (out of range -> i64::MIN on amd64).
     pub fn int(&self) -> i64 {
         match self.v() {
             Some(Value::Bool(true)) => 1,
-            Some(Value::String(s)) => s.parse::<i64>().unwrap_or(0),
+            Some(Value::String(s)) => go_parse_int(s).unwrap_or(0),
             Some(Value::Number(n)) => {
                 let raw = n.to_string();
-                if let Ok(i) = raw.parse::<i64>() {
-                    return i;
-                }
                 let f = raw.parse::<f64>().unwrap_or(0.0);
-                f as i64
+                if f.abs() <= MAX_SAFE {
+                    return f as i64;
+                }
+                go_parse_int(&raw).unwrap_or_else(|| go_f64_to_i64(f))
             }
             _ => 0,
         }
@@ -131,14 +132,14 @@ impl<'a> Res<'a> {
     pub fn uint(&self) -> u64 {
         match self.v() {
             Some(Value::Bool(true)) => 1,
-            Some(Value::String(s)) => s.parse::<u64>().unwrap_or(0),
+            Some(Value::String(s)) => go_parse_uint(s).unwrap_or(0),
             Some(Value::Number(n)) => {
                 let raw = n.to_string();
-                if let Ok(i) = raw.parse::<u64>() {
-                    return i;
-                }
                 let f = raw.parse::<f64>().unwrap_or(0.0);
-                if f < 0.0 { 0 } else { f as u64 }
+                if f.abs() <= MAX_SAFE && f >= 0.0 {
+                    return f as u64;
+                }
+                go_parse_uint(&raw).unwrap_or_else(|| go_f64_to_u64(f))
             }
             _ => 0,
         }
@@ -238,6 +239,40 @@ impl<'a> Res<'a> {
     }
 }
 
+/// Largest integer exactly representable in f64 (gjson `safeInt` bound).
+const MAX_SAFE: f64 = 9007199254740991.0;
+
+/// gjson `parseInt`: optional '-', digits only, wrapping on overflow.
+fn go_parse_int(s: &str) -> Option<i64> {
+    let (neg, digits) = match s.strip_prefix('-') {
+        Some(d) => (true, d),
+        None => (false, s),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let n = digits.bytes().fold(0i64, |n, b| n.wrapping_mul(10).wrapping_add(i64::from(b - b'0')));
+    Some(if neg { n.wrapping_neg() } else { n })
+}
+
+/// gjson `parseUint`: digits only, wrapping on overflow.
+fn go_parse_uint(s: &str) -> Option<u64> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(s.bytes().fold(0u64, |n, b| n.wrapping_mul(10).wrapping_add(u64::from(b - b'0'))))
+}
+
+/// Go `int64(f)` on amd64: truncation, out-of-range/NaN -> i64::MIN.
+fn go_f64_to_i64(f: f64) -> i64 {
+    if f.is_nan() || f >= 9.223372036854775807e18 || f < -9.223372036854775808e18 { i64::MIN } else { f as i64 }
+}
+
+/// Go `uint64(f)` on amd64 for values gjson can reach: out-of-range/negative -> 1<<63.
+fn go_f64_to_u64(f: f64) -> u64 {
+    if f.is_nan() || f < 0.0 || f >= 1.8446744073709552e19 { 1 << 63 } else { f as u64 }
+}
+
 /// gjson number `String()`: integer literals verbatim, everything else via shortest float.
 fn number_string(n: &Number) -> String {
     let raw = n.to_string();
@@ -285,16 +320,64 @@ impl J for Value {
 /// Parse bytes; invalid JSON yields `Value::Null` (gjson is lenient, so callers must not
 /// rely on errors).
 pub fn parse(bytes: &[u8]) -> Value {
-    serde_json::from_slice(bytes).unwrap_or(Value::Null)
+    if nesting_depth(bytes) > MAX_DEPTH {
+        return Value::Null;
+    }
+    let mut de = serde_json::Deserializer::from_slice(bytes);
+    de.disable_recursion_limit();
+    let v = serde::Deserialize::deserialize(serde_stacker::Deserializer::new(&mut de));
+    match v {
+        Ok(v) if de.end().is_ok() => v,
+        _ => Value::Null,
+    }
 }
 
 pub fn parse_str(s: &str) -> Value {
-    serde_json::from_str(s).unwrap_or(Value::Null)
+    parse(s.as_bytes())
+}
+
+/// Maximum accepted nesting. Go has no practical limit, but serde_json's default (128) drops
+/// real-world deep tool schemas; values deeper than this are treated as invalid to keep
+/// recursive drop/serialize/eval within thread stacks.
+pub const MAX_DEPTH: usize = 1000;
+
+/// Maximum bracket nesting outside strings (cheap pre-scan; does not validate).
+fn nesting_depth(bytes: &[u8]) -> usize {
+    let (mut depth, mut max, mut in_str, mut esc) = (0usize, 0usize, false, false);
+    for &b in bytes {
+        if in_str {
+            match (esc, b) {
+                (true, _) => esc = false,
+                (false, b'\\') => esc = true,
+                (false, b'"') => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' | b'[' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
 }
 
 /// gjson `ValidBytes`.
 pub fn valid(bytes: &[u8]) -> bool {
-    serde_json::from_slice::<&serde_json::value::RawValue>(bytes).is_ok()
+    if nesting_depth(bytes) > MAX_DEPTH {
+        return false;
+    }
+    let mut de = serde_json::Deserializer::from_slice(bytes);
+    de.disable_recursion_limit();
+    let ok = serde::Deserialize::deserialize(serde_stacker::Deserializer::new(&mut de))
+        .map(|_: serde::de::IgnoredAny| ())
+        .is_ok();
+    ok && de.end().is_ok()
 }
 
 /// Compact serialization.
@@ -332,7 +415,9 @@ fn split_path(path: &str) -> Vec<String> {
             }
             continue;
         }
-        if in_quote {
+        // Parentheses and quotes only matter inside a `#(...)` query component.
+        let in_query = cur.starts_with("#(");
+        if in_query && in_quote {
             if c == '"' {
                 in_quote = false;
             }
@@ -340,15 +425,15 @@ fn split_path(path: &str) -> Vec<String> {
             continue;
         }
         match c {
-            '"' if depth > 0 => {
+            '"' if in_query && depth > 0 => {
                 in_quote = true;
                 cur.push(c);
             }
-            '(' => {
+            '(' if in_query || (cur == "#") => {
                 depth += 1;
                 cur.push(c);
             }
-            ')' => {
+            ')' if in_query => {
                 depth = depth.saturating_sub(1);
                 cur.push(c);
             }
@@ -405,7 +490,7 @@ fn parse_comps(path: &str) -> Vec<Comp> {
                 }
             } else if p == "@this" {
                 Comp::This
-            } else if p.starts_with('@') {
+            } else if p.strip_prefix('@').is_some_and(is_gjson_modifier) {
                 Comp::Unsupported
             } else {
                 let wild = has_unescaped_wild(&p);
@@ -413,6 +498,16 @@ fn parse_comps(path: &str) -> Vec<Comp> {
             }
         })
         .collect()
+}
+
+/// gjson's built-in modifier names (`@name` or `@name:args`). Other `@...` components are
+/// plain keys, e.g. JSON-LD `@type`.
+fn is_gjson_modifier(rest: &str) -> bool {
+    let name = rest.split(':').next().unwrap_or(rest);
+    matches!(
+        name,
+        "pretty" | "ugly" | "reverse" | "this" | "valid" | "flatten" | "join" | "keys" | "values" | "tostr" | "fromstr" | "group" | "dig"
+    )
 }
 
 /// Glob match supporting `*` and `?`, with `\` escaping in the pattern.
@@ -497,32 +592,27 @@ struct Query {
 impl Query {
     fn parse(q: &str) -> Self {
         const OPS: [&str; 9] = ["==", "!=", "<=", ">=", "!%", "<", ">", "=", "%"];
-        let bytes = q.as_bytes();
         let mut in_quote = false;
-        let mut i = 0;
-        while i < bytes.len() {
-            let c = bytes[i];
-            if c == b'\\' {
-                i += 2;
+        let mut chars = q.char_indices();
+        while let Some((i, c)) = chars.next() {
+            if c == '\\' {
+                chars.next();
                 continue;
             }
-            if c == b'"' {
+            if c == '"' {
                 in_quote = !in_quote;
             }
             if !in_quote {
-                for op in OPS {
-                    if q[i..].starts_with(op) {
-                        let raw = q[i + op.len()..].trim();
-                        let value = if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
-                            serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw[1..raw.len() - 1].to_string())
-                        } else {
-                            raw.to_string()
-                        };
-                        return Query { key: q[..i].trim().to_string(), op: Some(op), value };
-                    }
+                if let Some(op) = OPS.into_iter().find(|op| q[i..].starts_with(op)) {
+                    let raw = q[i + op.len()..].trim();
+                    let value = if raw.len() >= 2 && raw.starts_with('"') && raw.ends_with('"') {
+                        serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw[1..raw.len() - 1].to_string())
+                    } else {
+                        raw.to_string()
+                    };
+                    return Query { key: q[..i].trim().to_string(), op: Some(op), value };
                 }
             }
-            i += 1;
         }
         Query { key: q.trim().to_string(), op: None, value: String::new() }
     }
@@ -587,9 +677,30 @@ fn is_index(k: &str) -> bool {
 
 /// sjson `Set`: creates intermediate containers (arrays for numeric keys, objects
 /// otherwise), pads arrays with nulls, appends on `-1`, keeps existing key positions.
-pub fn set(v: &mut Value, path: &str, val: impl Into<Value>) {
+/// Returns `false` and leaves `v` unchanged where sjson errors (a non-numeric key into an
+/// existing array); most Go callers ignore that error, so the result can be ignored too.
+pub fn set(v: &mut Value, path: &str, val: impl Into<Value>) -> bool {
     let keys = set_keys(path);
+    if !settable(v, &keys) {
+        return false;
+    }
     set_at(v, &keys, val.into());
+    true
+}
+
+/// Walk the existing part of the path; fails on a non-numeric key into an array.
+fn settable(v: &Value, keys: &[String]) -> bool {
+    let Some((k, rest)) = keys.split_first() else { return true };
+    match v {
+        Value::Object(m) => m.get(k).is_none_or(|c| settable(c, rest)),
+        Value::Array(a) => {
+            if !is_index(k) {
+                return false;
+            }
+            k == "-1" || k.parse::<usize>().ok().and_then(|i| a.get(i)).is_none_or(|c| settable(c, rest))
+        }
+        _ => true,
+    }
 }
 
 /// sjson `SetRaw`: parse `raw` as JSON and set it. Invalid raw JSON is stored as a string

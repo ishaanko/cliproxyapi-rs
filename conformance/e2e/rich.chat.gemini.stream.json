@@ -1,0 +1,321 @@
+{
+  "id": "rich.chat.gemini.stream",
+  "desc": "multi-turn request with system prompt, image, tool round trip and sampling options: chat -> gemini",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "stream": true,
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are a terse weather bot."
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "What does this look like and what is the weather in Paris?"
+                },
+                {
+                  "type": "image_url",
+                  "image_url": {
+                    "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                  }
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": null,
+              "tool_calls": [
+                {
+                  "id": "call_abc123",
+                  "type": "function",
+                  "function": {
+                    "name": "get_weather",
+                    "arguments": "{\"city\":\"Paris\"}"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "tool",
+              "tool_call_id": "call_abc123",
+              "content": "18C and sunny"
+            },
+            {
+              "role": "user",
+              "content": "Thanks. And in Rome?"
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "function": {
+                "name": "get_weather",
+                "description": "Get the weather",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "c",
+                        "f"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "function",
+              "function": {
+                "name": "get_time",
+                "description": "Get the time",
+                "parameters": {
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            }
+          ],
+          "tool_choice": "auto",
+          "parallel_tool_calls": false,
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "max_tokens": 300,
+          "stop": [
+            "END"
+          ],
+          "user": "user-1"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "data": {
+                "id": "mockresp01",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "gemini-2.5-flash",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "role": "assistant",
+                      "content": "Hello from ",
+                      "reasoning_content": null,
+                      "tool_calls": null
+                    },
+                    "finish_reason": null,
+                    "native_finish_reason": null
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "id": "mockresp01",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": "gemini-2.5-flash",
+                "choices": [
+                  {
+                    "index": 0,
+                    "delta": {
+                      "role": "assistant",
+                      "content": "mock",
+                      "reasoning_content": null,
+                      "tool_calls": null
+                    },
+                    "finish_reason": "stop",
+                    "native_finish_reason": "stop"
+                  }
+                ],
+                "usage": {
+                  "completion_tokens": 7,
+                  "total_tokens": 18,
+                  "prompt_tokens": 11
+                }
+              }
+            },
+            {
+              "data": "[DONE]"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What does this look like and what is the weather in Paris?"
+              },
+              {
+                "inlineData": {
+                  "mime_type": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                }
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  }
+                },
+                "thoughtSignature": "skip_thought_signature_validator"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "functionResponse": {
+                  "name": "get_weather",
+                  "response": {
+                    "result": "\"18C and sunny\""
+                  }
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Thanks. And in Rome?"
+              }
+            ]
+          }
+        ],
+        "model": "gemini-2.5-flash",
+        "generationConfig": {
+          "temperature": 0.2,
+          "topP": 0.9,
+          "maxOutputTokens": 300
+        },
+        "systemInstruction": {
+          "role": "user",
+          "parts": [
+            {
+              "text": "You are a terse weather bot."
+            }
+          ]
+        },
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "description": "Get the weather",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "c",
+                        "f"
+                      ],
+                      "description": "Allowed: c, f"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              },
+              {
+                "name": "get_time",
+                "description": "Get the time",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {}
+                }
+              }
+            ]
+          }
+        ],
+        "toolConfig": {
+          "functionCallingConfig": {
+            "mode": "NONE"
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ]
+      }
+    }
+  ]
+}

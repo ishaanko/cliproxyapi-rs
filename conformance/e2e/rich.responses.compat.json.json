@@ -1,0 +1,296 @@
+{
+  "id": "rich.responses.compat.json",
+  "desc": "multi-turn request with system prompt, image, tool round trip and sampling options: responses -> compat",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "stream": false,
+          "instructions": "You are a terse weather bot.",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "What does this look like and what is the weather in Paris?"
+                },
+                {
+                  "type": "input_image",
+                  "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                }
+              ]
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_abc123",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_abc123",
+              "output": "18C and sunny"
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Thanks. And in Rome?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "description": "Get the weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "c",
+                      "f"
+                    ]
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            },
+            {
+              "type": "function",
+              "name": "get_time",
+              "description": "Get the time",
+              "parameters": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          ],
+          "tool_choice": "auto",
+          "parallel_tool_calls": false,
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "max_output_tokens": 300,
+          "metadata": {
+            "k": "v"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "chatcmpl-mock01",
+            "object": "response",
+            "created_at": 1700000000,
+            "status": "completed",
+            "background": false,
+            "error": null,
+            "incomplete_details": null,
+            "max_output_tokens": 300,
+            "model": "mock-gpt-4o",
+            "parallel_tool_calls": false,
+            "tool_choice": "auto",
+            "tools": [
+              {
+                "function": {
+                  "description": "Get the weather",
+                  "name": "get_weather",
+                  "parameters": {
+                    "properties": {
+                      "city": {
+                        "type": "string"
+                      },
+                      "unit": {
+                        "enum": [
+                          "c",
+                          "f"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "city"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "type": "function"
+              },
+              {
+                "function": {
+                  "description": "Get the time",
+                  "name": "get_time",
+                  "parameters": {
+                    "properties": {},
+                    "type": "object"
+                  }
+                },
+                "type": "function"
+              }
+            ],
+            "output": [
+              {
+                "id": "msg_chatcmpl-mock01_0",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "logprobs": [],
+                    "text": "Hello from mock"
+                  }
+                ],
+                "role": "assistant"
+              }
+            ],
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 7,
+              "total_tokens": 18,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "input_tokens_details": {
+                "cached_tokens": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "system",
+            "content": "You are a terse weather bot."
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What does this look like and what is the weather in Paris?"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"city\":\"Paris\"}",
+                  "name": "get_weather"
+                },
+                "id": "call_abc123",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "call_abc123",
+            "content": "18C and sunny"
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "Thanks. And in Rome?"
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "max_tokens": 300,
+        "tools": [
+          {
+            "function": {
+              "description": "Get the weather",
+              "name": "get_weather",
+              "parameters": {
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "enum": [
+                      "c",
+                      "f"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "function"
+          },
+          {
+            "function": {
+              "description": "Get the time",
+              "name": "get_time",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              }
+            },
+            "type": "function"
+          }
+        ],
+        "parallel_tool_calls": false,
+        "tool_choice": "auto"
+      }
+    }
+  ]
+}

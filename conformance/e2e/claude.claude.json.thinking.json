@@ -1,0 +1,104 @@
+{
+  "id": "claude.claude.json.thinking",
+  "desc": "claude client -> claude upstream, json, thinking",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "claude-sonnet-4-5-20250929",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false,
+          "thinking": {
+            "type": "enabled",
+            "budget_tokens": 2048
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "msg_mock01",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-5-20250929",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "Let me think.",
+                "signature": "c2lnbmF0dXJlLW1vY2s="
+              },
+              {
+                "type": "text",
+                "text": "Hello from mock"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 7
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept": "*/*",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 4096,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "stream": false,
+        "thinking": {
+          "type": "enabled",
+          "budget_tokens": 2048
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,872 @@
+{
+  "id": "mgmt.keys.api_keys_crud",
+  "desc": "client api-keys: list, replace, patch, delete; the new key authenticates",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "api-keys": [
+              "e2e-client-key",
+              "e2e-client-key-2"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": [
+          "e2e-client-key",
+          "added-key"
+        ]
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "api-keys": [
+              "e2e-client-key",
+              "added-key"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/models",
+        "auth": "Bearer(\"added-key\")",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "data": [
+              {
+                "created": 1729555200,
+                "id": "claude-3-5-haiku-20241022",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1708300800,
+                "id": "claude-3-7-sonnet-20250219",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1781049600,
+                "id": "claude-fable-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1788220800,
+                "id": "claude-fable-5-1",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1759276800,
+                "id": "claude-haiku-4-5-20251001",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1722945600,
+                "id": "claude-opus-4-1-20250805",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1715644800,
+                "id": "claude-opus-4-20250514",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1761955200,
+                "id": "claude-opus-4-5-20251101",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1770318000,
+                "id": "claude-opus-4-6",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1776297600,
+                "id": "claude-opus-4-7",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1779984000,
+                "id": "claude-opus-4-8",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1784038800,
+                "id": "claude-opus-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1790035200,
+                "id": "claude-opus-5-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1715644800,
+                "id": "claude-sonnet-4-20250514",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1759104000,
+                "id": "claude-sonnet-4-5-20250929",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1771372800,
+                "id": "claude-sonnet-4-6",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1782777600,
+                "id": "claude-sonnet-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1790553600,
+                "id": "claude-sonnet-5-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1776902400,
+                "id": "codex-auto-review",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": "<now>",
+                "id": "compat-gpt-4o",
+                "object": "model",
+                "owned_by": "mockcompat"
+              },
+              {
+                "created": "<now>",
+                "id": "compat-reason",
+                "object": "model",
+                "owned_by": "mockcompat"
+              },
+              {
+                "created": 1750118400,
+                "id": "gemini-2.5-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1753142400,
+                "id": "gemini-2.5-flash-lite",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1750118400,
+                "id": "gemini-2.5-pro",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1765929600,
+                "id": "gemini-3-flash-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1737158400,
+                "id": "gemini-3-pro-image-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1737158400,
+                "id": "gemini-3-pro-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1771459200,
+                "id": "gemini-3.1-flash-image-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1776288000,
+                "id": "gemini-3.1-flash-lite-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1771459200,
+                "id": "gemini-3.1-pro-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1779235200,
+                "id": "gemini-3.5-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1782864000,
+                "id": "gemini-3.5-flash-lite",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1782864000,
+                "id": "gemini-3.6-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "id": "gemini-3.7-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "id": "gemini-3.8-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1776902400,
+                "id": "gpt-5.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-luna",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-terra",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-6-astra",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790035200,
+                "id": "gpt-6-luna",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790035200,
+                "id": "gpt-6-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790640000,
+                "id": "gpt-6.1-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-1.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5-flare",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5-sunburst",
+                "object": "model",
+                "owned_by": "openai"
+              }
+            ],
+            "object": "list"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "old": "added-key",
+          "new": "renamed-key"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/models",
+        "auth": "Bearer(\"added-key\")",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "Invalid API key"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v1/models",
+        "auth": "Bearer(\"renamed-key\")",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "data": [
+              {
+                "created": 1729555200,
+                "id": "claude-3-5-haiku-20241022",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1708300800,
+                "id": "claude-3-7-sonnet-20250219",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1781049600,
+                "id": "claude-fable-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1788220800,
+                "id": "claude-fable-5-1",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1759276800,
+                "id": "claude-haiku-4-5-20251001",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1722945600,
+                "id": "claude-opus-4-1-20250805",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1715644800,
+                "id": "claude-opus-4-20250514",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1761955200,
+                "id": "claude-opus-4-5-20251101",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1770318000,
+                "id": "claude-opus-4-6",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1776297600,
+                "id": "claude-opus-4-7",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1779984000,
+                "id": "claude-opus-4-8",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1784038800,
+                "id": "claude-opus-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1790035200,
+                "id": "claude-opus-5-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1715644800,
+                "id": "claude-sonnet-4-20250514",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1759104000,
+                "id": "claude-sonnet-4-5-20250929",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1771372800,
+                "id": "claude-sonnet-4-6",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1782777600,
+                "id": "claude-sonnet-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1790553600,
+                "id": "claude-sonnet-5-5",
+                "object": "model",
+                "owned_by": "anthropic"
+              },
+              {
+                "created": 1776902400,
+                "id": "codex-auto-review",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": "<now>",
+                "id": "compat-gpt-4o",
+                "object": "model",
+                "owned_by": "mockcompat"
+              },
+              {
+                "created": "<now>",
+                "id": "compat-reason",
+                "object": "model",
+                "owned_by": "mockcompat"
+              },
+              {
+                "created": 1750118400,
+                "id": "gemini-2.5-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1753142400,
+                "id": "gemini-2.5-flash-lite",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1750118400,
+                "id": "gemini-2.5-pro",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1765929600,
+                "id": "gemini-3-flash-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1737158400,
+                "id": "gemini-3-pro-image-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1737158400,
+                "id": "gemini-3-pro-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1771459200,
+                "id": "gemini-3.1-flash-image-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1776288000,
+                "id": "gemini-3.1-flash-lite-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1771459200,
+                "id": "gemini-3.1-pro-preview",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1779235200,
+                "id": "gemini-3.5-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1782864000,
+                "id": "gemini-3.5-flash-lite",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1782864000,
+                "id": "gemini-3.6-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "id": "gemini-3.7-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "id": "gemini-3.8-flash",
+                "object": "model",
+                "owned_by": "google"
+              },
+              {
+                "created": 1776902400,
+                "id": "gpt-5.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-luna",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-5.6-terra",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1783616400,
+                "id": "gpt-6-astra",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790035200,
+                "id": "gpt-6-luna",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790035200,
+                "id": "gpt-6-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1790640000,
+                "id": "gpt-6.1-sol",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-1.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5-flare",
+                "object": "model",
+                "owned_by": "openai"
+              },
+              {
+                "created": 1704067200,
+                "id": "gpt-image-2.5-sunburst",
+                "object": "model",
+                "owned_by": "openai"
+              }
+            ],
+            "object": "list"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v0/management/api-keys?value=renamed-key",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "api-keys": [
+              "e2e-client-key"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "DELETE",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "missing index or value"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v0/management/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": []
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "status": "ok"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

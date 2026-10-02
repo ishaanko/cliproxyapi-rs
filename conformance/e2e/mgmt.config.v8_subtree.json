@@ -1,0 +1,265 @@
+{
+  "id": "mgmt.config.v8_subtree",
+  "desc": "v8 config subtrees by key path",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/routing/retry",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "max-retry-credentials": 0,
+            "max-retry-interval": 0,
+            "request-retry": 2
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/access/api-keys",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": [
+            "e2e-client-key",
+            "e2e-client-key-2"
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/routing/retry/request-retry",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": 2
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/no/such/key",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "not_found"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "access": {
+              "api-keys": [
+                "e2e-client-key",
+                "e2e-client-key-2"
+              ]
+            },
+            "api-keys": {
+              "claude": [
+                {
+                  "base-url": "http://<mock>/anthropic",
+                  "keys": [
+                    {
+                      "api-key": "sk-claude-1"
+                    }
+                  ],
+                  "name": "claude-1"
+                },
+                {
+                  "base-url": "http://<mock>/anthropic",
+                  "keys": [
+                    {
+                      "api-key": "sk-claude-2"
+                    }
+                  ],
+                  "name": "claude-2"
+                }
+              ],
+              "codex": [
+                {
+                  "base-url": "http://<mock>/codex",
+                  "keys": [
+                    {
+                      "api-key": "sk-codex-1"
+                    }
+                  ],
+                  "name": "codex-1"
+                },
+                {
+                  "base-url": "http://<mock>/codex",
+                  "keys": [
+                    {
+                      "api-key": "sk-codex-2"
+                    }
+                  ],
+                  "name": "codex-2"
+                }
+              ],
+              "gemini": [
+                {
+                  "base-url": "http://<mock>/gemini",
+                  "keys": [
+                    {
+                      "api-key": "sk-gemini-1"
+                    }
+                  ],
+                  "name": "gemini-1"
+                },
+                {
+                  "base-url": "http://<mock>/gemini",
+                  "keys": [
+                    {
+                      "api-key": "sk-gemini-2"
+                    }
+                  ],
+                  "name": "gemini-2"
+                }
+              ],
+              "openai-compatibility": [
+                {
+                  "base-url": "http://<mock>/compat",
+                  "keys": [
+                    {
+                      "api-key": "sk-compat-1"
+                    },
+                    {
+                      "api-key": "sk-compat-2"
+                    }
+                  ],
+                  "models": [
+                    {
+                      "alias": "compat-gpt-4o",
+                      "name": "mock-gpt-4o"
+                    },
+                    {
+                      "alias": "compat-reason",
+                      "name": "mock-reason"
+                    }
+                  ],
+                  "name": "mockcompat"
+                }
+              ]
+            },
+            "config-version": 8,
+            "management": {
+              "allow-remote": false,
+              "disable-control-panel": true,
+              "secret-key": "<bcrypt>"
+            },
+            "oauth": {
+              "auth-dir": "<work>/mgmt.config.v8_subtree/auth"
+            },
+            "observability": {
+              "usage": {
+                "usage-statistics-enabled": false
+              }
+            },
+            "requests": {
+              "nonstream-keepalive-interval": 0,
+              "passthrough-headers": false,
+              "streaming": {
+                "bootstrap-retries": 0,
+                "keepalive-seconds": 0
+              }
+            },
+            "routing": {
+              "cooldown": {
+                "disable-cooling": false
+              },
+              "force-model-prefix": false,
+              "retry": {
+                "max-retry-credentials": 0,
+                "max-retry-interval": 0,
+                "request-retry": 2
+              }
+            },
+            "server": {
+              "host": "127.0.0.1",
+              "port": 38922
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

@@ -321,7 +321,7 @@ impl KimiTokenStorage {
             return false;
         }
         match chrono::DateTime::parse_from_rfc3339(&self.expired) {
-            Ok(t) => chrono::Utc::now() + chrono::Duration::seconds(300) > t,
+            Ok(t) => crate::util::now_plus_secs(300) > t,
             Err(_) => true,
         }
     }

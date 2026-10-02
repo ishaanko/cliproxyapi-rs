@@ -18,6 +18,7 @@ rand.workspace = true
 sha2.workspace = true
 hex.workspace = true
 base64.workspace = true
+regex.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "socks", "json"] }

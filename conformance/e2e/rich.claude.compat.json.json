@@ -1,0 +1,271 @@
+{
+  "id": "rich.claude.compat.json",
+  "desc": "multi-turn request with system prompt, image, tool round trip and sampling options: claude -> compat",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "stream": false,
+          "max_tokens": 300,
+          "system": [
+            {
+              "type": "text",
+              "text": "You are a terse weather bot.",
+              "cache_control": {
+                "type": "ephemeral"
+              }
+            }
+          ],
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "What does this look like and what is the weather in Paris?"
+                },
+                {
+                  "type": "image",
+                  "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                  }
+                }
+              ]
+            },
+            {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Let me check."
+                },
+                {
+                  "type": "tool_use",
+                  "id": "toolu_abc123",
+                  "name": "get_weather",
+                  "input": {
+                    "city": "Paris"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "toolu_abc123",
+                  "content": "18C and sunny"
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": "Thanks. And in Rome?"
+            }
+          ],
+          "tools": [
+            {
+              "name": "get_weather",
+              "description": "Get the weather",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "enum": [
+                      "c",
+                      "f"
+                    ]
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            },
+            {
+              "name": "get_time",
+              "description": "Get the time",
+              "input_schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          ],
+          "tool_choice": {
+            "type": "auto",
+            "disable_parallel_tool_use": true
+          },
+          "temperature": 0.2,
+          "top_p": 0.9,
+          "stop_sequences": [
+            "END"
+          ],
+          "metadata": {
+            "user_id": "user-1"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "chatcmpl-mock01",
+            "type": "message",
+            "role": "assistant",
+            "model": "mock-gpt-4o",
+            "content": [
+              {
+                "type": "text",
+                "text": "Hello from mock"
+              }
+            ],
+            "stop_reason": "end_turn",
+            "stop_sequence": null,
+            "usage": {
+              "input_tokens": 11,
+              "output_tokens": 7
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "system",
+            "content": [
+              {
+                "type": "text",
+                "text": "You are a terse weather bot."
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What does this look like and what is the weather in Paris?"
+              },
+              {
+                "type": "image_url",
+                "image_url": {
+                  "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+                }
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "Let me check."
+              }
+            ],
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"city\":\"Paris\"}",
+                  "name": "get_weather"
+                },
+                "id": "toolu_abc123",
+                "type": "function"
+              }
+            ]
+          },
+          {
+            "role": "tool",
+            "tool_call_id": "toolu_abc123",
+            "content": "18C and sunny",
+            "name": "get_weather"
+          },
+          {
+            "role": "user",
+            "content": "Thanks. And in Rome?"
+          }
+        ],
+        "max_tokens": 300,
+        "temperature": 0.2,
+        "stop": [
+          "END"
+        ],
+        "stream": false,
+        "tools": [
+          {
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "description": "Get the weather",
+              "parameters": {
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  },
+                  "unit": {
+                    "enum": [
+                      "c",
+                      "f"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          {
+            "type": "function",
+            "function": {
+              "name": "get_time",
+              "description": "Get the time",
+              "parameters": {
+                "properties": {},
+                "type": "object"
+              }
+            }
+          }
+        ],
+        "tool_choice": "auto",
+        "parallel_tool_calls": false
+      }
+    }
+  ]
+}

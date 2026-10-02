@@ -210,11 +210,23 @@ impl Serialize for GoDuration {
     }
 }
 
-/// Only strings are accepted, as with yaml.v3 decoding into `time.Duration`.
+/// Only strings are accepted, as with yaml.v3 decoding into `time.Duration`: a bare `0` is an
+/// integer scalar and is rejected, while `"0"` parses.
 impl<'de> Deserialize<'de> for GoDuration {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        GoDuration::parse(&s).map_err(de::Error::custom)
+        struct DurationVisitor;
+        impl de::Visitor<'_> for DurationVisitor {
+            type Value = GoDuration;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a duration string such as \"3s\"")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> Result<GoDuration, E> {
+                GoDuration::parse(v).map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(DurationVisitor)
     }
 }
 

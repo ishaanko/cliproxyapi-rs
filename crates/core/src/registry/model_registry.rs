@@ -6,7 +6,7 @@
 //! `registration_epoch` let callers invalidate their own list caches.
 //!
 //! Differences from Go: model listings are sorted by id (Go iterates a map, so order was random),
-//! hooks run on a short-lived thread instead of a goroutine (no context/timeout), and
+//! hooks run in order on one shared worker thread instead of a goroutine each (no context/timeout), and
 //! `ModelInfo` slices hold values rather than nullable pointers.
 
 use std::collections::HashMap;
@@ -32,6 +32,26 @@ const MODEL_QUOTA_EXCEEDED_WINDOW: Duration = Duration::from_secs(5 * 60);
 pub trait ModelRegistryHook: Send + Sync {
     fn on_models_registered(&self, provider: &str, client_id: &str, models: Vec<ModelInfo>);
     fn on_models_unregistered(&self, provider: &str, client_id: &str);
+}
+
+type HookJob = Box<dyn FnOnce() + Send>;
+
+/// Queues a hook notification on the single shared worker thread (started on first use), so
+/// notifications never block the registry and run in the order they were issued.
+fn run_hook_job(job: impl FnOnce() + Send + 'static) {
+    static WORKER: LazyLock<std::sync::mpsc::Sender<HookJob>> = LazyLock::new(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<HookJob>();
+        std::thread::Builder::new()
+            .name("model-registry-hooks".into())
+            .spawn(move || {
+                for job in rx {
+                    job();
+                }
+            })
+            .expect("spawn model registry hook worker");
+        tx
+    });
+    let _ = WORKER.send(Box::new(job));
 }
 
 /// A model's availability record.
@@ -312,7 +332,7 @@ impl ModelRegistry {
             .cloned()
             .collect();
         let (provider, client_id) = (provider.to_string(), client_id.to_string());
-        std::thread::spawn(move || {
+        run_hook_job(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 hook.on_models_registered(&provider, &client_id, models_copy)
             }));
@@ -327,7 +347,7 @@ impl ModelRegistry {
             return;
         };
         let (provider, client_id) = (provider.to_string(), client_id.to_string());
-        std::thread::spawn(move || {
+        run_hook_job(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 hook.on_models_unregistered(&provider, &client_id)
             }));

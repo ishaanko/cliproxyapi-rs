@@ -28,37 +28,21 @@ fn sha256_hex(data: &str) -> String {
 // Hashing helpers
 // ---------------------------------------------------------------------------------------------
 
-/// JSON of a thinking capability exactly as Go's `json.Marshal(*ThinkingSupport)` writes it
-/// (`null` for none; json tags use `zero_allowed` / `dynamic_allowed`).
+/// `|thinking=<json>`: the registry type serialises with Go's json tags (`zero_allowed`, ...,
+/// `null` when unset).
 fn thinking_hash_suffix(support: &Option<ThinkingSupport>) -> String {
-    let json = match support {
-        None => "null".to_string(),
-        Some(t) => {
-            let mut parts = Vec::new();
-            if t.min != 0 {
-                parts.push(format!("\"min\":{}", t.min));
-            }
-            if t.max != 0 {
-                parts.push(format!("\"max\":{}", t.max));
-            }
-            if t.zero_allowed {
-                parts.push("\"zero_allowed\":true".to_string());
-            }
-            if t.dynamic_allowed {
-                parts.push("\"dynamic_allowed\":true".to_string());
-            }
-            if !t.levels.is_empty() {
-                let levels: Vec<String> = t.levels.iter().map(|l| serde_json::Value::String(l.clone()).to_string()).collect();
-                parts.push(format!("\"levels\":[{}]", levels.join(",")));
-            }
-            format!("{{{}}}", parts.join(","))
-        }
-    };
-    format!("|thinking={json}")
+    format!(
+        "|thinking={}",
+        serde_json::to_string(support).unwrap_or_else(|_| "null".to_string())
+    )
 }
 
 fn hash_joined(keys: &[String]) -> String {
-    if keys.is_empty() { String::new() } else { sha256_hex(&keys.join("\n")) }
+    if keys.is_empty() {
+        String::new()
+    } else {
+        sha256_hex(&keys.join("\n"))
+    }
 }
 
 /// Dedupes and sorts keys (`normalizeModelPairs`).
@@ -76,8 +60,11 @@ fn name_alias(name: &str, alias: &str) -> Option<(String, String)> {
 
 /// Normalised hash of an excluded-model list (trimmed, lowercased, sorted; empty -> "").
 pub fn compute_excluded_models_hash(excluded: &[String]) -> String {
-    let mut normalized: Vec<String> =
-        excluded.iter().map(|e| e.trim().to_lowercase()).filter(|e| !e.is_empty()).collect();
+    let mut normalized: Vec<String> = excluded
+        .iter()
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect();
     if normalized.is_empty() {
         return String::new();
     }
@@ -202,7 +189,10 @@ pub fn compute_gemini_models_hash(models: &[GeminiModel]) -> String {
 // ---------------------------------------------------------------------------------------------
 
 fn summarize_keys(keys: Vec<String>) -> ModelsSummary {
-    ModelsSummary { hash: hash_joined(&keys), count: keys.len() }
+    ModelsSummary {
+        hash: hash_joined(&keys),
+        count: keys.len(),
+    }
 }
 
 /// Hashes Gemini model aliases for change detection.
@@ -258,14 +248,21 @@ pub fn summarize_vertex_models(models: &[VertexCompatModel]) -> ModelsSummary {
         .filter_map(|m| {
             let (name, alias) = name_alias(&m.name, &m.alias)?;
             let name = if alias.is_empty() { name } else { alias };
-            Some(format!("{name}|{}{}", m.display_name.trim(), thinking_hash_suffix(&m.thinking)))
+            Some(format!(
+                "{name}|{}{}",
+                m.display_name.trim(),
+                thinking_hash_suffix(&m.thinking)
+            ))
         })
         .collect();
     if names.is_empty() {
         return ModelsSummary::default();
     }
     names.sort();
-    ModelsSummary { hash: sha256_hex(&names.join("|")), count: names.len() }
+    ModelsSummary {
+        hash: sha256_hex(&names.join("|")),
+        count: names.len(),
+    }
 }
 
 /// Normalises and hashes an excluded-model list.
@@ -280,7 +277,10 @@ pub fn summarize_excluded_models(list: &[String]) -> ModelsSummary {
         .filter(|e| !e.is_empty() && seen.insert(e.clone()))
         .collect();
     normalized.sort();
-    ModelsSummary { hash: compute_excluded_models_hash(&normalized), count: normalized.len() }
+    ModelsSummary {
+        hash: compute_excluded_models_hash(&normalized),
+        count: normalized.len(),
+    }
 }
 
 /// Summarises a per-channel map (channel keys trimmed and lowercased, empty ones dropped).
@@ -318,7 +318,10 @@ fn diff_channels(
                 affected.push(key.clone());
             }
             (Some(o), Some(n)) if o.hash != n.hash => {
-                changes.push(format!("{label}[{key}]: updated ({} -> {} entries)", o.count, n.count));
+                changes.push(format!(
+                    "{label}[{key}]: updated ({} -> {} entries)",
+                    o.count, n.count
+                ));
                 affected.push(key.clone());
             }
             _ => {}
@@ -335,7 +338,8 @@ pub fn diff_oauth_excluded_model_changes(
     old: &BTreeMap<String, Vec<String>>,
     new: &BTreeMap<String, Vec<String>>,
 ) -> (Vec<String>, Vec<String>) {
-    let summarize = |m: &BTreeMap<String, Vec<String>>| summarize_channels(m, summarize_excluded_models);
+    let summarize =
+        |m: &BTreeMap<String, Vec<String>>| summarize_channels(m, summarize_excluded_models);
     diff_channels("oauth-excluded-models", &summarize(old), &summarize(new))
 }
 
@@ -368,7 +372,10 @@ fn summarize_oauth_model_alias_list(list: &[OAuthModelAlias]) -> ModelsSummary {
         return ModelsSummary::default();
     }
     normalized.sort();
-    ModelsSummary { hash: sha256_hex(&normalized.join("|")), count: normalized.len() }
+    ModelsSummary {
+        hash: sha256_hex(&normalized.join("|")),
+        count: normalized.len(),
+    }
 }
 
 /// OAuth model alias changes per channel.
@@ -387,7 +394,10 @@ fn summarize_request_scoped_errors_list(list: &[RequestScopedErrorRule]) -> Mode
     let mut text = String::new();
     let mut valid = 0;
     for entry in list {
-        if entry.status <= 0 || (entry.r#match.is_empty() && entry.match_regexr.is_empty()) || entry.action.is_empty() {
+        if entry.status <= 0
+            || (entry.r#match.is_empty() && entry.match_regexr.is_empty())
+            || entry.action.is_empty()
+        {
             continue;
         }
         valid += 1;
@@ -403,7 +413,10 @@ fn summarize_request_scoped_errors_list(list: &[RequestScopedErrorRule]) -> Mode
     if valid == 0 {
         return ModelsSummary::default();
     }
-    ModelsSummary { hash: sha256_hex(&text), count: valid }
+    ModelsSummary {
+        hash: sha256_hex(&text),
+        count: valid,
+    }
 }
 
 /// OAuth request-scoped error rule changes per channel.
@@ -437,7 +450,10 @@ fn summarize_oauth_settings_list(list: &[OAuthModelSetting]) -> ModelsSummary {
     if normalized.is_empty() {
         return ModelsSummary::default();
     }
-    ModelsSummary { hash: sha256_hex(&normalized.join("|")), count: normalized.len() }
+    ModelsSummary {
+        hash: sha256_hex(&normalized.join("|")),
+        count: normalized.len(),
+    }
 }
 
 /// OAuth model settings changes per channel.
@@ -457,11 +473,18 @@ pub fn diff_oauth_settings_changes(
 // ---------------------------------------------------------------------------------------------
 
 fn count_api_keys(entry: &OpenAiCompatibility) -> usize {
-    entry.api_key_entries.iter().filter(|k| !k.api_key.trim().is_empty()).count()
+    entry
+        .api_key_entries
+        .iter()
+        .filter(|k| !k.api_key.trim().is_empty())
+        .count()
 }
 
 fn count_openai_models(models: &[OpenAiCompatibilityModel]) -> usize {
-    models.iter().filter(|m| name_alias(&m.name, &m.alias).is_some()).count()
+    models
+        .iter()
+        .filter(|m| name_alias(&m.name, &m.alias).is_some())
+        .count()
 }
 
 fn openai_compat_signature(entry: &OpenAiCompatibility) -> String {
@@ -479,15 +502,25 @@ fn openai_compat_signature(entry: &OpenAiCompatibility) -> String {
         .iter()
         .filter_map(|m| {
             let (name, alias) = name_alias(&m.name, &m.alias)?;
-            Some(format!("{}|{}|{}|image={}", name.to_lowercase(), alias.to_lowercase(), m.display_name.trim(), m.image))
+            Some(format!(
+                "{}|{}|{}|image={}",
+                name.to_lowercase(),
+                alias.to_lowercase(),
+                m.display_name.trim(),
+                m.image
+            ))
         })
         .collect();
     if !models.is_empty() {
         models.sort();
         parts.push(format!("models={}", models.join(",")));
     }
-    let mut headers: Vec<String> =
-        entry.headers.keys().map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty()).collect();
+    let mut headers: Vec<String> = entry
+        .headers
+        .keys()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty())
+        .collect();
     if !headers.is_empty() {
         headers.sort();
         parts.push(format!("headers={}", headers.join(",")));
@@ -497,7 +530,11 @@ fn openai_compat_signature(entry: &OpenAiCompatibility) -> String {
     if keys > 0 {
         parts.push(format!("api_keys={keys}"));
     }
-    if parts.is_empty() { String::new() } else { sha256_hex(&parts.join("|")) }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        sha256_hex(&parts.join("|"))
+    }
 }
 
 /// (identity key, display label) of a provider entry.
@@ -512,7 +549,11 @@ fn openai_compat_key(entry: &OpenAiCompatibility, index: usize) -> (String, Stri
     }
     for model in &entry.models {
         let alias = model.alias.trim();
-        let alias = if alias.is_empty() { model.name.trim() } else { alias };
+        let alias = if alias.is_empty() {
+            model.name.trim()
+        } else {
+            alias
+        };
         if !alias.is_empty() {
             return (format!("alias:{alias}"), alias.to_string());
         }
@@ -569,19 +610,34 @@ fn describe_openai_compat_update(old: &OpenAiCompatibility, new: &OpenAiCompatib
     if old_keys != new_keys {
         details.push(format!("api-keys {old_keys} -> {new_keys}"));
     }
-    let (old_models, new_models) = (count_openai_models(&old.models), count_openai_models(&new.models));
+    let (old_models, new_models) = (
+        count_openai_models(&old.models),
+        count_openai_models(&new.models),
+    );
     if old_models != new_models {
         details.push(format!("models {old_models} -> {new_models}"));
     }
     if old.headers != new.headers {
         details.push("headers updated".to_string());
     }
-    if details.is_empty() { String::new() } else { format!("({})", details.join(", ")) }
+    if details.is_empty() {
+        String::new()
+    } else {
+        format!("({})", details.join(", "))
+    }
 }
 
 /// Human-readable changes between two `openai-compatibility` lists, ordered by provider key.
-pub fn diff_openai_compatibility(old: &[OpenAiCompatibility], new: &[OpenAiCompatibility]) -> Vec<String> {
-    fn index(list: &[OpenAiCompatibility]) -> (BTreeMap<String, &OpenAiCompatibility>, BTreeMap<String, String>) {
+pub fn diff_openai_compatibility(
+    old: &[OpenAiCompatibility],
+    new: &[OpenAiCompatibility],
+) -> Vec<String> {
+    fn index(
+        list: &[OpenAiCompatibility],
+    ) -> (
+        BTreeMap<String, &OpenAiCompatibility>,
+        BTreeMap<String, String>,
+    ) {
         let mut map = BTreeMap::new();
         let mut labels = BTreeMap::new();
         for (i, entry) in list.iter().enumerate() {
@@ -639,7 +695,11 @@ fn format_optional_int(value: Option<i64>) -> String {
 
 fn display_optional_value(raw: &str) -> String {
     let t = raw.trim();
-    if t.is_empty() { "<none>".to_string() } else { t.to_string() }
+    if t.is_empty() {
+        "<none>".to_string()
+    } else {
+        t.to_string()
+    }
 }
 
 /// Redacted `scheme://host[:port]` form of a URL (credentials, path and query are dropped);
@@ -658,22 +718,40 @@ pub fn format_url(raw: &str) -> String {
         let auth = &s[..end];
         let host = auth.rsplit_once('@').map_or(auth, |(_, host)| host);
         // An IPv6 literal must be bracketed on both sides.
-        if host.contains('[') != host.contains(']') { String::new() } else { host.to_string() }
+        if host.contains('[') != host.contains(']') {
+            String::new()
+        } else {
+            host.to_string()
+        }
     };
     let redacted = || "<redacted>".to_string();
     if let Some((scheme, rest)) = trimmed.split_once("://") {
-        let valid = scheme.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
+        let valid = scheme
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'));
         if valid {
             let host = authority(rest);
-            return if host.is_empty() { redacted() } else { format!("{}://{host}", scheme.to_lowercase()) };
+            return if host.is_empty() {
+                redacted()
+            } else {
+                format!("{}://{host}", scheme.to_lowercase())
+            };
         }
     }
     let host = authority(trimmed);
     if host.is_empty() { redacted() } else { host }
 }
 
-fn push_change<T: std::fmt::Display + PartialEq>(changes: &mut Vec<String>, field: &str, old: T, new: T) {
+fn push_change<T: std::fmt::Display + PartialEq>(
+    changes: &mut Vec<String>,
+    field: &str,
+    old: T,
+    new: T,
+) {
     if old != new {
         changes.push(format!("{field}: {old} -> {new}"));
     }
@@ -683,27 +761,57 @@ fn push_trimmed_change(changes: &mut Vec<String>, field: &str, old: &str, new: &
     push_change(changes, field, old.trim(), new.trim());
 }
 
-fn push_optional_bool_change(changes: &mut Vec<String>, field: &str, old: Option<bool>, new: Option<bool>) {
+fn push_optional_bool_change(
+    changes: &mut Vec<String>,
+    field: &str,
+    old: Option<bool>,
+    new: Option<bool>,
+) {
     if old != new {
-        changes.push(format!("{field}: {} -> {}", format_optional_bool(old), format_optional_bool(new)));
+        changes.push(format!(
+            "{field}: {} -> {}",
+            format_optional_bool(old),
+            format_optional_bool(new)
+        ));
     }
 }
 
-fn push_optional_int_change(changes: &mut Vec<String>, field: &str, old: Option<i64>, new: Option<i64>) {
+fn push_optional_int_change(
+    changes: &mut Vec<String>,
+    field: &str,
+    old: Option<i64>,
+    new: Option<i64>,
+) {
     if old != new {
-        changes.push(format!("{field}: {} -> {}", format_optional_int(old), format_optional_int(new)));
+        changes.push(format!(
+            "{field}: {} -> {}",
+            format_optional_int(old),
+            format_optional_int(new)
+        ));
     }
 }
 
 fn push_url_change(changes: &mut Vec<String>, field: &str, old: &str, new: &str) {
     if old.trim() != new.trim() {
-        changes.push(format!("{field}: {} -> {}", format_url(old), format_url(new)));
+        changes.push(format!(
+            "{field}: {} -> {}",
+            format_url(old),
+            format_url(new)
+        ));
     }
 }
 
-fn push_models_change(changes: &mut Vec<String>, field: &str, old: &ModelsSummary, new: &ModelsSummary) {
+fn push_models_change(
+    changes: &mut Vec<String>,
+    field: &str,
+    old: &ModelsSummary,
+    new: &ModelsSummary,
+) {
     if old.hash != new.hash {
-        changes.push(format!("{field}: updated ({} -> {} entries)", old.count, new.count));
+        changes.push(format!(
+            "{field}: updated ({} -> {} entries)",
+            old.count, new.count
+        ));
     }
 }
 
@@ -715,8 +823,18 @@ fn push_endpoint_changes(
     proxy_url: (&str, &str),
     prefix: (&str, &str),
 ) {
-    push_url_change(changes, &format!("{label}.base-url"), base_url.0, base_url.1);
-    push_url_change(changes, &format!("{label}.proxy-url"), proxy_url.0, proxy_url.1);
+    push_url_change(
+        changes,
+        &format!("{label}.base-url"),
+        base_url.0,
+        base_url.1,
+    );
+    push_url_change(
+        changes,
+        &format!("{label}.proxy-url"),
+        proxy_url.0,
+        proxy_url.1,
+    );
     push_trimmed_change(changes, &format!("{label}.prefix"), prefix.0, prefix.1);
 }
 
@@ -750,48 +868,127 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
     let mut c: Vec<String> = Vec::with_capacity(16);
 
     // Simple scalars.
-    push_change(&mut c, "client.codex.enable-apply-patch", old.client.codex.enable_apply_patch, new.client.codex.enable_apply_patch);
+    push_change(
+        &mut c,
+        "client.codex.enable-apply-patch",
+        old.client.codex.enable_apply_patch,
+        new.client.codex.enable_apply_patch,
+    );
     push_change(&mut c, "port", old.port, new.port);
-    push_change(&mut c, "auth-dir", old.auth_dir.as_str(), new.auth_dir.as_str());
+    push_change(
+        &mut c,
+        "auth-dir",
+        old.auth_dir.as_str(),
+        new.auth_dir.as_str(),
+    );
     push_change(&mut c, "debug", old.debug, new.debug);
     push_change(&mut c, "pprof.enable", old.pprof.enable, new.pprof.enable);
     push_trimmed_change(&mut c, "pprof.addr", &old.pprof.addr, &new.pprof.addr);
-    push_change(&mut c, "logging-to-file", old.logging_to_file, new.logging_to_file);
-    push_change(&mut c, "usage-statistics-enabled", old.usage_statistics_enabled, new.usage_statistics_enabled);
+    push_change(
+        &mut c,
+        "logging-to-file",
+        old.logging_to_file,
+        new.logging_to_file,
+    );
+    push_change(
+        &mut c,
+        "usage-statistics-enabled",
+        old.usage_statistics_enabled,
+        new.usage_statistics_enabled,
+    );
     push_change(
         &mut c,
         "redis-usage-queue-retention-seconds",
         old.redis_usage_queue_retention_seconds,
         new.redis_usage_queue_retention_seconds,
     );
-    push_change(&mut c, "disable-cooling", old.disable_cooling, new.disable_cooling);
-    push_change(&mut c, "save-cooldown-status", old.save_cooldown_status, new.save_cooldown_status);
+    push_change(
+        &mut c,
+        "disable-cooling",
+        old.disable_cooling,
+        new.disable_cooling,
+    );
+    push_change(
+        &mut c,
+        "save-cooldown-status",
+        old.save_cooldown_status,
+        new.save_cooldown_status,
+    );
     push_change(
         &mut c,
         "transient-error-cooldown-seconds",
         old.transient_error_cooldown_seconds,
         new.transient_error_cooldown_seconds,
     );
-    push_change(&mut c, "disable-claude-cloak-mode", old.disable_claude_cloak_mode, new.disable_claude_cloak_mode);
+    push_change(
+        &mut c,
+        "disable-claude-cloak-mode",
+        old.disable_claude_cloak_mode,
+        new.disable_claude_cloak_mode,
+    );
     push_change(
         &mut c,
         "claude-code.disable-cloaking-model-list",
         old.claude_code.disable_cloaking_model_list,
         new.claude_code.disable_cloaking_model_list,
     );
-    push_change(&mut c, "disable-image-generation", old.disable_image_generation, new.disable_image_generation);
-    push_trimmed_change(&mut c, "gpt-image-2-base-model", &old.gpt_image_2_base_model, &new.gpt_image_2_base_model);
+    push_change(
+        &mut c,
+        "disable-image-generation",
+        old.disable_image_generation,
+        new.disable_image_generation,
+    );
+    push_trimmed_change(
+        &mut c,
+        "gpt-image-2-base-model",
+        &old.gpt_image_2_base_model,
+        &new.gpt_image_2_base_model,
+    );
     push_change(&mut c, "request-log", old.request_log, new.request_log);
-    push_change(&mut c, "logs-max-total-size-mb", old.logs_max_total_size_mb, new.logs_max_total_size_mb);
-    push_change(&mut c, "error-logs-max-files", old.error_logs_max_files, new.error_logs_max_files);
-    push_change(&mut c, "request-retry", old.request_retry, new.request_retry);
-    push_change(&mut c, "max-retry-credentials", old.max_retry_credentials, new.max_retry_credentials);
-    push_change(&mut c, "max-retry-interval", old.max_retry_interval, new.max_retry_interval);
+    push_change(
+        &mut c,
+        "logs-max-total-size-mb",
+        old.logs_max_total_size_mb,
+        new.logs_max_total_size_mb,
+    );
+    push_change(
+        &mut c,
+        "error-logs-max-files",
+        old.error_logs_max_files,
+        new.error_logs_max_files,
+    );
+    push_change(
+        &mut c,
+        "request-retry",
+        old.request_retry,
+        new.request_retry,
+    );
+    push_change(
+        &mut c,
+        "max-retry-credentials",
+        old.max_retry_credentials,
+        new.max_retry_credentials,
+    );
+    push_change(
+        &mut c,
+        "max-retry-interval",
+        old.max_retry_interval,
+        new.max_retry_interval,
+    );
     if old.proxy_url != new.proxy_url {
-        c.push(format!("proxy-url: {} -> {}", format_url(&old.proxy_url), format_url(&new.proxy_url)));
+        c.push(format!(
+            "proxy-url: {} -> {}",
+            format_url(&old.proxy_url),
+            format_url(&new.proxy_url)
+        ));
     }
     push_change(&mut c, "ws-auth", old.websocket_auth, new.websocket_auth);
-    push_change(&mut c, "force-model-prefix", old.force_model_prefix, new.force_model_prefix);
+    push_change(
+        &mut c,
+        "force-model-prefix",
+        old.force_model_prefix,
+        new.force_model_prefix,
+    );
     push_change(
         &mut c,
         "nonstream-keepalive-interval",
@@ -800,7 +997,12 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
     );
 
     // Quota-exceeded behaviour.
-    push_change(&mut c, "quota-exceeded.switch-project", old.quota_exceeded.switch_project, new.quota_exceeded.switch_project);
+    push_change(
+        &mut c,
+        "quota-exceeded.switch-project",
+        old.quota_exceeded.switch_project,
+        new.quota_exceeded.switch_project,
+    );
     push_change(
         &mut c,
         "quota-exceeded.switch-preview-model",
@@ -827,7 +1029,10 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
             new.devin.sensitive_words.len()
         ));
     }
-    let (op, np) = (&old.antigravity.connection_pool, &new.antigravity.connection_pool);
+    let (op, np) = (
+        &old.antigravity.connection_pool,
+        &new.antigravity.connection_pool,
+    );
     let nil_or = |v: Option<String>| v.unwrap_or_else(|| "<nil>".to_string());
     push_change(
         &mut c,
@@ -848,7 +1053,12 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
         nil_or(np.max_idle_conns_per_host.map(|v| v.to_string())),
     );
 
-    push_change(&mut c, "codex.disable-codex-cloaking", old.codex.disable_codex_cloaking, new.codex.disable_codex_cloaking);
+    push_change(
+        &mut c,
+        "codex.disable-codex-cloaking",
+        old.codex.disable_codex_cloaking,
+        new.codex.disable_codex_cloaking,
+    );
     push_change(
         &mut c,
         "codex.stream-bootstrap-buffering",
@@ -873,10 +1083,25 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
         old.codex.orphan_delegation_compatibility,
         new.codex.orphan_delegation_compatibility,
     );
-    push_change(&mut c, "xai.inject-x-search", old.xai.inject_x_search, new.xai.inject_x_search);
+    push_change(
+        &mut c,
+        "xai.inject-x-search",
+        old.xai.inject_x_search,
+        new.xai.inject_x_search,
+    );
     let (or, nr) = (&old.codex.live_media_relay, &new.codex.live_media_relay);
-    push_change(&mut c, "codex.live-media-relay.enabled", or.enabled, nr.enabled);
-    push_change(&mut c, "codex.live-media-relay.max-sessions", or.max_sessions, nr.max_sessions);
+    push_change(
+        &mut c,
+        "codex.live-media-relay.enabled",
+        or.enabled,
+        nr.enabled,
+    );
+    push_change(
+        &mut c,
+        "codex.live-media-relay.max-sessions",
+        or.max_sessions,
+        nr.max_sessions,
+    );
     push_change(
         &mut c,
         "codex.live-media-relay.disable-private-remote-ips",
@@ -890,8 +1115,18 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
             display_optional_value(&nr.public_ip)
         ));
     }
-    push_change(&mut c, "codex.live-media-relay.udp-port-min", or.udp_port_min, nr.udp_port_min);
-    push_change(&mut c, "codex.live-media-relay.udp-port-max", or.udp_port_max, nr.udp_port_max);
+    push_change(
+        &mut c,
+        "codex.live-media-relay.udp-port-min",
+        or.udp_port_min,
+        nr.udp_port_min,
+    );
+    push_change(
+        &mut c,
+        "codex.live-media-relay.udp-port-max",
+        or.udp_port_max,
+        nr.udp_port_max,
+    );
     if or.ice_servers != nr.ice_servers {
         c.push(format!(
             "codex.live-media-relay.ice-servers: updated ({} -> {} entries, credentials redacted)",
@@ -900,24 +1135,47 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
         ));
     }
 
-    push_change(&mut c, "routing.strategy", old.routing.strategy.as_str(), new.routing.strategy.as_str());
+    push_change(
+        &mut c,
+        "routing.strategy",
+        old.routing.strategy.as_str(),
+        new.routing.strategy.as_str(),
+    );
     if old.payload != new.payload {
         push_payload_changes(&mut c, &old.payload, &new.payload);
     }
 
     // API keys (redacted) and counts.
     if old.api_keys.len() != new.api_keys.len() {
-        c.push(format!("api-keys count: {} -> {}", old.api_keys.len(), new.api_keys.len()));
-    } else if old.api_keys.iter().map(|k| k.trim()).ne(new.api_keys.iter().map(|k| k.trim())) {
+        c.push(format!(
+            "api-keys count: {} -> {}",
+            old.api_keys.len(),
+            new.api_keys.len()
+        ));
+    } else if old
+        .api_keys
+        .iter()
+        .map(|k| k.trim())
+        .ne(new.api_keys.iter().map(|k| k.trim()))
+    {
         c.push("api-keys: values updated (count unchanged, redacted)".to_string());
     }
 
     for (name, short, old_keys, new_keys) in [
         ("gemini-api-key", "gemini", &old.gemini_key, &new.gemini_key),
-        ("interactions-api-key", "interactions", &old.interactions_key, &new.interactions_key),
+        (
+            "interactions-api-key",
+            "interactions",
+            &old.interactions_key,
+            &new.interactions_key,
+        ),
     ] {
         if old_keys.len() != new_keys.len() {
-            c.push(format!("{name} count: {} -> {}", old_keys.len(), new_keys.len()));
+            c.push(format!(
+                "{name} count: {} -> {}",
+                old_keys.len(),
+                new_keys.len()
+            ));
             continue;
         }
         for (i, (o, n)) in old_keys.iter().zip(new_keys).enumerate() {
@@ -929,22 +1187,39 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
                 (&o.proxy_url, &n.proxy_url),
                 (&o.prefix, &n.prefix),
             );
-            push_optional_bool_change(&mut c, &format!("{label}.disable-cooling"), o.disable_cooling, n.disable_cooling);
+            push_optional_bool_change(
+                &mut c,
+                &format!("{label}.disable-cooling"),
+                o.disable_cooling,
+                n.disable_cooling,
+            );
             push_credential_tail_changes(
                 &mut c,
                 &label,
                 (&o.api_key, &n.api_key),
                 (&o.headers, &n.headers),
-                (&summarize_gemini_models(&o.models), &summarize_gemini_models(&n.models)),
+                (
+                    &summarize_gemini_models(&o.models),
+                    &summarize_gemini_models(&n.models),
+                ),
                 (&o.excluded_models, &n.excluded_models),
             );
-            push_optional_int_change(&mut c, &format!("{label}.request-retry"), o.request_retry, n.request_retry);
+            push_optional_int_change(
+                &mut c,
+                &format!("{label}.request-retry"),
+                o.request_retry,
+                n.request_retry,
+            );
         }
     }
 
     // Claude keys.
     if old.claude_key.len() != new.claude_key.len() {
-        c.push(format!("claude-api-key count: {} -> {}", old.claude_key.len(), new.claude_key.len()));
+        c.push(format!(
+            "claude-api-key count: {} -> {}",
+            old.claude_key.len(),
+            new.claude_key.len()
+        ));
     } else {
         for (i, (o, n)) in old.claude_key.iter().zip(&new.claude_key).enumerate() {
             let label = format!("claude[{i}]");
@@ -955,13 +1230,21 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
                 (&o.proxy_url, &n.proxy_url),
                 (&o.prefix, &n.prefix),
             );
-            push_optional_bool_change(&mut c, &format!("{label}.disable-cooling"), o.disable_cooling, n.disable_cooling);
+            push_optional_bool_change(
+                &mut c,
+                &format!("{label}.disable-cooling"),
+                o.disable_cooling,
+                n.disable_cooling,
+            );
             push_credential_tail_changes(
                 &mut c,
                 &label,
                 (&o.api_key, &n.api_key),
                 (&o.headers, &n.headers),
-                (&summarize_claude_models(&o.models), &summarize_claude_models(&n.models)),
+                (
+                    &summarize_claude_models(&o.models),
+                    &summarize_claude_models(&n.models),
+                ),
                 (&o.excluded_models, &n.excluded_models),
             );
             if o.rebuild_mid_system_message != n.rebuild_mid_system_message {
@@ -970,19 +1253,43 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
                     o.rebuild_mid_system_message, n.rebuild_mid_system_message
                 ));
             }
-            push_trimmed_change(&mut c, &format!("{label}.fingerprint-profile"), &o.fingerprint_profile, &n.fingerprint_profile);
-            push_optional_int_change(&mut c, &format!("{label}.request-retry"), o.request_retry, n.request_retry);
+            push_trimmed_change(
+                &mut c,
+                &format!("{label}.fingerprint-profile"),
+                &o.fingerprint_profile,
+                &n.fingerprint_profile,
+            );
+            push_optional_int_change(
+                &mut c,
+                &format!("{label}.request-retry"),
+                o.request_retry,
+                n.request_retry,
+            );
             if let (Some(oc), Some(nc)) = (&o.cloak, &n.cloak) {
                 push_trimmed_change(&mut c, &format!("{label}.cloak.mode"), &oc.mode, &nc.mode);
-                push_change(&mut c, &format!("{label}.cloak.strict-mode"), oc.strict_mode, nc.strict_mode);
-                push_change(&mut c, &format!("{label}.cloak.sensitive-words"), oc.sensitive_words.len(), nc.sensitive_words.len());
+                push_change(
+                    &mut c,
+                    &format!("{label}.cloak.strict-mode"),
+                    oc.strict_mode,
+                    nc.strict_mode,
+                );
+                push_change(
+                    &mut c,
+                    &format!("{label}.cloak.sensitive-words"),
+                    oc.sensitive_words.len(),
+                    nc.sensitive_words.len(),
+                );
             }
         }
     }
 
     // Codex keys.
     if old.codex_key.len() != new.codex_key.len() {
-        c.push(format!("codex-api-key count: {} -> {}", old.codex_key.len(), new.codex_key.len()));
+        c.push(format!(
+            "codex-api-key count: {} -> {}",
+            old.codex_key.len(),
+            new.codex_key.len()
+        ));
     } else {
         for (i, (o, n)) in old.codex_key.iter().zip(&new.codex_key).enumerate() {
             let label = format!("codex[{i}]");
@@ -993,9 +1300,24 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
                 (&o.proxy_url, &n.proxy_url),
                 (&o.prefix, &n.prefix),
             );
-            push_change(&mut c, &format!("{label}.websockets"), o.websockets, n.websockets);
-            push_change(&mut c, &format!("{label}.alpha-search"), o.alpha_search, n.alpha_search);
-            push_optional_bool_change(&mut c, &format!("{label}.disable-cooling"), o.disable_cooling, n.disable_cooling);
+            push_change(
+                &mut c,
+                &format!("{label}.websockets"),
+                o.websockets,
+                n.websockets,
+            );
+            push_change(
+                &mut c,
+                &format!("{label}.alpha-search"),
+                o.alpha_search,
+                n.alpha_search,
+            );
+            push_optional_bool_change(
+                &mut c,
+                &format!("{label}.disable-cooling"),
+                o.disable_cooling,
+                n.disable_cooling,
+            );
             push_optional_bool_change(
                 &mut c,
                 &format!("{label}.disable-codex-cloaking"),
@@ -1007,10 +1329,18 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
                 &label,
                 (&o.api_key, &n.api_key),
                 (&o.headers, &n.headers),
-                (&summarize_codex_models(&o.models), &summarize_codex_models(&n.models)),
+                (
+                    &summarize_codex_models(&o.models),
+                    &summarize_codex_models(&n.models),
+                ),
                 (&o.excluded_models, &n.excluded_models),
             );
-            push_optional_int_change(&mut c, &format!("{label}.request-retry"), o.request_retry, n.request_retry);
+            push_optional_int_change(
+                &mut c,
+                &format!("{label}.request-retry"),
+                o.request_retry,
+                n.request_retry,
+            );
         }
     }
 
@@ -1020,7 +1350,11 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
         ("meta-api-key", "meta", &old.meta_key, &new.meta_key),
     ] {
         if old_keys.len() != new_keys.len() {
-            c.push(format!("{name} count: {} -> {}", old_keys.len(), new_keys.len()));
+            c.push(format!(
+                "{name} count: {} -> {}",
+                old_keys.len(),
+                new_keys.len()
+            ));
             continue;
         }
         for (i, (o, n)) in old_keys.iter().zip(new_keys).enumerate() {
@@ -1034,38 +1368,84 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
             );
             push_change(&mut c, &format!("{label}.priority"), o.priority, n.priority);
             if short == "xai" {
-                push_change(&mut c, &format!("{label}.websockets"), o.websockets, n.websockets);
+                push_change(
+                    &mut c,
+                    &format!("{label}.websockets"),
+                    o.websockets,
+                    n.websockets,
+                );
             }
-            push_optional_bool_change(&mut c, &format!("{label}.disable-cooling"), o.disable_cooling, n.disable_cooling);
-            push_optional_int_change(&mut c, &format!("{label}.request-retry"), o.request_retry, n.request_retry);
+            push_optional_bool_change(
+                &mut c,
+                &format!("{label}.disable-cooling"),
+                o.disable_cooling,
+                n.disable_cooling,
+            );
+            push_optional_int_change(
+                &mut c,
+                &format!("{label}.request-retry"),
+                o.request_retry,
+                n.request_retry,
+            );
             push_credential_tail_changes(
                 &mut c,
                 &label,
                 (&o.api_key, &n.api_key),
                 (&o.headers, &n.headers),
-                (&summarize_codex_models(&o.models), &summarize_codex_models(&n.models)),
+                (
+                    &summarize_codex_models(&o.models),
+                    &summarize_codex_models(&n.models),
+                ),
                 (&o.excluded_models, &n.excluded_models),
             );
         }
     }
 
-    c.extend(diff_oauth_excluded_model_changes(&old.oauth_excluded_models, &new.oauth_excluded_models).0);
+    c.extend(
+        diff_oauth_excluded_model_changes(&old.oauth_excluded_models, &new.oauth_excluded_models).0,
+    );
     c.extend(diff_oauth_model_alias_changes(&old.oauth_model_alias, &new.oauth_model_alias).0);
-    c.extend(diff_oauth_request_scoped_errors_changes(&old.oauth_request_scoped_errors, &new.oauth_request_scoped_errors).0);
+    c.extend(
+        diff_oauth_request_scoped_errors_changes(
+            &old.oauth_request_scoped_errors,
+            &new.oauth_request_scoped_errors,
+        )
+        .0,
+    );
     c.extend(diff_oauth_settings_changes(&old.oauth_settings, &new.oauth_settings).0);
 
     // Remote management (never print the key).
     let (om, nm) = (&old.remote_management, &new.remote_management);
-    push_change(&mut c, "remote-management.allow-remote", om.allow_remote, nm.allow_remote);
-    push_change(&mut c, "remote-management.disable-control-panel", om.disable_control_panel, nm.disable_control_panel);
+    push_change(
+        &mut c,
+        "remote-management.allow-remote",
+        om.allow_remote,
+        nm.allow_remote,
+    );
+    push_change(
+        &mut c,
+        "remote-management.disable-control-panel",
+        om.disable_control_panel,
+        nm.disable_control_panel,
+    );
     push_change(
         &mut c,
         "remote-management.disable-auto-update-panel",
         om.disable_auto_update_panel,
         nm.disable_auto_update_panel,
     );
-    push_url_change(&mut c, "remote-management.panel-github-repository", &om.panel_github_repository, &nm.panel_github_repository);
-    push_url_change(&mut c, "remote-management.base-url", &om.base_url, &nm.base_url);
+    push_url_change(
+        &mut c,
+        "remote-management.panel-github-repository",
+        &om.panel_github_repository,
+        &nm.panel_github_repository,
+    );
+    push_url_change(
+        &mut c,
+        "remote-management.base-url",
+        &om.base_url,
+        &nm.base_url,
+    );
     if om.secret_key != nm.secret_key {
         c.push(
             match (om.secret_key.is_empty(), nm.secret_key.is_empty()) {
@@ -1092,12 +1472,32 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
             new.vertex_compat_api_key.len()
         ));
     } else {
-        for (i, (o, n)) in old.vertex_compat_api_key.iter().zip(&new.vertex_compat_api_key).enumerate() {
+        for (i, (o, n)) in old
+            .vertex_compat_api_key
+            .iter()
+            .zip(&new.vertex_compat_api_key)
+            .enumerate()
+        {
             let label = format!("vertex[{i}]");
-            push_url_change(&mut c, &format!("{label}.base-url"), &o.base_url, &n.base_url);
-            push_url_change(&mut c, &format!("{label}.proxy-url"), &o.proxy_url, &n.proxy_url);
+            push_url_change(
+                &mut c,
+                &format!("{label}.base-url"),
+                &o.base_url,
+                &n.base_url,
+            );
+            push_url_change(
+                &mut c,
+                &format!("{label}.proxy-url"),
+                &o.proxy_url,
+                &n.proxy_url,
+            );
             push_trimmed_change(&mut c, &format!("{label}.prefix"), &o.prefix, &n.prefix);
-            push_optional_bool_change(&mut c, &format!("{label}.disable-cooling"), o.disable_cooling, n.disable_cooling);
+            push_optional_bool_change(
+                &mut c,
+                &format!("{label}.disable-cooling"),
+                o.disable_cooling,
+                n.disable_cooling,
+            );
             if o.api_key.trim() != n.api_key.trim() {
                 c.push(format!("{label}.api-key: updated"));
             }
@@ -1116,7 +1516,12 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
             if o.headers != n.headers {
                 c.push(format!("{label}.headers: updated"));
             }
-            push_optional_int_change(&mut c, &format!("{label}.request-retry"), o.request_retry, n.request_retry);
+            push_optional_int_change(
+                &mut c,
+                &format!("{label}.request-retry"),
+                o.request_retry,
+                n.request_retry,
+            );
         }
     }
 
@@ -1126,13 +1531,22 @@ pub fn build_config_change_details(old: &Config, new: &Config) -> Vec<String> {
 fn push_payload_changes(changes: &mut Vec<String>, old: &PayloadConfig, new: &PayloadConfig) {
     fn section<T: PartialEq>(changes: &mut Vec<String>, name: &str, old: &[T], new: &[T]) {
         if old != new {
-            changes.push(format!("payload.{name}: updated ({} -> {} rules)", old.len(), new.len()));
+            changes.push(format!(
+                "payload.{name}: updated ({} -> {} rules)",
+                old.len(),
+                new.len()
+            ));
         }
     }
     section(changes, "default", &old.default, &new.default);
     section(changes, "default-raw", &old.default_raw, &new.default_raw);
     section(changes, "override", &old.r#override, &new.r#override);
-    section(changes, "override-raw", &old.override_raw, &new.override_raw);
+    section(
+        changes,
+        "override-raw",
+        &old.override_raw,
+        &new.override_raw,
+    );
     section(changes, "filter", &old.filter, &new.filter);
 }
 
@@ -1157,7 +1571,10 @@ impl ReloadPlan {
     /// Computes the plan for a reload from `old` (`None` on first load) to `new`.
     pub fn between(old: Option<&Config>, new: &Config) -> Self {
         let Some(old) = old else {
-            return Self { auth_dir_changed: true, ..Self::default() };
+            return Self {
+                auth_dir_changed: true,
+                ..Self::default()
+            };
         };
         let retry_changed = old.request_retry != new.request_retry
             || old.max_retry_interval != new.max_retry_interval
