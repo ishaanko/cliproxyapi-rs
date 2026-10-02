@@ -5,7 +5,7 @@
 
 use super::super::apply::is_user_defined_model;
 use super::super::convert::{convert_budget_to_level, has_level};
-use super::super::json::{body_or_empty_object, parse_or_empty_object, set, to_bytes};
+use super::super::json::{body_or_empty_object, parse_or_empty_object};
 use super::super::types::{ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode, level};
 use crate::registry::ModelInfo;
 
@@ -46,8 +46,8 @@ pub(super) fn apply_effort(
 
     let mut v = parse_or_empty_object(body);
     if config.mode == ThinkingMode::Level {
-        set(&mut v, path, config.level.as_str());
-        return Ok(to_bytes(&v));
+        cpa_json::set(&mut v, path, config.level.as_str());
+        return Ok(cpa_json::to_vec(&v));
     }
 
     let mut effort = "";
@@ -64,8 +64,8 @@ pub(super) fn apply_effort(
         return Ok(body_or_empty_object(body));
     }
 
-    set(&mut v, path, effort);
-    Ok(to_bytes(&v))
+    cpa_json::set(&mut v, path, effort);
+    Ok(cpa_json::to_vec(&v))
 }
 
 /// User-defined models: Level as given, None as `none` (or the carried level), Auto as `auto`,
@@ -93,6 +93,6 @@ fn apply_compatible_effort(body: &[u8], config: &ThinkingConfig, path: &str) -> 
     };
 
     let mut v = parse_or_empty_object(body);
-    set(&mut v, path, effort);
-    to_bytes(&v)
+    cpa_json::set(&mut v, path, effort);
+    cpa_json::to_vec(&v)
 }

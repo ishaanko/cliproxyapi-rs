@@ -4,9 +4,11 @@
 //! `reasoning_effort` is only a legacy input of the extraction layer and is removed from the
 //! final payload.
 
+use cpa_json::Value;
+
 use super::super::apply::is_user_defined_model;
 use super::super::convert::convert_budget_to_level;
-use super::super::json::{body_or_empty_object, parse_or_empty_object, to_bytes, try_set};
+use super::super::json::{body_or_empty_object, parse_or_empty_object};
 use super::super::types::{
     ErrorCode, ProviderApplier, ThinkingConfig, ThinkingError, ThinkingMode, level,
 };
@@ -82,22 +84,30 @@ fn apply_compatible_kimi(body: &[u8], config: &ThinkingConfig) -> Result<Vec<u8>
     apply_enabled_thinking(body, &effort)
 }
 
-/// The Go applier surfaces sjson failures (a named key set into an array) as plain errors.
-fn set_failed(field: &str, key: String) -> ThinkingError {
+/// The Go applier surfaces sjson failures (a named key set into an array) as plain errors. `key`
+/// is the offending key: `thinking` when the body root is an array, else `type`.
+fn set_failed(key: &str) -> ThinkingError {
     ThinkingError::new(
         ErrorCode::ApplyFailed,
         format!(
-            "kimi thinking: failed to set {field}: cannot set array element for non-numeric key '{key}'"
+            "kimi thinking: failed to set thinking.type: cannot set array element for non-numeric key '{key}'"
         ),
     )
+}
+
+fn failing_key(v: &Value) -> &'static str {
+    if v.is_array() { "thinking" } else { "type" }
 }
 
 fn apply_enabled_thinking(body: &[u8], effort: &str) -> Result<Vec<u8>, ThinkingError> {
     let mut v = parse_or_empty_object(body);
     cpa_json::delete(&mut v, "reasoning_effort");
-    try_set(&mut v, "thinking.type", "enabled").map_err(|k| set_failed("thinking.type", k))?;
-    try_set(&mut v, "thinking.effort", effort).map_err(|k| set_failed("thinking.effort", k))?;
-    Ok(to_bytes(&v))
+    if !cpa_json::set(&mut v, "thinking.type", "enabled") {
+        return Err(set_failed(failing_key(&v)));
+    }
+    // Cannot fail: `thinking` is now an object.
+    cpa_json::set(&mut v, "thinking.effort", effort);
+    Ok(cpa_json::to_vec(&v))
 }
 
 /// Replaces the `thinking` object with `{"type":"disabled"}` and drops the legacy effort.
@@ -105,6 +115,8 @@ fn apply_disabled_thinking(body: &[u8]) -> Result<Vec<u8>, ThinkingError> {
     let mut v = parse_or_empty_object(body);
     cpa_json::delete(&mut v, "thinking");
     cpa_json::delete(&mut v, "reasoning_effort");
-    try_set(&mut v, "thinking.type", "disabled").map_err(|k| set_failed("thinking.type", k))?;
-    Ok(to_bytes(&v))
+    if !cpa_json::set(&mut v, "thinking.type", "disabled") {
+        return Err(set_failed(failing_key(&v)));
+    }
+    Ok(cpa_json::to_vec(&v))
 }

@@ -5,7 +5,7 @@
 
 use cpa_json::{J, Kind, Value};
 
-use super::json::{delete_if_empty_object, parse_valid, set, to_bytes};
+use super::json::{delete_if_empty_object, parse_valid};
 use super::parse_suffix;
 use crate::registry::{ModelInfo, lookup_model_info};
 
@@ -251,7 +251,7 @@ pub(crate) fn apply_summary_config_for_provider(
                 activated = enable_claude_thinking_for_summary(&mut v, model, model_info);
             }
             if claude_thinking_accepts_display(&v) {
-                set(
+                cpa_json::set(
                     &mut v,
                     "thinking.display",
                     if enabled { "summarized" } else { "omitted" },
@@ -262,7 +262,7 @@ pub(crate) fn apply_summary_config_for_provider(
             }
         }
         "gemini" => {
-            set(
+            cpa_json::set(
                 &mut v,
                 "generationConfig.thinkingConfig.includeThoughts",
                 enabled,
@@ -277,7 +277,7 @@ pub(crate) fn apply_summary_config_for_provider(
             true
         }
         "antigravity" => {
-            set(
+            cpa_json::set(
                 &mut v,
                 "request.generationConfig.thinkingConfig.includeThoughts",
                 enabled,
@@ -294,7 +294,7 @@ pub(crate) fn apply_summary_config_for_provider(
         "interactions" => {
             // Google Interactions only accepts auto or none; OpenAI's concise and detailed
             // selectors collapse to the enabled value.
-            set(
+            cpa_json::set(
                 &mut v,
                 "generation_config.thinking_summaries",
                 if enabled { "auto" } else { "none" },
@@ -304,7 +304,7 @@ pub(crate) fn apply_summary_config_for_provider(
         }
         "openai-response" | "codex" => {
             if enabled {
-                set(
+                cpa_json::set(
                     &mut v,
                     "reasoning.summary",
                     normalized_summary_detail(&config.detail),
@@ -321,7 +321,7 @@ pub(crate) fn apply_summary_config_for_provider(
         }
         _ => false,
     };
-    if changed { to_bytes(&v) } else { body }
+    if changed { cpa_json::to_vec(&v) } else { body }
 }
 
 /// Protocols whose summary visibility this module can read or write.
@@ -368,11 +368,11 @@ fn claude_thinking_accepts_display(v: &Value) -> bool {
 fn apply_openai_chat_summary_config(v: &mut Value, provider: &str, enabled: bool) -> bool {
     let mut changed = false;
     if is_open_router_provider(provider) || v.g("reasoning.exclude").is_bool() {
-        set(v, "reasoning.exclude", !enabled);
+        cpa_json::set(v, "reasoning.exclude", !enabled);
         changed = true;
     }
     if v.g("include_reasoning").is_bool() {
-        set(v, "include_reasoning", enabled);
+        cpa_json::set(v, "include_reasoning", enabled);
         changed = true;
     }
     changed
@@ -532,7 +532,7 @@ pub(crate) fn strip_inferred_claude_summary_activation(
     for path in ["thinking", "output_config"] {
         delete_if_empty_object(&mut v, path);
     }
-    to_bytes(&v)
+    cpa_json::to_vec(&v)
 }
 
 /// Activates valid Claude thinking so an enabled summary can be returned: adaptive for models with
@@ -560,7 +560,7 @@ fn enable_claude_thinking_for_summary(
     };
 
     if !support.levels.is_empty() {
-        set(v, "thinking.type", "adaptive");
+        cpa_json::set(v, "thinking.type", "adaptive");
         cpa_json::delete(v, "thinking.budget_tokens");
         return true;
     }
@@ -573,8 +573,8 @@ fn enable_claude_thinking_for_summary(
     if max_tokens.exists() && max_tokens.int() <= budget {
         return false;
     }
-    set(v, "thinking.type", "enabled");
-    set(v, "thinking.budget_tokens", budget);
+    cpa_json::set(v, "thinking.type", "enabled");
+    cpa_json::set(v, "thinking.budget_tokens", budget);
     true
 }
 
