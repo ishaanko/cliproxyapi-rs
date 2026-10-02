@@ -13,7 +13,8 @@ use sha2::{Digest, Sha256};
 use cpa_translator::Format;
 
 use super::info::{
-    LCP_AFFINITY_SESSION_ID, bound_session_identity, claude_metadata_identities, extract_session_info, normalize_explicit_id,
+    LCP_AFFINITY_SESSION_ID, bound_session_identity, claude_metadata_identities,
+    extract_session_info, normalize_explicit_id,
 };
 use crate::executor::{Metadata, Options, Request, meta};
 
@@ -23,8 +24,24 @@ const INSTRUCTION_RUNE_LIMIT: usize = 50;
 
 /// Recognised protocol session prefixes, used when looking up a bare session id.
 pub const CANDIDATE_SESSION_PREFIXES: [&str; 18] = [
-    "lcp:v1:", "lcp:", "codex:", "claude:", "header:", "session:", "affinity:", "slot:", "task:", "conv:", "thread:",
-    "clientreq:", "geminicache:", "pck:", "user:", "execution:", "agy:", "derived:",
+    "lcp:v1:",
+    "lcp:",
+    "codex:",
+    "claude:",
+    "header:",
+    "session:",
+    "affinity:",
+    "slot:",
+    "task:",
+    "conv:",
+    "thread:",
+    "clientreq:",
+    "geminicache:",
+    "pck:",
+    "user:",
+    "execution:",
+    "agy:",
+    "derived:",
 ];
 
 /// Irreversible namespace for a downstream caller credential (Go: CallerScope).
@@ -89,7 +106,8 @@ pub fn enrich(req: &mut Request, opts: &mut Options) {
         opts.original_request = req.payload.clone();
     }
     let payload = opts.original_request.clone();
-    let execution_id = first_normalized_metadata_id(meta::EXECUTION_SESSION_ID, &[&opts.metadata, &req.metadata]);
+    let execution_id =
+        first_normalized_metadata_id(meta::EXECUTION_SESSION_ID, &[&opts.metadata, &req.metadata]);
 
     let sync_execution = |req: &mut Request, opts: &mut Options| {
         if execution_id.is_empty() {
@@ -127,7 +145,8 @@ pub fn enrich(req: &mut Request, opts: &mut Options) {
         sync_execution(req, opts);
         let canonical = bound_session_identity(&id);
         set_both(req, opts, meta::CANONICAL_SESSION_ID, &canonical);
-        let parent = first_normalized_metadata_id(meta::PARENT_SESSION_ID, &[&opts.metadata, &req.metadata]);
+        let parent =
+            first_normalized_metadata_id(meta::PARENT_SESSION_ID, &[&opts.metadata, &req.metadata]);
         if !parent.is_empty() && parent != id {
             let bounded = bound_session_identity(&parent);
             set_both(req, opts, meta::PARENT_SESSION_ID, &bounded);
@@ -148,7 +167,8 @@ pub fn enrich(req: &mut Request, opts: &mut Options) {
 
     remove_both(req, opts, meta::EXECUTION_SESSION_ID);
     remove_both(req, opts, meta::PARENT_SESSION_ID);
-    let mut derived = first_normalized_metadata_id(meta::DERIVED_SESSION_ID, &[&opts.metadata, &req.metadata]);
+    let mut derived =
+        first_normalized_metadata_id(meta::DERIVED_SESSION_ID, &[&opts.metadata, &req.metadata]);
     remove_both(req, opts, meta::DERIVED_SESSION_ID);
     if derived.is_empty() {
         let mut scope = metadata_string(&opts.metadata, meta::CALLER_SCOPE);
@@ -208,20 +228,57 @@ const EXPLICIT_HEADERS: &[&str] = &[
 ];
 
 const EXPLICIT_BODY_PATHS: &[&str] = &[
-    "session_id", "sessionId", "sessionID", "child_session_id", "childSessionId",
-    "task_id", "taskId", "taskID", "action_id", "actionId",
-    "cachedContent", "cached_content", "thread_id", "threadId",
-    "conversation_id", "conversationId", "chat_id", "chatId",
-    "prompt_cache_key", "promptCacheKey",
-    "parent_session_id", "parentSessionId", "parent_thread_id", "parentThreadId",
-    "parent_id", "parentId", "parentID", "parent_task_id", "parentTaskId",
-    "parent_action_id", "parentActionId", "parent_session", "parentSession",
-    "parent_subagent_id", "forkSource.sessionId", "previousSessionId",
-    "forked_from_thread_id", "forked_from_id",
-    "metadata.session_id", "metadata.sessionId", "metadata.task_id", "metadata.taskId",
-    "metadata.thread_id", "metadata.conversation_id", "metadata.parent_id",
-    "metadata.parent_task_id", "metadata.parent_agent_id",
-    "extra_body.session_id", "extra_body.task_id", "extra_body.parent_id", "extra_body.parent_task_id",
+    "session_id",
+    "sessionId",
+    "sessionID",
+    "child_session_id",
+    "childSessionId",
+    "task_id",
+    "taskId",
+    "taskID",
+    "action_id",
+    "actionId",
+    "cachedContent",
+    "cached_content",
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "chat_id",
+    "chatId",
+    "prompt_cache_key",
+    "promptCacheKey",
+    "parent_session_id",
+    "parentSessionId",
+    "parent_thread_id",
+    "parentThreadId",
+    "parent_id",
+    "parentId",
+    "parentID",
+    "parent_task_id",
+    "parentTaskId",
+    "parent_action_id",
+    "parentActionId",
+    "parent_session",
+    "parentSession",
+    "parent_subagent_id",
+    "forkSource.sessionId",
+    "previousSessionId",
+    "forked_from_thread_id",
+    "forked_from_id",
+    "metadata.session_id",
+    "metadata.sessionId",
+    "metadata.task_id",
+    "metadata.taskId",
+    "metadata.thread_id",
+    "metadata.conversation_id",
+    "metadata.parent_id",
+    "metadata.parent_task_id",
+    "metadata.parent_agent_id",
+    "extra_body.session_id",
+    "extra_body.task_id",
+    "extra_body.parent_id",
+    "extra_body.parent_task_id",
 ];
 
 /// Whether the headers or body carry any explicit client session signal.
@@ -234,10 +291,16 @@ pub fn has_explicit_session(headers: &HeaderMap, payload: &[u8]) -> bool {
     }
     let root = cpa_json::parse(payload);
     let req = root.g("request");
-    let nested = if req.exists() && !root.g("contents").exists() { req.into_value() } else { None };
+    let nested = if req.exists() && !root.g("contents").exists() {
+        req.into_value()
+    } else {
+        None
+    };
     let probe = |path: &str| -> bool {
         !normalize_explicit_id(&root.g(path).str()).is_empty()
-            || nested.as_ref().is_some_and(|n| !normalize_explicit_id(&n.g(path).str()).is_empty())
+            || nested
+                .as_ref()
+                .is_some_and(|n| !normalize_explicit_id(&n.g(path).str()).is_empty())
     };
     if EXPLICIT_BODY_PATHS.iter().any(|p| probe(p)) {
         return true;
@@ -256,12 +319,15 @@ pub fn has_explicit_session(headers: &HeaderMap, payload: &[u8]) -> bool {
     }
     let mut conversation = root.g("conversation").into_value();
     if conversation.is_none() {
-        conversation = nested.as_ref().and_then(|n| n.g("conversation").into_value());
+        conversation = nested
+            .as_ref()
+            .and_then(|n| n.g("conversation").into_value());
     }
     match conversation {
         Some(c) => {
             !normalize_explicit_id(&c.g("id").str()).is_empty()
-                || c.as_str().is_some_and(|s| !normalize_explicit_id(s).is_empty())
+                || c.as_str()
+                    .is_some_and(|s| !normalize_explicit_id(s).is_empty())
         }
         None => false,
     }
@@ -277,7 +343,9 @@ struct Part {
 }
 
 fn normalized_string(v: Option<&Value>) -> String {
-    v.and_then(Value::as_str).map(|s| s.trim().to_lowercase()).unwrap_or_default()
+    v.and_then(Value::as_str)
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_default()
 }
 
 fn first_field<'a>(obj: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Value> {
@@ -321,7 +389,11 @@ fn canonical_parts(v: &Value) -> Vec<Part> {
 }
 
 fn text_part(value: &str) -> Part {
-    Part { kind: "text".into(), mime: String::new(), value: value.to_string() }
+    Part {
+        kind: "text".into(),
+        mime: String::new(),
+        value: value.to_string(),
+    }
 }
 
 fn append_canonical_parts(parts: &mut Vec<Part>, v: &Value) {
@@ -361,19 +433,32 @@ fn append_canonical_parts(parts: &mut Vec<Part>, v: &Value) {
                 return;
             }
             if let Some(source) = m.get("source") {
-                append_media_part(parts, &normalized_string(m.get("type")), source, &normalized_string(m.get("media_type")));
+                append_media_part(
+                    parts,
+                    &normalized_string(m.get("type")),
+                    source,
+                    &normalized_string(m.get("media_type")),
+                );
                 return;
             }
             let normalized = normalize_json_value(v);
             let encoded = go_json(&normalized);
             if !encoded.is_empty() {
-                parts.push(Part { kind: "json".into(), mime: String::new(), value: encoded });
+                parts.push(Part {
+                    kind: "json".into(),
+                    mime: String::new(),
+                    value: encoded,
+                });
             }
         }
         other => {
             let encoded = go_json(other);
             if !encoded.is_empty() {
-                parts.push(Part { kind: "json".into(), mime: String::new(), value: encoded });
+                parts.push(Part {
+                    kind: "json".into(),
+                    mime: String::new(),
+                    value: encoded,
+                });
             }
         }
     }
@@ -385,7 +470,11 @@ fn append_media_part(parts: &mut Vec<Part>, kind: &str, value: &Value, fallback_
     match value {
         Value::String(s) => {
             if !s.is_empty() {
-                parts.push(Part { kind: kind.into(), mime: fallback_mime.into(), value: s.clone() });
+                parts.push(Part {
+                    kind: kind.into(),
+                    mime: fallback_mime.into(),
+                    value: s.clone(),
+                });
             }
         }
         Value::Object(m) => {
@@ -395,7 +484,11 @@ fn append_media_part(parts: &mut Vec<Part>, kind: &str, value: &Value, fallback_
             }
             let media_value = string_field(m, &["url", "uri", "fileUri", "file_uri", "data"]);
             if !media_value.is_empty() {
-                parts.push(Part { kind: kind.into(), mime, value: media_value });
+                parts.push(Part {
+                    kind: kind.into(),
+                    mime,
+                    value: media_value,
+                });
             }
         }
         other => append_canonical_parts(parts, other),
@@ -403,7 +496,9 @@ fn append_media_part(parts: &mut Vec<Part>, kind: &str, value: &Value, fallback_
 }
 
 fn content_value(v: &Value) -> Value {
-    let Value::Object(m) = v else { return v.clone() };
+    let Value::Object(m) = v else {
+        return v.clone();
+    };
     for key in ["content", "parts", "text"] {
         if let Some(c) = m.get(key) {
             return c.clone();
@@ -434,11 +529,14 @@ fn messages_root(body: &Map<String, Value>, include_top_level_system: bool) -> R
     }
     if let Some(Value::Array(messages)) = body.get("messages") {
         for raw in messages {
-            let Value::Object(message) = raw else { continue };
+            let Value::Object(message) = raw else {
+                continue;
+            };
             match normalized_string(message.get("role")).as_str() {
-                "system" | "developer" => {
-                    append_instruction(&mut instructions, message.get("content").unwrap_or(&Value::Null))
-                }
+                "system" | "developer" => append_instruction(
+                    &mut instructions,
+                    message.get("content").unwrap_or(&Value::Null),
+                ),
                 "user" => {
                     let parts = canonical_parts(message.get("content").unwrap_or(&Value::Null));
                     if !parts.is_empty() {
@@ -467,7 +565,10 @@ fn responses_root(body: &Map<String, Value>) -> Root {
         for raw in items {
             let Value::Object(item) = raw else { continue };
             match normalized_string(item.get("role")).as_str() {
-                "system" | "developer" => append_instruction(&mut instructions, item.get("content").unwrap_or(&Value::Null)),
+                "system" | "developer" => append_instruction(
+                    &mut instructions,
+                    item.get("content").unwrap_or(&Value::Null),
+                ),
                 "user" => {
                     let parts = canonical_parts(item.get("content").unwrap_or(&Value::Null));
                     if !parts.is_empty() {
@@ -492,7 +593,9 @@ fn gemini_root(body: &Map<String, Value>) -> Root {
     }
     if let Some(Value::Array(contents)) = body.get("contents") {
         for raw in contents {
-            let Value::Object(content) = raw else { continue };
+            let Value::Object(content) = raw else {
+                continue;
+            };
             if normalized_string(content.get("role")) != "user" {
                 continue;
             }
@@ -549,14 +652,23 @@ fn interactions_root(body: &Map<String, Value>) -> Root {
         if let Value::String(_) = entry {
             return (instructions, canonical_parts(&entry));
         }
-        let Value::Object(step) = &entry else { continue };
+        let Value::Object(step) = &entry else {
+            continue;
+        };
         let role = normalized_string(step.get("role"));
         let step_type = normalized_string(step.get("type"));
-        if role == "system" || role == "developer" || step_type == "system_instruction" || step_type == "developer_instruction" {
+        if role == "system"
+            || role == "developer"
+            || step_type == "system_instruction"
+            || step_type == "developer_instruction"
+        {
             append_instruction(&mut instructions, &content_value(&entry));
             continue;
         }
-        if role == "user" || step_type == "user_input" || ((step_type == "message" || step_type.is_empty()) && role.is_empty()) {
+        if role == "user"
+            || step_type == "user_input"
+            || ((step_type == "message" || step_type.is_empty()) && role.is_empty())
+        {
             return (instructions, canonical_parts(&content_value(&entry)));
         }
     }
@@ -573,7 +685,10 @@ fn hash_root(format: Format, caller_scope: &str, resource: &str, root: &Root) ->
         go_json(&Value::String(caller_scope.trim().into()))
     ));
     if !instructions.is_empty() {
-        let items: Vec<String> = instructions.iter().map(|i| go_json(&Value::String(i.clone()))).collect();
+        let items: Vec<String> = instructions
+            .iter()
+            .map(|i| go_json(&Value::String(i.clone())))
+            .collect();
         out.push_str(&format!(",\"instructions\":[{}]", items.join(",")));
     }
     if !user.is_empty() {
@@ -595,10 +710,16 @@ fn hash_root(format: Format, caller_scope: &str, resource: &str, root: &Root) ->
         out.push_str(&format!(",\"user\":[{}]", items.join(",")));
     }
     if !resource.is_empty() {
-        out.push_str(&format!(",\"resource\":{}", go_json(&Value::String(resource.into()))));
+        out.push_str(&format!(
+            ",\"resource\":{}",
+            go_json(&Value::String(resource.into()))
+        ));
     }
     out.push('}');
-    format!("{IDENTITY_PREFIX}{}", hex::encode(Sha256::digest(out.as_bytes())))
+    format!(
+        "{IDENTITY_PREFIX}{}",
+        hex::encode(Sha256::digest(out.as_bytes()))
+    )
 }
 
 /// Stable identity from leading instructions and the first complete user input (Go: DeriveID).
@@ -663,7 +784,11 @@ fn extract_conversation_alias(payload: &[u8]) -> String {
 
 /// Client- or execution-provided identities only, as `(primary, fallback)`. Records fork/parent
 /// hints in `metadata`.
-pub fn explicit_session_ids(headers: &HeaderMap, payload: &[u8], metadata: &mut Metadata) -> (String, String) {
+pub fn explicit_session_ids(
+    headers: &HeaderMap,
+    payload: &[u8],
+    metadata: &mut Metadata,
+) -> (String, String) {
     let Some(info) = extract_session_info(headers, payload, metadata) else {
         return Default::default();
     };
@@ -674,7 +799,10 @@ pub fn explicit_session_ids(headers: &HeaderMap, payload: &[u8], metadata: &mut 
         metadata.insert(meta::IS_FORK.into(), Value::Bool(true));
     }
     if !info.parent_session_id.is_empty() {
-        metadata.insert(meta::PARENT_SESSION_ID.into(), Value::String(info.parent_session_id.clone()));
+        metadata.insert(
+            meta::PARENT_SESSION_ID.into(),
+            Value::String(info.parent_session_id.clone()),
+        );
     }
     let mut fallback = info.parent_session_id.clone();
     if fallback.is_empty() && info.session_id.starts_with("pck:") && !payload.is_empty() {
@@ -685,7 +813,11 @@ pub fn explicit_session_ids(headers: &HeaderMap, payload: &[u8], metadata: &mut 
 
 /// `(primary, fallback)` affinity ids: explicit ids, else derived metadata id, else a hash of
 /// the first system/user/assistant messages.
-pub fn session_ids(headers: &HeaderMap, payload: &[u8], metadata: &mut Metadata) -> (String, String) {
+pub fn session_ids(
+    headers: &HeaderMap,
+    payload: &[u8],
+    metadata: &mut Metadata,
+) -> (String, String) {
     let (primary, fallback) = explicit_session_ids(headers, payload, metadata);
     if !primary.is_empty() {
         return (primary, fallback);
@@ -796,7 +928,8 @@ fn extract_responses_api_content(content: &cpa_json::Res<'_>) -> String {
 /// truncations). Returns `(hash with assistant, hash without assistant)`, or just the short hash.
 pub fn extract_message_hash_ids(payload: &[u8]) -> (String, String) {
     let root = cpa_json::parse(payload);
-    let (mut system_prompt, mut first_user, mut first_assistant) = (String::new(), String::new(), String::new());
+    let (mut system_prompt, mut first_user, mut first_assistant) =
+        (String::new(), String::new(), String::new());
 
     let messages = root.g("messages");
     if messages.is_array() {
@@ -807,9 +940,13 @@ pub fn extract_message_hash_ids(payload: &[u8]) -> (String, String) {
                 return true;
             }
             match role.as_str() {
-                "system" if system_prompt.is_empty() => system_prompt = truncate_bytes(&content, 100),
+                "system" if system_prompt.is_empty() => {
+                    system_prompt = truncate_bytes(&content, 100)
+                }
                 "user" if first_user.is_empty() => first_user = truncate_bytes(&content, 100),
-                "assistant" if first_assistant.is_empty() => first_assistant = truncate_bytes(&content, 100),
+                "assistant" if first_assistant.is_empty() => {
+                    first_assistant = truncate_bytes(&content, 100)
+                }
                 _ => {}
             }
             !(!system_prompt.is_empty() && !first_user.is_empty() && !first_assistant.is_empty())
@@ -859,7 +996,9 @@ pub fn extract_message_hash_ids(payload: &[u8]) -> (String, String) {
                     }
                     match role.as_str() {
                         "user" if first_user.is_empty() => first_user = truncate_bytes(&text, 100),
-                        "model" if first_assistant.is_empty() => first_assistant = truncate_bytes(&text, 100),
+                        "model" if first_assistant.is_empty() => {
+                            first_assistant = truncate_bytes(&text, 100)
+                        }
                         _ => {}
                     }
                     false
@@ -890,14 +1029,22 @@ pub fn extract_message_hash_ids(payload: &[u8]) -> (String, String) {
                     return true;
                 }
                 let content = item.g("content");
-                let text = if content.is_string() { content.str() } else { extract_responses_api_content(&content) };
+                let text = if content.is_string() {
+                    content.str()
+                } else {
+                    extract_responses_api_content(&content)
+                };
                 if text.is_empty() {
                     return true;
                 }
                 match role.as_str() {
-                    "developer" | "system" if system_prompt.is_empty() => system_prompt = truncate_bytes(&text, 100),
+                    "developer" | "system" if system_prompt.is_empty() => {
+                        system_prompt = truncate_bytes(&text, 100)
+                    }
                     "user" if first_user.is_empty() => first_user = truncate_bytes(&text, 100),
-                    "assistant" if first_assistant.is_empty() => first_assistant = truncate_bytes(&text, 100),
+                    "assistant" if first_assistant.is_empty() => {
+                        first_assistant = truncate_bytes(&text, 100)
+                    }
                     _ => {}
                 }
                 !(!first_user.is_empty() && !first_assistant.is_empty())
@@ -912,7 +1059,10 @@ pub fn extract_message_hash_ids(payload: &[u8]) -> (String, String) {
     if first_assistant.is_empty() {
         return (short_hash, String::new());
     }
-    (compute_session_hash(&system_prompt, &first_user, &first_assistant), short_hash)
+    (
+        compute_session_hash(&system_prompt, &first_user, &first_assistant),
+        short_hash,
+    )
 }
 
 /// Whether the id names a subagent session: a Claude/Codex agent id or a hierarchy child.
@@ -950,7 +1100,12 @@ mod tests {
         let mut opts = Options::new(Format::OpenAI);
         opts.original_request = Bytes::from(payload.to_string());
         (
-            Request { model: "m".into(), payload: Bytes::from(payload.to_string()), format: Format::OpenAI, metadata: Metadata::new() },
+            Request {
+                model: "m".into(),
+                payload: Bytes::from(payload.to_string()),
+                format: Format::OpenAI,
+                metadata: Metadata::new(),
+            },
             opts,
         )
     }
@@ -965,7 +1120,14 @@ mod tests {
         );
         assert!(a.starts_with("ctx:v1:") && a.len() == 7 + 64);
         assert_eq!(a, b);
-        assert_ne!(a, derive_id(Format::OpenAI, br#"{"messages":[{"role":"user","content":"other"}]}"#, "s"));
+        assert_ne!(
+            a,
+            derive_id(
+                Format::OpenAI,
+                br#"{"messages":[{"role":"user","content":"other"}]}"#,
+                "s"
+            )
+        );
         assert_ne!(a, derive_id(Format::OpenAI, br#"{"messages":[{"role":"system","content":"sys"},{"role":"user","content":"hello"}]}"#, "other-scope"));
         assert_eq!(derive_id(Format::OpenAI, b"not json", ""), "");
     }
@@ -977,7 +1139,8 @@ mod tests {
         assert!(o.metadata.get(meta::DERIVED_SESSION_ID).is_some());
         assert!(o.metadata.get(meta::CANONICAL_SESSION_ID).is_none());
 
-        let (mut r, mut o) = req(r#"{"messages":[{"role":"user","content":"hello"}],"prompt_cache_key":"abc"}"#);
+        let (mut r, mut o) =
+            req(r#"{"messages":[{"role":"user","content":"hello"}],"prompt_cache_key":"abc"}"#);
         enrich(&mut r, &mut o);
         assert_eq!(o.metadata[meta::CANONICAL_SESSION_ID], "pck:abc");
         assert!(o.metadata.get(meta::DERIVED_SESSION_ID).is_none());
@@ -989,11 +1152,15 @@ mod tests {
         let (p, _) = session_ids(&HeaderMap::new(), br#"{"prompt_cache_key":"k"}"#, &mut md);
         assert_eq!(p, "pck:k");
         let mut md = Metadata::new();
-        md.insert(meta::DERIVED_SESSION_ID.into(), Value::String("ctx:v1:abc".into()));
+        md.insert(
+            meta::DERIVED_SESSION_ID.into(),
+            Value::String("ctx:v1:abc".into()),
+        );
         let (p, _) = session_ids(&HeaderMap::new(), br#"{"messages":[]}"#, &mut md);
         assert_eq!(p, "derived:ctx:v1:abc");
         let mut md = Metadata::new();
-        let body = br#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]}"#;
+        let body =
+            br#"{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]}"#;
         let (p, f) = session_ids(&HeaderMap::new(), body, &mut md);
         assert!(p.starts_with("msg:") && f.starts_with("msg:") && p != f);
     }

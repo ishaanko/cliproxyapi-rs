@@ -42,14 +42,19 @@ pub struct Eligibility {
 
 impl Eligibility {
     pub(crate) fn from_meta(meta: &Metadata) -> Self {
-        Eligibility { disallow_free_auth: disallow_free_auth_from_metadata(meta), ..Default::default() }
+        Eligibility {
+            disallow_free_auth: disallow_free_auth_from_metadata(meta),
+            ..Default::default()
+        }
     }
 
     pub(crate) fn allows(&self, auth: &Auth) -> bool {
         if !self.required_kind.is_empty() && auth.auth_kind() != self.required_kind {
             return false;
         }
-        if !self.credential_policy.is_empty() && !credential_policy_allows(&self.credential_policy, auth) {
+        if !self.credential_policy.is_empty()
+            && !credential_policy_allows(&self.credential_policy, auth)
+        {
             return false;
         }
         !self.disallow_free_auth || !is_free_codex_auth(auth)
@@ -65,12 +70,15 @@ pub(crate) fn disallow_free_auth_from_metadata(meta_map: &Metadata) -> bool {
 }
 
 fn is_free_codex_auth(auth: &Auth) -> bool {
-    auth.provider.trim().eq_ignore_ascii_case("codex") && auth.attr("plan_type").eq_ignore_ascii_case("free")
+    auth.provider.trim().eq_ignore_ascii_case("codex")
+        && auth.attr("plan_type").eq_ignore_ascii_case("free")
 }
 
 pub fn normalize_credential_policy(policy: &str) -> String {
     match policy.trim().to_lowercase().as_str() {
-        super::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1 => super::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1.into(),
+        super::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1 => {
+            super::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1.into()
+        }
         _ => String::new(),
     }
 }
@@ -136,7 +144,10 @@ fn newer(cur: &Option<Timed<'_>>, time: Option<DateTime<Utc>>, id: &str) -> bool
 
 /// Most recent error text among candidates for the model, preferring model-level errors (Go:
 /// latestCandidateErrorForModel).
-fn latest_candidate_error_for_model(auths: &[&Auth], selection_model: &dyn Fn(&Auth) -> String) -> Option<String> {
+fn latest_candidate_error_for_model(
+    auths: &[&Auth],
+    selection_model: &dyn Fn(&Auth) -> String,
+) -> Option<String> {
     let mut model_best: Option<Timed<'_>> = None;
     let mut auth_best: Option<Timed<'_>> = None;
     for c in auths {
@@ -156,7 +167,11 @@ fn latest_candidate_error_for_model(auths: &[&Auth], selection_model: &dyn Fn(&A
             if let Some(text) = found {
                 let time = s.updated_at.or(c.updated_at);
                 if newer(&model_best, time, &c.id) {
-                    model_best = Some(Timed { time, id: &c.id, text });
+                    model_best = Some(Timed {
+                        time,
+                        id: &c.id,
+                        text,
+                    });
                 }
             }
         }
@@ -170,7 +185,11 @@ fn latest_candidate_error_for_model(auths: &[&Auth], selection_model: &dyn Fn(&A
         if let Some(text) = found
             && newer(&auth_best, c.updated_at, &c.id)
         {
-            auth_best = Some(Timed { time: c.updated_at, id: &c.id, text });
+            auth_best = Some(Timed {
+                time: c.updated_at,
+                id: &c.id,
+                text,
+            });
         }
     }
     model_best.or(auth_best).map(|t| t.text)
@@ -185,14 +204,24 @@ fn latest_unauthorized_candidate_error(auths: &[&Auth]) -> Option<String> {
         if let Some(e) = &c.last_error
             && newer(&best, c.updated_at, &c.id)
         {
-            best = Some(Timed { time: c.updated_at, id: &c.id, text: e.go_string() });
+            best = Some(Timed {
+                time: c.updated_at,
+                id: &c.id,
+                text: e.go_string(),
+            });
         }
     }
     best.map(|t| t.text)
 }
 
 fn to_cands<'a>(list: &[(&'a Auth, &'a str)]) -> Vec<Cand<'a>> {
-    list.iter().map(|(a, p)| Cand { id: a.id.as_str(), provider: p, weight: auth_weight(a) }).collect()
+    list.iter()
+        .map(|(a, p)| Cand {
+            id: a.id.as_str(),
+            provider: p,
+            weight: auth_weight(a),
+        })
+        .collect()
 }
 
 impl Manager {
@@ -207,7 +236,11 @@ impl Manager {
             return true;
         }
         let selection_key = self.selection_model_key_for_auth(auth, route_model);
-        !selection_key.is_empty() && selection_key != route_key && self.registry.client_supports_model(&auth.id, &selection_key)
+        !selection_key.is_empty()
+            && selection_key != route_key
+            && self
+                .registry
+                .client_supports_model(&auth.id, &selection_key)
     }
 
     /// One credential for the request across `providers` (Go: pickNextMixed). `meta_map` receives
@@ -226,8 +259,14 @@ impl Manager {
         let selector = self.selector();
         let affinity = selector.affinity();
         let strategy = selector.config.strategy;
-        meta_map.insert(meta::SESSION_AFFINITY_PROVIDER.into(), Value::String("mixed".into()));
-        meta_map.insert(meta::SESSION_AFFINITY_MODEL.into(), Value::String(route_model.into()));
+        meta_map.insert(
+            meta::SESSION_AFFINITY_PROVIDER.into(),
+            Value::String("mixed".into()),
+        );
+        meta_map.insert(
+            meta::SESSION_AFFINITY_MODEL.into(),
+            Value::String(route_model.into()),
+        );
         let pinned = pinned_auth_id(meta_map);
 
         let st = self.state.read();
@@ -246,7 +285,11 @@ impl Manager {
         let model_key = {
             let trimmed = route_model.trim();
             let base = parse_suffix(trimmed).model_name;
-            if base.trim().is_empty() { trimmed.to_string() } else { base.trim().to_string() }
+            if base.trim().is_empty() {
+                trimmed.to_string()
+            } else {
+                base.trim().to_string()
+            }
         };
         let mut cands: Vec<(&Auth, String)> = Vec::new();
         for a in st.auths.values() {
@@ -286,7 +329,10 @@ impl Manager {
             let check_model = self.selection_model_for_auth(c, route_model);
             let b = is_auth_blocked_for_model(c, &check_model, now);
             if !b.blocked {
-                by_priority.entry(auth_priority(c)).or_default().push((c, key.as_str()));
+                by_priority
+                    .entry(auth_priority(c))
+                    .or_default()
+                    .push((c, key.as_str()));
                 continue;
             }
             if b.reason == BlockReason::Cooldown {
@@ -307,12 +353,21 @@ impl Manager {
             let refs: Vec<&Auth> = cands.iter().map(|(a, _)| *a).collect();
             let sel = |a: &Auth| self.selection_model_for_auth(a, route_model);
             let last_err = latest_candidate_error_for_model(&refs, &sel);
-            let provider_for_error = if affinity.is_none() && eligible.len() == 1 { eligible[0].as_str() } else { "" };
+            let provider_for_error = if affinity.is_none() && eligible.len() == 1 {
+                eligible[0].as_str()
+            } else {
+                ""
+            };
             if cooldown_count == cands.len()
                 && let Some(next) = earliest
             {
                 let reset_in = (next - now).to_std().unwrap_or(Duration::ZERO);
-                return Err(model_cooldown_error(route_model, provider_for_error, reset_in, last_err.as_deref()));
+                return Err(model_cooldown_error(
+                    route_model,
+                    provider_for_error,
+                    reset_in,
+                    last_err.as_deref(),
+                ));
             }
             if unauthorized_count == cands.len() {
                 let cause = latest_unauthorized_candidate_error(&refs).or(last_err);
@@ -322,7 +377,8 @@ impl Manager {
         }
 
         let best_priority = *by_priority.keys().next_back().unwrap_or(&0);
-        let mut top: Vec<(&Auth, &str)> = by_priority.get(&best_priority).cloned().unwrap_or_default();
+        let mut top: Vec<(&Auth, &str)> =
+            by_priority.get(&best_priority).cloned().unwrap_or_default();
         top.sort_by(|a, b| a.0.id.cmp(&b.0.id));
 
         let chosen: &Auth = if let Some(aff) = affinity {
@@ -331,7 +387,14 @@ impl Manager {
             let all_ids: Vec<&str> = all.iter().map(|(a, _)| a.id.as_str()).collect();
             let key = format!("mixed:{}", canonical_model_key(route_model));
             let top_cands = to_cands(&top);
-            match aff.decide("mixed", route_model, headers, original_request, meta_map, &all_ids) {
+            match aff.decide(
+                "mixed",
+                route_model,
+                headers,
+                original_request,
+                meta_map,
+                &all_ids,
+            ) {
                 AffinityPick::Bound(id) => match all.iter().find(|(a, _)| a.id == id) {
                     Some((a, _)) => a,
                     None => return Err(auth_not_found("selector returned no auth")),
@@ -369,13 +432,27 @@ impl Manager {
         let Some(executor) = executor_locked(&st, &provider) else {
             return Err(super::errors::executor_not_found());
         };
-        Ok(Picked { auth: chosen.clone(), executor, provider: executor_key_from_auth(chosen) })
+        Ok(Picked {
+            auth: chosen.clone(),
+            executor,
+            provider: executor_key_from_auth(chosen),
+        })
     }
 
     /// Selects one credential through the configured strategy without executing anything (Go:
     /// SelectAuth). `required_kind` / `policy` narrow the candidates when non-empty.
-    pub fn select_auth(&self, provider: &str, model: &str, opts: &crate::executor::Options) -> Result<Auth, ExecError> {
-        self.select_with(provider, model, opts, Eligibility::from_meta(&opts.metadata))
+    pub fn select_auth(
+        &self,
+        provider: &str,
+        model: &str,
+        opts: &crate::executor::Options,
+    ) -> Result<Auth, ExecError> {
+        self.select_with(
+            provider,
+            model,
+            opts,
+            Eligibility::from_meta(&opts.metadata),
+        )
     }
 
     pub fn select_auth_by_kind(
@@ -389,7 +466,11 @@ impl Manager {
             "apikey" | "api_key" | "api-key" => AUTH_KIND_API_KEY,
             "oauth" | "oauth2" => AUTH_KIND_OAUTH,
             _ => {
-                let mut e = super::errors::auth_error("invalid_auth_kind", "required auth kind is invalid", 400);
+                let mut e = super::errors::auth_error(
+                    "invalid_auth_kind",
+                    "required auth kind is invalid",
+                    400,
+                );
                 e.upstream_attempted = false;
                 return Err(e);
             }
@@ -408,7 +489,11 @@ impl Manager {
     ) -> Result<Auth, ExecError> {
         let policy = normalize_credential_policy(policy);
         if policy.is_empty() {
-            return Err(super::errors::auth_error("invalid_credential_policy", "credential policy is invalid", 400));
+            return Err(super::errors::auth_error(
+                "invalid_credential_policy",
+                "credential policy is invalid",
+                400,
+            ));
         }
         let mut elig = Eligibility::from_meta(&opts.metadata);
         elig.credential_policy = policy.clone();
@@ -419,7 +504,13 @@ impl Manager {
         Ok(picked)
     }
 
-    fn select_with(&self, provider: &str, model: &str, opts: &crate::executor::Options, elig: Eligibility) -> Result<Auth, ExecError> {
+    fn select_with(
+        &self,
+        provider: &str,
+        model: &str,
+        opts: &crate::executor::Options,
+        elig: Eligibility,
+    ) -> Result<Auth, ExecError> {
         let mut md = opts.metadata.clone();
         let picked = self.pick_next_mixed(
             &[provider.to_string()],

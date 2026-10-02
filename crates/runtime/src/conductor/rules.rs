@@ -4,7 +4,7 @@
 //! status plus a body substring or regex and picks one of four actions. Rules are evaluated before
 //! the built-in classification.
 
-use cpa_auth::types::{Auth, AUTH_KIND_OAUTH};
+use cpa_auth::types::{AUTH_KIND_OAUTH, Auth};
 use cpa_config::{Config, RequestScopedErrorRule};
 use regex::Regex;
 use serde_json::Value;
@@ -27,19 +27,33 @@ pub fn extract_rules(auth: &Auth, cfg: &Config) -> Vec<RequestScopedErrorRule> {
         .get("request_scoped_errors")
         .or_else(|| auth.metadata.get("request-scoped-errors"));
     if let Some(Value::Array(items)) = raw
-        && let Ok(rules) = serde_json::from_value::<Vec<RequestScopedErrorRule>>(Value::Array(items.clone()))
+        && let Ok(rules) =
+            serde_json::from_value::<Vec<RequestScopedErrorRule>>(Value::Array(items.clone()))
         && !rules.is_empty()
     {
         return rules;
     }
     let provider = auth.provider.trim().to_lowercase();
     if auth.auth_kind() == AUTH_KIND_OAUTH {
-        return cfg.oauth_request_scoped_errors.get(&provider).filter(|r| !r.is_empty()).cloned().unwrap_or_default();
+        return cfg
+            .oauth_request_scoped_errors
+            .get(&provider)
+            .filter(|r| !r.is_empty())
+            .cloned()
+            .unwrap_or_default();
     }
 
     let index = auth.attr("config_index").parse::<usize>().ok();
-    let provider_key = auth.attributes.get("provider_key").cloned().unwrap_or_default();
-    let mut compat_name = auth.attributes.get("compat_name").cloned().unwrap_or_default();
+    let provider_key = auth
+        .attributes
+        .get("provider_key")
+        .cloned()
+        .unwrap_or_default();
+    let mut compat_name = auth
+        .attributes
+        .get("compat_name")
+        .cloned()
+        .unwrap_or_default();
     if compat_name.is_empty() {
         if let Some(rest) = provider.strip_prefix("openai-compatible-") {
             compat_name = rest.to_string();
@@ -53,20 +67,25 @@ pub fn extract_rules(auth: &Auth, cfg: &Config) -> Vec<RequestScopedErrorRule> {
         || provider.starts_with("openai-compatibility:")
         || provider.starts_with("openai-compatible")
     {
-        if let Some(entry) = resolve_openai_compat_config_for_auth(cfg, auth, &provider_key, &compat_name) {
+        if let Some(entry) =
+            resolve_openai_compat_config_for_auth(cfg, auth, &provider_key, &compat_name)
+        {
             return entry.request_scoped_errors.clone();
         }
     }
     let at = |len: usize| index.filter(|i| *i < len);
     match provider.as_str() {
-        "claude" => at(cfg.claude_key.len()).map(|i| cfg.claude_key[i].request_scoped_errors.clone()),
+        "claude" => {
+            at(cfg.claude_key.len()).map(|i| cfg.claude_key[i].request_scoped_errors.clone())
+        }
         "codex" => at(cfg.codex_key.len()).map(|i| cfg.codex_key[i].request_scoped_errors.clone()),
         "xai" => at(cfg.xai_key.len()).map(|i| cfg.xai_key[i].request_scoped_errors.clone()),
         "meta" => at(cfg.meta_key.len()).map(|i| cfg.meta_key[i].request_scoped_errors.clone()),
-        "gemini" => at(cfg.gemini_key.len()).map(|i| cfg.gemini_key[i].request_scoped_errors.clone()),
-        "interactions" | "gemini-interactions" => {
-            at(cfg.interactions_key.len()).map(|i| cfg.interactions_key[i].request_scoped_errors.clone())
+        "gemini" => {
+            at(cfg.gemini_key.len()).map(|i| cfg.gemini_key[i].request_scoped_errors.clone())
         }
+        "interactions" | "gemini-interactions" => at(cfg.interactions_key.len())
+            .map(|i| cfg.interactions_key[i].request_scoped_errors.clone()),
         _ => None,
     }
     .unwrap_or_default()
@@ -103,7 +122,10 @@ pub fn match_action(auth: &Auth, err: &ExecError, cfg: &Config) -> Option<&'stat
         if rule.r#match.is_empty() && rule.match_regexr.is_empty() {
             continue;
         }
-        let mut matched = rule.r#match.iter().any(|s| !s.is_empty() && body.contains(s.as_str()));
+        let mut matched = rule
+            .r#match
+            .iter()
+            .any(|s| !s.is_empty() && body.contains(s.as_str()));
         if !matched {
             matched = rule
                 .match_regexr
@@ -132,7 +154,9 @@ pub fn apply_action_to_result(action: Option<&str>, result: &mut ExecResult) {
     };
     match action {
         ACTION_STOP | ACTION_CONTINUE => err.code = CODE_REQUEST_SCOPED.into(),
-        ACTION_STOP_AND_COOLDOWN | ACTION_CONTINUE_AND_COOLDOWN => err.code = CODE_FORCE_COOLDOWN.into(),
+        ACTION_STOP_AND_COOLDOWN | ACTION_CONTINUE_AND_COOLDOWN => {
+            err.code = CODE_FORCE_COOLDOWN.into()
+        }
         _ => {}
     }
 }
@@ -146,7 +170,12 @@ mod tests {
     use super::*;
 
     fn rule(status: i64, m: &str, action: &str) -> RequestScopedErrorRule {
-        RequestScopedErrorRule { status, r#match: vec![m.into()], match_regexr: vec![], action: action.into() }
+        RequestScopedErrorRule {
+            status,
+            r#match: vec![m.into()],
+            match_regexr: vec![],
+            action: action.into(),
+        }
     }
 
     fn claude_key_auth() -> (Config, Auth) {
@@ -155,7 +184,12 @@ mod tests {
             api_key: "sk".into(),
             request_scoped_errors: vec![
                 rule(400, "content filter", "STOP"),
-                RequestScopedErrorRule { status: 500, r#match: vec![], match_regexr: vec!["overload(ed)?".into()], action: "continue-and-cooldown".into() },
+                RequestScopedErrorRule {
+                    status: 500,
+                    r#match: vec![],
+                    match_regexr: vec!["overload(ed)?".into()],
+                    action: "continue-and-cooldown".into(),
+                },
                 rule(429, "x", "bogus"),
             ],
             ..Default::default()
@@ -163,7 +197,8 @@ mod tests {
         let mut auth = Auth::new("k", "claude");
         auth.attributes.insert("api_key".into(), "sk".into());
         auth.attributes.insert("config_index".into(), "0".into());
-        auth.attributes.insert("source".into(), "config:claude[abc]".into());
+        auth.attributes
+            .insert("source".into(), "config:claude[abc]".into());
         (cfg, auth)
     }
 
@@ -172,19 +207,37 @@ mod tests {
         let (cfg, auth) = claude_key_auth();
         let e = ExecError::new(400, "blocked by content filter");
         assert_eq!(match_action(&auth, &e, &cfg), Some(ACTION_STOP));
-        assert_eq!(match_action(&auth, &ExecError::new(400, "other"), &cfg), None);
-        assert_eq!(match_action(&auth, &ExecError::new(500, "server overloaded"), &cfg), Some(ACTION_CONTINUE_AND_COOLDOWN));
+        assert_eq!(
+            match_action(&auth, &ExecError::new(400, "other"), &cfg),
+            None
+        );
+        assert_eq!(
+            match_action(&auth, &ExecError::new(500, "server overloaded"), &cfg),
+            Some(ACTION_CONTINUE_AND_COOLDOWN)
+        );
         // Unknown actions never match; status must be equal.
         assert_eq!(match_action(&auth, &ExecError::new(429, "x"), &cfg), None);
-        assert_eq!(match_action(&auth, &ExecError::new(401, "content filter"), &cfg), None);
+        assert_eq!(
+            match_action(&auth, &ExecError::new(401, "content filter"), &cfg),
+            None
+        );
     }
 
     #[test]
     fn metadata_rules_override_and_apply_to_result() {
         let (cfg, mut auth) = claude_key_auth();
-        auth.metadata.insert("request-scoped-errors".into(), serde_json::json!([{"status": 502, "match": ["bad"], "action": "continue"}]));
-        assert_eq!(match_action(&auth, &ExecError::new(502, "bad gateway"), &cfg), Some(ACTION_CONTINUE));
-        assert_eq!(match_action(&auth, &ExecError::new(400, "content filter"), &cfg), None);
+        auth.metadata.insert(
+            "request-scoped-errors".into(),
+            serde_json::json!([{"status": 502, "match": ["bad"], "action": "continue"}]),
+        );
+        assert_eq!(
+            match_action(&auth, &ExecError::new(502, "bad gateway"), &cfg),
+            Some(ACTION_CONTINUE)
+        );
+        assert_eq!(
+            match_action(&auth, &ExecError::new(400, "content filter"), &cfg),
+            None
+        );
 
         let mut result = ExecResult {
             auth_id: "k".into(),

@@ -8,10 +8,12 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use cpa_auth::types::{ATTRIBUTE_API_KEY, Auth, AUTH_KIND_API_KEY, AUTH_KIND_OAUTH, AUTH_SOURCE_CONFIG};
+use cpa_auth::types::{
+    ATTRIBUTE_API_KEY, AUTH_KIND_API_KEY, AUTH_KIND_OAUTH, AUTH_SOURCE_CONFIG, Auth,
+};
 use cpa_config::{
-    ClaudeKey, CodexKey, Config, GeminiKey, OAuthModelAlias, OpenAiCompatibility, ThinkingSupport as CfgThinking,
-    VertexCompatKey,
+    ClaudeKey, CodexKey, Config, GeminiKey, OAuthModelAlias, OpenAiCompatibility,
+    ThinkingSupport as CfgThinking, VertexCompatKey,
 };
 use cpa_core::registry::{ModelInfo, ThinkingSupport};
 use serde_json::Value;
@@ -59,7 +61,10 @@ pub fn is_configured_openai_compat_auth(auth: &Auth) -> bool {
     if !is_configured_model_routing_auth(auth) {
         return false;
     }
-    auth.provider.trim().eq_ignore_ascii_case("openai-compatibility") || !auth.attr("compat_name").is_empty()
+    auth.provider
+        .trim()
+        .eq_ignore_ascii_case("openai-compatibility")
+        || !auth.attr("compat_name").is_empty()
 }
 
 pub fn rewrite_model_for_auth(model: &str, auth: &Auth) -> String {
@@ -71,12 +76,24 @@ pub fn executor_key_from_auth(auth: &Auth) -> String {
     let provider_key = auth.attr("provider_key");
     let compat_name = auth.attr("compat_name");
     if !compat_name.is_empty() {
-        let key = if provider_key.is_empty() { compat_name } else { provider_key };
+        let key = if provider_key.is_empty() {
+            compat_name
+        } else {
+            provider_key
+        };
         return cpa_core::util::openai_compatible_provider_key(&key);
     }
-    if auth.provider.trim().eq_ignore_ascii_case("openai-compatibility") {
+    if auth
+        .provider
+        .trim()
+        .eq_ignore_ascii_case("openai-compatibility")
+    {
         let key = auth.label.trim();
-        let key = if key.is_empty() { "openai-compatibility" } else { key };
+        let key = if key.is_empty() {
+            "openai-compatibility"
+        } else {
+            key
+        };
         return cpa_core::util::openai_compatible_provider_key(key);
     }
     canonical_scheduling_provider(&auth.provider)
@@ -100,7 +117,11 @@ fn alias_lookup_candidates(requested: &str) -> (super::util::SuffixResult, Vec<S
         return (Default::default(), Vec::new());
     }
     let result = parse_suffix(requested);
-    let base = if result.model_name.is_empty() { requested.to_string() } else { result.model_name.clone() };
+    let base = if result.model_name.is_empty() {
+        requested.to_string()
+    } else {
+        result.model_name.clone()
+    };
     let mut candidates = vec![requested.to_string()];
     if base != requested {
         candidates.push(base);
@@ -142,7 +163,11 @@ pub fn resolve_model_alias_pool(requested: &str, models: &[ConfiguredModel]) -> 
             if candidate.is_empty() || alias.is_empty() || !eq_fold(alias, candidate) {
                 continue;
             }
-            let resolved = if name.is_empty() { candidate.as_str() } else { name };
+            let resolved = if name.is_empty() {
+                candidate.as_str()
+            } else {
+                name
+            };
             let resolved = preserve_resolved_model_suffix(resolved, &request);
             let key = resolved.trim().to_lowercase();
             if key.is_empty() || out.iter().any(|o| o.trim().to_lowercase() == key) {
@@ -166,11 +191,20 @@ pub fn resolve_model_alias_pool(requested: &str, models: &[ConfiguredModel]) -> 
     Vec::new()
 }
 
-pub fn resolve_model_alias_from_config_models(requested: &str, models: &[ConfiguredModel]) -> String {
-    resolve_model_alias_pool(requested, models).into_iter().next().unwrap_or_default()
+pub fn resolve_model_alias_from_config_models(
+    requested: &str,
+    models: &[ConfiguredModel],
+) -> String {
+    resolve_model_alias_pool(requested, models)
+        .into_iter()
+        .next()
+        .unwrap_or_default()
 }
 
-pub fn resolve_model_alias_result_from_config_models(requested: &str, models: &[ConfiguredModel]) -> AliasResult {
+pub fn resolve_model_alias_result_from_config_models(
+    requested: &str,
+    models: &[ConfiguredModel],
+) -> AliasResult {
     let requested = requested.trim();
     if requested.is_empty() || models.is_empty() {
         return AliasResult::default();
@@ -179,7 +213,11 @@ pub fn resolve_model_alias_result_from_config_models(requested: &str, models: &[
     if candidates.is_empty() {
         return AliasResult::default();
     }
-    let base_model = if request.model_name.is_empty() { requested.to_string() } else { request.model_name.clone() };
+    let base_model = if request.model_name.is_empty() {
+        requested.to_string()
+    } else {
+        request.model_name.clone()
+    };
     for candidate in &candidates {
         let key = candidate.trim();
         if key.is_empty() {
@@ -201,7 +239,11 @@ pub fn resolve_model_alias_result_from_config_models(requested: &str, models: &[
                     original_alias: alias.to_string(),
                 };
             }
-            let original_alias = if m.force_mapping { alias.to_string() } else { requested.to_string() };
+            let original_alias = if m.force_mapping {
+                alias.to_string()
+            } else {
+                requested.to_string()
+            };
             return AliasResult {
                 upstream_model: preserve_resolved_model_suffix(original, &request),
                 force_mapping: m.force_mapping,
@@ -227,7 +269,9 @@ pub struct OAuthAliasTable {
     reverse: HashMap<String, HashMap<String, OAuthAliasEntry>>,
 }
 
-pub fn compile_oauth_model_alias_table(aliases: &BTreeMap<String, Vec<OAuthModelAlias>>) -> OAuthAliasTable {
+pub fn compile_oauth_model_alias_table(
+    aliases: &BTreeMap<String, Vec<OAuthModelAlias>>,
+) -> OAuthAliasTable {
     let mut table = OAuthAliasTable::default();
     for (raw_channel, entries) in aliases {
         let channel = raw_channel.trim().to_lowercase();
@@ -241,11 +285,12 @@ pub fn compile_oauth_model_alias_table(aliases: &BTreeMap<String, Vec<OAuthModel
             if name.is_empty() || alias.is_empty() || eq_fold(name, alias) {
                 continue;
             }
-            rev.entry(alias.to_lowercase()).or_insert_with(|| OAuthAliasEntry {
-                upstream_model: name.to_string(),
-                config_alias: alias.to_string(),
-                force_mapping: entry.force_mapping,
-            });
+            rev.entry(alias.to_lowercase())
+                .or_insert_with(|| OAuthAliasEntry {
+                    upstream_model: name.to_string(),
+                    config_alias: alias.to_string(),
+                    force_mapping: entry.force_mapping,
+                });
         }
         if !rev.is_empty() {
             table.reverse.insert(channel, rev);
@@ -290,7 +335,8 @@ pub fn set_oauth_model_aliases_attribute(auth: &mut Auth, aliases: Vec<OAuthMode
         return;
     }
     if let Ok(data) = serde_json::to_string(&aliases) {
-        auth.attributes.insert(OAUTH_MODEL_ALIASES_ATTRIBUTE_KEY.into(), data);
+        auth.attributes
+            .insert(OAUTH_MODEL_ALIASES_ATTRIBUTE_KEY.into(), data);
     }
 }
 
@@ -304,7 +350,10 @@ fn sanitize_oauth_model_aliases(aliases: Vec<OAuthModelAlias>) -> Vec<OAuthModel
     cfg.oauth_model_alias.remove("auth").unwrap_or_default()
 }
 
-fn resolve_upstream_model_from_aliases(aliases: &[OAuthModelAlias], requested: &str) -> AliasResult {
+fn resolve_upstream_model_from_aliases(
+    aliases: &[OAuthModelAlias],
+    requested: &str,
+) -> AliasResult {
     if aliases.is_empty() {
         return AliasResult::default();
     }
@@ -312,7 +361,11 @@ fn resolve_upstream_model_from_aliases(aliases: &[OAuthModelAlias], requested: &
     if candidates.is_empty() {
         return AliasResult::default();
     }
-    let base_model = if request.model_name.is_empty() { requested.trim().to_string() } else { request.model_name.clone() };
+    let base_model = if request.model_name.is_empty() {
+        requested.trim().to_string()
+    } else {
+        request.model_name.clone()
+    };
     for candidate in &candidates {
         let key = candidate.trim();
         if key.is_empty() {
@@ -334,7 +387,11 @@ fn resolve_upstream_model_from_aliases(aliases: &[OAuthModelAlias], requested: &
                     original_alias: alias.to_string(),
                 };
             }
-            let original_alias = if entry.force_mapping { alias.to_string() } else { requested.to_string() };
+            let original_alias = if entry.force_mapping {
+                alias.to_string()
+            } else {
+                requested.to_string()
+            };
             return AliasResult {
                 upstream_model: preserve_resolved_model_suffix(original, &request),
                 force_mapping: entry.force_mapping,
@@ -345,7 +402,11 @@ fn resolve_upstream_model_from_aliases(aliases: &[OAuthModelAlias], requested: &
     AliasResult::default()
 }
 
-fn resolve_upstream_model_from_alias_table(table: &OAuthAliasTable, requested: &str, channel: &str) -> AliasResult {
+fn resolve_upstream_model_from_alias_table(
+    table: &OAuthAliasTable,
+    requested: &str,
+    channel: &str,
+) -> AliasResult {
     if channel.is_empty() {
         return AliasResult::default();
     }
@@ -381,7 +442,11 @@ fn resolve_upstream_model_from_alias_table(table: &OAuthAliasTable, requested: &
         } else {
             target.clone()
         };
-        let original_alias = if entry.force_mapping { entry.config_alias.trim().to_string() } else { requested.to_string() };
+        let original_alias = if entry.force_mapping {
+            entry.config_alias.trim().to_string()
+        } else {
+            requested.to_string()
+        };
         return AliasResult {
             upstream_model: upstream,
             force_mapping: entry.force_mapping,
@@ -392,12 +457,17 @@ fn resolve_upstream_model_from_alias_table(table: &OAuthAliasTable, requested: &
 }
 
 /// Per-auth aliases first, then the global table (Go: resolveOAuthModelAliasWithResult).
-pub fn resolve_oauth_model_alias_with_result(table: &OAuthAliasTable, auth: &Auth, requested: &str) -> AliasResult {
+pub fn resolve_oauth_model_alias_with_result(
+    table: &OAuthAliasTable,
+    auth: &Auth,
+    requested: &str,
+) -> AliasResult {
     let channel = model_alias_channel(auth);
     if channel.is_empty() {
         return AliasResult::default();
     }
-    let per_auth = resolve_upstream_model_from_aliases(&oauth_model_aliases_from_attributes(auth), requested);
+    let per_auth =
+        resolve_upstream_model_from_aliases(&oauth_model_aliases_from_attributes(auth), requested);
     if !per_auth.upstream_model.is_empty() {
         return per_auth;
     }
@@ -407,7 +477,11 @@ pub fn resolve_oauth_model_alias_with_result(table: &OAuthAliasTable, auth: &Aut
 /// Upstream name for an OAuth auth, the request unchanged when no alias applies.
 pub fn apply_oauth_model_alias(table: &OAuthAliasTable, auth: &Auth, requested: &str) -> String {
     let r = resolve_oauth_model_alias_with_result(table, auth, requested);
-    if r.upstream_model.is_empty() { requested.to_string() } else { r.upstream_model }
+    if r.upstream_model.is_empty() {
+        requested.to_string()
+    } else {
+        r.upstream_model
+    }
 }
 
 // ---- API-key config lookup ----
@@ -447,7 +521,8 @@ pub fn resolve_api_key_config<'a, T: KeyEntry>(entries: &'a [T], auth: &Auth) ->
             return eq_fold(cfg_key, &attr_key) && eq_fold(cfg_base, &attr_base);
         }
         if !attr_key.is_empty() {
-            return eq_fold(cfg_key, &attr_key) && (cfg_base.is_empty() || eq_fold(cfg_base, &attr_base));
+            return eq_fold(cfg_key, &attr_key)
+                && (cfg_base.is_empty() || eq_fold(cfg_base, &attr_base));
         }
         !attr_base.is_empty() && eq_fold(cfg_base, &attr_base)
     };
@@ -470,7 +545,9 @@ pub fn resolve_api_key_config<'a, T: KeyEntry>(entries: &'a [T], auth: &Auth) ->
         return Some(e);
     }
     if !attr_key.is_empty() {
-        return entries.iter().find(|e| eq_fold(e.api_key().trim(), &attr_key));
+        return entries
+            .iter()
+            .find(|e| eq_fold(e.api_key().trim(), &attr_key));
     }
     None
 }
@@ -516,7 +593,10 @@ fn compat_entry<'a>(cfg: &'a Config, auth: &Auth) -> Option<&'a OpenAiCompatibil
 
 macro_rules! models_of {
     ($models:expr, |$m:ident| $conv:expr) => {
-        $models.iter().map(|$m| $conv).collect::<Vec<ConfiguredModel>>()
+        $models
+            .iter()
+            .map(|$m| $conv)
+            .collect::<Vec<ConfiguredModel>>()
     };
 }
 
@@ -524,50 +604,63 @@ macro_rules! models_of {
 pub fn configured_models(cfg: &Config, auth: &Auth) -> Vec<ConfiguredModel> {
     match auth.provider.trim().to_lowercase().as_str() {
         "gemini" => resolve_api_key_config(&cfg.gemini_key, auth)
-            .map(|e| models_of!(e.models, |m| ConfiguredModel {
-                name: m.name.clone(),
-                alias: m.alias.clone(),
-                force_mapping: m.force_mapping,
-                thinking: m.thinking.clone(),
-                is_compat: m.is_compat,
-                ..Default::default()
-            }))
+            .map(|e| {
+                models_of!(e.models, |m| ConfiguredModel {
+                    name: m.name.clone(),
+                    alias: m.alias.clone(),
+                    force_mapping: m.force_mapping,
+                    thinking: m.thinking.clone(),
+                    is_compat: m.is_compat,
+                    ..Default::default()
+                })
+            })
             .unwrap_or_default(),
         "gemini-interactions" => resolve_api_key_config(&cfg.interactions_key, auth)
-            .map(|e| models_of!(e.models, |m| ConfiguredModel {
-                name: m.name.clone(),
-                alias: m.alias.clone(),
-                force_mapping: m.force_mapping,
-                thinking: m.thinking.clone(),
-                is_compat: m.is_compat,
-                ..Default::default()
-            }))
+            .map(|e| {
+                models_of!(e.models, |m| ConfiguredModel {
+                    name: m.name.clone(),
+                    alias: m.alias.clone(),
+                    force_mapping: m.force_mapping,
+                    thinking: m.thinking.clone(),
+                    is_compat: m.is_compat,
+                    ..Default::default()
+                })
+            })
             .unwrap_or_default(),
         "claude" => resolve_api_key_config(&cfg.claude_key, auth)
-            .map(|e| models_of!(e.models, |m| ConfiguredModel {
-                name: m.name.clone(),
-                alias: m.alias.clone(),
-                force_mapping: m.force_mapping,
-                thinking: m.thinking.clone(),
-                is_compat: m.is_compat,
-                ..Default::default()
-            }))
+            .map(|e| {
+                models_of!(e.models, |m| ConfiguredModel {
+                    name: m.name.clone(),
+                    alias: m.alias.clone(),
+                    force_mapping: m.force_mapping,
+                    thinking: m.thinking.clone(),
+                    is_compat: m.is_compat,
+                    ..Default::default()
+                })
+            })
             .unwrap_or_default(),
         "codex" => codex_like_models(resolve_api_key_config(&cfg.codex_key, auth)),
         "xai" => codex_like_models(resolve_api_key_config(&cfg.xai_key, auth)),
         "meta" => codex_like_models(resolve_api_key_config(&cfg.meta_key, auth)),
         "vertex" => resolve_api_key_config(&cfg.vertex_compat_api_key, auth)
-            .map(|e| models_of!(e.models, |m| ConfiguredModel {
-                name: m.name.clone(),
-                alias: m.alias.clone(),
-                force_mapping: m.force_mapping,
-                thinking: m.thinking.clone(),
-                ..Default::default()
-            }))
+            .map(|e| {
+                models_of!(e.models, |m| ConfiguredModel {
+                    name: m.name.clone(),
+                    alias: m.alias.clone(),
+                    force_mapping: m.force_mapping,
+                    thinking: m.thinking.clone(),
+                    ..Default::default()
+                })
+            })
             .unwrap_or_default(),
         _ => {
             let compat_name = auth.attr("compat_name");
-            if compat_name.is_empty() && !auth.provider.trim().eq_ignore_ascii_case("openai-compatibility") {
+            if compat_name.is_empty()
+                && !auth
+                    .provider
+                    .trim()
+                    .eq_ignore_ascii_case("openai-compatibility")
+            {
                 return Vec::new();
             }
             compat_entry(cfg, auth)
@@ -606,7 +699,11 @@ fn compat_models(entry: &OpenAiCompatibility) -> Vec<ConfiguredModel> {
 }
 
 /// Pool of upstream models for an OpenAI-compatible alias (Go: resolveOpenAICompatUpstreamModelPool).
-pub fn resolve_openai_compat_upstream_model_pool(cfg: &Config, auth: &Auth, requested: &str) -> Vec<String> {
+pub fn resolve_openai_compat_upstream_model_pool(
+    cfg: &Config,
+    auth: &Auth,
+    requested: &str,
+) -> Vec<String> {
     if !is_configured_openai_compat_auth(auth) {
         return Vec::new();
     }
@@ -621,18 +718,28 @@ pub fn resolve_openai_compat_upstream_model_pool(cfg: &Config, auth: &Auth, requ
 }
 
 /// Alias result for API-key / compat auths (Go: resolveAPIKeyModelAliasWithResult).
-pub fn resolve_api_key_model_alias_with_result(cfg: &Config, auth: &Auth, requested: &str) -> AliasResult {
+pub fn resolve_api_key_model_alias_with_result(
+    cfg: &Config,
+    auth: &Auth,
+    requested: &str,
+) -> AliasResult {
     let requested = requested.trim();
     if requested.is_empty() {
         return AliasResult::default();
     }
     let models = configured_models(cfg, auth);
     if models.is_empty() {
-        return AliasResult { upstream_model: requested.to_string(), ..Default::default() };
+        return AliasResult {
+            upstream_model: requested.to_string(),
+            ..Default::default()
+        };
     }
     let result = resolve_model_alias_result_from_config_models(requested, &models);
     if result.upstream_model.trim().is_empty() {
-        return AliasResult { upstream_model: requested.to_string(), ..Default::default() };
+        return AliasResult {
+            upstream_model: requested.to_string(),
+            ..Default::default()
+        };
     }
     result
 }
@@ -692,10 +799,19 @@ pub fn apply_api_key_model_alias(cfg: &Config, auth: &Auth, requested: &str) -> 
     }
     let models = configured_models(cfg, auth);
     let resolved = resolve_model_alias_from_config_models(requested, &models);
-    if resolved.is_empty() { requested.to_string() } else { resolved }
+    if resolved.is_empty() {
+        requested.to_string()
+    } else {
+        resolved
+    }
 }
 
-fn resolve_model_alias_result_for_upstream(cfg: &Config, auth: &Auth, requested: &str, upstream: &str) -> AliasResult {
+fn resolve_model_alias_result_for_upstream(
+    cfg: &Config,
+    auth: &Auth,
+    requested: &str,
+    upstream: &str,
+) -> AliasResult {
     let requested = requested.trim();
     let upstream = upstream.trim();
     if requested.is_empty() || upstream.is_empty() {
@@ -731,7 +847,8 @@ pub fn resolve_attempt_alias_result(
     if result.upstream_model.trim().is_empty() {
         return fallback.clone();
     }
-    if result.force_mapping && fallback.force_mapping && !fallback.original_alias.trim().is_empty() {
+    if result.force_mapping && fallback.force_mapping && !fallback.original_alias.trim().is_empty()
+    {
         result.original_alias = fallback.original_alias.clone();
     }
     result
@@ -754,7 +871,11 @@ pub fn openai_compat_model_pool_key(auth: &Auth, requested: &str) -> String {
             cpa_core::util::openai_compatible_provider_key(&auth.provider)
         }
     };
-    format!("{}|{provider_key}|{}", auth.id.trim().to_lowercase(), base.to_lowercase())
+    format!(
+        "{}|{provider_key}|{}",
+        auth.id.trim().to_lowercase(),
+        base.to_lowercase()
+    )
 }
 
 pub fn rotate_strings(values: &[String], offset: usize) -> Vec<String> {
@@ -791,7 +912,13 @@ pub fn execution_result_model(route_model: &str, upstream_model: &str, pooled: b
 
 // ---- Response model rewrite for force-mapped aliases ----
 
-const MODEL_FIELD_PATHS: [&str; 5] = ["model", "modelVersion", "response.model", "response.modelVersion", "message.model"];
+const MODEL_FIELD_PATHS: [&str; 5] = [
+    "model",
+    "modelVersion",
+    "response.model",
+    "response.modelVersion",
+    "message.model",
+];
 
 /// Rewrites the model field(s) of a JSON response to `target_model`.
 pub fn rewrite_model_in_response(data: &[u8], target_model: &str) -> Vec<u8> {
@@ -845,7 +972,11 @@ fn normalize_thinking(raw: &CfgThinking) -> ThinkingSupport {
 
 /// Private capability snapshot for a configured model (Go: modelconfig.ResolveModelInfo): static
 /// catalog metadata of the suffix-free name, with explicit thinking config taking precedence.
-pub fn resolve_model_info(name: &str, model_type: &str, support: Option<&CfgThinking>) -> ModelInfo {
+pub fn resolve_model_info(
+    name: &str,
+    model_type: &str,
+    support: Option<&CfgThinking>,
+) -> ModelInfo {
     let trimmed = name.trim();
     let base = parse_suffix(trimmed).model_name;
     let mut info = cpa_core::registry::lookup_static_model_info(base.trim()).unwrap_or_default();
@@ -907,9 +1038,16 @@ fn capability_routes(cfg: &Config, auth: &Auth, candidates: &[String]) -> Vec<Ca
         }
         let mut model = m.clone();
         if model_type == "openai-compatibility" && model.thinking.is_none() && !model.image {
-            model.thinking = Some(CfgThinking { levels: vec!["low".into(), "medium".into(), "high".into()], ..Default::default() });
+            model.thinking = Some(CfgThinking {
+                levels: vec!["low".into(), "medium".into(), "high".into()],
+                ..Default::default()
+            });
         }
-        let route = CapabilityRoute { upstream_model: name, model, model_type };
+        let route = CapabilityRoute {
+            upstream_model: name,
+            model,
+            model_type,
+        };
         let mut seen_keys: Vec<String> = Vec::new();
         for route_model in [&alias, &route.upstream_model] {
             let (_, cands) = alias_lookup_candidates(route_model);
@@ -923,7 +1061,10 @@ fn capability_routes(cfg: &Config, auth: &Auth, candidates: &[String]) -> Vec<Ca
                     continue;
                 }
                 let list = by_key.entry(key).or_default();
-                if !list.iter().any(|e| eq_fold(&e.upstream_model, &route.upstream_model)) {
+                if !list
+                    .iter()
+                    .any(|e| eq_fold(&e.upstream_model, &route.upstream_model))
+                {
                     list.push(route.clone());
                 }
             }
@@ -939,13 +1080,22 @@ fn capability_routes(cfg: &Config, auth: &Auth, candidates: &[String]) -> Vec<Ca
 }
 
 fn route_model_info(route: &CapabilityRoute) -> ModelInfo {
-    let mut info = resolve_model_info(&route.upstream_model, route.model_type, route.model.thinking.as_ref());
+    let mut info = resolve_model_info(
+        &route.upstream_model,
+        route.model_type,
+        route.model.thinking.as_ref(),
+    );
     info.is_compat = route.model.is_compat;
     info.support_configuration_update = route.model.support_configuration_update;
     info
 }
 
-fn lookup_api_key_model_capability(cfg: &Config, auth: &Auth, route_model: &str, upstream_model: &str) -> Option<ModelInfo> {
+fn lookup_api_key_model_capability(
+    cfg: &Config,
+    auth: &Auth,
+    route_model: &str,
+    upstream_model: &str,
+) -> Option<ModelInfo> {
     if !is_configured_model_routing_auth(auth) {
         return None;
     }
@@ -956,7 +1106,10 @@ fn lookup_api_key_model_capability(cfg: &Config, auth: &Auth, route_model: &str,
         return None;
     }
     let selected = upstream_model.trim();
-    if let Some(r) = routes.iter().find(|r| eq_fold(r.upstream_model.trim(), selected)) {
+    if let Some(r) = routes
+        .iter()
+        .find(|r| eq_fold(r.upstream_model.trim(), selected))
+    {
         return Some(route_model_info(r));
     }
     routes
@@ -965,7 +1118,11 @@ fn lookup_api_key_model_capability(cfg: &Config, auth: &Auth, route_model: &str,
         .map(route_model_info)
 }
 
-fn lookup_unlisted_codex_api_key_model_capability(cfg: &Config, auth: &Auth, upstream_model: &str) -> Option<ModelInfo> {
+fn lookup_unlisted_codex_api_key_model_capability(
+    cfg: &Config,
+    auth: &Auth,
+    upstream_model: &str,
+) -> Option<ModelInfo> {
     if auth.auth_kind() != AUTH_KIND_API_KEY
         || !auth.provider.trim().eq_ignore_ascii_case("codex")
         || upstream_model.trim().is_empty()
@@ -985,7 +1142,8 @@ fn lookup_unlisted_codex_api_key_model_capability(cfg: &Config, auth: &Auth, ups
         if eq_fold(configured.name.trim(), upstream_model.trim())
             || configured_upstream_fallback_matches(&configured.name, upstream_model)
         {
-            let mut info = resolve_model_info(upstream_model, "codex", configured.thinking.as_ref());
+            let mut info =
+                resolve_model_info(upstream_model, "codex", configured.thinking.as_ref());
             info.support_configuration_update = configured.support_configuration_update;
             info.is_compat = configured.is_compat;
             return Some(info);
@@ -1023,7 +1181,10 @@ fn model_info_value(info: &ModelInfo) -> Value {
     let mut v = serde_json::to_value(info).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
         m.insert("is_compat".into(), Value::Bool(info.is_compat));
-        m.insert("support_configuration_update".into(), Value::Bool(info.support_configuration_update));
+        m.insert(
+            "support_configuration_update".into(),
+            Value::Bool(info.support_configuration_update),
+        );
     }
     v
 }
@@ -1031,15 +1192,24 @@ fn model_info_value(info: &ModelInfo) -> Value {
 /// Capability snapshot bound to this execution attempt, if any (Go: ResolvedModelInfo).
 pub fn resolved_model_info(req: &Request) -> Option<ResolvedModelInfo> {
     for key in [RESOLVED_CODEX_OAUTH_MODEL_INFO, RESOLVED_API_KEY_MODEL_INFO] {
-        let Some(v) = req.metadata.get(key) else { continue };
+        let Some(v) = req.metadata.get(key) else {
+            continue;
+        };
         let Ok(mut info) = serde_json::from_value::<ModelInfo>(v.clone()) else {
             continue;
         };
         let is_compat = v.get("is_compat").and_then(Value::as_bool).unwrap_or(false);
-        let support = v.get("support_configuration_update").and_then(Value::as_bool).unwrap_or(false);
+        let support = v
+            .get("support_configuration_update")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         info.is_compat = is_compat;
         info.support_configuration_update = support;
-        return Some(ResolvedModelInfo { info, is_compat, support_configuration_update: support });
+        return Some(ResolvedModelInfo {
+            info,
+            is_compat,
+            support_configuration_update: support,
+        });
     }
     None
 }
@@ -1078,7 +1248,8 @@ pub fn attach_resolved_execution_model_info(
     req.metadata.remove(RESOLVED_API_KEY_MODEL_INFO);
     req.metadata.remove(RESOLVED_CODEX_OAUTH_MODEL_INFO);
     if let Some(info) = info {
-        req.metadata.insert(key.to_string(), model_info_value(&info));
+        req.metadata
+            .insert(key.to_string(), model_info_value(&info));
     }
 }
 
@@ -1113,7 +1284,11 @@ pub fn codex_api_key_model_is_compat(cfg: &Config, auth: &Auth, model: &str) -> 
         if name.is_empty() {
             continue;
         }
-        if eq_fold(&name, requested) || eq_fold(&name, &base) || eq_fold(&alias, requested) || eq_fold(&alias, &base) {
+        if eq_fold(&name, requested)
+            || eq_fold(&name, &base)
+            || eq_fold(&alias, requested)
+            || eq_fold(&alias, &base)
+        {
             return m.is_compat;
         }
     }
@@ -1130,12 +1305,20 @@ mod tests {
     use cpa_config::{ClaudeModel, OpenAiCompatibilityModel};
 
     fn cm(name: &str, alias: &str, force: bool) -> ConfiguredModel {
-        ConfiguredModel { name: name.into(), alias: alias.into(), force_mapping: force, ..Default::default() }
+        ConfiguredModel {
+            name: name.into(),
+            alias: alias.into(),
+            force_mapping: force,
+            ..Default::default()
+        }
     }
 
     #[test]
     fn alias_result_preserves_suffix_and_force_mapping() {
-        let models = vec![cm("claude-sonnet-4", "sonnet", false), cm("gpt-5", "gpt-5", true)];
+        let models = vec![
+            cm("claude-sonnet-4", "sonnet", false),
+            cm("gpt-5", "gpt-5", true),
+        ];
         let r = resolve_model_alias_result_from_config_models("sonnet(8192)", &models);
         assert_eq!(r.upstream_model, "claude-sonnet-4(8192)");
         assert!(!r.force_mapping);
@@ -1143,17 +1326,33 @@ mod tests {
         // alias == name without force: no mapping; with force: rewrite back to the alias.
         let r = resolve_model_alias_result_from_config_models("gpt-5", &models);
         assert!(r.force_mapping && r.upstream_model == "gpt-5" && r.original_alias == "gpt-5");
-        assert_eq!(resolve_model_alias_result_from_config_models("nope", &models), AliasResult::default());
+        assert_eq!(
+            resolve_model_alias_result_from_config_models("nope", &models),
+            AliasResult::default()
+        );
     }
 
     #[test]
     fn pool_collects_distinct_names_in_config_order() {
-        let models = vec![cm("up-a", "pool", false), cm("up-b", "pool", false), cm("UP-A", "pool", false)];
-        assert_eq!(resolve_model_alias_pool("pool", &models), vec!["up-a".to_string(), "up-b".to_string()]);
+        let models = vec![
+            cm("up-a", "pool", false),
+            cm("up-b", "pool", false),
+            cm("UP-A", "pool", false),
+        ];
+        assert_eq!(
+            resolve_model_alias_pool("pool", &models),
+            vec!["up-a".to_string(), "up-b".to_string()]
+        );
         // Name fallback when no alias matches.
         let models = vec![cm("real", "other", false)];
-        assert_eq!(resolve_model_alias_pool("real", &models), vec!["real".to_string()]);
-        assert_eq!(rotate_strings(&["a".into(), "b".into(), "c".into()], 1), vec!["b", "c", "a"]);
+        assert_eq!(
+            resolve_model_alias_pool("real", &models),
+            vec!["real".to_string()]
+        );
+        assert_eq!(
+            rotate_strings(&["a".into(), "b".into(), "c".into()], 1),
+            vec!["b", "c", "a"]
+        );
     }
 
     #[test]
@@ -1162,15 +1361,31 @@ mod tests {
         aliases.insert(
             "Claude".to_string(),
             vec![
-                OAuthModelAlias { name: "claude-sonnet-4-5".into(), alias: "sonnet".into(), ..Default::default() },
-                OAuthModelAlias { name: "other".into(), alias: "Sonnet".into(), ..Default::default() },
-                OAuthModelAlias { name: "claude-opus".into(), alias: "opus".into(), force_mapping: true, ..Default::default() },
+                OAuthModelAlias {
+                    name: "claude-sonnet-4-5".into(),
+                    alias: "sonnet".into(),
+                    ..Default::default()
+                },
+                OAuthModelAlias {
+                    name: "other".into(),
+                    alias: "Sonnet".into(),
+                    ..Default::default()
+                },
+                OAuthModelAlias {
+                    name: "claude-opus".into(),
+                    alias: "opus".into(),
+                    force_mapping: true,
+                    ..Default::default()
+                },
             ],
         );
         let table = compile_oauth_model_alias_table(&aliases);
         let mut auth = Auth::new("a.json", "claude");
         auth.metadata.insert("access_token".into(), "t".into());
-        assert_eq!(apply_oauth_model_alias(&table, &auth, "SONNET(high)"), "claude-sonnet-4-5(high)");
+        assert_eq!(
+            apply_oauth_model_alias(&table, &auth, "SONNET(high)"),
+            "claude-sonnet-4-5(high)"
+        );
         let r = resolve_oauth_model_alias_with_result(&table, &auth, "opus");
         assert!(r.force_mapping);
         assert_eq!(r.original_alias, "opus");
@@ -1186,8 +1401,16 @@ mod tests {
         cfg.claude_key.push(ClaudeKey {
             api_key: "sk".into(),
             models: vec![
-                ClaudeModel { name: "A".into(), alias: "X".into(), ..Default::default() },
-                ClaudeModel { name: "B".into(), alias: "A".into(), ..Default::default() },
+                ClaudeModel {
+                    name: "A".into(),
+                    alias: "X".into(),
+                    ..Default::default()
+                },
+                ClaudeModel {
+                    name: "B".into(),
+                    alias: "A".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         });
@@ -1206,16 +1429,28 @@ mod tests {
         cfg.openai_compatibility.push(OpenAiCompatibility {
             name: "Pool".into(),
             models: vec![
-                OpenAiCompatibilityModel { name: "m1".into(), alias: "gpt".into(), ..Default::default() },
-                OpenAiCompatibilityModel { name: "m2".into(), alias: "gpt".into(), ..Default::default() },
+                OpenAiCompatibilityModel {
+                    name: "m1".into(),
+                    alias: "gpt".into(),
+                    ..Default::default()
+                },
+                OpenAiCompatibilityModel {
+                    name: "m2".into(),
+                    alias: "gpt".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         });
         let mut auth = Auth::new("c1", "openai-compatibility");
         auth.attributes.insert("compat_name".into(), "pool".into());
         auth.attributes.insert("api_key".into(), "k".into());
-        auth.attributes.insert("source".into(), "config:openai-compat[abc]".into());
-        assert_eq!(resolve_openai_compat_upstream_model_pool(&cfg, &auth, "gpt"), vec!["m1".to_string(), "m2".to_string()]);
+        auth.attributes
+            .insert("source".into(), "config:openai-compat[abc]".into());
+        assert_eq!(
+            resolve_openai_compat_upstream_model_pool(&cfg, &auth, "gpt"),
+            vec!["m1".to_string(), "m2".to_string()]
+        );
         let mut req = Request {
             model: "m1".into(),
             payload: Default::default(),
@@ -1225,13 +1460,20 @@ mod tests {
         attach_resolved_execution_model_info(&cfg, &mut req, &auth, "gpt", "m1", false);
         let resolved = resolved_model_info(&req).unwrap();
         assert_eq!(resolved.info.id, "m1");
-        assert_eq!(resolved.info.thinking.unwrap().levels, vec!["low", "medium", "high"]);
+        assert_eq!(
+            resolved.info.thinking.unwrap().levels,
+            vec!["low", "medium", "high"]
+        );
     }
 
     #[test]
     fn response_rewrite_sets_known_model_paths() {
-        let out = rewrite_model_in_response(br#"{"model":"up","message":{"model":"up"},"x":1}"#, "alias");
-        assert_eq!(String::from_utf8(out).unwrap(), r#"{"model":"alias","message":{"model":"alias"},"x":1}"#);
+        let out =
+            rewrite_model_in_response(br#"{"model":"up","message":{"model":"up"},"x":1}"#, "alias");
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            r#"{"model":"alias","message":{"model":"alias"},"x":1}"#
+        );
         let same = rewrite_model_in_response(b"not json", "alias");
         assert_eq!(same, b"not json");
     }

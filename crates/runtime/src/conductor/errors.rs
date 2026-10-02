@@ -10,8 +10,8 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use cpa_auth::types::AuthError;
-use http::{HeaderMap, HeaderValue, header};
 use cpa_json::J;
+use http::{HeaderMap, HeaderValue, header};
 use regex::Regex;
 use serde_json::Value;
 
@@ -170,8 +170,17 @@ fn safe_retry_after_header(retry_after: Duration) -> Option<HeaderMap> {
 
 /// `model_cooldown`: every credential for the model is cooling. HTTP 429 with a JSON message and
 /// `Retry-After`; `model` is the client-requested route model.
-pub fn model_cooldown_error(model: &str, provider: &str, reset_in: Duration, cause: Option<&str>) -> ExecError {
-    let model_name = if model.is_empty() { "requested model" } else { model };
+pub fn model_cooldown_error(
+    model: &str,
+    provider: &str,
+    reset_in: Duration,
+    cause: Option<&str>,
+) -> ExecError {
+    let model_name = if model.is_empty() {
+        "requested model"
+    } else {
+        model
+    };
     let mut message = format!("All credentials for model {model_name} are cooling down");
     if !provider.is_empty() {
         message = format!("{message} via provider {provider}");
@@ -192,7 +201,9 @@ pub fn model_cooldown_error(model: &str, provider: &str, reset_in: Duration, cau
     body.insert("model".into(), Value::String(model.to_string()));
     body.insert(
         "reset_time".into(),
-        Value::String(cpa_config::GoDuration(display.as_nanos().min(i64::MAX as u128) as i64).to_string()),
+        Value::String(
+            cpa_config::GoDuration(display.as_nanos().min(i64::MAX as u128) as i64).to_string(),
+        ),
     );
     body.insert("reset_seconds".into(), Value::from(reset_seconds));
     if !provider.is_empty() {
@@ -214,15 +225,22 @@ pub fn model_cooldown_error(model: &str, provider: &str, reset_in: Duration, cau
     err.auth_code = Some(CODE_MODEL_COOLDOWN.to_string());
     err.upstream_attempted = false;
     err.cause_text = cause.map(str::to_string);
-    err.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    err.headers.insert(header::RETRY_AFTER, HeaderValue::from(reset_seconds));
+    err.headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    err.headers
+        .insert(header::RETRY_AFTER, HeaderValue::from(reset_seconds));
     err
 }
 
 /// Headers that are safe to relay for a conductor-generated error (retry/cooldown hints only);
 /// empty for upstream errors (Go: SafeResponseHeaders).
 pub fn safe_response_headers(err: &ExecError) -> HeaderMap {
-    if matches!(err.auth_code.as_deref(), Some(CODE_MODEL_COOLDOWN) | Some(CODE_AUTH_UNAVAILABLE)) {
+    if matches!(
+        err.auth_code.as_deref(),
+        Some(CODE_MODEL_COOLDOWN) | Some(CODE_AUTH_UNAVAILABLE)
+    ) {
         err.headers.clone()
     } else {
         HeaderMap::new()
@@ -241,20 +259,36 @@ pub fn enrich_auth_selection_error(err: ExecError, providers: &[String], model: 
     if code != CODE_AUTH_NOT_FOUND && code != CODE_AUTH_UNAVAILABLE {
         return err;
     }
-    let provider_text = if providers.is_empty() { "unknown".to_string() } else { providers.join(",") };
-    let model_text = if model.trim().is_empty() { "unknown" } else { model.trim() };
+    let provider_text = if providers.is_empty() {
+        "unknown".to_string()
+    } else {
+        providers.join(",")
+    };
+    let model_text = if model.trim().is_empty() {
+        "unknown"
+    } else {
+        model.trim()
+    };
     let mut base = auth_error_base_message(&err).trim().to_string();
     if base.is_empty() {
         base = "no auth available".into();
     }
-    let summary = err.cause_text.as_deref().map(extract_upstream_error_summary).unwrap_or_default();
+    let summary = err
+        .cause_text
+        .as_deref()
+        .map(extract_upstream_error_summary)
+        .unwrap_or_default();
     let mut detail = if !summary.is_empty() && !base.contains(&summary) {
-        format!("{base} (providers={provider_text}, model={model_text}; last upstream error: {summary})")
+        format!(
+            "{base} (providers={provider_text}, model={model_text}; last upstream error: {summary})"
+        )
     } else {
         format!("{base} (providers={provider_text}, model={model_text})")
     };
     if format!(",{provider_text},").contains(",claude,") {
-        detail.push_str("; check Claude auth/key session and cooldown state via /v0/management/auth-files");
+        detail.push_str(
+            "; check Claude auth/key session and cooldown state via /v0/management/auth-files",
+        );
     }
     let mut out = err.clone();
     out.message = format!("{code}: {detail}");
@@ -288,7 +322,10 @@ macro_rules! lazy_re {
     };
 }
 
-lazy_re!(SCHEME_AUTH, r#"(?i)((?:[A-Za-z0-9.+_\-]+:)?//)(?:[^:\s/@]+:[^@\s]+|[^@\s/]+)@"#);
+lazy_re!(
+    SCHEME_AUTH,
+    r#"(?i)((?:[A-Za-z0-9.+_\-]+:)?//)(?:[^:\s/@]+:[^@\s]+|[^@\s/]+)@"#
+);
 lazy_re!(
     QUERY_PARAM,
     r#"(?i)([?&][A-Za-z0-9_.-]*(?:key|token|secret|password|auth|sig|signature)=)[^&\s,\r\n;]+"#
@@ -307,12 +344,18 @@ lazy_re!(
     INVALID_TOKEN,
     r#"(?i)\b(invalid|bad|expired|unknown)\s+(?:api\s+key|access\s+token|refresh\s+token|token|key|secret|password|credentials?|bearer)\s*(?:[:= ]\s*)?(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s,\r\n;]+)"#
 );
-lazy_re!(SK_KEY, r#"\b(?:sk-[A-Za-z0-9._~+/=-]{6,}|ghp_[A-Za-z0-9._~+/=-]{6,})\b"#);
+lazy_re!(
+    SK_KEY,
+    r#"\b(?:sk-[A-Za-z0-9._~+/=-]{6,}|ghp_[A-Za-z0-9._~+/=-]{6,})\b"#
+);
 lazy_re!(BEARER, r#"(?i)\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+"#);
 lazy_re!(DQ_PATH, r#""/[^"\r\n]+""#);
 lazy_re!(SQ_PATH, r#"'/[^'\r\n]+'"#);
 lazy_re!(BT_PATH, r#"`/[^`\r\n]+`"#);
-lazy_re!(PATH_CONNECTOR, r#"(?i)\s+(to|from|into|onto|for|via|with|and)\s+/"#);
+lazy_re!(
+    PATH_CONNECTOR,
+    r#"(?i)\s+(to|from|into|onto|for|via|with|and)\s+/"#
+);
 lazy_re!(
     UNIX_PATH,
     r#"(^|[\s\(\[\{<"';,=])(/(?:[^/\s\r\n"',;?#()<>{}\[\]]+(?:\s+[^/\s\r\n"',;?#()<>{}\[\]]+)*/)*[^/:\s\r\n"',;?#()<>{}\[\]]+(?::[^/:\s\r\n"',;?#()<>{}\[\]]+)?)"#
@@ -360,7 +403,9 @@ pub fn extract_upstream_error_summary(raw: &str) -> String {
             message = parsed.g("message").str().trim().to_string();
         }
         let summary = if !code.is_empty() && !message.is_empty() {
-            if code.eq_ignore_ascii_case(&message) || message.to_lowercase().contains(&code.to_lowercase()) {
+            if code.eq_ignore_ascii_case(&message)
+                || message.to_lowercase().contains(&code.to_lowercase())
+            {
                 message
             } else {
                 format!("{code}: {message}")
@@ -402,7 +447,9 @@ fn sanitize_no_truncate(s: &str) -> String {
     if s.is_empty() {
         return s;
     }
-    s = SCHEME_AUTH.replace_all(&s, "${1}[REDACTED_AUTH]@").into_owned();
+    s = SCHEME_AUTH
+        .replace_all(&s, "${1}[REDACTED_AUTH]@")
+        .into_owned();
     s = QUERY_PARAM.replace_all(&s, "${1}[REDACTED]").into_owned();
     s = DQ_PATH.replace_all(&s, "\"[REDACTED_PATH]\"").into_owned();
     s = SQ_PATH.replace_all(&s, "'[REDACTED_PATH]'").into_owned();
@@ -456,11 +503,19 @@ fn sanitize_no_truncate(s: &str) -> String {
             }
             if i >= 6 {
                 let before = &prefix[..i];
-                if before.ends_with("http:/") || before.ends_with("https:/") || before.ends_with("://") {
+                if before.ends_with("http:/")
+                    || before.ends_with("https:/")
+                    || before.ends_with("://")
+                {
                     continue;
                 }
             }
-            if i == 0 || matches!(pb[i - 1], b' ' | b'\t' | b'(' | b'[' | b'{' | b'<' | b'"' | b'\'' | b'`' | b'=') {
+            if i == 0
+                || matches!(
+                    pb[i - 1],
+                    b' ' | b'\t' | b'(' | b'[' | b'{' | b'<' | b'"' | b'\'' | b'`' | b'='
+                )
+            {
                 slash_idx = Some(i);
                 break;
             }
@@ -492,18 +547,28 @@ fn sanitize_no_truncate(s: &str) -> String {
 
     for _ in 0..3 {
         let prev = s.clone();
-        s = UNIX_PATH.replace_all(&s, "${1}[REDACTED_PATH]").into_owned();
+        s = UNIX_PATH
+            .replace_all(&s, "${1}[REDACTED_PATH]")
+            .into_owned();
         if s == prev {
             break;
         }
     }
-    s = FILE_EXT_PATH.replace_all(&s, "${1}[REDACTED_PATH]").into_owned();
+    s = FILE_EXT_PATH
+        .replace_all(&s, "${1}[REDACTED_PATH]")
+        .into_owned();
     s = COOKIE.replace_all(&s, "Cookie: [REDACTED]").into_owned();
-    s = AUTH_HEADER.replace_all(&s, "Authorization: [REDACTED]").into_owned();
+    s = AUTH_HEADER
+        .replace_all(&s, "Authorization: [REDACTED]")
+        .into_owned();
     s = SK_KEY.replace_all(&s, "sk-[REDACTED]").into_owned();
     s = BEARER.replace_all(&s, "Bearer [REDACTED]").into_owned();
-    s = INVALID_TOKEN.replace_all(&s, "${1} token [REDACTED]").into_owned();
-    s = NATURAL_SECRET.replace_all(&s, "${1}: [REDACTED]").into_owned();
+    s = INVALID_TOKEN
+        .replace_all(&s, "${1} token [REDACTED]")
+        .into_owned();
+    s = NATURAL_SECRET
+        .replace_all(&s, "${1}: [REDACTED]")
+        .into_owned();
     s = KV.replace_all(&s, "${1}[REDACTED]").into_owned();
     s
 }
@@ -538,7 +603,10 @@ pub struct Failure<'a> {
 impl<'a> Failure<'a> {
     pub fn of_exec(e: &'a ExecError) -> Failure<'a> {
         let text = if e.message.is_empty() {
-            e.body.as_deref().and_then(|b| std::str::from_utf8(b).ok()).unwrap_or("")
+            e.body
+                .as_deref()
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .unwrap_or("")
         } else {
             e.message.as_str()
         };
@@ -577,7 +645,11 @@ impl ResultFailure {
             status: self.status,
             text: &self.text,
             request_scoped: self.request_scoped,
-            code: if self.code.is_empty() { None } else { Some(&self.code) },
+            code: if self.code.is_empty() {
+                None
+            } else {
+                Some(&self.code)
+            },
             raw_message: Some(&self.message),
         }
     }
@@ -623,28 +695,58 @@ pub fn is_request_fault(status: i32, text: &str) -> bool {
     }
     let body = json_body(text);
     if status == 401
-        && body
-            .as_ref()
-            .is_some_and(|b| any_path_lower(b, &["error.type", "type", "response.error.type", "body.error.type"], |t| t == "authentication_error"))
+        && body.as_ref().is_some_and(|b| {
+            any_path_lower(
+                b,
+                &[
+                    "error.type",
+                    "type",
+                    "response.error.type",
+                    "body.error.type",
+                ],
+                |t| t == "authentication_error",
+            )
+        })
     {
         return false;
     }
     if body.as_ref().is_some_and(|b| {
-        any_path_lower(b, &["error.code", "code", "response.error.code", "body.error.code"], |c| {
-            c == "model_not_found" || c == "model_not_found_error"
-        })
+        any_path_lower(
+            b,
+            &[
+                "error.code",
+                "code",
+                "response.error.code",
+                "body.error.code",
+            ],
+            |c| c == "model_not_found" || c == "model_not_found_error",
+        )
     }) {
         return false;
     }
     if let Some(b) = &body {
-        if any_path_lower(b, &["error.code", "code", "response.error.code", "body.error.code"], |c| {
-            REQUEST_FAULT_CODES.contains(&c)
-        }) {
+        if any_path_lower(
+            b,
+            &[
+                "error.code",
+                "code",
+                "response.error.code",
+                "body.error.code",
+            ],
+            |c| REQUEST_FAULT_CODES.contains(&c),
+        ) {
             return true;
         }
-        if any_path_lower(b, &["error.type", "type", "response.error.type", "body.error.type"], |t| {
-            REQUEST_FAULT_TYPES.contains(&t)
-        }) {
+        if any_path_lower(
+            b,
+            &[
+                "error.type",
+                "type",
+                "response.error.type",
+                "body.error.type",
+            ],
+            |t| REQUEST_FAULT_TYPES.contains(&t),
+        ) {
             return true;
         }
     }
@@ -721,7 +823,8 @@ impl Failure<'_> {
     }
 
     pub fn is_invalid_grant(&self) -> bool {
-        if !is_invalid_grant_message(self.text) && !self.code.is_some_and(is_invalid_grant_message) {
+        if !is_invalid_grant_message(self.text) && !self.code.is_some_and(is_invalid_grant_message)
+        {
             return false;
         }
         matches!(self.status, 0 | 400 | 401)
@@ -775,7 +878,11 @@ fn is_model_not_found_identifier(value: &str) -> bool {
     let normalized = candidate.replace(['-', ' '], "_");
     matches!(
         normalized.as_str(),
-        "model_not_found" | "model_not_found_error" | "unknown_model" | "model_does_not_exist" | "model_not_exist"
+        "model_not_found"
+            | "model_not_found_error"
+            | "unknown_model"
+            | "model_does_not_exist"
+            | "model_not_exist"
     )
 }
 
@@ -818,8 +925,8 @@ fn contains_structured_model_not_found(value: &Value, requested_model: &str) -> 
                             if is_explicit_model_not_found_message(text, requested_model) {
                                 return true;
                             }
-                            exact_model_reference =
-                                exact_model_reference || is_exact_requested_model_reference(text, requested_model);
+                            exact_model_reference = exact_model_reference
+                                || is_exact_requested_model_reference(text, requested_model);
                         }
                         _ => {}
                     }
@@ -869,23 +976,42 @@ fn is_explicit_model_not_found_message(message: &str, requested_model: &str) -> 
         return true;
     }
     for prefix in ["no such model", "unknown model"] {
-        if lower != prefix && !lower.starts_with(&format!("{prefix} ")) && !lower.starts_with(&format!("{prefix}:")) {
+        if lower != prefix
+            && !lower.starts_with(&format!("{prefix} "))
+            && !lower.starts_with(&format!("{prefix}:"))
+        {
             continue;
         }
         let remainder = lower[prefix.len()..].trim().to_string();
-        let remainder = remainder.strip_prefix(':').unwrap_or(&remainder).trim().to_string();
+        let remainder = remainder
+            .strip_prefix(':')
+            .unwrap_or(&remainder)
+            .trim()
+            .to_string();
         if remainder.is_empty() {
             return true;
         }
         let (missing_suffix, matches) = trim_requested_model_reference(&remainder, requested_model);
         return matches && missing_suffix.is_empty();
     }
-    for prefix in ["the requested model", "requested model", "the model", "model"] {
-        if lower != prefix && !lower.starts_with(&format!("{prefix} ")) && !lower.starts_with(&format!("{prefix}:")) {
+    for prefix in [
+        "the requested model",
+        "requested model",
+        "the model",
+        "model",
+    ] {
+        if lower != prefix
+            && !lower.starts_with(&format!("{prefix} "))
+            && !lower.starts_with(&format!("{prefix}:"))
+        {
             continue;
         }
         let remainder = lower[prefix.len()..].trim().to_string();
-        let remainder = remainder.strip_prefix(':').unwrap_or(&remainder).trim().to_string();
+        let remainder = remainder
+            .strip_prefix(':')
+            .unwrap_or(&remainder)
+            .trim()
+            .to_string();
         if is_missing_model_phrase(&remainder) {
             return true;
         }
@@ -897,12 +1023,24 @@ fn is_explicit_model_not_found_message(message: &str, requested_model: &str) -> 
 
 fn is_exact_requested_model_reference(message: &str, requested_model: &str) -> bool {
     let lower = trim_msg(message);
-    for prefix in ["the requested model", "requested model", "the model", "model"] {
-        if lower != prefix && !lower.starts_with(&format!("{prefix} ")) && !lower.starts_with(&format!("{prefix}:")) {
+    for prefix in [
+        "the requested model",
+        "requested model",
+        "the model",
+        "model",
+    ] {
+        if lower != prefix
+            && !lower.starts_with(&format!("{prefix} "))
+            && !lower.starts_with(&format!("{prefix}:"))
+        {
             continue;
         }
         let remainder = lower[prefix.len()..].trim().to_string();
-        let remainder = remainder.strip_prefix(':').unwrap_or(&remainder).trim().to_string();
+        let remainder = remainder
+            .strip_prefix(':')
+            .unwrap_or(&remainder)
+            .trim()
+            .to_string();
         let (suffix, matches) = trim_requested_model_reference(&remainder, requested_model);
         return matches && suffix.is_empty();
     }
@@ -914,14 +1052,22 @@ fn trim_requested_model_reference(value: &str, requested_model: &str) -> (String
     if model.is_empty() {
         return (String::new(), false);
     }
-    for candidate in [model.clone(), format!("'{model}'"), format!("\"{model}\""), format!("`{model}`")] {
+    for candidate in [
+        model.clone(),
+        format!("'{model}'"),
+        format!("\"{model}\""),
+        format!("`{model}`"),
+    ] {
         if value == candidate {
             return (String::new(), true);
         }
         if let Some(remainder) = value.strip_prefix(&candidate)
             && (remainder.is_empty() || remainder.starts_with([' ', ':', ',']))
         {
-            return (remainder.trim_start_matches([' ', ':', ',']).to_string(), true);
+            return (
+                remainder.trim_start_matches([' ', ':', ',']).to_string(),
+                true,
+            );
         }
     }
     (String::new(), false)
@@ -1070,7 +1216,9 @@ pub fn should_skip_credential_cooldown(err: Option<&AuthError>) -> bool {
     if err.code == CODE_FORCE_COOLDOWN {
         return false;
     }
-    is_request_scoped_result(err) || is_connection_lifecycle_result(err) || is_transient_transport_result(err)
+    is_request_scoped_result(err)
+        || is_connection_lifecycle_result(err)
+        || is_transient_transport_result(err)
 }
 
 /// Statuses that are retried in another credential round (Go: isCredentialRetryRoundStatus).
@@ -1106,7 +1254,9 @@ pub fn result_error_from_error(err: &ExecError) -> AuthError {
         if code.is_empty() || code == CODE_CONNECTION_LIFECYCLE {
             code = CODE_CONNECTION_LIFECYCLE.into();
         }
-    } else if is_transient_transport_error(err) && (code.is_empty() || code == CODE_TRANSIENT_TRANSPORT) {
+    } else if is_transient_transport_error(err)
+        && (code.is_empty() || code == CODE_TRANSIENT_TRANSPORT)
+    {
         code = CODE_TRANSIENT_TRANSPORT.into();
     }
     let _ = is_go_error;
@@ -1162,7 +1312,11 @@ pub fn is_responses_compact_request_fault(alt: &str, err: &ExecError) -> bool {
     matches!(f.status, 400 | 404 | 405 | 409 | 413 | 422 | 501)
 }
 
-pub fn is_responses_compact_availability_neutral(alt: &str, err: &ExecError, result_err: Option<&AuthError>) -> bool {
+pub fn is_responses_compact_availability_neutral(
+    alt: &str,
+    err: &ExecError,
+    result_err: Option<&AuthError>,
+) -> bool {
     if !is_responses_compact_request(alt) {
         return false;
     }
@@ -1194,22 +1348,41 @@ mod tests {
     #[test]
     fn request_fault_rules() {
         assert!(is_request_fault(400, "bad"));
-        assert!(!is_request_fault(429, r#"{"error":{"code":"invalid_value"}}"#));
-        assert!(is_request_fault(200, r#"{"error":{"code":"context_length_exceeded"}}"#));
-        assert!(!is_request_fault(401, r#"{"error":{"type":"authentication_error"}}"#));
-        assert!(!is_request_fault(400, r#"{"error":{"code":"model_not_found"}}"#));
-        assert!(is_request_fault(404, "Item with id 'x' not found. Items are not persisted when `store` is set to false."));
+        assert!(!is_request_fault(
+            429,
+            r#"{"error":{"code":"invalid_value"}}"#
+        ));
+        assert!(is_request_fault(
+            200,
+            r#"{"error":{"code":"context_length_exceeded"}}"#
+        ));
+        assert!(!is_request_fault(
+            401,
+            r#"{"error":{"type":"authentication_error"}}"#
+        ));
+        assert!(!is_request_fault(
+            400,
+            r#"{"error":{"code":"model_not_found"}}"#
+        ));
+        assert!(is_request_fault(
+            404,
+            "Item with id 'x' not found. Items are not persisted when `store` is set to false."
+        ));
         assert!(!is_request_fault(500, "boom"));
     }
 
     #[test]
     fn summary_sanitizes_and_bounds() {
-        let s = extract_upstream_error_summary(r#"status: {"error":{"code":"x","message":"upstream rejected sk-abcdefghij"}}"#);
+        let s = extract_upstream_error_summary(
+            r#"status: {"error":{"code":"x","message":"upstream rejected sk-abcdefghij"}}"#,
+        );
         assert_eq!(s, "x: upstream rejected sk-[REDACTED]");
         let long = "a".repeat(400);
         assert_eq!(sanitize_upstream_error_summary(&long).chars().count(), 256);
         assert_eq!(
-            sanitize_upstream_error_summary("failed to open /tmp/secret/file.json: permission denied"),
+            sanitize_upstream_error_summary(
+                "failed to open /tmp/secret/file.json: permission denied"
+            ),
             "failed to open [REDACTED_PATH]: permission denied"
         );
     }
@@ -1218,7 +1391,10 @@ mod tests {
     fn model_cooldown_message_is_json_with_retry_after() {
         let e = model_cooldown_error("m", "claude", Duration::from_millis(1500), None);
         assert_eq!(e.status, 429);
-        assert_eq!(e.headers.get("retry-after").and_then(|v| v.to_str().ok()), Some("2"));
+        assert_eq!(
+            e.headers.get("retry-after").and_then(|v| v.to_str().ok()),
+            Some("2")
+        );
         let v: Value = serde_json::from_str(&e.message).unwrap();
         assert_eq!(v["error"]["code"], "model_cooldown");
         assert_eq!(v["error"]["reset_seconds"], 2);

@@ -49,8 +49,16 @@ impl SessionCache {
     pub fn with_capacity(ttl: Duration, max_entries: usize, clock: Arc<dyn Clock>) -> Self {
         SessionCache {
             inner: Mutex::new(Inner::default()),
-            max_entries: if max_entries == 0 { DEFAULT_MAX_SESSION_ENTRIES } else { max_entries },
-            ttl: if ttl.is_zero() { Duration::from_secs(30 * 60) } else { ttl },
+            max_entries: if max_entries == 0 {
+                DEFAULT_MAX_SESSION_ENTRIES
+            } else {
+                max_entries
+            },
+            ttl: if ttl.is_zero() {
+                Duration::from_secs(30 * 60)
+            } else {
+                ttl
+            },
             clock,
         }
     }
@@ -92,7 +100,13 @@ impl SessionCache {
         }
         let aliases = compact_aliases(merge_aliases(&[session_id.to_string()], &entry.aliases));
         let auth_id = entry.auth_id.clone();
-        inner.replace_groups(&auth_id, self.expiry(now), aliases, &[entry], self.max_entries);
+        inner.replace_groups(
+            &auth_id,
+            self.expiry(now),
+            aliases,
+            &[entry],
+            self.max_entries,
+        );
         Some(auth_id)
     }
 
@@ -124,7 +138,13 @@ impl SessionCache {
         if aliases.is_empty() {
             return;
         }
-        inner.replace_groups(auth_id, self.expiry(now), aliases, &previous, self.max_entries);
+        inner.replace_groups(
+            auth_id,
+            self.expiry(now),
+            aliases,
+            &previous,
+            self.max_entries,
+        );
     }
 
     /// Refreshes the binding only while it still points at `expected_auth_id`.
@@ -141,7 +161,13 @@ impl SessionCache {
             return false;
         }
         let aliases = compact_aliases(merge_aliases(&[session_id.to_string()], &entry.aliases));
-        inner.replace_groups(expected_auth_id, self.expiry(now), aliases, &[entry], self.max_entries);
+        inner.replace_groups(
+            expected_auth_id,
+            self.expiry(now),
+            aliases,
+            &[entry],
+            self.max_entries,
+        );
         true
     }
 
@@ -158,7 +184,12 @@ impl SessionCache {
             return false;
         }
         inner.remove_group(&entry);
-        let surviving: Vec<String> = entry.aliases.iter().filter(|a| *a != session_id).cloned().collect();
+        let surviving: Vec<String> = entry
+            .aliases
+            .iter()
+            .filter(|a| *a != session_id)
+            .cloned()
+            .collect();
         if !surviving.is_empty() {
             let max = self.max_entries;
             inner.replace_groups(&entry.auth_id, entry.expires_at, surviving, &[], max);
@@ -172,7 +203,12 @@ impl SessionCache {
             return;
         }
         let mut inner = self.inner.lock();
-        let doomed: Vec<Entry> = inner.groups.values().filter(|g| g.auth_id == auth_id).cloned().collect();
+        let doomed: Vec<Entry> = inner
+            .groups
+            .values()
+            .filter(|g| g.auth_id == auth_id)
+            .cloned()
+            .collect();
         for g in doomed {
             inner.remove_group(&g);
         }
@@ -191,7 +227,12 @@ impl SessionCache {
     pub fn cleanup(&self) {
         let now = self.clock.now();
         let mut inner = self.inner.lock();
-        let doomed: Vec<Entry> = inner.groups.values().filter(|g| now >= g.expires_at).cloned().collect();
+        let doomed: Vec<Entry> = inner
+            .groups
+            .values()
+            .filter(|g| now >= g.expires_at)
+            .cloned()
+            .collect();
         for g in doomed {
             inner.remove_group(&g);
         }
@@ -263,7 +304,9 @@ fn is_local_prompt_cache_alias(alias: &str) -> bool {
     if alias.starts_with("pck:") {
         return true;
     }
-    alias.split_once("::").is_some_and(|(_, rest)| rest.starts_with("pck:"))
+    alias
+        .split_once("::")
+        .is_some_and(|(_, rest)| rest.starts_with("pck:"))
 }
 
 /// At most one prompt-cache-key alias and 64 stable aliases per group.
@@ -305,8 +348,13 @@ mod tests {
     use crate::conductor::clock::ManualClock;
 
     fn cache(ttl_secs: u64, cap: usize) -> (SessionCache, Arc<ManualClock>) {
-        let clock = Arc::new(ManualClock::new(DateTime::from_timestamp(1_800_000_000, 0).unwrap()));
-        (SessionCache::with_capacity(Duration::from_secs(ttl_secs), cap, clock.clone()), clock)
+        let clock = Arc::new(ManualClock::new(
+            DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        ));
+        (
+            SessionCache::with_capacity(Duration::from_secs(ttl_secs), cap, clock.clone()),
+            clock,
+        )
     }
 
     #[test]
@@ -317,7 +365,11 @@ mod tests {
         assert_eq!(c.get("s").as_deref(), Some("auth-a"));
         assert_eq!(c.get_and_refresh("s").as_deref(), Some("auth-a"));
         clock.advance(Duration::from_secs(6));
-        assert_eq!(c.get("s").as_deref(), Some("auth-a"), "refresh extended the deadline");
+        assert_eq!(
+            c.get("s").as_deref(),
+            Some("auth-a"),
+            "refresh extended the deadline"
+        );
         clock.advance(Duration::from_secs(5));
         assert_eq!(c.get("s"), None);
         assert!(c.is_empty());
@@ -329,7 +381,11 @@ mod tests {
         c.set_aliases("a", &["k1".into(), "k2".into()]);
         assert_eq!(c.get("k2").as_deref(), Some("a"));
         c.set_aliases("b", &["k1".into()]);
-        assert_eq!(c.get("k2").as_deref(), Some("b"), "alias group is rebound as a whole");
+        assert_eq!(
+            c.get("k2").as_deref(),
+            Some("b"),
+            "alias group is rebound as a whole"
+        );
         assert!(!c.compare_and_delete("k1", "a"));
         assert!(c.compare_and_delete("k1", "b"));
         assert_eq!(c.get("k1"), None);

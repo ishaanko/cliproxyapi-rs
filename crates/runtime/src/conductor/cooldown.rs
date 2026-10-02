@@ -14,8 +14,8 @@ use http::HeaderMap;
 use serde::Serialize;
 
 use super::errors::{
-    CODE_FORCE_COOLDOWN, CODE_UNAUTHORIZED, is_cloudflare_challenge_result, is_invalid_grant_result,
-    is_model_support_result, should_skip_credential_cooldown,
+    CODE_FORCE_COOLDOWN, CODE_UNAUTHORIZED, is_cloudflare_challenge_result,
+    is_invalid_grant_result, is_model_support_result, should_skip_credential_cooldown,
 };
 use super::util::{add_duration, after, canonical_model_key};
 
@@ -91,7 +91,11 @@ pub fn quota_cooldown_after_failure(quota: &QuotaState, now: DateTime<Utc>) -> (
     (next, level)
 }
 
-pub fn next_cloudflare_cooldown(level: i32, disable_cooling: bool, now: DateTime<Utc>) -> (Time, i32) {
+pub fn next_cloudflare_cooldown(
+    level: i32,
+    disable_cooling: bool,
+    now: DateTime<Utc>,
+) -> (Time, i32) {
     if disable_cooling {
         return (None, level);
     }
@@ -121,7 +125,10 @@ pub fn recoverable_failure_retry_after(
     if transient_seconds == 0 {
         return Some(add_duration(now, TRANSIENT_ERROR_COOLDOWN));
     }
-    Some(add_duration(now, Duration::from_secs(transient_seconds as u64)))
+    Some(add_duration(
+        now,
+        Duration::from_secs(transient_seconds as u64),
+    ))
 }
 
 // ---- Availability ----
@@ -220,7 +227,10 @@ pub fn is_auth_blocked_for_model(auth: &Auth, model: &str, now: DateTime<Utc>) -
             next: None,
         };
     }
-    if auth.quota.exceeded && auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
+    if auth.quota.exceeded
+        && auth.quota.reason == "credential_quota"
+        && after(auth.quota.next_recover_at, now)
+    {
         return Block {
             blocked: true,
             reason: BlockReason::Cooldown,
@@ -263,7 +273,10 @@ pub fn is_auth_blocked_for_model(auth: &Auth, model: &str, now: DateTime<Utc>) -
                         next: None,
                     };
                 }
-                if !blocked || b.next > next_retry || (b.next == next_retry && b.reason == BlockReason::Cooldown) {
+                if !blocked
+                    || b.next > next_retry
+                    || (b.next == next_retry && b.reason == BlockReason::Cooldown)
+                {
                     blocked = true;
                     blocked_reason = b.reason;
                     next_retry = b.next;
@@ -288,7 +301,8 @@ pub fn is_auth_blocked_for_model(auth: &Auth, model: &str, now: DateTime<Utc>) -
     }
     let mut quota_exceeded = auth.quota.exceeded;
     // With per-model states the aggregate quota flag only summarizes single-model cooldowns.
-    if !auth.model_states.is_empty() && auth.quota.reason != "credential_quota" && !auth.unavailable {
+    if !auth.model_states.is_empty() && auth.quota.reason != "credential_quota" && !auth.unavailable
+    {
         quota_exceeded = false;
     }
     availability_block(
@@ -461,7 +475,10 @@ pub fn clear_aggregated_availability(auth: &mut Auth) {
 
 /// Go: updateAggregatedAvailability. Folds per-model states into the credential-level flags.
 pub fn update_aggregated_availability(auth: &mut Auth, now: DateTime<Utc>) {
-    if auth.quota.exceeded && auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
+    if auth.quota.exceeded
+        && auth.quota.reason == "credential_quota"
+        && after(auth.quota.next_recover_at, now)
+    {
         auth.unavailable = true;
         return;
     }
@@ -497,7 +514,8 @@ pub fn update_aggregated_availability(auth: &mut Auth, now: DateTime<Utc>) {
         if state.quota.exceeded {
             quota_exceeded = true;
             if quota_recover.is_none()
-                || (state.quota.next_recover_at.is_some() && state.quota.next_recover_at < quota_recover)
+                || (state.quota.next_recover_at.is_some()
+                    && state.quota.next_recover_at < quota_recover)
             {
                 quota_recover = state.quota.next_recover_at;
             }
@@ -507,7 +525,11 @@ pub fn update_aggregated_availability(auth: &mut Auth, now: DateTime<Utc>) {
         }
     }
     auth.unavailable = all_unavailable;
-    auth.next_retry_after = if all_unavailable { earliest_retry } else { None };
+    auth.next_retry_after = if all_unavailable {
+        earliest_retry
+    } else {
+        None
+    };
     if quota_exceeded {
         auth.quota.exceeded = true;
         auth.quota.reason = "quota".into();
@@ -576,7 +598,11 @@ pub fn clear_unauthorized_model_states(auth: &mut Auth, now: DateTime<Utc>) -> V
 /// Wipes cooldown/quota deadlines on the credential and every model (Go: clearCooldownStateForAuth).
 pub fn clear_cooldown_state_for_auth(auth: &mut Auth, now: DateTime<Utc>) -> bool {
     let mut changed = false;
-    if auth.unavailable || auth.next_retry_after.is_some() || auth.quota.exceeded || auth.quota.next_recover_at.is_some() {
+    if auth.unavailable
+        || auth.next_retry_after.is_some()
+        || auth.quota.exceeded
+        || auth.quota.next_recover_at.is_some()
+    {
         auth.unavailable = false;
         auth.next_retry_after = None;
         apply_cooldown_fields(&mut auth.quota, &QuotaState::default());
@@ -584,7 +610,11 @@ pub fn clear_cooldown_state_for_auth(auth: &mut Auth, now: DateTime<Utc>) -> boo
         changed = true;
     }
     for state in auth.model_states.values_mut() {
-        if state.unavailable || state.next_retry_after.is_some() || state.quota.exceeded || state.quota.next_recover_at.is_some() {
+        if state.unavailable
+            || state.next_retry_after.is_some()
+            || state.quota.exceeded
+            || state.quota.next_recover_at.is_some()
+        {
             state.unavailable = false;
             state.next_retry_after = None;
             apply_cooldown_fields(&mut state.quota, &QuotaState::default());
@@ -635,7 +665,10 @@ pub fn merge_quota_observation(mut target: QuotaState, source: &QuotaState) -> Q
 }
 
 pub fn provider_supports_quota_observation(provider: &str) -> bool {
-    matches!(provider.trim().to_lowercase().as_str(), "claude" | "codex" | "devin")
+    matches!(
+        provider.trim().to_lowercase().as_str(),
+        "claude" | "codex" | "devin"
+    )
 }
 
 fn is_quota_signal_header_for_provider(provider: &str, name: &str) -> bool {
@@ -653,7 +686,10 @@ fn is_quota_signal_header_for_provider(provider: &str, name: &str) -> bool {
     if !name.starts_with("x-codex-") || provider != "codex" {
         return false;
     }
-    if name == "x-codex-active-limit" || name == "x-codex-plan-type" || name.starts_with("x-codex-credits-") {
+    if name == "x-codex-active-limit"
+        || name == "x-codex-plan-type"
+        || name.starts_with("x-codex-credits-")
+    {
         return true;
     }
     [
@@ -674,7 +710,10 @@ fn quota_signal_retention_rank(name: &str) -> u8 {
     let lower = name.trim().to_lowercase();
     if lower == "retry-after" || lower.starts_with("anthropic-ratelimit-unified-") {
         0
-    } else if lower == "x-codex-plan-type" || lower == "x-codex-active-limit" || lower.starts_with("x-codex-credits-") {
+    } else if lower == "x-codex-plan-type"
+        || lower == "x-codex-active-limit"
+        || lower.starts_with("x-codex-credits-")
+    {
         1
     } else if lower == "x-codex-allowed"
         || lower == "x-codex-limit-reached"
@@ -735,7 +774,11 @@ fn collect_quota_signals(provider: &str, headers: &HeaderMap) -> BTreeMap<String
         }
         values.insert(canonical, value.to_string());
     }
-    names.sort_by(|a, b| quota_signal_retention_rank(a).cmp(&quota_signal_retention_rank(b)).then(a.cmp(b)));
+    names.sort_by(|a, b| {
+        quota_signal_retention_rank(a)
+            .cmp(&quota_signal_retention_rank(b))
+            .then(a.cmp(b))
+    });
     names.truncate(MAX_QUOTA_SIGNAL_HEADERS);
     names
         .into_iter()
@@ -745,7 +788,12 @@ fn collect_quota_signals(provider: &str, headers: &HeaderMap) -> BTreeMap<String
 
 /// Replaces the passive quota snapshot with the signals of the current response (Go:
 /// ObserveResponseHeadersForProvider). Responses without quota signals keep the old snapshot.
-pub fn observe_response_headers(q: &mut QuotaState, provider: &str, headers: &HeaderMap, observed_at: DateTime<Utc>) -> bool {
+pub fn observe_response_headers(
+    q: &mut QuotaState,
+    provider: &str,
+    headers: &HeaderMap,
+    observed_at: DateTime<Utc>,
+) -> bool {
     if !provider_supports_quota_observation(provider) {
         if q.signals.is_empty() && q.observed_at.is_none() {
             return false;
@@ -827,7 +875,8 @@ pub fn apply_auth_failure_state(
     let invalid_grant = result_err.is_some_and(is_invalid_grant_result);
     if cloudflare {
         auth.status_message = "cloudflare challenge".into();
-        let (next, level) = next_cloudflare_cooldown(auth.quota.backoff_level, disable_cooling, now);
+        let (next, level) =
+            next_cloudflare_cooldown(auth.quota.backoff_level, disable_cooling, now);
         apply_cooldown_fields(
             &mut auth.quota,
             &QuotaState {
@@ -841,18 +890,28 @@ pub fn apply_auth_failure_state(
         auth.next_retry_after = next;
     } else if invalid_grant {
         auth.status_message = "invalid_grant".into();
-        auth.next_retry_after = if disable_cooling { None } else { Some(add_duration(now, Duration::from_secs(30 * 60))) };
+        auth.next_retry_after = if disable_cooling {
+            None
+        } else {
+            Some(add_duration(now, Duration::from_secs(30 * 60)))
+        };
     } else {
         match status {
             401 => {
                 auth.status_message = "unauthorized".into();
-                auth.next_retry_after =
-                    if disable_cooling { None } else { Some(add_duration(now, Duration::from_secs(30 * 60))) };
+                auth.next_retry_after = if disable_cooling {
+                    None
+                } else {
+                    Some(add_duration(now, Duration::from_secs(30 * 60)))
+                };
             }
             402 | 403 => {
                 auth.status_message = "payment_required".into();
-                auth.next_retry_after =
-                    if disable_cooling { None } else { Some(add_duration(now, Duration::from_secs(30 * 60))) };
+                auth.next_retry_after = if disable_cooling {
+                    None
+                } else {
+                    Some(add_duration(now, Duration::from_secs(30 * 60)))
+                };
             }
             404 => {
                 auth.status_message = "not_found".into();
@@ -886,25 +945,37 @@ pub fn apply_auth_failure_state(
             }
             408 | 500 | 502 | 503 | 504 | 520..=526 => {
                 auth.status_message = "transient upstream error".into();
-                auth.next_retry_after =
-                    recoverable_failure_retry_after(now, retry_after, disable_cooling, policy.transient_seconds);
+                auth.next_retry_after = recoverable_failure_retry_after(
+                    now,
+                    retry_after,
+                    disable_cooling,
+                    policy.transient_seconds,
+                );
                 auth.unavailable = auth.next_retry_after.is_some();
             }
             _ => {
                 if auth.status_message.is_empty() {
                     auth.status_message = "request failed".into();
                 }
-                auth.next_retry_after =
-                    recoverable_failure_retry_after(now, None, disable_cooling, policy.transient_seconds);
+                auth.next_retry_after = recoverable_failure_retry_after(
+                    now,
+                    None,
+                    disable_cooling,
+                    policy.transient_seconds,
+                );
                 auth.unavailable = auth.next_retry_after.is_some();
             }
         }
     }
     // A later failure only extends a still-live credential cooldown.
-    if auth.next_retry_after.is_some() && prev_auth_retry_after > auth.next_retry_after && after(prev_auth_retry_after, now) {
+    if auth.next_retry_after.is_some()
+        && prev_auth_retry_after > auth.next_retry_after
+        && after(prev_auth_retry_after, now)
+    {
         auth.next_retry_after = prev_auth_retry_after;
     }
-    if result_err.is_some_and(|e| e.code == CODE_FORCE_COOLDOWN) && auth.next_retry_after.is_none() {
+    if result_err.is_some_and(|e| e.code == CODE_FORCE_COOLDOWN) && auth.next_retry_after.is_none()
+    {
         auth.next_retry_after = Some(add_duration(now, TRANSIENT_ERROR_COOLDOWN));
         auth.unavailable = true;
     }
@@ -916,7 +987,13 @@ pub fn apply_auth_failure_state(
 
 /// Applies one execution result to the credential's state (Go: MarkResult body under the lock).
 /// `model_key` is the canonical state model (already resolved from the route model when empty).
-pub fn apply_result(auth: &mut Auth, result: &ExecResult, model_key: &str, now: DateTime<Utc>, policy: CoolingPolicy) {
+pub fn apply_result(
+    auth: &mut Auth,
+    result: &ExecResult,
+    model_key: &str,
+    now: DateTime<Utc>,
+    policy: CoolingPolicy,
+) {
     auth.record_recent_request(now, result.success);
     if result.success {
         auth.success += 1;
@@ -946,34 +1023,68 @@ pub fn apply_result(auth: &mut Auth, result: &ExecResult, model_key: &str, now: 
         }
     } else {
         let mut disable = policy.disable_cooling;
-        if result.error.as_ref().is_some_and(|e| e.code == CODE_FORCE_COOLDOWN) {
+        if result
+            .error
+            .as_ref()
+            .is_some_and(|e| e.code == CODE_FORCE_COOLDOWN)
+        {
             disable = false;
         }
-        apply_auth_failure_state(auth, result.error.as_ref(), result.retry_after, now, policy, disable);
+        apply_auth_failure_state(
+            auth,
+            result.error.as_ref(),
+            result.retry_after,
+            now,
+            policy,
+            disable,
+        );
     }
 
     auth.generation += 1;
     auth.updated_at = Some(now);
 
     if !result.skip_quota_observation {
-        observe_response_headers(&mut auth.quota, &result.provider, &result.response_headers, now);
+        observe_response_headers(
+            &mut auth.quota,
+            &result.provider,
+            &result.response_headers,
+            now,
+        );
         if !model_key.is_empty()
             && let Some(state) = auth.model_states.get_mut(&canonical_model_key(model_key))
         {
-            observe_response_headers(&mut state.quota, &result.provider, &result.response_headers, now);
+            observe_response_headers(
+                &mut state.quota,
+                &result.provider,
+                &result.response_headers,
+                now,
+            );
         }
     }
 }
 
-fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, now: DateTime<Utc>, policy: CoolingPolicy) {
+fn apply_model_failure(
+    auth: &mut Auth,
+    result: &ExecResult,
+    model_key: &str,
+    now: DateTime<Utc>,
+    policy: CoolingPolicy,
+) {
     let mut disable = policy.disable_cooling;
-    if result.error.as_ref().is_some_and(|e| e.code == CODE_FORCE_COOLDOWN) {
+    if result
+        .error
+        .as_ref()
+        .is_some_and(|e| e.code == CODE_FORCE_COOLDOWN)
+    {
         disable = false;
     }
     // Take the state out so sibling states and credential fields can be edited alongside it.
     normalize_model_states(auth);
     let key = canonical_model_key(model_key);
-    let mut state = auth.model_states.remove(&key).unwrap_or_else(new_model_state);
+    let mut state = auth
+        .model_states
+        .remove(&key)
+        .unwrap_or_else(new_model_state);
 
     state.unavailable = true;
     state.status = Status::Error;
@@ -1017,11 +1128,19 @@ fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, no
             },
         );
     } else if err_ref.is_some_and(is_invalid_grant_result) {
-        state.next_retry_after = if disable { None } else { Some(add_duration(now, Duration::from_secs(30 * 60))) };
+        state.next_retry_after = if disable {
+            None
+        } else {
+            Some(add_duration(now, Duration::from_secs(30 * 60)))
+        };
     } else {
         match status_code {
             401 | 402 | 403 => {
-                state.next_retry_after = if disable { None } else { Some(add_duration(now, Duration::from_secs(30 * 60))) };
+                state.next_retry_after = if disable {
+                    None
+                } else {
+                    Some(add_duration(now, Duration::from_secs(30 * 60)))
+                };
             }
             404 => {
                 state.next_retry_after = if disable {
@@ -1036,9 +1155,14 @@ fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, no
                 let mut next: Time = None;
                 let mut credential_next: Time = None;
                 let mut backoff_level = state.quota.backoff_level;
-                let auth_credential_quota = auth.quota.exceeded && auth.quota.reason == "credential_quota";
+                let auth_credential_quota =
+                    auth.quota.exceeded && auth.quota.reason == "credential_quota";
                 if result.credential_scope {
-                    backoff_level = if auth_credential_quota { auth.quota.backoff_level } else { 0 };
+                    backoff_level = if auth_credential_quota {
+                        auth.quota.backoff_level
+                    } else {
+                        0
+                    };
                 }
                 if !disable {
                     if let Some(ra) = retry_after {
@@ -1083,7 +1207,9 @@ fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, no
                         }
                         let mut other_retry_after = other_quota_next;
                         // Propagation only extends a sibling's still-live deadline.
-                        if other.next_retry_after.is_some() && other.next_retry_after > other_retry_after {
+                        if other.next_retry_after.is_some()
+                            && other.next_retry_after > other_retry_after
+                        {
                             other_retry_after = other.next_retry_after;
                         }
                         other.next_retry_after = other_retry_after;
@@ -1111,12 +1237,17 @@ fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, no
                 }
             }
             408 | 500 | 502 | 503 | 504 | 520..=526 => {
-                state.next_retry_after =
-                    recoverable_failure_retry_after(now, retry_after, disable, policy.transient_seconds);
+                state.next_retry_after = recoverable_failure_retry_after(
+                    now,
+                    retry_after,
+                    disable,
+                    policy.transient_seconds,
+                );
                 state.unavailable = state.next_retry_after.is_some();
             }
             _ => {
-                state.next_retry_after = recoverable_failure_retry_after(now, None, disable, policy.transient_seconds);
+                state.next_retry_after =
+                    recoverable_failure_retry_after(now, None, disable, policy.transient_seconds);
                 state.unavailable = state.next_retry_after.is_some();
             }
         }
@@ -1131,7 +1262,10 @@ fn apply_model_failure(auth: &mut Auth, result: &ExecResult, model_key: &str, no
         state.unavailable = true;
     }
     // A later failure only extends a still-live cooldown; never shortens it.
-    if state.next_retry_after.is_some() && prev_model_retry_after > state.next_retry_after && after(prev_model_retry_after, now) {
+    if state.next_retry_after.is_some()
+        && prev_model_retry_after > state.next_retry_after
+        && after(prev_model_retry_after, now)
+    {
         state.next_retry_after = prev_model_retry_after;
     }
     auth.model_states.insert(key, state);
@@ -1173,16 +1307,41 @@ fn is_zero_status(v: &i32) -> bool {
 /// Timers visible to management for one credential. An empty result does not imply usability.
 pub fn cooldown_snapshot_for_auth(auth: &Auth, now: DateTime<Utc>) -> Vec<CooldownView> {
     let mut views = Vec::new();
-    if auth.quota.exceeded && auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
+    if auth.quota.exceeded
+        && auth.quota.reason == "credential_quota"
+        && after(auth.quota.next_recover_at, now)
+    {
         if let Some(next) = auth.quota.next_recover_at {
-            views.push(new_cooldown_view("credential", "", next, now, &auth.quota, &auth.status_message, auth.last_error.as_ref()));
+            views.push(new_cooldown_view(
+                "credential",
+                "",
+                next,
+                now,
+                &auth.quota,
+                &auth.status_message,
+                auth.last_error.as_ref(),
+            ));
         }
     } else if auth.model_states.is_empty() {
-        let b = availability_block(auth.unavailable, auth.quota.exceeded, auth.next_retry_after, auth.quota.next_recover_at, now);
+        let b = availability_block(
+            auth.unavailable,
+            auth.quota.exceeded,
+            auth.next_retry_after,
+            auth.quota.next_recover_at,
+            now,
+        );
         if let (true, Some(next)) = (b.blocked, b.next)
             && next > now
         {
-            views.push(new_cooldown_view("credential", "", next, now, &auth.quota, &auth.status_message, auth.last_error.as_ref()));
+            views.push(new_cooldown_view(
+                "credential",
+                "",
+                next,
+                now,
+                &auth.quota,
+                &auth.status_message,
+                auth.last_error.as_ref(),
+            ));
         }
     }
 
@@ -1192,13 +1351,20 @@ pub fn cooldown_snapshot_for_auth(auth: &Auth, now: DateTime<Utc>) -> Vec<Cooldo
         if model.is_empty() {
             continue;
         }
-        let b = availability_block(state.unavailable, state.quota.exceeded, state.next_retry_after, state.quota.next_recover_at, now);
+        let b = availability_block(
+            state.unavailable,
+            state.quota.exceeded,
+            state.next_retry_after,
+            state.quota.next_recover_at,
+            now,
+        );
         let Some(next) = b.next.filter(|n| b.blocked && *n > now) else {
             continue;
         };
         if let Some((prev, prev_reason)) = by_model.get(&model) {
-            let prefer_quota_tie =
-                next == prev.retry_at && b.reason == BlockReason::Cooldown && *prev_reason != BlockReason::Cooldown;
+            let prefer_quota_tie = next == prev.retry_at
+                && b.reason == BlockReason::Cooldown
+                && *prev_reason != BlockReason::Cooldown;
             if next <= prev.retry_at && !prefer_quota_tie {
                 continue;
             }
@@ -1206,7 +1372,15 @@ pub fn cooldown_snapshot_for_auth(auth: &Auth, now: DateTime<Utc>) -> Vec<Cooldo
         by_model.insert(
             model.clone(),
             (
-                new_cooldown_view("model", &model, next, now, &state.quota, &state.status_message, state.last_error.as_ref()),
+                new_cooldown_view(
+                    "model",
+                    &model,
+                    next,
+                    now,
+                    &state.quota,
+                    &state.status_message,
+                    state.last_error.as_ref(),
+                ),
                 b.reason,
             ),
         );
@@ -1247,7 +1421,8 @@ fn new_cooldown_view(
     if view.reason == "credential_quota" {
         return view;
     }
-    if (view.reason == "quota" || view.reason == "cloudflare_challenge") && quota.backoff_level >= 0 {
+    if (view.reason == "quota" || view.reason == "cloudflare_challenge") && quota.backoff_level >= 0
+    {
         view.backoff_level = Some(quota.backoff_level);
     }
     let error_reason = cooldown_error_reason(last_err);
@@ -1268,7 +1443,9 @@ fn new_cooldown_view(
 }
 
 fn cooldown_error_reason(err: Option<&AuthError>) -> String {
-    let Some(e) = err else { return "unknown".into() };
+    let Some(e) = err else {
+        return "unknown".into();
+    };
     if is_model_support_result(e) {
         return "model_not_supported".into();
     }
@@ -1302,7 +1479,11 @@ fn cooldown_status_reason(message: &str) -> String {
 }
 
 /// Reason string persisted with cooldown records (Go: cooldownReason).
-pub fn cooldown_reason(status_message: &str, quota: &QuotaState, last_err: Option<&AuthError>) -> String {
+pub fn cooldown_reason(
+    status_message: &str,
+    quota: &QuotaState,
+    last_err: Option<&AuthError>,
+) -> String {
     let reason = quota.reason.trim();
     if !reason.is_empty() {
         return reason.to_string();
@@ -1354,7 +1535,11 @@ mod tests {
         let q = QuotaState::default();
         let (n1, l1) = quota_cooldown_after_failure(&q, now);
         assert_eq!((n1, l1), (Some(t(1)), 1));
-        let q2 = QuotaState { next_recover_at: n1, backoff_level: l1, ..Default::default() };
+        let q2 = QuotaState {
+            next_recover_at: n1,
+            backoff_level: l1,
+            ..Default::default()
+        };
         let (n2, l2) = quota_cooldown_after_failure(&q2, now);
         assert_eq!((n2, l2), (n1, l1));
     }
@@ -1364,7 +1549,10 @@ mod tests {
         let now = t(100);
         assert!(!availability_block(false, false, None, None, now).blocked);
         let b = availability_block(true, true, Some(t(200)), Some(t(150)), now);
-        assert_eq!((b.blocked, b.reason, b.next), (true, BlockReason::Cooldown, Some(t(200))));
+        assert_eq!(
+            (b.blocked, b.reason, b.next),
+            (true, BlockReason::Cooldown, Some(t(200)))
+        );
         // Expired cooldown is available again.
         assert!(!availability_block(true, true, Some(t(50)), None, now).blocked);
         // Flagged unavailable with no deadline is blocked indefinitely.
@@ -1392,19 +1580,44 @@ mod tests {
         }
     }
 
-    const POLICY: CoolingPolicy = CoolingPolicy { disable_cooling: false, transient_seconds: 0 };
+    const POLICY: CoolingPolicy = CoolingPolicy {
+        disable_cooling: false,
+        transient_seconds: 0,
+    };
 
     #[test]
     fn retry_after_floor_and_never_shorten() {
         let mut auth = Auth::new("a", "p");
-        apply_result(&mut auth, &result_with(429, Some(Duration::from_secs(2))), "m", t(0), POLICY);
-        assert_eq!(auth.model_states["m"].next_retry_after, Some(t(10)), "retry-after is floored at 10s");
+        apply_result(
+            &mut auth,
+            &result_with(429, Some(Duration::from_secs(2))),
+            "m",
+            t(0),
+            POLICY,
+        );
+        assert_eq!(
+            auth.model_states["m"].next_retry_after,
+            Some(t(10)),
+            "retry-after is floored at 10s"
+        );
         assert!(auth.unavailable);
         // A longer hint extends the live cooldown.
-        apply_result(&mut auth, &result_with(429, Some(Duration::from_secs(60))), "m", t(1), POLICY);
+        apply_result(
+            &mut auth,
+            &result_with(429, Some(Duration::from_secs(60))),
+            "m",
+            t(1),
+            POLICY,
+        );
         assert_eq!(auth.model_states["m"].next_retry_after, Some(t(61)));
         // A shorter later failure must not shorten it.
-        apply_result(&mut auth, &result_with(429, Some(Duration::from_secs(1))), "m", t(2), POLICY);
+        apply_result(
+            &mut auth,
+            &result_with(429, Some(Duration::from_secs(1))),
+            "m",
+            t(2),
+            POLICY,
+        );
         assert_eq!(auth.model_states["m"].next_retry_after, Some(t(61)));
     }
 
@@ -1433,10 +1646,28 @@ mod tests {
         apply_result(&mut auth, &result_with(503, None), "m", t(0), POLICY);
         assert_eq!(auth.model_states["m"].next_retry_after, Some(t(60)));
         let mut auth = Auth::new("a", "p");
-        apply_result(&mut auth, &result_with(500, None), "m", t(0), CoolingPolicy { disable_cooling: true, transient_seconds: 0 });
+        apply_result(
+            &mut auth,
+            &result_with(500, None),
+            "m",
+            t(0),
+            CoolingPolicy {
+                disable_cooling: true,
+                transient_seconds: 0,
+            },
+        );
         assert!(!auth.unavailable && auth.model_states["m"].next_retry_after.is_none());
         let mut auth = Auth::new("a", "p");
-        apply_result(&mut auth, &result_with(500, None), "m", t(0), CoolingPolicy { disable_cooling: false, transient_seconds: -1 });
+        apply_result(
+            &mut auth,
+            &result_with(500, None),
+            "m",
+            t(0),
+            CoolingPolicy {
+                disable_cooling: false,
+                transient_seconds: -1,
+            },
+        );
         assert!(!auth.unavailable);
     }
 
@@ -1467,7 +1698,13 @@ mod tests {
     #[test]
     fn cooldown_view_reports_reason() {
         let mut auth = Auth::new("a", "p");
-        apply_result(&mut auth, &result_with(429, Some(Duration::from_secs(30))), "m", t(0), POLICY);
+        apply_result(
+            &mut auth,
+            &result_with(429, Some(Duration::from_secs(30))),
+            "m",
+            t(0),
+            POLICY,
+        );
         let views = cooldown_snapshot_for_auth(&auth, t(5));
         assert_eq!(views.len(), 1);
         assert_eq!(views[0].reason, "quota");

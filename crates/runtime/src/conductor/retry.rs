@@ -12,7 +12,10 @@ use cpa_auth::Auth;
 use cpa_auth::types::{AuthError, Status};
 use rand::Rng;
 
-use super::cooldown::{BlockReason, MIN_QUOTA_COOLDOWN_FLOOR, availability_block, is_auth_blocked_for_model, is_disabled};
+use super::cooldown::{
+    BlockReason, MIN_QUOTA_COOLDOWN_FLOOR, availability_block, is_auth_blocked_for_model,
+    is_disabled,
+};
 use super::errors::{is_credential_retry_round_status, is_request_retry_round_error};
 use super::models::executor_key_from_auth;
 use super::pick::{Eligibility, pinned_auth_id};
@@ -24,12 +27,16 @@ use crate::executor::ExecError;
 const COOLDOWN_WAIT_JITTER_CAP: Duration = Duration::from_secs(2);
 
 fn effective_request_retry_limit(auth: &Auth, default_retry: i64) -> i64 {
-    auth.request_retry_override().unwrap_or(default_retry.max(0))
+    auth.request_retry_override()
+        .unwrap_or(default_retry.max(0))
 }
 
 /// Whether a credential cooling because of this last error is worth waiting for: no error means
 /// only quota cooldowns are, otherwise the retry-round statuses.
-fn credential_retry_round_state_eligible(last_err: Option<&AuthError>, quota_exceeded: bool) -> bool {
+fn credential_retry_round_state_eligible(
+    last_err: Option<&AuthError>,
+    quota_exceeded: bool,
+) -> bool {
     match last_err {
         None => quota_exceeded,
         Some(e) => is_credential_retry_round_status(e.http_status),
@@ -37,7 +44,11 @@ fn credential_retry_round_state_eligible(last_err: Option<&AuthError>, quota_exc
 }
 
 /// `(eligible, next)`: can this credential serve a later round, and when does it recover.
-pub(crate) fn retry_round_availability_for_auth(auth: &Auth, model: &str, now: DateTime<Utc>) -> (bool, Option<DateTime<Utc>>) {
+pub(crate) fn retry_round_availability_for_auth(
+    auth: &Auth,
+    model: &str,
+    now: DateTime<Utc>,
+) -> (bool, Option<DateTime<Utc>>) {
     let b = is_auth_blocked_for_model(auth, model, now);
     if !b.blocked {
         return (true, None);
@@ -46,8 +57,14 @@ pub(crate) fn retry_round_availability_for_auth(auth: &Auth, model: &str, now: D
         return (false, None);
     }
     let next = b.next;
-    if auth.quota.exceeded && auth.quota.reason == "credential_quota" && auth.quota.next_recover_at.is_some_and(|t| t > now) {
-        return (credential_retry_round_state_eligible(auth.last_error.as_ref(), true), next);
+    if auth.quota.exceeded
+        && auth.quota.reason == "credential_quota"
+        && auth.quota.next_recover_at.is_some_and(|t| t > now)
+    {
+        return (
+            credential_retry_round_state_eligible(auth.last_error.as_ref(), true),
+            next,
+        );
     }
     let model_key = canonical_model_key(model);
     if !model_key.is_empty() && !auth.model_states.is_empty() {
@@ -59,12 +76,23 @@ pub(crate) fn retry_round_availability_for_auth(auth: &Auth, model: &str, now: D
             if state.status == Status::Disabled {
                 return (false, None);
             }
-            let sb = availability_block(state.unavailable, state.quota.exceeded, state.next_retry_after, state.quota.next_recover_at, now);
+            let sb = availability_block(
+                state.unavailable,
+                state.quota.exceeded,
+                state.next_retry_after,
+                state.quota.next_recover_at,
+                now,
+            );
             if !sb.blocked {
                 continue;
             }
             matched_blocked = true;
-            if sb.next.is_none() || !credential_retry_round_state_eligible(state.last_error.as_ref(), state.quota.exceeded) {
+            if sb.next.is_none()
+                || !credential_retry_round_state_eligible(
+                    state.last_error.as_ref(),
+                    state.quota.exceeded,
+                )
+            {
                 return (false, None);
             }
         }
@@ -97,7 +125,11 @@ pub(crate) fn jittered_cooldown_wait(wait: Duration, max_wait: Duration) -> Dura
 
 impl Manager {
     /// Credentials excluded from retry round `round` because their own limit is exhausted.
-    pub(crate) fn request_retry_round_exclusions(&self, round: i64, default_retry: i64) -> HashSet<String> {
+    pub(crate) fn request_retry_round_exclusions(
+        &self,
+        round: i64,
+        default_retry: i64,
+    ) -> HashSet<String> {
         let mut excluded = HashSet::new();
         if round <= 0 {
             return excluded;
@@ -142,7 +174,11 @@ impl Manager {
     }
 
     fn provider_set(providers: &[String]) -> Vec<String> {
-        providers.iter().map(|p| p.trim().to_lowercase()).filter(|p| !p.is_empty()).collect()
+        providers
+            .iter()
+            .map(|p| p.trim().to_lowercase())
+            .filter(|p| !p.is_empty())
+            .collect()
     }
 
     /// Smallest wait until some eligible credential can serve another round (Go:
@@ -167,13 +203,20 @@ impl Manager {
         let st = self.state.read();
         let mut min_wait: Option<Duration> = None;
         for auth in st.auths.values() {
-            if self.eligible_for_retry(auth, &provider_set, model, pinned, eligibility).is_none() {
+            if self
+                .eligible_for_retry(auth, &provider_set, model, pinned, eligibility)
+                .is_none()
+            {
                 continue;
             }
             if attempt >= effective_request_retry_limit(auth, default_retry) {
                 continue;
             }
-            let check_model = if model.trim().is_empty() { model.to_string() } else { self.selection_model_for_auth(auth, model) };
+            let check_model = if model.trim().is_empty() {
+                model.to_string()
+            } else {
+                self.selection_model_for_auth(auth, model)
+            };
             let (eligible, next) = retry_round_availability_for_auth(auth, &check_model, now);
             if !eligible {
                 continue;
@@ -226,13 +269,20 @@ impl Manager {
         let now = self.now();
         let st = self.state.read();
         st.auths.values().any(|auth| {
-            if self.eligible_for_retry(auth, &provider_set, model, pinned, eligibility).is_none() {
+            if self
+                .eligible_for_retry(auth, &provider_set, model, pinned, eligibility)
+                .is_none()
+            {
                 return false;
             }
             if attempt >= effective_request_retry_limit(auth, default_retry) {
                 return false;
             }
-            let check_model = if model.trim().is_empty() { model.to_string() } else { self.selection_model_for_auth(auth, model) };
+            let check_model = if model.trim().is_empty() {
+                model.to_string()
+            } else {
+                self.selection_model_for_auth(auth, model)
+            };
             retry_round_availability_for_auth(auth, &check_model, now).0
         })
     }
@@ -258,10 +308,28 @@ impl Manager {
         }
         let eligibility = Eligibility::from_meta(meta_map);
         let pinned = pinned_auth_id(meta_map);
-        if !is_request_retry_round_error(err) || !self.retry_allowed(attempt, providers, model, &eligibility, &pinned, default_retry) {
+        if !is_request_retry_round_error(err)
+            || !self.retry_allowed(
+                attempt,
+                providers,
+                model,
+                &eligibility,
+                &pinned,
+                default_retry,
+            )
+        {
             return (Duration::ZERO, false);
         }
-        if let Some(wait) = self.closest_cooldown_wait(providers, model, attempt, &eligibility, &pinned, default_retry, status, attempted) {
+        if let Some(wait) = self.closest_cooldown_wait(
+            providers,
+            model,
+            attempt,
+            &eligibility,
+            &pinned,
+            default_retry,
+            status,
+            attempted,
+        ) {
             if !wait.is_zero() && (max_wait.is_zero() || wait > max_wait) {
                 return (Duration::ZERO, false);
             }
@@ -301,7 +369,10 @@ mod tests {
             assert!(j >= w && j <= Duration::from_secs(21));
         }
         assert_eq!(jittered_cooldown_wait(w, w), w);
-        assert_eq!(jittered_cooldown_wait(Duration::ZERO, Duration::ZERO), Duration::ZERO);
+        assert_eq!(
+            jittered_cooldown_wait(Duration::ZERO, Duration::ZERO),
+            Duration::ZERO
+        );
     }
 
     #[test]
@@ -310,9 +381,18 @@ mod tests {
         let mut a = Auth::new("a", "p");
         a.unavailable = true;
         a.next_retry_after = Some(now + chrono::Duration::seconds(30));
-        a.last_error = Some(AuthError { http_status: 401, ..Default::default() });
+        a.last_error = Some(AuthError {
+            http_status: 401,
+            ..Default::default()
+        });
         assert!(!retry_round_availability_for_auth(&a, "m", now).0);
-        a.last_error = Some(AuthError { http_status: 503, ..Default::default() });
-        assert_eq!(retry_round_availability_for_auth(&a, "m", now), (true, a.next_retry_after));
+        a.last_error = Some(AuthError {
+            http_status: 503,
+            ..Default::default()
+        });
+        assert_eq!(
+            retry_round_availability_for_auth(&a, "m", now),
+            (true, a.next_retry_after)
+        );
     }
 }

@@ -65,11 +65,24 @@ fn failure_of(err: &AuthError) -> UsageFailure {
 }
 
 /// Builds the usage record of one finished attempt.
-pub fn build_usage_record(result: &ExecResult, auth: Option<&Auth>, facts: &UsageFacts, now: DateTime<Utc>) -> UsageRecord {
+pub fn build_usage_record(
+    result: &ExecResult,
+    auth: Option<&Auth>,
+    facts: &UsageFacts,
+    now: DateTime<Utc>,
+) -> UsageRecord {
     let latency_ms = i64::try_from(facts.latency.as_millis()).unwrap_or(i64::MAX);
     let requested = facts.requested_model.trim();
-    let upstream = if facts.upstream_model.trim().is_empty() { result.model.as_str() } else { facts.upstream_model.trim() };
-    let alias = if !requested.is_empty() && requested != upstream { requested.to_string() } else { String::new() };
+    let upstream = if facts.upstream_model.trim().is_empty() {
+        result.model.as_str()
+    } else {
+        facts.upstream_model.trim()
+    };
+    let alias = if !requested.is_empty() && requested != upstream {
+        requested.to_string()
+    } else {
+        String::new()
+    };
     let (source, auth_index, auth_type) = match auth {
         Some(a) => {
             let mut source = a.label.trim().to_string();
@@ -87,7 +100,9 @@ pub fn build_usage_record(result: &ExecResult, auth: Option<&Auth>, facts: &Usag
     UsageRecord {
         timestamp: now - chrono::Duration::milliseconds(latency_ms),
         latency_ms,
-        ttft_ms: facts.ttft.map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
+        ttft_ms: facts
+            .ttft
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX)),
         source,
         auth_index,
         auth_type,
@@ -95,7 +110,11 @@ pub fn build_usage_record(result: &ExecResult, auth: Option<&Auth>, facts: &Usag
         executor_type: result.provider.clone(),
         model: upstream.to_string(),
         alias,
-        endpoint: if path.is_empty() { String::new() } else { format!("POST {path}") },
+        endpoint: if path.is_empty() {
+            String::new()
+        } else {
+            format!("POST {path}")
+        },
         api_key: meta_str(&result.options.metadata, META_CLIENT_API_KEY),
         request_id: meta_str(&result.options.metadata, META_REQUEST_ID),
         failed: !result.success,
@@ -110,13 +129,20 @@ fn int(v: &Value, path: &str) -> i64 {
 }
 
 fn first_nonzero(v: &Value, paths: &[&str]) -> i64 {
-    paths.iter().map(|p| int(v, p)).find(|n| *n != 0).unwrap_or(0)
+    paths
+        .iter()
+        .map(|p| int(v, p))
+        .find(|n| *n != 0)
+        .unwrap_or(0)
 }
 
 /// Token counts from one usage-bearing JSON object (`usage` / `usageMetadata`), by schema.
 fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
     // Gemini family: usageMetadata.
-    if u.g("promptTokenCount").exists() || u.g("candidatesTokenCount").exists() || u.g("totalTokenCount").exists() {
+    if u.g("promptTokenCount").exists()
+        || u.g("candidatesTokenCount").exists()
+        || u.g("totalTokenCount").exists()
+    {
         let input = int(u, "promptTokenCount") + int(u, "toolUsePromptTokenCount");
         let output = int(u, "candidatesTokenCount");
         let reasoning = int(u, "thoughtsTokenCount");
@@ -138,9 +164,19 @@ fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
     let cache_create = int(u, "cache_creation_input_tokens");
     let claude_style = format == Format::Claude || cache_read != 0 || cache_create != 0;
     if claude_style {
-        let reasoning =
-            first_nonzero(u, &["output_tokens_details.thinking_tokens", "output_tokens_details.reasoning_tokens", "thinking_tokens"]);
-        let cached = if cache_read != 0 { cache_read } else { cache_create };
+        let reasoning = first_nonzero(
+            u,
+            &[
+                "output_tokens_details.thinking_tokens",
+                "output_tokens_details.reasoning_tokens",
+                "thinking_tokens",
+            ],
+        );
+        let cached = if cache_read != 0 {
+            cache_read
+        } else {
+            cache_create
+        };
         return TokenUsage {
             input_tokens: input,
             output_tokens: output,
@@ -149,22 +185,42 @@ fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
             total_tokens: input + output + cache_read + cache_create,
         };
     }
-    let cached =
-        first_nonzero(u, &["prompt_tokens_details.cached_tokens", "input_tokens_details.cached_tokens"]);
+    let cached = first_nonzero(
+        u,
+        &[
+            "prompt_tokens_details.cached_tokens",
+            "input_tokens_details.cached_tokens",
+        ],
+    );
     let reasoning = first_nonzero(
         u,
-        &["completion_tokens_details.reasoning_tokens", "output_tokens_details.reasoning_tokens"],
+        &[
+            "completion_tokens_details.reasoning_tokens",
+            "output_tokens_details.reasoning_tokens",
+        ],
     );
     let total = match int(u, "total_tokens") {
         0 => input + output,
         t => t,
     };
-    TokenUsage { input_tokens: input, output_tokens: output, reasoning_tokens: reasoning, cached_tokens: cached, total_tokens: total }
+    TokenUsage {
+        input_tokens: input,
+        output_tokens: output,
+        reasoning_tokens: reasoning,
+        cached_tokens: cached,
+        total_tokens: total,
+    }
 }
 
 /// Locates the usage object in a payload of the client format and extracts its counts.
 pub fn tokens_from_value(format: Format, v: &Value) -> Option<TokenUsage> {
-    for path in ["usage", "response.usage", "message.usage", "usageMetadata", "response.usageMetadata"] {
+    for path in [
+        "usage",
+        "response.usage",
+        "message.usage",
+        "usageMetadata",
+        "response.usageMetadata",
+    ] {
         let r = v.g(path);
         if r.is_object() {
             let t = tokens_from_usage_object(format, &r.value());
@@ -207,7 +263,10 @@ pub struct StreamUsage {
 
 impl StreamUsage {
     pub fn new(format: Format) -> Self {
-        StreamUsage { format: Some(format), tokens: TokenUsage::default() }
+        StreamUsage {
+            format: Some(format),
+            tokens: TokenUsage::default(),
+        }
     }
 
     /// Observes one chunk (raw JSON or SSE frames) for usage.
@@ -236,8 +295,14 @@ fn contains(hay: &[u8], needle: &[u8]) -> bool {
 }
 
 fn trim(b: &[u8]) -> &[u8] {
-    let s = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
-    let e = b.iter().rposition(|c| !c.is_ascii_whitespace()).map_or(s, |e| e + 1);
+    let s = b
+        .iter()
+        .position(|c| !c.is_ascii_whitespace())
+        .unwrap_or(b.len());
+    let e = b
+        .iter()
+        .rposition(|c| !c.is_ascii_whitespace())
+        .map_or(s, |e| e + 1);
     &b[s..e]
 }
 
@@ -267,9 +332,25 @@ mod tests {
             br#"{"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4},"completion_tokens_details":{"reasoning_tokens":2}}}"#,
             &Metadata::new(),
         );
-        assert_eq!((t.input_tokens, t.output_tokens, t.total_tokens, t.cached_tokens, t.reasoning_tokens), (10, 5, 15, 4, 2));
-        let t = tokens_from_response(Format::OpenAIResponse, br#"{"usage":{"input_tokens":7,"output_tokens":3}}"#, &Metadata::new());
-        assert_eq!((t.input_tokens, t.output_tokens, t.total_tokens), (7, 3, 10));
+        assert_eq!(
+            (
+                t.input_tokens,
+                t.output_tokens,
+                t.total_tokens,
+                t.cached_tokens,
+                t.reasoning_tokens
+            ),
+            (10, 5, 15, 4, 2)
+        );
+        let t = tokens_from_response(
+            Format::OpenAIResponse,
+            br#"{"usage":{"input_tokens":7,"output_tokens":3}}"#,
+            &Metadata::new(),
+        );
+        assert_eq!(
+            (t.input_tokens, t.output_tokens, t.total_tokens),
+            (7, 3, 10)
+        );
     }
 
     #[test]
@@ -289,10 +370,24 @@ mod tests {
             br#"{"response":{"usageMetadata":{"promptTokenCount":8,"candidatesTokenCount":2,"thoughtsTokenCount":1,"totalTokenCount":11}}}"#,
             &Metadata::new(),
         );
-        assert_eq!((t.input_tokens, t.output_tokens, t.reasoning_tokens, t.total_tokens), (8, 2, 1, 11));
+        assert_eq!(
+            (
+                t.input_tokens,
+                t.output_tokens,
+                t.reasoning_tokens,
+                t.total_tokens
+            ),
+            (8, 2, 1, 11)
+        );
         let mut md = Metadata::new();
-        md.insert(META_USAGE.into(), serde_json::json!({"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}));
-        assert_eq!(tokens_from_response(Format::OpenAI, b"{}", &md).total_tokens, 3);
+        md.insert(
+            META_USAGE.into(),
+            serde_json::json!({"input_tokens": 1, "output_tokens": 2, "total_tokens": 3}),
+        );
+        assert_eq!(
+            tokens_from_response(Format::OpenAI, b"{}", &md).total_tokens,
+            3
+        );
     }
 
     #[test]
@@ -314,12 +409,20 @@ mod tests {
             success: false,
             retry_after: None,
             credential_scope: false,
-            error: Some(AuthError { message: "x".repeat(5000), http_status: 429, ..Default::default() }),
+            error: Some(AuthError {
+                message: "x".repeat(5000),
+                http_status: 429,
+                ..Default::default()
+            }),
             options: crate::executor::Options::new(Format::OpenAI),
             skip_quota_observation: false,
             response_headers: Default::default(),
         };
-        let facts = UsageFacts { upstream_model: "up".into(), requested_model: "alias".into(), ..Default::default() };
+        let facts = UsageFacts {
+            upstream_model: "up".into(),
+            requested_model: "alias".into(),
+            ..Default::default()
+        };
         let rec = build_usage_record(&result, None, &facts, Utc::now());
         assert!(rec.failed && rec.fail.status_code == 429 && rec.fail.body.len() == 2048);
         assert_eq!((rec.model.as_str(), rec.alias.as_str()), ("up", "alias"));

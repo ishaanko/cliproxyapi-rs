@@ -7,7 +7,13 @@
 
 use cpa_json::J;
 
-const MODEL_FIELD_PATHS: [&str; 5] = ["model", "modelVersion", "response.model", "response.modelVersion", "message.model"];
+const MODEL_FIELD_PATHS: [&str; 5] = [
+    "model",
+    "modelVersion",
+    "response.model",
+    "response.modelVersion",
+    "message.model",
+];
 const MAX_PENDING_BUF_SIZE: usize = 1 << 20;
 
 fn valid_json(data: &[u8]) -> bool {
@@ -30,14 +36,19 @@ fn rewrite_model(data: &[u8], target: &str) -> Vec<u8> {
             changed = true;
         }
     }
-    if changed { cpa_json::to_vec(&v) } else { data.to_vec() }
+    if changed {
+        cpa_json::to_vec(&v)
+    } else {
+        data.to_vec()
+    }
 }
 
 fn extract_sse_data_line(line: &[u8]) -> Option<(&'static [u8], &[u8])> {
     if let Some(rest) = line.strip_prefix(b"data: ") {
         return Some((b"data: ", rest));
     }
-    line.strip_prefix(b"data:").map(|rest| (&b"data:"[..], rest))
+    line.strip_prefix(b"data:")
+        .map(|rest| (&b"data:"[..], rest))
 }
 
 fn split_lines(payload: &[u8]) -> Vec<&[u8]> {
@@ -101,7 +112,8 @@ fn safe_replace_glued(chunk: &[u8], old: &[u8], new: &[u8]) -> Vec<u8> {
             None => &remaining[..idx + 1],
             Some(ls) => &remaining[ls + 1..idx + 1],
         };
-        let closes_valid_data = extract_sse_data_line(part).is_some_and(|(_, json)| !json.is_empty() && valid_json(json));
+        let closes_valid_data = extract_sse_data_line(part)
+            .is_some_and(|(_, json)| !json.is_empty() && valid_json(json));
         if closes_valid_data {
             result.extend_from_slice(&remaining[..idx]);
             result.extend_from_slice(new);
@@ -126,15 +138,22 @@ fn normalize_glued_sse_events(chunk: &[u8]) -> Vec<u8> {
 }
 
 fn extract_last_data_payload(chunk: &[u8]) -> Option<&[u8]> {
-    split_lines(chunk)
-        .into_iter()
-        .rev()
-        .find_map(|l| extract_sse_data_line(l).map(|(_, j)| j).filter(|j| !j.is_empty()))
+    split_lines(chunk).into_iter().rev().find_map(|l| {
+        extract_sse_data_line(l)
+            .map(|(_, j)| j)
+            .filter(|j| !j.is_empty())
+    })
 }
 
 fn trim_ascii(b: &[u8]) -> &[u8] {
-    let start = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
-    let end = b.iter().rposition(|c| !c.is_ascii_whitespace()).map_or(start, |e| e + 1);
+    let start = b
+        .iter()
+        .position(|c| !c.is_ascii_whitespace())
+        .unwrap_or(b.len());
+    let end = b
+        .iter()
+        .rposition(|c| !c.is_ascii_whitespace())
+        .map_or(start, |e| e + 1);
     &b[start..end]
 }
 
@@ -146,7 +165,10 @@ pub struct StreamRewriter {
 
 impl StreamRewriter {
     pub fn new(rewrite_model: impl Into<String>) -> Self {
-        StreamRewriter { model: rewrite_model.into(), pending: Vec::new() }
+        StreamRewriter {
+            model: rewrite_model.into(),
+            pending: Vec::new(),
+        }
     }
 
     fn rewrite_sse_lines(&self, payload: &[u8]) -> Vec<u8> {
@@ -300,12 +322,18 @@ mod tests {
     #[test]
     fn rewrites_sse_data_frames_and_keeps_events() {
         let out = run(&["event: message_start\ndata: {\"message\":{\"model\":\"up\"}}\n\n"]);
-        assert_eq!(out, "event: message_start\ndata: {\"message\":{\"model\":\"alias\"}}\n\n");
+        assert_eq!(
+            out,
+            "event: message_start\ndata: {\"message\":{\"model\":\"alias\"}}\n\n"
+        );
     }
 
     #[test]
     fn rewrites_raw_json_and_glued_codex_lines() {
-        assert_eq!(run(&[r#"{"model":"up","x":1}"#]), r#"{"model":"alias","x":1}"#);
+        assert_eq!(
+            run(&[r#"{"model":"up","x":1}"#]),
+            r#"{"model":"alias","x":1}"#
+        );
         let out = run(&["data: {\"response\":{\"model\":\"up\"}}data: {\"model\":\"up\"}"]);
         assert!(out.contains("\"response\":{\"model\":\"alias\"}"), "{out}");
         assert_eq!(out.matches("alias").count(), 2, "{out}");
@@ -324,7 +352,12 @@ mod tests {
             .rewrite_chunk(b"event:message_start\ndata:{\"type\":\"message_start\",\"message\":{\"model\":\"kimi-k2.5\"}}\n\n")
             .unwrap();
         let out = String::from_utf8(out).unwrap();
-        assert!(out.contains("\"model\":\"k2.5\"") && out.contains("data:{") && !out.contains("kimi-k2.5"), "{out}");
+        assert!(
+            out.contains("\"model\":\"k2.5\"")
+                && out.contains("data:{")
+                && !out.contains("kimi-k2.5"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -332,11 +365,16 @@ mod tests {
         let mut r = StreamRewriter::new("gpt-5.4-fast");
         assert_eq!(r.rewrite_chunk(b"event: response.created\n"), None);
         let out = r
-            .rewrite_chunk(b"data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-5.4\"}}\n\n")
+            .rewrite_chunk(
+                b"data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-5.4\"}}\n\n",
+            )
             .unwrap();
         let out = String::from_utf8(out).unwrap();
         assert_eq!(out.matches("event: response.created").count(), 1, "{out}");
-        assert!(out.ends_with("\n\n") && out.contains("\"model\":\"gpt-5.4-fast\""), "{out}");
+        assert!(
+            out.ends_with("\n\n") && out.contains("\"model\":\"gpt-5.4-fast\""),
+            "{out}"
+        );
         assert!(r.finish().is_none());
     }
 

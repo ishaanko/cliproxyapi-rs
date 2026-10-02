@@ -127,7 +127,10 @@ mod tests {
     #[test]
     fn suffix_uses_last_paren_and_requires_closing() {
         let r = parse_suffix("claude-x(8192)");
-        assert_eq!((r.model_name.as_str(), r.raw_suffix.as_str(), r.has_suffix), ("claude-x", "8192", true));
+        assert_eq!(
+            (r.model_name.as_str(), r.raw_suffix.as_str(), r.has_suffix),
+            ("claude-x", "8192", true)
+        );
         assert!(!parse_suffix("a(b)c").has_suffix);
         assert_eq!(canonical_model_key(" m(high) "), "m");
         assert_eq!(canonical_model_key("(x)"), "(x)");

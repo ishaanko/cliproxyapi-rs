@@ -14,21 +14,27 @@ use bytes::Bytes;
 use cpa_auth::Auth;
 use tokio::sync::mpsc;
 
+use super::Manager;
 use super::cooldown::ExecResult;
 use super::errors::{Failure, empty_stream, executor_not_found, result_error_from_error};
-use super::exec::{AuthAttempt, Fail, Outcome, ensure_canonical_session_metadata, preferred, requested_model_alias};
-use super::models::{AliasResult, attach_resolved_execution_model_info, resolve_attempt_alias_result};
+use super::exec::{
+    AuthAttempt, Fail, Outcome, ensure_canonical_session_metadata, preferred, requested_model_alias,
+};
+use super::models::{
+    AliasResult, attach_resolved_execution_model_info, resolve_attempt_alias_result,
+};
 use super::rewriter::StreamRewriter;
 use super::rules;
 use super::usage::{StreamUsage, UsageFacts};
-use super::Manager;
 use crate::executor::{DynExecutor, ExecError, Options, Request, StreamResult};
 
 type Chunk = Result<Bytes, ExecError>;
 
 /// Reads chunks until the first non-empty payload. `Ok((buffered, closed))`: `closed` means the
 /// channel ended before any payload; `Err` is a bootstrap failure.
-async fn read_stream_bootstrap(rx: &mut mpsc::Receiver<Chunk>) -> Result<(Vec<Bytes>, bool), ExecError> {
+async fn read_stream_bootstrap(
+    rx: &mut mpsc::Receiver<Chunk>,
+) -> Result<(Vec<Bytes>, bool), ExecError> {
     let mut buffered = Vec::with_capacity(1);
     loop {
         match rx.recv().await {
@@ -46,7 +52,11 @@ async fn read_stream_bootstrap(rx: &mut mpsc::Receiver<Chunk>) -> Result<(Vec<By
 }
 
 fn bootstrap_fail(err: ExecError, headers: &http::HeaderMap) -> Fail {
-    Fail { err, stop: false, bootstrap_headers: Some(headers.clone()) }
+    Fail {
+        err,
+        stop: false,
+        bootstrap_headers: Some(headers.clone()),
+    }
 }
 
 impl Manager {
@@ -66,7 +76,18 @@ impl Manager {
         upstream_err: &mut Option<Fail>,
     ) -> AuthAttempt {
         let res = self
-            .stream_with_model_pool(&executor, auth.clone(), provider, req, opts, route_model, restore_model, &models, pooled, alias_result)
+            .stream_with_model_pool(
+                &executor,
+                auth.clone(),
+                provider,
+                req,
+                opts,
+                route_model,
+                restore_model,
+                &models,
+                pooled,
+                alias_result,
+            )
             .await;
         match res {
             Ok(stream) => AuthAttempt::Success(Outcome::Stream(stream)),
@@ -113,17 +134,35 @@ impl Manager {
         let mut upstream_err: Option<Fail> = None;
         let mut did_refresh = false;
         for (idx, exec_model) in exec_models.iter().enumerate() {
-            let result_model = self.state_model_for_execution(&auth, route_model, exec_model, pooled);
+            let result_model =
+                self.state_model_for_execution(&auth, route_model, exec_model, pooled);
             let mut exec_req = req.clone();
             exec_req.model = execution_model.map_or_else(|| exec_model.clone(), str::to_string);
             let mut exec_opts = opts.clone();
-            attach_resolved_execution_model_info(&cfg, &mut exec_req, &auth, route_model, exec_model, execution_model.is_some());
-            let payload: Bytes =
-                if exec_opts.original_request.is_empty() { exec_req.payload.clone() } else { exec_opts.original_request.clone() };
-            ensure_canonical_session_metadata(&mut exec_opts.metadata, &exec_opts.headers, &payload);
+            attach_resolved_execution_model_info(
+                &cfg,
+                &mut exec_req,
+                &auth,
+                route_model,
+                exec_model,
+                execution_model.is_some(),
+            );
+            let payload: Bytes = if exec_opts.original_request.is_empty() {
+                exec_req.payload.clone()
+            } else {
+                exec_opts.original_request.clone()
+            };
+            ensure_canonical_session_metadata(
+                &mut exec_opts.metadata,
+                &exec_opts.headers,
+                &payload,
+            );
 
             let started = Instant::now();
-            let make_result = |auth: &Auth, error: &ExecError, credential_scope: bool, opts: &Options| ExecResult {
+            let make_result = |auth: &Auth,
+                               error: &ExecError,
+                               credential_scope: bool,
+                               opts: &Options| ExecResult {
                 auth_id: auth.id.clone(),
                 provider: provider.to_string(),
                 model: result_model.clone(),
@@ -145,15 +184,22 @@ impl Manager {
                 ..Default::default()
             };
 
-            let mut res = executor.execute_stream(&auth, exec_req.clone(), exec_opts.clone()).await;
+            let mut res = executor
+                .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
+                .await;
             if let Err(err) = &res {
                 if err.upstream_attempted {
                     upstream_err = Some(err.clone().into());
                 }
-                if let Some(refreshed) = self.try_refresh_after_unauthorized(&auth, err, did_refresh).await {
+                if let Some(refreshed) = self
+                    .try_refresh_after_unauthorized(&auth, err, did_refresh)
+                    .await
+                {
                     auth = refreshed;
                     did_refresh = true;
-                    res = executor.execute_stream(&auth, exec_req.clone(), exec_opts.clone()).await;
+                    res = executor
+                        .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
+                        .await;
                     if let Err(e2) = &res
                         && e2.upstream_attempted
                     {
@@ -203,17 +249,26 @@ impl Manager {
                 upstream_err = Some(bootstrap_fail(e.clone(), &stream.headers));
             }
             if let Err(boot_err) = &boot {
-                if let Some(refreshed) = self.try_refresh_after_unauthorized(&auth, boot_err, did_refresh).await {
+                if let Some(refreshed) = self
+                    .try_refresh_after_unauthorized(&auth, boot_err, did_refresh)
+                    .await
+                {
                     drop(std::mem::replace(&mut stream.chunks, mpsc::channel(1).1));
                     auth = refreshed;
                     did_refresh = true;
-                    match executor.execute_stream(&auth, exec_req.clone(), exec_opts.clone()).await {
+                    match executor
+                        .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
+                        .await
+                    {
                         Err(retry_err) => {
                             if retry_err.upstream_attempted {
                                 upstream_err = Some(retry_err.clone().into());
                             }
                             boot = Err(retry_err);
-                            stream = StreamResult { headers: Default::default(), chunks: mpsc::channel(1).1 };
+                            stream = StreamResult {
+                                headers: Default::default(),
+                                chunks: mpsc::channel(1).1,
+                            };
                         }
                         Ok(retry_stream) => {
                             stream = retry_stream;
@@ -240,7 +295,9 @@ impl Manager {
                     let mut result = make_result(&auth, &boot_err, credential_scope, &exec_opts);
                     rules::apply_action_to_result(action, &mut result);
                     let credential_scope = result.credential_scope;
-                    let record = |m: &Manager, result: ExecResult| m.mark_result_inner(result, Some(facts(started, Default::default())));
+                    let record = |m: &Manager, result: ExecResult| {
+                        m.mark_result_inner(result, Some(facts(started, Default::default())))
+                    };
                     if action.is_some() {
                         record(self, result);
                         if rules::is_stop(action) {
@@ -248,7 +305,10 @@ impl Manager {
                         }
                         last_err = Some(boot_err.clone());
                         if credential_scope {
-                            return Err(preferred(bootstrap_fail(boot_err, &stream.headers), upstream_err.as_ref()));
+                            return Err(preferred(
+                                bootstrap_fail(boot_err, &stream.headers),
+                                upstream_err.as_ref(),
+                            ));
                         }
                         continue;
                     }
@@ -260,11 +320,17 @@ impl Manager {
                     if idx + 1 < exec_models.len() {
                         last_err = Some(boot_err.clone());
                         if credential_scope {
-                            return Err(preferred(bootstrap_fail(boot_err, &stream.headers), upstream_err.as_ref()));
+                            return Err(preferred(
+                                bootstrap_fail(boot_err, &stream.headers),
+                                upstream_err.as_ref(),
+                            ));
                         }
                         continue;
                     }
-                    return Err(preferred(bootstrap_fail(boot_err, &stream.headers), upstream_err.as_ref()));
+                    return Err(preferred(
+                        bootstrap_fail(boot_err, &stream.headers),
+                        upstream_err.as_ref(),
+                    ));
                 }
                 Ok(v) => v,
             };
@@ -283,7 +349,8 @@ impl Manager {
                 return Err(preferred(current, upstream_err.as_ref()));
             }
 
-            let attempt_alias = resolve_attempt_alias_result(&cfg, &auth, route_model, exec_model, alias_result);
+            let attempt_alias =
+                resolve_attempt_alias_result(&cfg, &auth, route_model, exec_model, alias_result);
             let wrap = WrapCtx {
                 manager: self.clone(),
                 auth_id: auth.id.clone(),
@@ -297,7 +364,12 @@ impl Manager {
                 started,
                 response_headers: stream.headers.clone(),
             };
-            return Ok(wrap_stream(wrap, stream.headers, buffered, if closed { None } else { Some(stream.chunks) }));
+            return Ok(wrap_stream(
+                wrap,
+                stream.headers,
+                buffered,
+                if closed { None } else { Some(stream.chunks) },
+            ));
         }
         let err = last_err.unwrap_or_else(|| {
             let mut e = super::errors::auth_not_found("no upstream model available");
@@ -325,10 +397,27 @@ struct WrapCtx {
 }
 
 /// Forwards the bootstrapped stream, then records one result.
-fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, remaining: Option<mpsc::Receiver<Chunk>>) -> StreamResult {
+fn wrap_stream(
+    ctx: WrapCtx,
+    headers: http::HeaderMap,
+    buffered: Vec<Bytes>,
+    remaining: Option<mpsc::Receiver<Chunk>>,
+) -> StreamResult {
     let (tx, rx) = mpsc::channel::<Chunk>(1);
     tokio::spawn(async move {
-        let WrapCtx { manager, auth_id, provider, result_model, route_model, upstream_model, requested_model, options, alias, started, response_headers } = ctx;
+        let WrapCtx {
+            manager,
+            auth_id,
+            provider,
+            result_model,
+            route_model,
+            upstream_model,
+            requested_model,
+            options,
+            alias,
+            started,
+            response_headers,
+        } = ctx;
         let mut rewriter = (alias.force_mapping && !alias.original_alias.trim().is_empty())
             .then(|| StreamRewriter::new(alias.original_alias.trim()));
         let mut usage = StreamUsage::new(options.response_format_or_source());
@@ -337,35 +426,40 @@ fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, rem
         let mut pending: VecDeque<Chunk> = buffered.into_iter().map(Ok).collect();
         let mut remaining = remaining;
 
-        let record_failure = |manager: &Manager, err: &ExecError, usage: &StreamUsage, ttft: Option<Duration>| {
-            let auth = manager.get(&auth_id);
-            let mut result = ExecResult {
-                auth_id: auth_id.clone(),
-                provider: provider.clone(),
-                model: result_model.clone(),
-                route_model: route_model.clone(),
-                success: false,
-                retry_after: err.retry_after,
-                credential_scope: err.credential_scoped,
-                error: Some(result_error_from_error(err)),
-                options: options.clone(),
-                skip_quota_observation: false,
-                response_headers: if err.headers.is_empty() { response_headers.clone() } else { err.headers.clone() },
+        let record_failure =
+            |manager: &Manager, err: &ExecError, usage: &StreamUsage, ttft: Option<Duration>| {
+                let auth = manager.get(&auth_id);
+                let mut result = ExecResult {
+                    auth_id: auth_id.clone(),
+                    provider: provider.clone(),
+                    model: result_model.clone(),
+                    route_model: route_model.clone(),
+                    success: false,
+                    retry_after: err.retry_after,
+                    credential_scope: err.credential_scoped,
+                    error: Some(result_error_from_error(err)),
+                    options: options.clone(),
+                    skip_quota_observation: false,
+                    response_headers: if err.headers.is_empty() {
+                        response_headers.clone()
+                    } else {
+                        err.headers.clone()
+                    },
+                };
+                if let Some(auth) = auth {
+                    let action = rules::match_action(&auth, err, &manager.cfg());
+                    rules::apply_action_to_result(action, &mut result);
+                }
+                let facts = UsageFacts {
+                    latency: started.elapsed(),
+                    ttft,
+                    stream: true,
+                    tokens: usage.tokens.clone(),
+                    upstream_model: upstream_model.clone(),
+                    requested_model: requested_model.clone(),
+                };
+                manager.mark_result_inner(result, Some(facts));
             };
-            if let Some(auth) = auth {
-                let action = rules::match_action(&auth, err, &manager.cfg());
-                rules::apply_action_to_result(action, &mut result);
-            }
-            let facts = UsageFacts {
-                latency: started.elapsed(),
-                ttft,
-                stream: true,
-                tokens: usage.tokens.clone(),
-                upstream_model: upstream_model.clone(),
-                requested_model: requested_model.clone(),
-            };
-            manager.mark_result_inner(result, Some(facts));
-        };
 
         loop {
             let item = match pending.pop_front() {
@@ -442,5 +536,8 @@ fn wrap_stream(ctx: WrapCtx, headers: http::HeaderMap, buffered: Vec<Bytes>, rem
             manager.mark_result_inner(result, Some(facts));
         }
     });
-    StreamResult { headers, chunks: rx }
+    StreamResult {
+        headers,
+        chunks: rx,
+    }
 }

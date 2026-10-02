@@ -21,8 +21,9 @@ use tokio::sync::{Notify, Semaphore};
 use tokio::task::JoinHandle;
 
 use super::cooldown::{
-    REFRESH_FAILURE_BACKOFF, REFRESH_INEFFECTIVE_BACKOFF, REFRESH_PENDING_BACKOFF, clear_unauthorized_model_states,
-    has_disabled_invalid_grant_failure, has_unauthorized_auth_failure, invalid_grant_backoff_duration, is_disabled,
+    REFRESH_FAILURE_BACKOFF, REFRESH_INEFFECTIVE_BACKOFF, REFRESH_PENDING_BACKOFF,
+    clear_unauthorized_model_states, has_disabled_invalid_grant_failure,
+    has_unauthorized_auth_failure, invalid_grant_backoff_duration, is_disabled,
 };
 use super::errors::{Failure, refresh_error_from_error};
 use super::models::executor_key_from_auth;
@@ -92,7 +93,12 @@ fn parse_duration_value(v: &Value) -> Duration {
     }
 }
 
-const INTERVAL_KEYS: [&str; 4] = ["refresh_interval_seconds", "refreshIntervalSeconds", "refresh_interval", "refreshInterval"];
+const INTERVAL_KEYS: [&str; 4] = [
+    "refresh_interval_seconds",
+    "refreshIntervalSeconds",
+    "refresh_interval",
+    "refreshInterval",
+];
 
 /// Credential-specific refresh interval from metadata or attributes (number = seconds, or a Go
 /// duration string).
@@ -117,7 +123,12 @@ fn auth_preferred_interval(auth: &Auth) -> Duration {
 }
 
 fn auth_last_refresh_timestamp(auth: &Auth) -> Option<DateTime<Utc>> {
-    const KEYS: [&str; 4] = ["last_refresh", "lastRefresh", "last_refreshed_at", "lastRefreshedAt"];
+    const KEYS: [&str; 4] = [
+        "last_refresh",
+        "lastRefresh",
+        "last_refreshed_at",
+        "lastRefreshedAt",
+    ];
     for key in KEYS {
         if let Some(v) = auth.metadata.get(key)
             && let Some(t) = parse_time_value(v)
@@ -153,7 +164,9 @@ pub(crate) fn should_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
     if auth.next_refresh_after.is_some_and(|t| now < t) {
         return false;
     }
-    let last_refresh = auth.last_refreshed_at.or_else(|| auth_last_refresh_timestamp(auth));
+    let last_refresh = auth
+        .last_refreshed_at
+        .or_else(|| auth_last_refresh_timestamp(auth));
     let expiry = auth.expiration_time();
     let interval = auth_preferred_interval(auth);
     if !interval.is_zero() {
@@ -197,7 +210,9 @@ fn next_refresh_check_at(now: DateTime<Utc>, auth: &Auth) -> Option<DateTime<Utc
     {
         return Some(next);
     }
-    let last_refresh = auth.last_refreshed_at.or_else(|| auth_last_refresh_timestamp(auth));
+    let last_refresh = auth
+        .last_refreshed_at
+        .or_else(|| auth_last_refresh_timestamp(auth));
     let expiry = auth.expiration_time();
     let pref = auth_preferred_interval(auth);
     if !pref.is_zero() {
@@ -209,7 +224,9 @@ fn next_refresh_check_at(now: DateTime<Utc>, auth: &Auth) -> Option<DateTime<Utc
             }
             candidates.push(exp - pref);
         }
-        let Some(l) = last_refresh else { return Some(now) };
+        let Some(l) = last_refresh else {
+            return Some(now);
+        };
         candidates.push(l + pref);
         let next = candidates.into_iter().min()?;
         return Some(if next <= now { now } else { next });
@@ -232,34 +249,63 @@ impl Manager {
 
     /// Refreshes local OAuth credentials once after a 401 so the same credential can be retried
     /// before failing over (Go: tryRefreshAfterUnauthorized).
-    pub(crate) async fn try_refresh_after_unauthorized(&self, auth: &Auth, err: &ExecError, already_tried: bool) -> Option<Auth> {
+    pub(crate) async fn try_refresh_after_unauthorized(
+        &self,
+        auth: &Auth,
+        err: &ExecError,
+        already_tried: bool,
+    ) -> Option<Auth> {
         if already_tried || err.is_request_scoped() {
             return None;
         }
         if !Failure::of_exec(err).is_unauthorized() || !auth_has_refresh_credential(auth) {
             return None;
         }
-        tracing::debug!("unauthorized response for {} ({}), refreshing credentials before fallback", auth.provider, auth.id);
-        match self.refresh_auth_for_request(&auth.id, &auth.access_token()).await {
+        tracing::debug!(
+            "unauthorized response for {} ({}), refreshing credentials before fallback",
+            auth.provider,
+            auth.id
+        );
+        match self
+            .refresh_auth_for_request(&auth.id, &auth.access_token())
+            .await
+        {
             Ok(refreshed) => Some(refreshed),
             Err(e) => {
-                tracing::debug!("credential refresh before fallback failed for {} ({}): {e}", auth.provider, auth.id);
+                tracing::debug!(
+                    "credential refresh before fallback failed for {} ({}): {e}",
+                    auth.provider,
+                    auth.id
+                );
                 None
             }
         }
     }
 
     fn refresh_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
-        self.refresh_locks.lock().entry(key.to_string()).or_default().clone()
+        self.refresh_locks
+            .lock()
+            .entry(key.to_string())
+            .or_default()
+            .clone()
     }
 
     /// Synchronous refresh of one credential. `failed_access_token` lets concurrent callers reuse
     /// a refresh that already replaced the token that produced the 401.
-    pub async fn refresh_auth_for_request(&self, id: &str, failed_access_token: &str) -> Result<Auth, ExecError> {
+    pub async fn refresh_auth_for_request(
+        &self,
+        id: &str,
+        failed_access_token: &str,
+    ) -> Result<Auth, ExecError> {
         self.refresh_auth_at_epoch(id, failed_access_token, 0).await
     }
 
-    pub(crate) async fn refresh_auth_at_epoch(&self, id: &str, failed_access_token: &str, epoch: u64) -> Result<Auth, ExecError> {
+    pub(crate) async fn refresh_auth_at_epoch(
+        &self,
+        id: &str,
+        failed_access_token: &str,
+        epoch: u64,
+    ) -> Result<Auth, ExecError> {
         let id = id.trim();
         let plain = |m: &str| {
             let mut e = ExecError::new(0, m);
@@ -275,7 +321,9 @@ impl Manager {
         let (auth, exec) = {
             let st = self.state.read();
             let auth = st.auths.get(id).cloned();
-            let exec = auth.as_ref().and_then(|a| executor_locked(&st, &executor_key_from_auth(a)));
+            let exec = auth
+                .as_ref()
+                .and_then(|a| executor_locked(&st, &executor_key_from_auth(a)));
             (auth, exec)
         };
         let (Some(auth), Some(exec)) = (auth, exec) else {
@@ -318,12 +366,22 @@ impl Manager {
                 updated.updated_at = Some(now);
                 clear_unauthorized_model_states(&mut updated, now);
                 if should_refresh(&updated, now) {
-                    updated.next_refresh_after = Some(now + chrono::Duration::from_std(REFRESH_INEFFECTIVE_BACKOFF).unwrap_or_default());
+                    updated.next_refresh_after = Some(
+                        now + chrono::Duration::from_std(REFRESH_INEFFECTIVE_BACKOFF)
+                            .unwrap_or_default(),
+                    );
                 }
-                let saved = self.update_refreshed_auth(&base, updated).await.map_err(|e| {
-                    tracing::warn!("persist refreshed auth {} ({}) failed: {e}", auth.provider, auth.id);
-                    e
-                })?;
+                let saved = self
+                    .update_refreshed_auth(&base, updated)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(
+                            "persist refreshed auth {} ({}) failed: {e}",
+                            auth.provider,
+                            auth.id
+                        );
+                        e
+                    })?;
                 let Some(saved) = saved else {
                     return Err(plain(&format!("auth {id} not found")));
                 };
@@ -341,7 +399,9 @@ impl Manager {
         let mut permanently_disabled = false;
         {
             let mut st = self.state.write();
-            let Some(current) = st.auths.get_mut(id) else { return };
+            let Some(current) = st.auths.get_mut(id) else {
+                return;
+            };
             if current.registration_epoch != base.registration_epoch {
                 return;
             }
@@ -350,7 +410,8 @@ impl Manager {
             current.last_error = Some(refresh_error_from_error(err));
             let disabled = is_disabled(current);
             let has_valid_token = current.has_valid_access_token(now);
-            let failure_backoff = chrono::Duration::from_std(REFRESH_FAILURE_BACKOFF).unwrap_or_default();
+            let failure_backoff =
+                chrono::Duration::from_std(REFRESH_FAILURE_BACKOFF).unwrap_or_default();
             if disabled && invalid_grant {
                 current.unavailable = true;
                 current.status = Status::Disabled;
@@ -375,8 +436,12 @@ impl Manager {
                     current.status_message = "unauthorized".into();
                 } else if invalid_grant {
                     current.refresh_failures += 1;
-                    current.next_refresh_after =
-                        Some(now + chrono::Duration::from_std(invalid_grant_backoff_duration(current.refresh_failures)).unwrap_or_default());
+                    current.next_refresh_after = Some(
+                        now + chrono::Duration::from_std(invalid_grant_backoff_duration(
+                            current.refresh_failures,
+                        ))
+                        .unwrap_or_default(),
+                    );
                     current.status_message = "invalid grant (retrying)".into();
                     reschedule = true;
                 } else {
@@ -390,7 +455,11 @@ impl Manager {
                 let mut next_retry = now + failure_backoff;
                 if invalid_grant {
                     current.refresh_failures += 1;
-                    next_retry = now + chrono::Duration::from_std(invalid_grant_backoff_duration(current.refresh_failures)).unwrap_or_default();
+                    next_retry = now
+                        + chrono::Duration::from_std(invalid_grant_backoff_duration(
+                            current.refresh_failures,
+                        ))
+                        .unwrap_or_default();
                 } else {
                     current.refresh_failures = 0;
                 }
@@ -426,7 +495,12 @@ impl Manager {
             .map(|m| self.client_model_projection_for_auth(snapshot, &m.id, now))
             .collect();
         if !projections.is_empty() {
-            self.registry.apply_client_model_projections(&snapshot.id, epoch, snapshot.generation, &projections);
+            self.registry.apply_client_model_projections(
+                &snapshot.id,
+                epoch,
+                snapshot.generation,
+                &projections,
+            );
         }
     }
 
@@ -458,7 +532,11 @@ impl Manager {
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await;
                 let res = this.force_refresh_auth(&id).await;
-                ForceRefreshResult { id, success: res.is_ok(), error: res.err().map(|e| e.message).unwrap_or_default() }
+                ForceRefreshResult {
+                    id,
+                    success: res.is_ok(),
+                    error: res.err().map(|e| e.message).unwrap_or_default(),
+                }
             }));
         }
         let mut out = Vec::with_capacity(handles.len());
@@ -472,22 +550,37 @@ impl Manager {
 
     fn refresh_workers(&self) -> usize {
         let n = self.cfg().auth_auto_refresh_workers;
-        if n > 0 { n as usize } else { REFRESH_MAX_CONCURRENCY }
+        if n > 0 {
+            n as usize
+        } else {
+            REFRESH_MAX_CONCURRENCY
+        }
     }
 
     /// Runs the executor's request-time credential preparation under a per-credential lock and
     /// merges/persists the result (Go: prepareRequestAuth / PrepareRequestAuth).
-    pub(crate) async fn prepare_request_auth(&self, executor: &DynExecutor, auth: &Auth) -> Result<Auth, ExecError> {
+    pub(crate) async fn prepare_request_auth(
+        &self,
+        executor: &DynExecutor,
+        auth: &Auth,
+    ) -> Result<Auth, ExecError> {
         if !executor.should_prepare_request_auth(auth) {
             return Ok(auth.clone());
         }
         let id = auth.id.trim().to_string();
         if id.is_empty() {
-            return Ok(executor.prepare_request_auth(auth).await?.unwrap_or_else(|| auth.clone()));
+            return Ok(executor
+                .prepare_request_auth(auth)
+                .await?
+                .unwrap_or_else(|| auth.clone()));
         }
         let is_meta = auth.provider.trim().eq_ignore_ascii_case("meta");
         // Meta also mints on 401 recovery: share the refresh lock.
-        let lock = self.refresh_lock(&if is_meta { id.clone() } else { format!("prepare:{id}") });
+        let lock = self.refresh_lock(&if is_meta {
+            id.clone()
+        } else {
+            format!("prepare:{id}")
+        });
         let _guard = lock.lock().await;
         let current = self.state.read().auths.get(&id).cloned();
         if current.is_none() && is_meta {
@@ -520,7 +613,11 @@ impl Manager {
     /// loop. `interval` is the re-check delay for credentials whose refresh could not start
     /// (missing executor, full queue); 0 uses 5s.
     pub fn start_auto_refresh(&self, interval: Duration) {
-        let interval = if interval.is_zero() { REFRESH_CHECK_INTERVAL } else { interval };
+        let interval = if interval.is_zero() {
+            REFRESH_CHECK_INTERVAL
+        } else {
+            interval
+        };
         self.stop_auto_refresh();
         let shared = Arc::new(LoopShared {
             dirty: Mutex::new(HashSet::new()),
@@ -641,7 +738,13 @@ impl Manager {
 
     /// Handles one due credential: re-queue, or enqueue a refresh job. Returns the next time to
     /// look at it.
-    async fn handle_due_auth(&self, now: DateTime<Utc>, id: &str, interval: Duration, sem: &Arc<Semaphore>) -> Option<DateTime<Utc>> {
+    async fn handle_due_auth(
+        &self,
+        now: DateTime<Utc>,
+        id: &str,
+        interval: Duration,
+        sem: &Arc<Semaphore>,
+    ) -> Option<DateTime<Utc>> {
         let interval_chrono = chrono::Duration::from_std(interval).unwrap_or_default();
         let (auth, exec) = {
             let st = self.state.read();
@@ -659,7 +762,11 @@ impl Manager {
         let Some(epoch) = self.mark_refresh_pending(id, auth.registration_epoch, now) else {
             let auth = self.state.read().auths.get(id).cloned()?;
             let next = next_refresh_check_at(now, &auth)?;
-            return Some(if next > now { next } else { now + interval_chrono });
+            return Some(if next > now {
+                next
+            } else {
+                now + interval_chrono
+            });
         };
         let Ok(permit) = sem.clone().try_acquire_owned() else {
             // Queue full: do not hold the dispatcher.
@@ -683,15 +790,26 @@ impl Manager {
     fn mark_refresh_pending(&self, id: &str, epoch: u64, now: DateTime<Utc>) -> Option<u64> {
         let mut st = self.state.write();
         let auth = st.auths.get_mut(id)?;
-        if auth.registration_epoch != epoch || has_unauthorized_auth_failure(auth) || has_disabled_invalid_grant_failure(auth) {
+        if auth.registration_epoch != epoch
+            || has_unauthorized_auth_failure(auth)
+            || has_disabled_invalid_grant_failure(auth)
+        {
             return None;
         }
         let mut rs = self.refresh_state.lock();
         if rs.jobs.contains_key(id) || auth.next_refresh_after.is_some_and(|t| now < t) {
             return None;
         }
-        let pending_until = now + chrono::Duration::from_std(REFRESH_PENDING_BACKOFF).unwrap_or_default();
-        rs.jobs.insert(id.to_string(), JobInfo { epoch, pending_until, running: false });
+        let pending_until =
+            now + chrono::Duration::from_std(REFRESH_PENDING_BACKOFF).unwrap_or_default();
+        rs.jobs.insert(
+            id.to_string(),
+            JobInfo {
+                epoch,
+                pending_until,
+                running: false,
+            },
+        );
         auth.next_refresh_after = Some(pending_until);
         auth.generation += 1;
         auth.updated_at = Some(now);
@@ -704,8 +822,14 @@ impl Manager {
     fn begin_refresh_job(&self, id: &str, epoch: u64) -> bool {
         let st = self.state.read();
         let mut rs = self.refresh_state.lock();
-        let Some(job) = rs.jobs.get_mut(id) else { return false };
-        if st.auths.get(id).is_none_or(|a| a.registration_epoch != epoch) {
+        let Some(job) = rs.jobs.get_mut(id) else {
+            return false;
+        };
+        if st
+            .auths
+            .get(id)
+            .is_none_or(|a| a.registration_epoch != epoch)
+        {
             return false;
         }
         job.running = true;
@@ -766,7 +890,8 @@ mod tests {
         a.metadata.insert("access_token".into(), json!("opaque"));
         a.metadata.insert("refresh_token".into(), json!("rt"));
         if let Some(e) = expiry {
-            a.metadata.insert("expired".into(), json!(t(e).to_rfc3339()));
+            a.metadata
+                .insert("expired".into(), json!(t(e).to_rfc3339()));
         }
         a.last_refreshed_at = last_refresh.map(t);
         a
@@ -793,9 +918,11 @@ mod tests {
     #[test]
     fn preferred_interval_overrides_provider_lead() {
         let mut a = claude(Some(10 * 3600), Some(-120));
-        a.metadata.insert("refresh_interval_seconds".into(), json!(60));
+        a.metadata
+            .insert("refresh_interval_seconds".into(), json!(60));
         assert!(should_refresh(&a, t(0)));
-        a.metadata.insert("refresh_interval_seconds".into(), json!(3600));
+        a.metadata
+            .insert("refresh_interval_seconds".into(), json!(3600));
         assert!(!should_refresh(&a, t(0)));
     }
 

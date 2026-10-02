@@ -73,7 +73,11 @@ impl Mock {
 }
 
 fn payload_for(step: &'static str, auth: &Auth) -> Bytes {
-    if step.is_empty() { Bytes::from(auth.id.clone()) } else { Bytes::from(step) }
+    if step.is_empty() {
+        Bytes::from(auth.id.clone())
+    } else {
+        Bytes::from(step)
+    }
 }
 
 #[async_trait]
@@ -82,29 +86,51 @@ impl Executor for Mock {
         &self.id
     }
 
-    async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.credit_flags.lock().push(opts.metadata.contains_key(ANTIGRAVITY_CREDITS_METADATA_KEY));
+    async fn execute(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError> {
+        self.credit_flags
+            .lock()
+            .push(opts.metadata.contains_key(ANTIGRAVITY_CREDITS_METADATA_KEY));
         match self.next(auth, &req.model) {
-            Step::Ok(p) => Ok(Response { payload: payload_for(p, auth), ..Default::default() }),
+            Step::Ok(p) => Ok(Response {
+                payload: payload_for(p, auth),
+                ..Default::default()
+            }),
             Step::Err(e) => Err(e),
             Step::Stream(_) => panic!("stream step used for execute"),
         }
     }
 
-    async fn execute_stream(&self, auth: &Auth, req: Request, _opts: Options) -> Result<StreamResult, ExecError> {
+    async fn execute_stream(
+        &self,
+        auth: &Auth,
+        req: Request,
+        _opts: Options,
+    ) -> Result<StreamResult, ExecError> {
         match self.next(auth, &req.model) {
             Step::Err(e) => Err(e),
             Step::Ok(p) => {
                 let (tx, rx) = mpsc::channel(8);
                 tx.try_send(Ok(payload_for(p, auth))).unwrap();
-                Ok(StreamResult { headers: Default::default(), chunks: rx })
+                Ok(StreamResult {
+                    headers: Default::default(),
+                    chunks: rx,
+                })
             }
             Step::Stream(items) => {
                 let (tx, rx) = mpsc::channel(items.len().max(1) + 1);
                 for item in items {
-                    tx.try_send(item.map(|s| Bytes::from_static(s.as_bytes()))).unwrap();
+                    tx.try_send(item.map(|s| Bytes::from_static(s.as_bytes())))
+                        .unwrap();
                 }
-                Ok(StreamResult { headers: Default::default(), chunks: rx })
+                Ok(StreamResult {
+                    headers: Default::default(),
+                    chunks: rx,
+                })
             }
         }
     }
@@ -112,13 +138,23 @@ impl Executor for Mock {
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
         self.refreshes.lock().push(auth.id.clone());
         let mut updated = auth.clone();
-        updated.metadata.insert("access_token".into(), serde_json::json!("fresh-token"));
+        updated
+            .metadata
+            .insert("access_token".into(), serde_json::json!("fresh-token"));
         Ok(updated)
     }
 
-    async fn count_tokens(&self, auth: &Auth, req: Request, _opts: Options) -> Result<Response, ExecError> {
+    async fn count_tokens(
+        &self,
+        auth: &Auth,
+        req: Request,
+        _opts: Options,
+    ) -> Result<Response, ExecError> {
         match self.next(auth, &req.model) {
-            Step::Ok(p) => Ok(Response { payload: payload_for(p, auth), ..Default::default() }),
+            Step::Ok(p) => Ok(Response {
+                payload: payload_for(p, auth),
+                ..Default::default()
+            }),
             Step::Err(e) => Err(e),
             Step::Stream(_) => panic!("stream step used for count"),
         }
@@ -147,7 +183,12 @@ impl Harness {
         let mgr = Manager::with_parts(clock.clone(), registry);
         let exec = Mock::new(provider);
         mgr.register_executor(exec.clone());
-        Harness { mgr, clock, exec, registry }
+        Harness {
+            mgr,
+            clock,
+            exec,
+            registry,
+        }
     }
 
     fn config(&self, edit: impl FnOnce(&mut Config)) {
@@ -161,17 +202,31 @@ impl Harness {
         let provider = self.exec.id.clone();
         let mut auth = Auth::new(id, provider.clone());
         edit(&mut auth);
-        let infos: Vec<ModelInfo> = models.iter().map(|m| ModelInfo { id: (*m).into(), ..Default::default() }).collect();
+        let infos: Vec<ModelInfo> = models
+            .iter()
+            .map(|m| ModelInfo {
+                id: (*m).into(),
+                ..Default::default()
+            })
+            .collect();
         self.registry.register_client(id, &provider, &infos);
         self.mgr.register(auth).await.unwrap()
     }
 
     async fn run(&self, model: &str) -> Result<Response, ExecError> {
-        self.mgr.execute(&["mock".to_string()], request(model), Options::new(Format::OpenAI)).await
+        self.mgr
+            .execute(
+                &["mock".to_string()],
+                request(model),
+                Options::new(Format::OpenAI),
+            )
+            .await
     }
 
     async fn run_with(&self, model: &str, opts: Options) -> Result<Response, ExecError> {
-        self.mgr.execute(&["mock".to_string()], request(model), opts).await
+        self.mgr
+            .execute(&["mock".to_string()], request(model), opts)
+            .await
     }
 
     async fn payload(&self, model: &str) -> String {
@@ -180,7 +235,12 @@ impl Harness {
 }
 
 fn request(model: &str) -> Request {
-    Request { model: model.into(), payload: Bytes::from_static(b"{}"), format: Format::OpenAI, metadata: Default::default() }
+    Request {
+        model: model.into(),
+        payload: Bytes::from_static(b"{}"),
+        format: Format::OpenAI,
+        metadata: Default::default(),
+    }
 }
 
 fn status_err(status: u16, body: &str) -> ExecError {
@@ -259,7 +319,8 @@ async fn priority_tiers_use_lower_tier_only_when_higher_is_blocked() {
     for _ in 0..3 {
         assert_eq!(h.payload("m").await, "hi");
     }
-    h.exec.script("hi", vec![Step::Err(status_err(500, "boom"))]);
+    h.exec
+        .script("hi", vec![Step::Err(status_err(500, "boom"))]);
     // hi fails (transient cooldown) and the request falls to the lower tier.
     assert_eq!(h.payload("m").await, "lo");
     assert_eq!(h.payload("m").await, "lo");
@@ -288,7 +349,10 @@ async fn pinned_auth_and_disallow_free_metadata_filter_candidates() {
     let mut o = Options::new(Format::OpenAI);
     o.metadata.insert(meta::PINNED_AUTH_ID.into(), "b".into());
     for _ in 0..3 {
-        assert_eq!(String::from_utf8(h.run_with("m", o.clone()).await.unwrap().payload.to_vec()).unwrap(), "b");
+        assert_eq!(
+            String::from_utf8(h.run_with("m", o.clone()).await.unwrap().payload.to_vec()).unwrap(),
+            "b"
+        );
     }
 }
 
@@ -298,7 +362,12 @@ async fn pinned_auth_and_disallow_free_metadata_filter_candidates() {
 async fn quota_429_cools_with_retry_after_floor_then_recovers() {
     let h = Harness::new();
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(429, "slow down").with_retry_after(Duration::from_secs(30)))]);
+    h.exec.script(
+        "a",
+        vec![Step::Err(
+            status_err(429, "slow down").with_retry_after(Duration::from_secs(30)),
+        )],
+    );
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 429);
     assert_eq!(h.exec.count("a"), 1);
@@ -337,7 +406,9 @@ async fn backoff_ladder_escalates_per_failure_window() {
         let st = h.mgr.get("a").unwrap();
         let next = st.model_states["m"].next_retry_after.unwrap();
         windows.push((next - before).num_seconds());
-        h.clock.advance(Duration::from_secs((next - before).num_seconds() as u64 + 1));
+        h.clock.advance(Duration::from_secs(
+            (next - before).num_seconds() as u64 + 1,
+        ));
     }
     assert_eq!(windows, [1, 2, 4, 8]);
 }
@@ -346,10 +417,17 @@ async fn backoff_ladder_escalates_per_failure_window() {
 async fn disable_cooling_keeps_credential_eligible() {
     let h = Harness::new();
     h.add("a", &["m"], |a| {
-        a.metadata.insert("disable_cooling".into(), serde_json::json!(true));
+        a.metadata
+            .insert("disable_cooling".into(), serde_json::json!(true));
     })
     .await;
-    h.exec.script("a", vec![Step::Err(status_err(429, "q")), Step::Err(status_err(429, "q"))]);
+    h.exec.script(
+        "a",
+        vec![
+            Step::Err(status_err(429, "q")),
+            Step::Err(status_err(429, "q")),
+        ],
+    );
     assert!(h.run("m").await.is_err());
     assert!(h.run("m").await.is_err());
     assert_eq!(h.payload("m").await, "a");
@@ -363,7 +441,12 @@ async fn cooldown_state_survives_restart_via_file_store() {
     let h = Harness::new();
     h.mgr.set_cooldown_state_store(Some(store.clone()));
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(429, "q").with_retry_after(Duration::from_secs(120)))]);
+    h.exec.script(
+        "a",
+        vec![Step::Err(
+            status_err(429, "q").with_retry_after(Duration::from_secs(120)),
+        )],
+    );
     assert!(h.run("m").await.is_err());
     h.mgr.persist_cooldown_states().await;
 
@@ -397,32 +480,55 @@ async fn reset_quota_clears_cooldown_and_resumes_registry() {
 async fn unauthorized_refreshes_once_then_retries_same_credential() {
     let h = Harness::new();
     h.add("a", &["m"], |a| {
-        a.metadata.insert("access_token".into(), serde_json::json!("stale"));
-        a.metadata.insert("refresh_token".into(), serde_json::json!("rt"));
+        a.metadata
+            .insert("access_token".into(), serde_json::json!("stale"));
+        a.metadata
+            .insert("refresh_token".into(), serde_json::json!("rt"));
     })
     .await;
-    h.exec.script("a", vec![Step::Err(status_err(401, "expired")), Step::Ok("ok-after-refresh")]);
+    h.exec.script(
+        "a",
+        vec![
+            Step::Err(status_err(401, "expired")),
+            Step::Ok("ok-after-refresh"),
+        ],
+    );
     assert_eq!(h.payload("m").await, "ok-after-refresh");
     assert_eq!(h.exec.refreshes.lock().len(), 1);
     assert_eq!(h.exec.count("a"), 2);
     let st = h.mgr.get("a").unwrap();
     assert_eq!(st.access_token(), "fresh-token");
     assert!(st.last_refreshed_at.is_some());
-    assert_eq!(st.failed, 0, "the 401 was recovered before a failure was recorded");
+    assert_eq!(
+        st.failed, 0,
+        "the 401 was recovered before a failure was recorded"
+    );
 }
 
 #[tokio::test]
 async fn second_unauthorized_after_refresh_fails_over_and_cools() {
     let h = Harness::new();
     h.add("a", &["m"], |a| {
-        a.metadata.insert("access_token".into(), serde_json::json!("stale"));
-        a.metadata.insert("refresh_token".into(), serde_json::json!("rt"));
+        a.metadata
+            .insert("access_token".into(), serde_json::json!("stale"));
+        a.metadata
+            .insert("refresh_token".into(), serde_json::json!("rt"));
     })
     .await;
     h.add("b", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(401, "bad")), Step::Err(status_err(401, "still bad"))]);
+    h.exec.script(
+        "a",
+        vec![
+            Step::Err(status_err(401, "bad")),
+            Step::Err(status_err(401, "still bad")),
+        ],
+    );
     assert_eq!(h.payload("m").await, "b");
-    assert_eq!(h.exec.refreshes.lock().len(), 1, "refresh is attempted once per attempt");
+    assert_eq!(
+        h.exec.refreshes.lock().len(),
+        1,
+        "refresh is attempted once per attempt"
+    );
     let st = h.mgr.get("a").unwrap();
     assert!(is_auth_blocked_for_model(&st, "m", h.clock.now()).blocked);
 }
@@ -434,9 +540,12 @@ async fn due_credentials_refresh_by_provider_lead() {
     let later = (t0() + chrono::Duration::hours(10)).to_rfc3339();
     for (id, exp) in [("due", soon), ("fresh", later)] {
         let mut auth = Auth::new(id, "claude");
-        auth.metadata.insert("access_token".into(), serde_json::json!("opaque"));
-        auth.metadata.insert("refresh_token".into(), serde_json::json!("rt"));
-        auth.metadata.insert("expired".into(), serde_json::json!(exp));
+        auth.metadata
+            .insert("access_token".into(), serde_json::json!("opaque"));
+        auth.metadata
+            .insert("refresh_token".into(), serde_json::json!("rt"));
+        auth.metadata
+            .insert("expired".into(), serde_json::json!(exp));
         h.mgr.register(auth).await.unwrap();
     }
     assert_eq!(h.mgr.refresh_due_auths().await, 1);
@@ -453,12 +562,21 @@ async fn request_invalid_errors_return_without_failover_or_cooldown() {
     h.add("a", &["m"], |_| {}).await;
     h.add("b", &["m"], |_| {}).await;
     h.config(|c| c.request_retry = 3);
-    h.exec.script("a", vec![Step::Err(status_err(400, r#"{"error":{"type":"invalid_request_error","message":"bad"}}"#))]);
+    h.exec.script(
+        "a",
+        vec![Step::Err(status_err(
+            400,
+            r#"{"error":{"type":"invalid_request_error","message":"bad"}}"#,
+        ))],
+    );
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 400);
     assert_eq!(h.exec.call_ids(), ["a"]);
     let st = h.mgr.get("a").unwrap();
-    assert!(!st.unavailable && st.model_states.is_empty(), "request-scoped failure must not cool the credential");
+    assert!(
+        !st.unavailable && st.model_states.is_empty(),
+        "request-scoped failure must not cool the credential"
+    );
     assert_eq!(st.failed, 1);
 }
 
@@ -474,7 +592,10 @@ async fn request_scoped_stop_rule_ends_the_call_without_retry_rounds() {
     })
     .await;
     h.add("b", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(500, "blocked by content filter"))]);
+    h.exec.script(
+        "a",
+        vec![Step::Err(status_err(500, "blocked by content filter"))],
+    );
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 500);
     assert_eq!(h.exec.call_ids(), ["a"]);
@@ -495,9 +616,18 @@ async fn continue_rule_rotates_without_cooling_and_cooldown_variant_cools() {
     })
     .await;
     h.add("b", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(500, "soft failure")), Step::Err(status_err(500, "hard failure"))]);
+    h.exec.script(
+        "a",
+        vec![
+            Step::Err(status_err(500, "soft failure")),
+            Step::Err(status_err(500, "hard failure")),
+        ],
+    );
     assert_eq!(h.payload("m").await, "b");
-    assert!(h.mgr.get("a").unwrap().model_states.is_empty(), "continue does not cool");
+    assert!(
+        h.mgr.get("a").unwrap().model_states.is_empty(),
+        "continue does not cool"
+    );
     // b is next in rotation, then a again (hard failure forces a cooldown).
     assert_eq!(h.payload("m").await, "b");
     assert_eq!(h.payload("m").await, "b");
@@ -510,14 +640,28 @@ async fn retry_rounds_respect_per_credential_limits() {
     h.config(|c| c.request_retry = 3);
     for (id, limit) in [("retry-a", 3), ("retry-b", 2), ("retry-c", 2)] {
         h.add(id, &["m"], |a| {
-            a.metadata.insert("request_retry".into(), serde_json::json!(limit));
-            a.metadata.insert("disable_cooling".into(), serde_json::json!(true));
+            a.metadata
+                .insert("request_retry".into(), serde_json::json!(limit));
+            a.metadata
+                .insert("disable_cooling".into(), serde_json::json!(true));
         })
         .await;
-        h.exec.script(id, (0..10).map(|_| Step::Err(status_err(500, "fail"))).collect());
+        h.exec.script(
+            id,
+            (0..10)
+                .map(|_| Step::Err(status_err(500, "fail")))
+                .collect(),
+        );
     }
     assert!(h.run("m").await.is_err());
-    assert_eq!((h.exec.count("retry-a"), h.exec.count("retry-b"), h.exec.count("retry-c")), (4, 3, 3));
+    assert_eq!(
+        (
+            h.exec.count("retry-a"),
+            h.exec.count("retry-b"),
+            h.exec.count("retry-c")
+        ),
+        (4, 3, 3)
+    );
 }
 
 #[tokio::test]
@@ -529,11 +673,18 @@ async fn max_retry_credentials_bounds_each_round_and_ages_skipped_credentials() 
     });
     for (id, limit) in [("cap-a", 1), ("cap-b", 1), ("cap-c", 1), ("cap-d", 2)] {
         h.add(id, &["m"], |a| {
-            a.metadata.insert("request_retry".into(), serde_json::json!(limit));
-            a.metadata.insert("disable_cooling".into(), serde_json::json!(true));
+            a.metadata
+                .insert("request_retry".into(), serde_json::json!(limit));
+            a.metadata
+                .insert("disable_cooling".into(), serde_json::json!(true));
         })
         .await;
-        h.exec.script(id, (0..10).map(|_| Step::Err(status_err(500, "fail"))).collect());
+        h.exec.script(
+            id,
+            (0..10)
+                .map(|_| Step::Err(status_err(500, "fail")))
+                .collect(),
+        );
     }
     assert!(h.run("m").await.is_err());
     let calls = h.exec.call_ids();
@@ -551,14 +702,20 @@ async fn retry_round_waits_for_cooldown_within_max_retry_interval() {
     h.add("a", &["m"], |_| {}).await;
     h.exec.script(
         "a",
-        vec![Step::Err(status_err(429, "q").with_retry_after(Duration::from_secs(12))), Step::Ok("recovered")],
+        vec![
+            Step::Err(status_err(429, "q").with_retry_after(Duration::from_secs(12))),
+            Step::Ok("recovered"),
+        ],
     );
     let resp = h.run("m").await.unwrap();
     assert_eq!(resp.payload, "recovered");
     let sleeps = h.clock.sleeps();
     assert_eq!(sleeps.len(), 1);
     // A 10s floor / 12s retry-after plus jitter bounded by 2s and by max-retry-interval.
-    assert!(sleeps[0] >= Duration::from_secs(12) && sleeps[0] <= Duration::from_secs(14), "{sleeps:?}");
+    assert!(
+        sleeps[0] >= Duration::from_secs(12) && sleeps[0] <= Duration::from_secs(14),
+        "{sleeps:?}"
+    );
 }
 
 #[tokio::test]
@@ -569,7 +726,12 @@ async fn retry_round_does_not_wait_longer_than_max_retry_interval() {
         c.max_retry_interval = 5;
     });
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(429, "q").with_retry_after(Duration::from_secs(60)))]);
+    h.exec.script(
+        "a",
+        vec![Step::Err(
+            status_err(429, "q").with_retry_after(Duration::from_secs(60)),
+        )],
+    );
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 429);
     assert!(h.clock.sleeps().is_empty());
@@ -580,10 +742,15 @@ async fn retry_round_does_not_wait_longer_than_max_retry_interval() {
 async fn pick_failure_after_an_attempt_reports_the_upstream_error_not_no_auth() {
     let h = Harness::new();
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Err(status_err(503, "upstream overloaded"))]);
+    h.exec
+        .script("a", vec![Step::Err(status_err(503, "upstream overloaded"))]);
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 503);
-    assert!(err.message.contains("upstream overloaded"), "{}", err.message);
+    assert!(
+        err.message.contains("upstream overloaded"),
+        "{}",
+        err.message
+    );
     assert!(err.auth_code.is_none());
 }
 
@@ -593,7 +760,11 @@ async fn count_tokens_uses_the_same_selection_and_failover() {
     h.add("a", &["m"], |_| {}).await;
     h.add("b", &["m"], |_| {}).await;
     h.exec.script("a", vec![Step::Err(status_err(500, "x"))]);
-    let r = h.mgr.execute_count(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
+    let r = h
+        .mgr
+        .execute_count(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
     assert_eq!(r.payload, "b");
 }
 
@@ -606,7 +777,10 @@ async fn run_session(h: &Harness, body: &'static str) -> Result<Response, ExecEr
 async fn drain(mut s: StreamResult) -> Vec<Result<String, String>> {
     let mut out = Vec::new();
     while let Some(c) = s.chunks.recv().await {
-        out.push(c.map(|b| String::from_utf8(b.to_vec()).unwrap()).map_err(|e| e.message));
+        out.push(
+            c.map(|b| String::from_utf8(b.to_vec()).unwrap())
+                .map_err(|e| e.message),
+        );
     }
     out
 }
@@ -617,8 +791,15 @@ async fn stream_fails_over_only_before_the_first_payload() {
     h.add("a", &["m"], |_| {}).await;
     h.add("b", &["m"], |_| {}).await;
     // Bootstrap failure on a (error before any payload): b serves the stream.
-    h.exec.script("a", vec![Step::Stream(vec![Err(status_err(502, "bad gateway"))])]);
-    let stream = h.mgr.execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
+    h.exec.script(
+        "a",
+        vec![Step::Stream(vec![Err(status_err(502, "bad gateway"))])],
+    );
+    let stream = h
+        .mgr
+        .execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
     assert_eq!(drain(stream).await, vec![Ok("b".to_string())]);
     assert_eq!(h.exec.call_ids(), ["a", "b"]);
 
@@ -627,7 +808,11 @@ async fn stream_fails_over_only_before_the_first_payload() {
     h.add("a", &["m"], |_| {}).await;
     h.add("b", &["m"], |_| {}).await;
     h.exec.script("a", vec![Step::Stream(vec![])]);
-    let stream = h.mgr.execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
+    let stream = h
+        .mgr
+        .execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
     assert_eq!(drain(stream).await, vec![Ok("b".to_string())]);
 }
 
@@ -638,9 +823,17 @@ async fn stream_error_after_first_chunk_is_in_band_and_never_replayed() {
     h.add("b", &["m"], |_| {}).await;
     h.exec.script(
         "a",
-        vec![Step::Stream(vec![Ok("first"), Ok("second"), Err(status_err(500, "mid-stream failure"))])],
+        vec![Step::Stream(vec![
+            Ok("first"),
+            Ok("second"),
+            Err(status_err(500, "mid-stream failure")),
+        ])],
     );
-    let stream = h.mgr.execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
+    let stream = h
+        .mgr
+        .execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
     let chunks = drain(stream).await;
     assert_eq!(chunks.len(), 3);
     assert_eq!(chunks[0], Ok("first".to_string()));
@@ -657,9 +850,17 @@ async fn stream_error_after_first_chunk_is_in_band_and_never_replayed() {
 async fn successful_stream_records_success_when_it_ends() {
     let h = Harness::new();
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Stream(vec![Ok("x"), Ok("y")])]);
-    let stream = h.mgr.execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
-    assert_eq!(drain(stream).await, vec![Ok("x".to_string()), Ok("y".to_string())]);
+    h.exec
+        .script("a", vec![Step::Stream(vec![Ok("x"), Ok("y")])]);
+    let stream = h
+        .mgr
+        .execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
+    assert_eq!(
+        drain(stream).await,
+        vec![Ok("x".to_string()), Ok("y".to_string())]
+    );
     tokio::task::yield_now().await;
     assert_eq!(h.mgr.get("a").unwrap().success, 1);
 }
@@ -668,8 +869,15 @@ async fn successful_stream_records_success_when_it_ends() {
 async fn all_bootstrap_failures_surface_as_an_error_stream_with_upstream_headers() {
     let h = Harness::new();
     h.add("a", &["m"], |_| {}).await;
-    h.exec.script("a", vec![Step::Stream(vec![Err(status_err(502, "bad gateway"))])]);
-    let stream = h.mgr.execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI)).await.unwrap();
+    h.exec.script(
+        "a",
+        vec![Step::Stream(vec![Err(status_err(502, "bad gateway"))])],
+    );
+    let stream = h
+        .mgr
+        .execute_stream(&["mock".into()], request("m"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
     assert_eq!(drain(stream).await, vec![Err("bad gateway".to_string())]);
 }
 
@@ -681,16 +889,25 @@ async fn oauth_alias_routes_to_upstream_model_and_force_mapping_rewrites_respons
     h.config(|c| {
         c.oauth_model_alias.insert(
             "mock".into(),
-            vec![OAuthModelAlias { name: "up-model".into(), alias: "friendly".into(), force_mapping: true, ..Default::default() }],
+            vec![OAuthModelAlias {
+                name: "up-model".into(),
+                alias: "friendly".into(),
+                force_mapping: true,
+                ..Default::default()
+            }],
         );
     });
     h.add("a", &["friendly"], |_| {}).await;
-    h.exec.script("a", vec![Step::Ok(r#"{"model":"up-model","id":1}"#)]);
+    h.exec
+        .script("a", vec![Step::Ok(r#"{"model":"up-model","id":1}"#)]);
     let resp = h.run("friendly(8192)").await;
     // The registry knows `friendly`; a thinking suffix is stripped for matching and kept upstream.
     let resp = resp.unwrap();
     assert_eq!(h.exec.calls.lock()[0].1, "up-model(8192)");
-    assert_eq!(String::from_utf8(resp.payload.to_vec()).unwrap(), r#"{"model":"friendly(8192)","id":1}"#.replace("friendly(8192)", "friendly"));
+    assert_eq!(
+        String::from_utf8(resp.payload.to_vec()).unwrap(),
+        r#"{"model":"friendly(8192)","id":1}"#.replace("friendly(8192)", "friendly")
+    );
 }
 
 #[tokio::test]
@@ -710,33 +927,50 @@ async fn prefix_is_stripped_before_the_executor_and_state_is_keyed_by_upstream_n
 async fn api_key_alias_pool_rotates_and_falls_through_on_failure() {
     let h = Harness::with_executor("openai-compatible-mock");
     h.config(|c| {
-        c.openai_compatibility.push(cpa_config::OpenAiCompatibility {
-            name: "mock".into(),
-            models: vec![
-                cpa_config::OpenAiCompatibilityModel { name: "up-1".into(), alias: "pooled".into(), ..Default::default() },
-                cpa_config::OpenAiCompatibilityModel { name: "up-2".into(), alias: "pooled".into(), ..Default::default() },
-            ],
-            ..Default::default()
-        });
+        c.openai_compatibility
+            .push(cpa_config::OpenAiCompatibility {
+                name: "mock".into(),
+                models: vec![
+                    cpa_config::OpenAiCompatibilityModel {
+                        name: "up-1".into(),
+                        alias: "pooled".into(),
+                        ..Default::default()
+                    },
+                    cpa_config::OpenAiCompatibilityModel {
+                        name: "up-2".into(),
+                        alias: "pooled".into(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            });
     });
     h.add("a", &["pooled"], |a| {
         a.provider = "openai-compatibility".into();
         a.attributes.insert("compat_name".into(), "mock".into());
         a.attributes.insert("api_key".into(), "k".into());
-        a.attributes.insert("source".into(), "config:openai-compatibility[abc]".into());
+        a.attributes
+            .insert("source".into(), "config:openai-compatibility[abc]".into());
     })
     .await;
     let providers = ["openai-compatible-mock".to_string()];
-    let run = || h.mgr.execute(&providers, request("pooled"), Options::new(Format::OpenAI));
+    let run = || {
+        h.mgr
+            .execute(&providers, request("pooled"), Options::new(Format::OpenAI))
+    };
     run().await.unwrap();
     run().await.unwrap();
     let models: Vec<String> = h.exec.calls.lock().iter().map(|(_, m)| m.clone()).collect();
     assert_eq!(models, ["up-1", "up-2"], "pool rotates its starting model");
     // First pooled model fails: the second one serves within the same attempt.
-    h.exec.script("a", vec![Step::Err(status_err(500, "pool member down"))]);
+    h.exec
+        .script("a", vec![Step::Err(status_err(500, "pool member down"))]);
     let before = h.exec.calls.lock().len();
     run().await.unwrap();
-    let models: Vec<String> = h.exec.calls.lock()[before..].iter().map(|(_, m)| m.clone()).collect();
+    let models: Vec<String> = h.exec.calls.lock()[before..]
+        .iter()
+        .map(|(_, m)| m.clone())
+        .collect();
     assert_eq!(models, ["up-1", "up-2"]);
 }
 
@@ -755,26 +989,44 @@ async fn session_affinity_sticks_fails_over_and_expires() {
     let body = r#"{"prompt_cache_key":"sess-1","messages":[{"role":"user","content":"hi"}]}"#;
     let first = String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap();
     for _ in 0..4 {
-        assert_eq!(String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap(), first, "session sticks");
+        assert_eq!(
+            String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap(),
+            first,
+            "session sticks"
+        );
     }
     // A different session is distributed by the fallback strategy.
     let other = String::from_utf8(
-        h.run_with("m", opts_with_body(r#"{"prompt_cache_key":"sess-2"}"#)).await.unwrap().payload.to_vec(),
+        h.run_with("m", opts_with_body(r#"{"prompt_cache_key":"sess-2"}"#))
+            .await
+            .unwrap()
+            .payload
+            .to_vec(),
     )
     .unwrap();
     assert_ne!(other, first);
 
     // The bound credential failing rebinds the session to another credential.
-    h.exec.script(&first, vec![Step::Err(status_err(500, "down"))]);
+    h.exec
+        .script(&first, vec![Step::Err(status_err(500, "down"))]);
     let moved = String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap();
     assert_ne!(moved, first);
     for _ in 0..3 {
-        assert_eq!(String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap(), moved);
+        assert_eq!(
+            String::from_utf8(run_session(&h, body).await.unwrap().payload.to_vec()).unwrap(),
+            moved
+        );
     }
     // After the TTL the binding lapses (the fallback strategy decides again).
     h.clock.advance(Duration::from_secs(11));
     let sel = h.mgr.selector();
-    assert!(sel.affinity().unwrap().cache().get("mixed::pck:sess-1::m").is_none());
+    assert!(
+        sel.affinity()
+            .unwrap()
+            .cache()
+            .get("mixed::pck:sess-1::m")
+            .is_none()
+    );
 }
 
 #[tokio::test]
@@ -782,11 +1034,16 @@ async fn lookup_session_affinity_reports_bound_credential() {
     let h = Harness::new();
     h.config(|c| c.routing.session_affinity = true);
     h.add("a", &["m"], |_| {}).await;
-    h.run_with("m", opts_with_body(r#"{"prompt_cache_key":"look"}"#)).await.unwrap();
+    h.run_with("m", opts_with_body(r#"{"prompt_cache_key":"look"}"#))
+        .await
+        .unwrap();
     let (auth, status) = h.mgr.lookup_session_affinity("mixed", "m", "pck:look");
     assert_eq!(status, "bound");
     assert_eq!(auth.unwrap().id, "a");
-    assert_eq!(h.mgr.lookup_session_affinity("mixed", "m", "missing").1, "unbound");
+    assert_eq!(
+        h.mgr.lookup_session_affinity("mixed", "m", "missing").1,
+        "unbound"
+    );
 }
 
 // ---- Lifecycle ----
@@ -798,11 +1055,17 @@ async fn update_upserts_and_keeps_counters_and_credential_cooldown() {
     assert_eq!((a.registration_epoch, a.generation), (1, 1));
     h.payload("m").await;
     let mut edited = h.mgr.get("a").unwrap();
-    edited.metadata.insert("note".into(), serde_json::json!("hello"));
+    edited
+        .metadata
+        .insert("note".into(), serde_json::json!("hello"));
     let updated = h.mgr.update(edited).await.unwrap();
     assert_eq!(updated.registration_epoch, 1);
     assert!(updated.generation > 1);
-    assert_eq!(h.mgr.get("a").unwrap().success, 1, "counters survive an update");
+    assert_eq!(
+        h.mgr.get("a").unwrap().success,
+        1,
+        "counters survive an update"
+    );
     // Unknown ids register.
     let fresh = h.mgr.update(Auth::new("new", "mock")).await.unwrap();
     assert_eq!(fresh.registration_epoch, 1);
@@ -826,7 +1089,13 @@ async fn error_enrichment_adds_routing_context() {
     let h = Harness::new();
     let err = h.run("nothing-registered").await.unwrap_err();
     let enriched = enrich_auth_selection_error(err, &["claude".into()], "nothing-registered");
-    assert!(enriched.message.contains("providers=claude, model=nothing-registered"), "{}", enriched.message);
+    assert!(
+        enriched
+            .message
+            .contains("providers=claude, model=nothing-registered"),
+        "{}",
+        enriched.message
+    );
     assert!(enriched.message.contains("/v0/management/auth-files"));
 }
 
@@ -858,7 +1127,11 @@ fn mark_failure(h: &Harness, auth_id: &str, model: &str, status: i32, retry_afte
         success: false,
         retry_after: Some(retry_after),
         credential_scope: false,
-        error: Some(cpa_auth::types::AuthError { http_status: status, message: "limited".into(), ..Default::default() }),
+        error: Some(cpa_auth::types::AuthError {
+            http_status: status,
+            message: "limited".into(),
+            ..Default::default()
+        }),
         options: Options::new(Format::OpenAI),
         skip_quota_observation: true,
         response_headers: Default::default(),
@@ -876,7 +1149,12 @@ async fn alias_quota_failover_with_unobserved_target_model_for_every_strategy() 
                 c.max_retry_interval = 30;
                 c.oauth_model_alias.insert(
                     "mock".into(),
-                    vec![OAuthModelAlias { name: "quota-target".into(), alias: "quota-route".into(), fork: true, ..Default::default() }],
+                    vec![OAuthModelAlias {
+                        name: "quota-target".into(),
+                        alias: "quota-route".into(),
+                        fork: true,
+                        ..Default::default()
+                    }],
                 );
             });
             for (id, prio) in [("high", "4"), ("low", "3")] {
@@ -895,19 +1173,40 @@ async fn alias_quota_failover_with_unobserved_target_model_for_every_strategy() 
             h.exec.script(
                 "high",
                 vec![Step::Err(
-                    status_err(429, "account quota exhausted").with_retry_after(Duration::from_secs(3600)).with_credential_scope(),
+                    status_err(429, "account quota exhausted")
+                        .with_retry_after(Duration::from_secs(3600))
+                        .with_credential_scope(),
                 )],
             );
             let providers = ["mock".to_string()];
             let payload = if stream {
-                let s = h.mgr.execute_stream(&providers, request("quota-route"), Options::new(Format::OpenAI)).await.unwrap();
-                drain(s).await.into_iter().map(|c| c.unwrap()).collect::<String>()
+                let s = h
+                    .mgr
+                    .execute_stream(
+                        &providers,
+                        request("quota-route"),
+                        Options::new(Format::OpenAI),
+                    )
+                    .await
+                    .unwrap();
+                drain(s)
+                    .await
+                    .into_iter()
+                    .map(|c| c.unwrap())
+                    .collect::<String>()
             } else {
                 h.payload("quota-route").await
             };
             assert_eq!(payload, "low", "{strategy} stream={stream}");
-            assert_eq!(h.exec.call_ids(), ["high", "low"], "{strategy} stream={stream}");
-            assert!(h.exec.calls.lock().iter().all(|(_, m)| m == "quota-target"), "upstream model is the alias target");
+            assert_eq!(
+                h.exec.call_ids(),
+                ["high", "low"],
+                "{strategy} stream={stream}"
+            );
+            assert!(
+                h.exec.calls.lock().iter().all(|(_, m)| m == "quota-target"),
+                "upstream model is the alias target"
+            );
         }
     }
 }
@@ -918,7 +1217,12 @@ async fn alias_request_is_not_blocked_by_other_model_cooldown_but_by_its_own_tar
     h.config(|c| {
         c.oauth_model_alias.insert(
             "mock".into(),
-            vec![OAuthModelAlias { name: "target".into(), alias: "route".into(), fork: true, ..Default::default() }],
+            vec![OAuthModelAlias {
+                name: "target".into(),
+                alias: "route".into(),
+                fork: true,
+                ..Default::default()
+            }],
         );
     });
     h.add("a", &["route", "target", "image"], |_| {}).await;
@@ -931,7 +1235,13 @@ async fn alias_request_is_not_blocked_by_other_model_cooldown_but_by_its_own_tar
     assert_eq!(err.auth_code.as_deref(), Some("model_cooldown"));
     let v: serde_json::Value = serde_json::from_str(&err.message).unwrap();
     assert_eq!(v["error"]["model"], "route");
-    assert_eq!(h.mgr.select_auth("mock", "route", &Options::new(Format::OpenAI)).unwrap_err().status, 429);
+    assert_eq!(
+        h.mgr
+            .select_auth("mock", "route", &Options::new(Format::OpenAI))
+            .unwrap_err()
+            .status,
+        429
+    );
 }
 
 // ---- Retry-storm guards (Go: conductor_subsecond_cooldown_test) ----
@@ -944,7 +1254,12 @@ fn expired_state_edit(model: &'static str, at: DateTime<Utc>) -> impl FnOnce(&mu
                 status: cpa_auth::types::Status::Error,
                 unavailable: true,
                 next_retry_after: Some(at),
-                quota: cpa_auth::types::QuotaState { exceeded: true, reason: "quota".into(), next_recover_at: Some(at), ..Default::default() },
+                quota: cpa_auth::types::QuotaState {
+                    exceeded: true,
+                    reason: "quota".into(),
+                    next_recover_at: Some(at),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         );
@@ -961,7 +1276,17 @@ async fn subsecond_retry_after_is_floored_so_rounds_do_not_storm() {
     });
     for id in ["storm-1", "storm-2"] {
         h.add(id, &["m"], |_| {}).await;
-        h.exec.script(id, (0..10).map(|_| Step::Err(status_err(429, "quota exhausted").with_retry_after(Duration::from_millis(708)))).collect());
+        h.exec.script(
+            id,
+            (0..10)
+                .map(|_| {
+                    Step::Err(
+                        status_err(429, "quota exhausted")
+                            .with_retry_after(Duration::from_millis(708)),
+                    )
+                })
+                .collect(),
+        );
     }
     let err = h.run("m").await.unwrap_err();
     assert_eq!(err.status, 429);
@@ -978,15 +1303,29 @@ async fn attempted_credential_after_429_never_gets_a_zero_wait_round() {
     let elig = pick::Eligibility::default();
     let providers = ["mock".to_string()];
     // Untried credential with an expired cooldown is available immediately.
-    let untried = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &Default::default());
+    let untried =
+        h.mgr
+            .closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &Default::default());
     assert_eq!(untried, Some(Duration::ZERO));
     // The same credential after failing this round with 429 must wait at least the quota floor.
     let attempted: std::collections::HashSet<String> = ["a".to_string()].into();
-    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted).unwrap();
+    let wait = h
+        .mgr
+        .closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted)
+        .unwrap();
     assert!(wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR, "{wait:?}");
     // And should_retry honors a large max wait with that positive wait.
     let err = status_err(429, "RESOURCE_EXHAUSTED");
-    let (wait, retry) = h.mgr.should_retry_after_error(&err, 0, &providers, "m", Duration::from_secs(30), 5, &attempted, &Default::default());
+    let (wait, retry) = h.mgr.should_retry_after_error(
+        &err,
+        0,
+        &providers,
+        "m",
+        Duration::from_secs(30),
+        5,
+        &attempted,
+        &Default::default(),
+    );
     assert!(retry && wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR);
 }
 
@@ -995,23 +1334,30 @@ async fn provider_cooling_override_allows_immediate_retry_round() {
     let h = Harness::with_executor("openai-compatibility");
     let expired = t0() - chrono::Duration::seconds(5);
     h.add("a", &["m"], |a| {
-        a.attributes.insert("provider_key".into(), "custom-llm".into());
+        a.attributes
+            .insert("provider_key".into(), "custom-llm".into());
         expired_state_edit("m", expired)(a);
     })
     .await;
     let elig = pick::Eligibility::default();
     let providers = ["openai-compatibility".to_string()];
     let attempted: std::collections::HashSet<String> = ["a".to_string()].into();
-    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted).unwrap();
+    let wait = h
+        .mgr
+        .closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted)
+        .unwrap();
     assert!(wait >= cooldown::MIN_QUOTA_COOLDOWN_FLOOR);
     h.config(|c| {
-        c.openai_compatibility.push(cpa_config::OpenAiCompatibility {
-            name: "custom-llm".into(),
-            disable_cooling: Some(true),
-            ..Default::default()
-        });
+        c.openai_compatibility
+            .push(cpa_config::OpenAiCompatibility {
+                name: "custom-llm".into(),
+                disable_cooling: Some(true),
+                ..Default::default()
+            });
     });
-    let wait = h.mgr.closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted);
+    let wait = h
+        .mgr
+        .closest_cooldown_wait(&providers, "m", 0, &elig, "", 5, 429, &attempted);
     assert_eq!(wait, Some(Duration::ZERO));
 }
 
@@ -1022,7 +1368,10 @@ async fn later_shorter_failure_keeps_the_longer_model_deadline() {
     mark_failure(&h, "a", "m", 429, Duration::from_secs(600));
     let long = h.mgr.get("a").unwrap().model_states["m"].next_retry_after;
     mark_failure(&h, "a", "m", 429, Duration::from_secs(15));
-    assert_eq!(h.mgr.get("a").unwrap().model_states["m"].next_retry_after, long);
+    assert_eq!(
+        h.mgr.get("a").unwrap().model_states["m"].next_retry_after,
+        long
+    );
     // Credential-scope failures extend siblings but never shorten them.
     let r = cooldown::ExecResult {
         auth_id: "a".into(),
@@ -1032,7 +1381,11 @@ async fn later_shorter_failure_keeps_the_longer_model_deadline() {
         success: false,
         retry_after: Some(Duration::from_secs(30)),
         credential_scope: true,
-        error: Some(cpa_auth::types::AuthError { http_status: 429, message: "q".into(), ..Default::default() }),
+        error: Some(cpa_auth::types::AuthError {
+            http_status: 429,
+            message: "q".into(),
+            ..Default::default()
+        }),
         options: Options::new(Format::OpenAI),
         skip_quota_observation: true,
         response_headers: Default::default(),
@@ -1073,9 +1426,21 @@ async fn payload_only_requests_still_get_session_affinity() {
     let mut req = request("m");
     req.payload = Bytes::from_static(br#"{"prompt_cache_key":"payload-only"}"#);
     let providers = ["mock".to_string()];
-    let first = h.mgr.execute(&providers, req.clone(), Options::new(Format::OpenAI)).await.unwrap().payload;
+    let first = h
+        .mgr
+        .execute(&providers, req.clone(), Options::new(Format::OpenAI))
+        .await
+        .unwrap()
+        .payload;
     for _ in 0..3 {
-        assert_eq!(h.mgr.execute(&providers, req.clone(), Options::new(Format::OpenAI)).await.unwrap().payload, first);
+        assert_eq!(
+            h.mgr
+                .execute(&providers, req.clone(), Options::new(Format::OpenAI))
+                .await
+                .unwrap()
+                .payload,
+            first
+        );
     }
 }
 
@@ -1086,9 +1451,12 @@ async fn auto_refresh_loop_refreshes_due_credentials_once_and_backs_off() {
     let h = Harness::with_executor("claude");
     let soon = (t0() + chrono::Duration::hours(1)).to_rfc3339();
     let mut auth = Auth::new("loop-due", "claude");
-    auth.metadata.insert("access_token".into(), serde_json::json!("opaque"));
-    auth.metadata.insert("refresh_token".into(), serde_json::json!("rt"));
-    auth.metadata.insert("expired".into(), serde_json::json!(soon));
+    auth.metadata
+        .insert("access_token".into(), serde_json::json!("opaque"));
+    auth.metadata
+        .insert("refresh_token".into(), serde_json::json!("rt"));
+    auth.metadata
+        .insert("expired".into(), serde_json::json!(soon));
     h.mgr.register(auth).await.unwrap();
     h.mgr.start_auto_refresh(Duration::from_secs(1));
     for _ in 0..100 {
@@ -1105,7 +1473,10 @@ async fn auto_refresh_loop_refreshes_due_credentials_once_and_backs_off() {
     assert!(st.last_refreshed_at.is_some());
     // The mock does not move the expiry, so the refresh is "ineffective": the loop backs off 30s
     // instead of spinning.
-    assert_eq!(st.next_refresh_after, Some(t0() + chrono::Duration::seconds(30)));
+    assert_eq!(
+        st.next_refresh_after,
+        Some(t0() + chrono::Duration::seconds(30))
+    );
 }
 
 // ---- Antigravity credits fallback ----
@@ -1116,18 +1487,39 @@ async fn antigravity_credits_fallback_retries_claude_models_with_credits_flag() 
     h.config(|c| c.quota_exceeded.antigravity_credits = true);
     h.add("ag-1", &["claude-sonnet-4-6"], |_| {}).await;
     h.add("ag-2", &["claude-sonnet-4-6"], |_| {}).await;
-    set_antigravity_credits_hint("ag-2", AntigravityCreditsHint { known: true, available: true, ..Default::default() });
+    set_antigravity_credits_hint(
+        "ag-2",
+        AntigravityCreditsHint {
+            known: true,
+            available: true,
+            ..Default::default()
+        },
+    );
     for id in ["ag-1", "ag-2"] {
-        h.exec.script(id, vec![Step::Err(status_err(429, "quota").with_retry_after(Duration::from_secs(3600))), Step::Ok("with-credits")]);
+        h.exec.script(
+            id,
+            vec![
+                Step::Err(status_err(429, "quota").with_retry_after(Duration::from_secs(3600))),
+                Step::Ok("with-credits"),
+            ],
+        );
     }
     let resp = h
         .mgr
-        .execute(&["antigravity".to_string()], request("claude-sonnet-4-6"), Options::new(Format::OpenAI))
+        .execute(
+            &["antigravity".to_string()],
+            request("claude-sonnet-4-6"),
+            Options::new(Format::OpenAI),
+        )
         .await
         .unwrap();
     assert_eq!(resp.payload, "with-credits");
     assert_eq!(*h.exec.credit_flags.lock().last().unwrap(), true);
-    assert_eq!(h.exec.credit_flags.lock().iter().filter(|f| !**f).count(), 2, "both credentials were tried normally first");
+    assert_eq!(
+        h.exec.credit_flags.lock().iter().filter(|f| !**f).count(),
+        2,
+        "both credentials were tried normally first"
+    );
     // The credential known to have credits is preferred for the fallback.
     assert_eq!(h.exec.call_ids().last().map(String::as_str), Some("ag-2"));
 
@@ -1135,10 +1527,19 @@ async fn antigravity_credits_fallback_retries_claude_models_with_credits_flag() 
     let h2 = Harness::with_executor("antigravity");
     h2.config(|c| c.quota_exceeded.antigravity_credits = true);
     h2.add("ag-3", &["gemini-3-flash"], |_| {}).await;
-    h2.exec.script("ag-3", vec![Step::Err(status_err(429, "quota").with_retry_after(Duration::from_secs(3600)))]);
+    h2.exec.script(
+        "ag-3",
+        vec![Step::Err(
+            status_err(429, "quota").with_retry_after(Duration::from_secs(3600)),
+        )],
+    );
     let err = h2
         .mgr
-        .execute(&["antigravity".to_string()], request("gemini-3-flash"), Options::new(Format::OpenAI))
+        .execute(
+            &["antigravity".to_string()],
+            request("gemini-3-flash"),
+            Options::new(Format::OpenAI),
+        )
         .await
         .unwrap_err();
     assert_eq!(err.status, 429);

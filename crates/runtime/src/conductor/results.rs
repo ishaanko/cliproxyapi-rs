@@ -9,16 +9,19 @@ use cpa_auth::Auth;
 use cpa_auth::types::Status;
 use cpa_core::registry::ClientModelProjection;
 
+use super::Manager;
 use super::cooldown::{
-    CooldownView, ExecResult, apply_result, clear_cooldown_state_for_auth, cooldown_reason, cooldown_snapshot_for_auth,
-    existing_model_state, has_model_error, is_disabled, is_model_state_active_cooldown, model_state_is_clean, merge_model_state,
+    CooldownView, ExecResult, apply_result, clear_cooldown_state_for_auth, cooldown_reason,
+    cooldown_snapshot_for_auth, existing_model_state, has_model_error, is_disabled,
+    is_model_state_active_cooldown, merge_model_state, model_state_is_clean,
     normalize_model_states, reset_model_state, update_aggregated_availability,
 };
-use super::cooldown_state::{CooldownStateRecord, CooldownStateStore, records_equal, records_for_auth};
+use super::cooldown_state::{
+    CooldownStateRecord, CooldownStateStore, records_equal, records_for_auth,
+};
 use super::events::build_error_event_payload;
 use super::usage::{UsageFacts, build_usage_record};
 use super::util::{after, canonical_model_key, dedupe_strings};
-use super::Manager;
 
 impl Manager {
     /// Records an execution outcome: updates cooldown/quota state, registry availability, hooks and
@@ -56,7 +59,8 @@ impl Manager {
                 let policy = self.cooling_policy_for(auth);
                 apply_result(auth, &result, &model_key, now, policy);
                 if let Some(before) = before {
-                    cooldown_changed = !records_equal(&before, &self.cooldown_records_for(auth, now));
+                    cooldown_changed =
+                        !records_equal(&before, &self.cooldown_records_for(auth, now));
                 }
                 auth.clone()
             })
@@ -78,14 +82,25 @@ impl Manager {
         self.record_usage(&result, snapshot.as_ref(), facts.as_ref(), now);
     }
 
-    fn record_usage(&self, result: &ExecResult, snapshot: Option<&Auth>, facts: Option<&UsageFacts>, now: DateTime<Utc>) {
+    fn record_usage(
+        &self,
+        result: &ExecResult,
+        snapshot: Option<&Auth>,
+        facts: Option<&UsageFacts>,
+        now: DateTime<Utc>,
+    ) {
         let tracker = self.usage.read().clone();
         if let (Some(tracker), Some(facts)) = (tracker, facts) {
             tracker.record(build_usage_record(result, snapshot, facts, now));
         }
     }
 
-    fn publish_error_event(&self, result: &ExecResult, snapshot: Option<&Auth>, now: DateTime<Utc>) {
+    fn publish_error_event(
+        &self,
+        result: &ExecResult,
+        snapshot: Option<&Auth>,
+        now: DateTime<Utc>,
+    ) {
         if result.success {
             return;
         }
@@ -99,7 +114,11 @@ impl Manager {
 
     /// A failed attempt that must not suspend anything (compact-endpoint faults, count-tokens
     /// route 404s): counters, hook, event and usage only.
-    pub(crate) fn record_availability_neutral_result(&self, result: ExecResult, facts: Option<UsageFacts>) {
+    pub(crate) fn record_availability_neutral_result(
+        &self,
+        result: ExecResult,
+        facts: Option<UsageFacts>,
+    ) {
         if result.auth_id.is_empty() {
             return;
         }
@@ -130,7 +149,12 @@ impl Manager {
 
     /// Desired registry availability of one of the client's models (Go:
     /// clientModelProjectionForAuth).
-    pub(crate) fn client_model_projection_for_auth(&self, auth: &Auth, route_model: &str, now: DateTime<Utc>) -> ClientModelProjection {
+    pub(crate) fn client_model_projection_for_auth(
+        &self,
+        auth: &Auth,
+        route_model: &str,
+        now: DateTime<Utc>,
+    ) -> ClientModelProjection {
         let target = route_model.trim();
         if target.is_empty() {
             return ClientModelProjection::default();
@@ -141,7 +165,10 @@ impl Manager {
         }
         let state = existing_model_state(auth, &key);
         let mut suspended = is_disabled(auth);
-        if auth.quota.exceeded && auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
+        if auth.quota.exceeded
+            && auth.quota.reason == "credential_quota"
+            && after(auth.quota.next_recover_at, now)
+        {
             suspended = true;
         }
         let mut quota_exceeded = false;
@@ -150,7 +177,9 @@ impl Manager {
             if s.status == Status::Disabled || s.unavailable || after(s.next_retry_after, now) {
                 suspended = true;
             }
-            if s.quota.exceeded && (s.quota.next_recover_at.is_none() || after(s.quota.next_recover_at, now)) {
+            if s.quota.exceeded
+                && (s.quota.next_recover_at.is_none() || after(s.quota.next_recover_at, now))
+            {
                 quota_exceeded = true;
             }
             if suspended {
@@ -164,7 +193,12 @@ impl Manager {
         if suspended && reason.is_empty() {
             reason = cooldown_reason(&auth.status_message, &auth.quota, auth.last_error.as_ref());
         }
-        ClientModelProjection { model_id: target.to_string(), suspended, suspend_reason: reason, quota_exceeded }
+        ClientModelProjection {
+            model_id: target.to_string(),
+            suspended,
+            suspend_reason: reason,
+            quota_exceeded,
+        }
     }
 
     fn apply_projections_for(&self, snapshot: &Auth, now: DateTime<Utc>) {
@@ -175,7 +209,12 @@ impl Manager {
             .map(|m| self.client_model_projection_for_auth(snapshot, &m.id, now))
             .collect();
         if !projections.is_empty() {
-            self.registry.apply_client_model_projections(&snapshot.id, epoch, snapshot.generation, &projections);
+            self.registry.apply_client_model_projections(
+                &snapshot.id,
+                epoch,
+                snapshot.generation,
+                &projections,
+            );
         }
     }
 
@@ -195,7 +234,9 @@ impl Manager {
         let mut reg_epoch = 0;
         {
             let mut st = self.state.write();
-            let Some(auth) = st.auths.get_mut(auth_id) else { return };
+            let Some(auth) = st.auths.get_mut(auth_id) else {
+                return;
+            };
             let before = track_cooldown.then(|| self.cooldown_records_for(auth, now));
             for _ in 0..10 {
                 let (models, epoch) = self.registry.get_models_and_epoch_for_client(auth_id);
@@ -234,7 +275,9 @@ impl Manager {
                             continue;
                         }
                         let canonical_route = canonical_model_key(route_id);
-                        let Some(target) = route_to_target.get(&canonical_route).cloned() else { continue };
+                        let Some(target) = route_to_target.get(&canonical_route).cloned() else {
+                            continue;
+                        };
                         if target.is_empty() || canonical_route.is_empty() {
                             continue;
                         }
@@ -245,7 +288,9 @@ impl Manager {
                             }
                             for alias_key in alias_keys {
                                 if let Some(state) = tmp.model_states.get(&alias_key).cloned() {
-                                    if !model_state_is_clean(&state) || is_model_state_active_cooldown(&state, now) {
+                                    if !model_state_is_clean(&state)
+                                        || is_model_state_active_cooldown(&state, now)
+                                    {
                                         match tmp.model_states.get_mut(&target) {
                                             Some(existing) => merge_model_state(existing, &state),
                                             None => {
@@ -285,7 +330,9 @@ impl Manager {
                         changed = true;
                         continue;
                     }
-                    let Some(state) = tmp.model_states.get_mut(&model_key) else { continue };
+                    let Some(state) = tmp.model_states.get_mut(&model_key) else {
+                        continue;
+                    };
                     if model_state_is_clean(state) || is_model_state_active_cooldown(state, now) {
                         continue;
                     }
@@ -306,7 +353,8 @@ impl Manager {
                         auth.updated_at = Some(now);
                     }
                     if let Some(before) = &before {
-                        cooldown_changed = changed || !records_equal(before, &self.cooldown_records_for(auth, now));
+                        cooldown_changed = changed
+                            || !records_equal(before, &self.cooldown_records_for(auth, now));
                     }
                     snapshot = Some(auth.clone());
                     break;
@@ -319,7 +367,12 @@ impl Manager {
             .filter(|m| !m.id.trim().is_empty())
             .map(|m| self.client_model_projection_for_auth(&snapshot, &m.id, now))
             .collect();
-        self.registry.apply_client_model_projections(auth_id, reg_epoch, snapshot.generation, &projections);
+        self.registry.apply_client_model_projections(
+            auth_id,
+            reg_epoch,
+            snapshot.generation,
+            &projections,
+        );
         if cooldown_changed {
             self.persist_cooldown_states_detached();
         }
@@ -389,12 +442,20 @@ impl Manager {
     /// Unexpired local cooldown timers of one credential, for the management API.
     pub fn cooldown_snapshot(&self, auth_id: &str) -> Option<Vec<CooldownView>> {
         let now = self.now();
-        self.state.read().auths.get(auth_id).map(|a| cooldown_snapshot_for_auth(a, now))
+        self.state
+            .read()
+            .auths
+            .get(auth_id)
+            .map(|a| cooldown_snapshot_for_auth(a, now))
     }
 
     // ---- Cooldown persistence ----
 
-    pub(crate) fn cooldown_records_for(&self, auth: &Auth, now: DateTime<Utc>) -> Vec<CooldownStateRecord> {
+    pub(crate) fn cooldown_records_for(
+        &self,
+        auth: &Auth,
+        now: DateTime<Utc>,
+    ) -> Vec<CooldownStateRecord> {
         if auth.id.is_empty() || is_disabled(auth) || self.cooldown_disabled_for_auth(auth) {
             return Vec::new();
         }
@@ -404,9 +465,14 @@ impl Manager {
     fn cooldown_snapshot_records(&self) -> Vec<CooldownStateRecord> {
         let now = self.now();
         let st = self.state.read();
-        let mut records: Vec<CooldownStateRecord> =
-            st.auths.values().flat_map(|a| self.cooldown_records_for(a, now)).collect();
-        records.sort_by(|a, b| (&a.provider, &a.auth_id, &a.model).cmp(&(&b.provider, &b.auth_id, &b.model)));
+        let mut records: Vec<CooldownStateRecord> = st
+            .auths
+            .values()
+            .flat_map(|a| self.cooldown_records_for(a, now))
+            .collect();
+        records.sort_by(|a, b| {
+            (&a.provider, &a.auth_id, &a.model).cmp(&(&b.provider, &b.auth_id, &b.model))
+        });
         records
     }
 
@@ -418,7 +484,9 @@ impl Manager {
     /// Saves the current cooldown records without blocking the caller (file I/O runs on the
     /// blocking pool when a runtime is available, inline otherwise).
     pub(crate) fn persist_cooldown_states_detached(&self) {
-        let Some(store) = self.cooldown_store.read().clone() else { return };
+        let Some(store) = self.cooldown_store.read().clone() else {
+            return;
+        };
         let records = self.cooldown_snapshot_records();
         let save = move || {
             if let Err(e) = store.save(&records) {
@@ -435,7 +503,9 @@ impl Manager {
 
     /// Saves the current cooldown records and waits for the write.
     pub async fn persist_cooldown_states(&self) {
-        let Some(store) = self.cooldown_store.read().clone() else { return };
+        let Some(store) = self.cooldown_store.read().clone() else {
+            return;
+        };
         let records = self.cooldown_snapshot_records();
         let res = tokio::task::spawn_blocking(move || store.save(&records)).await;
         if let Ok(Err(e)) = res {
@@ -445,13 +515,19 @@ impl Manager {
 
     /// Restores unexpired persisted records into registered credentials (Go: RestoreCooldownStates).
     pub async fn restore_cooldown_states(&self) -> Result<(), String> {
-        let Some(store) = self.cooldown_store.read().clone() else { return Ok(()) };
-        let records = tokio::task::spawn_blocking(move || store.load()).await.map_err(|e| e.to_string())??;
+        let Some(store) = self.cooldown_store.read().clone() else {
+            return Ok(());
+        };
+        let records = tokio::task::spawn_blocking(move || store.load())
+            .await
+            .map_err(|e| e.to_string())??;
         if records.is_empty() {
             return Ok(());
         }
         let now = self.now();
-        let (model_records, auth_records): (Vec<_>, Vec<_>) = records.into_iter().partition(|r| !r.model.trim().is_empty());
+        let (model_records, auth_records): (Vec<_>, Vec<_>) = records
+            .into_iter()
+            .partition(|r| !r.model.trim().is_empty());
         {
             let mut st = self.state.write();
             for r in model_records.iter().chain(auth_records.iter()) {
@@ -462,13 +538,23 @@ impl Manager {
         Ok(())
     }
 
-    fn restore_cooldown_record(&self, st: &mut super::State, record: &CooldownStateRecord, now: DateTime<Utc>) -> bool {
+    fn restore_cooldown_record(
+        &self,
+        st: &mut super::State,
+        record: &CooldownStateRecord,
+        now: DateTime<Utc>,
+    ) -> bool {
         let auth_id = record.auth_id.trim().to_string();
-        if auth_id.is_empty() || record.next_retry_after.is_none() || !after(record.next_retry_after, now) {
+        if auth_id.is_empty()
+            || record.next_retry_after.is_none()
+            || !after(record.next_retry_after, now)
+        {
             return false;
         }
         let cfg = self.cfg();
-        let Some(auth) = st.auths.get_mut(&auth_id) else { return false };
+        let Some(auth) = st.auths.get_mut(&auth_id) else {
+            return false;
+        };
         if is_disabled(auth) || self.cooldown_disabled_for_auth_cfg(auth, &cfg) {
             return false;
         }
@@ -484,7 +570,8 @@ impl Manager {
             auth.status = Status::Error;
             auth.next_retry_after = record.next_retry_after;
             super::cooldown::apply_cooldown_fields(&mut auth.quota, &quota);
-            auth.quota = super::cooldown::merge_quota_observation(std::mem::take(&mut auth.quota), &quota);
+            auth.quota =
+                super::cooldown::merge_quota_observation(std::mem::take(&mut auth.quota), &quota);
             auth.generation += 1;
             auth.updated_at = Some(updated_at);
             if !reason.is_empty() {

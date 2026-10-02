@@ -11,13 +11,13 @@ use cpa_auth::credmeta::{normalize_credential_metadata, validate_auth_weight};
 use cpa_auth::store::SaveOptions;
 use cpa_auth::types::{ATTRIBUTE_API_KEY, Auth, Status};
 
+use super::Manager;
 use super::cooldown::{
-    clear_cooldown_state_for_auth, clear_unauthorized_model_states, has_unauthorized_auth_failure, is_disabled,
-    normalize_model_states,
+    clear_cooldown_state_for_auth, clear_unauthorized_model_states, has_unauthorized_auth_failure,
+    is_disabled, normalize_model_states,
 };
 use super::errors::Failure;
 use super::merge::{merge_prepared_auth, merge_refreshed_auth};
-use super::Manager;
 use crate::executor::ExecError;
 
 /// Per-call options for register/update (Go carries these on the context).
@@ -43,19 +43,33 @@ fn plain_error(msg: impl Into<String>) -> ExecError {
 
 /// Whether authentication material (tokens or API keys) differs (Go: CredentialsChanged).
 pub fn credentials_changed(existing: &Auth, incoming: &Auth) -> bool {
-    if existing.access_token() != incoming.access_token() || existing.refresh_token() != incoming.refresh_token() {
+    if existing.access_token() != incoming.access_token()
+        || existing.refresh_token() != incoming.refresh_token()
+    {
         return true;
     }
     let id_token = |a: &Auth| {
         let t = a.meta_str("id_token");
-        if t.is_empty() { a.meta_str("idToken") } else { t }
+        if t.is_empty() {
+            a.meta_str("idToken")
+        } else {
+            t
+        }
     };
     if id_token(existing) != id_token(incoming) {
         return true;
     }
     let key = |a: &Auth| {
-        let k = a.attributes.get(ATTRIBUTE_API_KEY).cloned().unwrap_or_default();
-        if k.is_empty() { a.meta_str("api_key") } else { k }
+        let k = a
+            .attributes
+            .get(ATTRIBUTE_API_KEY)
+            .cloned()
+            .unwrap_or_default();
+        if k.is_empty() {
+            a.meta_str("api_key")
+        } else {
+            k
+        }
     };
     key(existing) != key(incoming)
 }
@@ -100,7 +114,11 @@ impl Manager {
         self.register_with(auth, UpdateOptions::default()).await
     }
 
-    pub async fn register_with(&self, mut auth: Auth, opts: UpdateOptions) -> Result<Auth, ExecError> {
+    pub async fn register_with(
+        &self,
+        mut auth: Auth,
+        opts: UpdateOptions,
+    ) -> Result<Auth, ExecError> {
         normalize_credential_metadata(&mut auth.metadata);
         validate_auth_weight(&auth).map_err(|e| plain_error(format!("register auth: {e}")))?;
         if auth.id.is_empty() {
@@ -141,7 +159,11 @@ impl Manager {
         if !opts.skip_persist
             && let Err(e) = self.persist(&mut auth).await
         {
-            tracing::warn!("failed to persist registered auth {} ({}): {e}", auth.provider, auth.id);
+            tracing::warn!(
+                "failed to persist registered auth {} ({}): {e}",
+                auth.provider,
+                auth.id
+            );
         }
         let hook = self.hook.read().clone();
         if let Some(h) = hook {
@@ -167,7 +189,10 @@ impl Manager {
         if !exists {
             return self.register_with(auth, opts).await;
         }
-        match self.update_internal(None, auth.clone(), UpdateMode::Replace, opts).await? {
+        match self
+            .update_internal(None, auth.clone(), UpdateMode::Replace, opts)
+            .await?
+        {
             Some(saved) => Ok(saved),
             // Removed between the check and the update: register instead.
             None => self.register_with(auth, opts).await,
@@ -175,13 +200,33 @@ impl Manager {
     }
 
     /// Merges a refresh result into the latest credential (Go: UpdateRefreshedAuth).
-    pub async fn update_refreshed_auth(&self, base: &Auth, updated: Auth) -> Result<Option<Auth>, ExecError> {
-        self.update_internal(Some(base), updated, UpdateMode::Refresh, UpdateOptions::default()).await
+    pub async fn update_refreshed_auth(
+        &self,
+        base: &Auth,
+        updated: Auth,
+    ) -> Result<Option<Auth>, ExecError> {
+        self.update_internal(
+            Some(base),
+            updated,
+            UpdateMode::Refresh,
+            UpdateOptions::default(),
+        )
+        .await
     }
 
     /// Merges request-preparation results into the latest credential (Go: UpdatePreparedAuth).
-    pub async fn update_prepared_auth(&self, base: &Auth, updated: Auth) -> Result<Option<Auth>, ExecError> {
-        self.update_internal(Some(base), updated, UpdateMode::Prepare, UpdateOptions::default()).await
+    pub async fn update_prepared_auth(
+        &self,
+        base: &Auth,
+        updated: Auth,
+    ) -> Result<Option<Auth>, ExecError> {
+        self.update_internal(
+            Some(base),
+            updated,
+            UpdateMode::Prepare,
+            UpdateOptions::default(),
+        )
+        .await
     }
 
     pub(crate) async fn update_internal(
@@ -237,7 +282,8 @@ impl Manager {
                 )));
             }
             if auth.registration_epoch >= epoch {
-                st.auth_epochs.insert(auth.id.clone(), auth.registration_epoch);
+                st.auth_epochs
+                    .insert(auth.id.clone(), auth.registration_epoch);
             } else if auth.registration_epoch == 0 {
                 auth.registration_epoch = epoch;
             }
@@ -246,15 +292,25 @@ impl Manager {
             }
             auth.success = existing.success;
             auth.failed = existing.failed;
-            auth.generation = if auth.generation <= existing.generation { existing.generation + 1 } else { auth.generation + 1 };
+            auth.generation = if auth.generation <= existing.generation {
+                existing.generation + 1
+            } else {
+                auth.generation + 1
+            };
             if !is_disabled(&existing) && !is_disabled(&auth) {
                 if auth.model_states.is_empty() && !existing.model_states.is_empty() {
                     auth.model_states = existing.model_states.clone();
                 }
                 if credentials_changed(&existing, &auth) {
                     let last_unauthorized = auth.last_error.as_ref().is_some_and(|e| {
-                        Failure { status: e.http_status, text: &e.message, request_scoped: false, code: None, raw_message: None }
-                            .is_unauthorized()
+                        Failure {
+                            status: e.http_status,
+                            text: &e.message,
+                            request_scoped: false,
+                            code: None,
+                            raw_message: None,
+                        }
+                        .is_unauthorized()
                     });
                     if has_unauthorized_auth_failure(&existing) || last_unauthorized {
                         auth.unavailable = false;
@@ -281,7 +337,8 @@ impl Manager {
             auth.updated_at = Some(now);
             cooldown_changed = normalize_model_states(&mut auth) || cooldown_changed;
             if self.cooldown_disabled_for_auth(&auth) || is_disabled(&auth) {
-                cooldown_changed = clear_cooldown_state_for_auth(&mut auth, now) || cooldown_changed;
+                cooldown_changed =
+                    clear_cooldown_state_for_auth(&mut auth, now) || cooldown_changed;
             }
             auth.ensure_index();
             let mut stored = existing;
@@ -299,7 +356,11 @@ impl Manager {
         } else if !opts.skip_persist
             && let Err(e) = self.persist(&mut result).await
         {
-            tracing::warn!("failed to persist updated auth {} ({}): {e}", result.provider, result.id);
+            tracing::warn!(
+                "failed to persist updated auth {} ({}): {e}",
+                result.provider,
+                result.id
+            );
         }
         let hook = self.hook.read().clone();
         if let Some(h) = hook {
@@ -338,7 +399,8 @@ impl Manager {
         if !provider.is_empty()
             && let Some(exec) = executor
         {
-            exec.close_execution_session(super::CLOSE_ALL_EXECUTION_SESSIONS_ID).await;
+            exec.close_execution_session(super::CLOSE_ALL_EXECUTION_SESSIONS_ID)
+                .await;
         }
         self.persist_cooldown_states().await;
     }
@@ -388,7 +450,10 @@ impl Manager {
         };
         validate_auth_weight(auth).map_err(|e| format!("persist auth: {e}"))?;
         if auth.is_config_api_key()
-            || auth.attributes.get("runtime_only").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+            || auth
+                .attributes
+                .get("runtime_only")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
             || auth.is_plugin_virtual()
             || auth.metadata.is_empty()
         {
@@ -396,7 +461,10 @@ impl Manager {
         }
         let lock = {
             let mut locks = self.persist_locks.lock();
-            locks.entry(auth.id.clone()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new((0, 0)))).clone()
+            locks
+                .entry(auth.id.clone())
+                .or_insert_with(|| Arc::new(tokio::sync::Mutex::new((0, 0))))
+                .clone()
         };
         let mut last = lock.lock().await;
         if (auth.registration_epoch, auth.generation) < *last {

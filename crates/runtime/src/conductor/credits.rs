@@ -16,8 +16,12 @@ use super::cooldown::{ExecResult, is_disabled};
 use super::errors::{
     CODE_AUTH_NOT_FOUND, CODE_AUTH_UNAVAILABLE, CODE_MODEL_COOLDOWN, result_error_from_error,
 };
-use super::exec::{ensure_requested_model_metadata, publish_selected_auth_metadata, requested_model_alias};
-use super::models::{executor_key_from_auth, resolve_attempt_alias_result, rewrite_model_in_response};
+use super::exec::{
+    ensure_requested_model_metadata, publish_selected_auth_metadata, requested_model_alias,
+};
+use super::models::{
+    executor_key_from_auth, resolve_attempt_alias_result, rewrite_model_in_response,
+};
 use super::pick::pinned_auth_id;
 use super::usage::{UsageFacts, tokens_from_response};
 use super::{Manager, executor_locked};
@@ -43,8 +47,9 @@ struct CreditsCandidate {
     provider: String,
 }
 
-static HINTS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, AntigravityCreditsHint>>> =
-    std::sync::LazyLock::new(Default::default);
+static HINTS: std::sync::LazyLock<
+    parking_lot::Mutex<std::collections::HashMap<String, AntigravityCreditsHint>>,
+> = std::sync::LazyLock::new(Default::default);
 
 /// Records the latest known AI-credits state of a credential. Process-wide (Go: a global sync.Map)
 /// so executors can report it without a manager handle.
@@ -68,8 +73,15 @@ pub fn has_known_antigravity_credits_hint(auth_id: &str) -> bool {
 }
 
 impl Manager {
-    pub(crate) fn should_attempt_antigravity_credits_fallback(&self, last_err: &ExecError, providers: &[String]) -> bool {
-        if !providers.iter().any(|p| p.trim().eq_ignore_ascii_case("antigravity")) {
+    pub(crate) fn should_attempt_antigravity_credits_fallback(
+        &self,
+        last_err: &ExecError,
+        providers: &[String],
+    ) -> bool {
+        if !providers
+            .iter()
+            .any(|p| p.trim().eq_ignore_ascii_case("antigravity"))
+        {
             return false;
         }
         if !self.cfg().quota_exceeded.antigravity_credits {
@@ -107,7 +119,11 @@ impl Manager {
             let Some(executor) = executor_locked(&st, &key) else {
                 continue;
             };
-            let cand = CreditsCandidate { auth: auth.clone(), executor, provider: key };
+            let cand = CreditsCandidate {
+                auth: auth.clone(),
+                executor,
+                provider: key,
+            };
             match hints.get(&auth.id) {
                 Some(h) if h.known => {
                     if h.available {
@@ -123,23 +139,35 @@ impl Manager {
         known
     }
 
-    pub(crate) async fn try_antigravity_credits_execute(&self, req: &Request, opts: &Options) -> Result<Option<Response>, ExecError> {
+    pub(crate) async fn try_antigravity_credits_execute(
+        &self,
+        req: &Request,
+        opts: &Options,
+    ) -> Result<Option<Response>, ExecError> {
         let route_model = req.model.clone();
         for mut c in self.credits_candidates(&route_model, opts) {
             let mut credits_opts = ensure_requested_model_metadata(opts.clone(), &route_model);
-            credits_opts.metadata.insert(ANTIGRAVITY_CREDITS_METADATA_KEY.into(), serde_json::Value::Bool(true));
+            credits_opts.metadata.insert(
+                ANTIGRAVITY_CREDITS_METADATA_KEY.into(),
+                serde_json::Value::Bool(true),
+            );
             match self.prepare_request_auth(&c.executor, &c.auth).await {
                 Ok(prepared) => c.auth = prepared,
                 Err(_) => continue,
             }
             publish_selected_auth_metadata(&mut credits_opts.metadata, &c.auth);
-            let (models, pooled, alias) = self.execution_model_candidates_with_alias(&c.auth, &route_model);
+            let (models, pooled, alias) =
+                self.execution_model_candidates_with_alias(&c.auth, &route_model);
             for upstream_model in &models {
-                let result_model = self.state_model_for_execution(&c.auth, &route_model, upstream_model, pooled);
+                let result_model =
+                    self.state_model_for_execution(&c.auth, &route_model, upstream_model, pooled);
                 let mut exec_req = req.clone();
                 exec_req.model = upstream_model.clone();
                 let started = Instant::now();
-                let res = c.executor.execute(&c.auth, exec_req, credits_opts.clone()).await;
+                let res = c
+                    .executor
+                    .execute(&c.auth, exec_req, credits_opts.clone())
+                    .await;
                 let mut result = ExecResult {
                     auth_id: c.auth.id.clone(),
                     provider: c.provider.clone(),
@@ -172,12 +200,25 @@ impl Manager {
                         }
                     }
                     Ok(mut resp) => {
-                        facts.tokens = tokens_from_response(credits_opts.response_format_or_source(), &resp.payload, &resp.metadata);
+                        facts.tokens = tokens_from_response(
+                            credits_opts.response_format_or_source(),
+                            &resp.payload,
+                            &resp.metadata,
+                        );
                         result.response_headers = resp.headers.clone();
                         self.mark_result_inner(result, Some(facts));
-                        let attempt = resolve_attempt_alias_result(&self.cfg(), &c.auth, &route_model, upstream_model, &alias);
+                        let attempt = resolve_attempt_alias_result(
+                            &self.cfg(),
+                            &c.auth,
+                            &route_model,
+                            upstream_model,
+                            &alias,
+                        );
                         if attempt.force_mapping && !attempt.original_alias.trim().is_empty() {
-                            resp.payload = Bytes::from(rewrite_model_in_response(&resp.payload, attempt.original_alias.trim()));
+                            resp.payload = Bytes::from(rewrite_model_in_response(
+                                &resp.payload,
+                                attempt.original_alias.trim(),
+                            ));
                         }
                         return Ok(Some(resp));
                     }
@@ -195,18 +236,33 @@ impl Manager {
         let route_model = req.model.clone();
         for mut c in self.credits_candidates(&route_model, opts) {
             let mut credits_opts = ensure_requested_model_metadata(opts.clone(), &route_model);
-            credits_opts.metadata.insert(ANTIGRAVITY_CREDITS_METADATA_KEY.into(), serde_json::Value::Bool(true));
+            credits_opts.metadata.insert(
+                ANTIGRAVITY_CREDITS_METADATA_KEY.into(),
+                serde_json::Value::Bool(true),
+            );
             match self.prepare_request_auth(&c.executor, &c.auth).await {
                 Ok(prepared) => c.auth = prepared,
                 Err(_) => continue,
             }
             publish_selected_auth_metadata(&mut credits_opts.metadata, &c.auth);
-            let (models, pooled, alias) = self.execution_model_candidates_with_alias(&c.auth, &route_model);
+            let (models, pooled, alias) =
+                self.execution_model_candidates_with_alias(&c.auth, &route_model);
             if models.is_empty() {
                 continue;
             }
             if let Ok(stream) = self
-                .stream_with_model_pool(&c.executor, c.auth.clone(), &c.provider, req, &credits_opts, &route_model, None, &models, pooled, &alias)
+                .stream_with_model_pool(
+                    &c.executor,
+                    c.auth.clone(),
+                    &c.provider,
+                    req,
+                    &credits_opts,
+                    &route_model,
+                    None,
+                    &models,
+                    pooled,
+                    &alias,
+                )
                 .await
             {
                 return Ok(Some(stream));

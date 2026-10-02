@@ -85,13 +85,25 @@ struct Roots {
 impl Roots {
     fn new(payload: &[u8]) -> Self {
         if payload.is_empty() {
-            return Roots { root: Value::Null, exists: false, nested: None };
+            return Roots {
+                root: Value::Null,
+                exists: false,
+                nested: None,
+            };
         }
         let root = cpa_json::parse(payload);
         let exists = !root.is_null();
         let req = root.g("request");
-        let nested = if req.exists() && !root.g("contents").exists() { req.into_value() } else { None };
-        Roots { root, exists, nested }
+        let nested = if req.exists() && !root.g("contents").exists() {
+            req.into_value()
+        } else {
+            None
+        };
+        Roots {
+            root,
+            exists,
+            nested,
+        }
     }
 
     /// Candidate id at `path` in the root, falling back to the nested request object.
@@ -107,7 +119,11 @@ impl Roots {
     }
 
     fn pick_first(&self, paths: &[&str]) -> String {
-        paths.iter().map(|p| self.pick(p)).find(|v| !v.is_empty()).unwrap_or_default()
+        paths
+            .iter()
+            .map(|p| self.pick(p))
+            .find(|v| !v.is_empty())
+            .unwrap_or_default()
     }
 
     /// Root-only lookup (no nested fallback), as the Go code does for a few keys.
@@ -117,45 +133,92 @@ impl Roots {
 }
 
 const PARENT_PATHS: &[&str] = &[
-    "parent_session_id", "parentSessionId", "parentSessionID",
-    "parent_thread_id", "parentThreadId", "parentThreadID",
-    "forked_from_thread_id", "forked_from_id",
-    "parent_conversation_id", "parentConversationId", "parentConversationID",
-    "parent_id", "parentId", "parentID",
-    "parent_task_id", "parentTaskId", "parentTaskID",
-    "parent_action_id", "parentActionId", "parentActionID",
-    "parent_session", "parentSession",
-    "parent_subagent_id", "parentSubagentId",
-    "forkSource.sessionId", "fork_source.session_id",
-    "previousSessionId", "previous_session_id",
-    "metadata.parent_session_id", "metadata.parentSessionId", "metadata.parentSessionID",
-    "metadata.parent_thread_id", "metadata.parentThreadId",
-    "metadata.forked_from_thread_id", "metadata.forked_from_id",
-    "metadata.parent_id", "metadata.parentId", "metadata.parentID",
-    "metadata.parent_task_id", "metadata.parentTaskId", "metadata.parentTaskID",
-    "metadata.parent_action_id", "metadata.parentActionId",
-    "metadata.parent_subagent_id", "metadata.parentSubagentId",
-    "metadata.parent_session", "metadata.parentSession",
-    "metadata.parent_agent_id", "metadata.parentAgentId",
-    "metadata.forkSource.sessionId", "metadata.previousSessionId",
-    "extra_body.parent_session_id", "extra_body.parentSessionId", "extra_body.parentSessionID",
-    "extra_body.parent_thread_id", "extra_body.parentThreadId",
-    "extra_body.forked_from_thread_id", "extra_body.forked_from_id",
-    "extra_body.parent_id", "extra_body.parentId", "extra_body.parentID",
-    "extra_body.parent_task_id", "extra_body.parentTaskId",
-    "extra_body.parent_action_id", "extra_body.parentActionId",
-    "extra_body.parent_subagent_id", "extra_body.parentSubagentId",
-    "extra_body.parent_session", "extra_body.parentSession",
+    "parent_session_id",
+    "parentSessionId",
+    "parentSessionID",
+    "parent_thread_id",
+    "parentThreadId",
+    "parentThreadID",
+    "forked_from_thread_id",
+    "forked_from_id",
+    "parent_conversation_id",
+    "parentConversationId",
+    "parentConversationID",
+    "parent_id",
+    "parentId",
+    "parentID",
+    "parent_task_id",
+    "parentTaskId",
+    "parentTaskID",
+    "parent_action_id",
+    "parentActionId",
+    "parentActionID",
+    "parent_session",
+    "parentSession",
+    "parent_subagent_id",
+    "parentSubagentId",
+    "forkSource.sessionId",
+    "fork_source.session_id",
+    "previousSessionId",
+    "previous_session_id",
+    "metadata.parent_session_id",
+    "metadata.parentSessionId",
+    "metadata.parentSessionID",
+    "metadata.parent_thread_id",
+    "metadata.parentThreadId",
+    "metadata.forked_from_thread_id",
+    "metadata.forked_from_id",
+    "metadata.parent_id",
+    "metadata.parentId",
+    "metadata.parentID",
+    "metadata.parent_task_id",
+    "metadata.parentTaskId",
+    "metadata.parentTaskID",
+    "metadata.parent_action_id",
+    "metadata.parentActionId",
+    "metadata.parent_subagent_id",
+    "metadata.parentSubagentId",
+    "metadata.parent_session",
+    "metadata.parentSession",
+    "metadata.parent_agent_id",
+    "metadata.parentAgentId",
+    "metadata.forkSource.sessionId",
+    "metadata.previousSessionId",
+    "extra_body.parent_session_id",
+    "extra_body.parentSessionId",
+    "extra_body.parentSessionID",
+    "extra_body.parent_thread_id",
+    "extra_body.parentThreadId",
+    "extra_body.forked_from_thread_id",
+    "extra_body.forked_from_id",
+    "extra_body.parent_id",
+    "extra_body.parentId",
+    "extra_body.parentID",
+    "extra_body.parent_task_id",
+    "extra_body.parentTaskId",
+    "extra_body.parent_action_id",
+    "extra_body.parentActionId",
+    "extra_body.parent_subagent_id",
+    "extra_body.parentSubagentId",
+    "extra_body.parent_session",
+    "extra_body.parentSession",
 ];
 
 const BODY_FORK_PATHS: &[&str] = &[
-    "forked_from_thread_id", "forked_from_id",
-    "forkSource.sessionId", "fork_source.session_id",
-    "previousSessionId", "previous_session_id",
-    "metadata.forked_from_thread_id", "metadata.forked_from_id",
-    "metadata.forkSource.sessionId", "metadata.previousSessionId",
-    "extra_body.forked_from_thread_id", "extra_body.forked_from_id",
-    "extra_body.forkSource.sessionId", "extra_body.previousSessionId",
+    "forked_from_thread_id",
+    "forked_from_id",
+    "forkSource.sessionId",
+    "fork_source.session_id",
+    "previousSessionId",
+    "previous_session_id",
+    "metadata.forked_from_thread_id",
+    "metadata.forked_from_id",
+    "metadata.forkSource.sessionId",
+    "metadata.previousSessionId",
+    "extra_body.forked_from_thread_id",
+    "extra_body.forked_from_id",
+    "extra_body.forkSource.sessionId",
+    "extra_body.previousSessionId",
 ];
 
 /// Claude Code `metadata.user_id`: JSON object or legacy `..._session_<uuid>` string. Returns
@@ -213,7 +276,11 @@ pub fn claude_metadata_identities(payload: &[u8]) -> (String, String, String) {
 fn legacy_claude_session(user_id: &str) -> Option<&str> {
     let idx = user_id.rfind("_session_")?;
     let tail = &user_id[idx + "_session_".len()..];
-    if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-') {
+    if !tail.is_empty()
+        && tail
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-')
+    {
         Some(tail)
     } else {
         None
@@ -286,7 +353,10 @@ fn finalize(mut info: SessionInfo) -> Option<SessionInfo> {
 }
 
 fn meta_str(metadata: &Metadata, key: &str) -> Option<String> {
-    metadata.get(key).and_then(Value::as_str).map(str::to_string)
+    metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Generic "prefix:id" header session with an optional parent and subagent labelling.
@@ -318,7 +388,11 @@ fn simple_header_session(
 /// X-Conversation-Id / X-Thread-Id / X-Client-Request-Id, 6 body keys (cachedContent, thread_id,
 /// session_id, task_id, prompt_cache_key, conversation, metadata.user_id, conversation_id),
 /// 7 `execution_session_id` metadata, 8 `lcp_affinity_session_id` metadata.
-pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Metadata) -> Option<SessionInfo> {
+pub fn extract_session_info(
+    headers: &HeaderMap,
+    payload: &[u8],
+    metadata: &Metadata,
+) -> Option<SessionInfo> {
     let mut info = SessionInfo::default();
     if let Some(scope) = meta_str(metadata, meta::CALLER_SCOPE) {
         info.caller_scope = scope.trim().to_string();
@@ -419,7 +493,11 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
         .and_then(|v| v.to_str().ok())
         .map(|v| v.trim().to_string())
         .unwrap_or_default();
-    let turn = if codex_turn_meta.is_empty() { Value::Null } else { cpa_json::parse(codex_turn_meta.as_bytes()) };
+    let turn = if codex_turn_meta.is_empty() {
+        Value::Null
+    } else {
+        cpa_json::parse(codex_turn_meta.as_bytes())
+    };
     let turn_exists = !turn.is_null();
     if sid.is_empty() && turn_exists {
         sid = cand(turn.g("session_id"));
@@ -432,7 +510,10 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
     }
     if !sid.is_empty() || !tid.is_empty() {
         info.client_type = "codex".into();
-        let mut parent_thread = header_any(headers, &["x-codex-parent-thread-id", "X-Codex-Parent-Thread-Id"]);
+        let mut parent_thread = header_any(
+            headers,
+            &["x-codex-parent-thread-id", "X-Codex-Parent-Thread-Id"],
+        );
         if parent_thread.is_empty() && turn_exists {
             parent_thread = cand(turn.g("parent_thread_id"));
         }
@@ -464,14 +545,19 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
             }
         }
         let sub_val = header_value(headers, "X-Openai-Subagent");
-        let mut subagent_signal = !sub_val.is_empty() && !sub_val.eq_ignore_ascii_case("false") && sub_val != "0";
+        let mut subagent_signal =
+            !sub_val.is_empty() && !sub_val.eq_ignore_ascii_case("false") && sub_val != "0";
         if turn_exists && turn.g("subagent_kind").str() == "thread_spawn" {
             subagent_signal = true;
         }
 
         // 1. Fork detection.
         if !forked_from.is_empty() {
-            let mut fork_session = if tid.is_empty() { sid.clone() } else { tid.clone() };
+            let mut fork_session = if tid.is_empty() {
+                sid.clone()
+            } else {
+                tid.clone()
+            };
             if fork_session == forked_from && !sid.is_empty() && sid != forked_from {
                 fork_session = sid.clone();
             }
@@ -488,8 +574,16 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
             || (!tid.is_empty() && !sid.is_empty() && tid != sid)
             || (!parent_thread.is_empty() && parent_thread != tid && parent_thread != sid)
         {
-            let child = if tid.is_empty() { sid.clone() } else { tid.clone() };
-            let parent_sid = if parent_thread.is_empty() { sid.clone() } else { parent_thread.clone() };
+            let child = if tid.is_empty() {
+                sid.clone()
+            } else {
+                tid.clone()
+            };
+            let parent_sid = if parent_thread.is_empty() {
+                sid.clone()
+            } else {
+                parent_thread.clone()
+            };
             if !clean_agent_name.is_empty() && !sid.is_empty() {
                 info.session_id = format!("codex:{sid}:agent:{clean_agent_name}");
                 info.agent_name = clean_agent_name.clone();
@@ -500,7 +594,11 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
                 }
             } else {
                 info.session_id = format!("codex:{child}");
-                info.agent_name = if clean_agent_name.is_empty() { "subagent".into() } else { clean_agent_name.clone() };
+                info.agent_name = if clean_agent_name.is_empty() {
+                    "subagent".into()
+                } else {
+                    clean_agent_name.clone()
+                };
                 if !parent_sid.is_empty() && parent_sid != child {
                     info.parent_session_id = format!("codex:{parent_sid}");
                 } else if !parent_candidate.is_empty() && parent_candidate != child {
@@ -512,7 +610,11 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
         }
 
         // 3. Normal interactive session.
-        let session_id = if sid.is_empty() { tid.clone() } else { sid.clone() };
+        let session_id = if sid.is_empty() {
+            tid.clone()
+        } else {
+            sid.clone()
+        };
         info.session_id = format!("codex:{session_id}");
         if !parent_thread.is_empty() && parent_thread != session_id {
             info.parent_session_id = format!("codex:{parent_thread}");
@@ -531,25 +633,70 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
     // 4. Antigravity CLI headers.
     let sid = header_value(headers, "X-Http-Session-Id");
     if !sid.is_empty() {
-        let parent = header_any(headers, &["X-Parent-Session-ID", "X-Parent-Session-Id", "X-Parent-ID", "X-Parent-Id"]);
-        simple_header_session(&mut info, "agy", "agy:", &sid, parent, &parent_candidate, "main");
+        let parent = header_any(
+            headers,
+            &[
+                "X-Parent-Session-ID",
+                "X-Parent-Session-Id",
+                "X-Parent-ID",
+                "X-Parent-Id",
+            ],
+        );
+        simple_header_session(
+            &mut info,
+            "agy",
+            "agy:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
 
     // 5. OpenCode / Pi slot / task / generic headers.
     let sid = header_value(headers, "X-Session-ID");
     if !sid.is_empty() {
-        let parent = header_any(headers, &["X-Parent-Session-ID", "X-Parent-Session-Id", "X-Parent-ID", "X-Parent-Id"]);
-        simple_header_session(&mut info, "generic", "header:", &sid, parent, &parent_candidate, "main");
+        let parent = header_any(
+            headers,
+            &[
+                "X-Parent-Session-ID",
+                "X-Parent-Session-Id",
+                "X-Parent-ID",
+                "X-Parent-Id",
+            ],
+        );
+        simple_header_session(
+            &mut info,
+            "generic",
+            "header:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
     let sid = header_value(headers, "X-Session-Affinity");
     if !sid.is_empty() {
         let parent = header_any(
             headers,
-            &["X-Parent-Session-Affinity", "X-Parent-Session-ID", "X-Parent-ID", "X-Parent-Id"],
+            &[
+                "X-Parent-Session-Affinity",
+                "X-Parent-Session-ID",
+                "X-Parent-ID",
+                "X-Parent-Id",
+            ],
         );
-        simple_header_session(&mut info, "opencode", "affinity:", &sid, parent, &parent_candidate, "main");
+        simple_header_session(
+            &mut info,
+            "opencode",
+            "affinity:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
     let sid = header_value(headers, "X-Slot-Session-Id");
@@ -564,7 +711,15 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
                 "X-Parent-Id",
             ],
         );
-        simple_header_session(&mut info, "pi", "slot:", &sid, parent, &parent_candidate, "slot");
+        simple_header_session(
+            &mut info,
+            "pi",
+            "slot:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "slot",
+        );
         return finalize(info);
     }
     let task_id = header_any(headers, &["X-Task-ID", "X-Task-Id", "X-Task_ID"]);
@@ -580,25 +735,60 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
                 "X-Parent-Id",
             ],
         );
-        simple_header_session(&mut info, "task", "task:", &task_id, parent, &parent_candidate, "main");
+        simple_header_session(
+            &mut info,
+            "task",
+            "task:",
+            &task_id,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
     let sid = header_value(headers, "X-Conversation-Id");
     if !sid.is_empty() {
         let parent = header_any(headers, &["X-Parent-Conversation-Id", "X-Parent-ID"]);
-        simple_header_session(&mut info, "conv", "conv:", &sid, parent, &parent_candidate, "main");
+        simple_header_session(
+            &mut info,
+            "conv",
+            "conv:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
     let sid = header_value(headers, "X-Thread-Id");
     if !sid.is_empty() {
         let parent = header_any(headers, &["X-Parent-Thread-Id", "X-Parent-ID"]);
-        simple_header_session(&mut info, "openai-thread", "thread:", &sid, parent, &parent_candidate, "main");
+        simple_header_session(
+            &mut info,
+            "openai-thread",
+            "thread:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
     let sid = header_value(headers, "X-Client-Request-Id");
     if !sid.is_empty() {
-        let parent = header_any(headers, &["X-Parent-Session-ID", "X-Parent-ID", "X-Parent-Id"]);
-        simple_header_session(&mut info, "generic", "clientreq:", &sid, parent, &parent_candidate, "main");
+        let parent = header_any(
+            headers,
+            &["X-Parent-Session-ID", "X-Parent-ID", "X-Parent-Id"],
+        );
+        simple_header_session(
+            &mut info,
+            "generic",
+            "clientreq:",
+            &sid,
+            parent,
+            &parent_candidate,
+            "main",
+        );
         return finalize(info);
     }
 
@@ -663,11 +853,18 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
             }
         }
         for path in [
-            "session_id", "sessionId", "sessionID",
-            "child_session_id", "childSessionId",
-            "metadata.session_id", "metadata.sessionId", "metadata.sessionID",
+            "session_id",
+            "sessionId",
+            "sessionID",
+            "child_session_id",
+            "childSessionId",
+            "metadata.session_id",
+            "metadata.sessionId",
+            "metadata.sessionID",
             "metadata.child_session_id",
-            "extra_body.session_id", "extra_body.sessionId", "extra_body.sessionID",
+            "extra_body.session_id",
+            "extra_body.sessionId",
+            "extra_body.sessionID",
         ] {
             let sid = r.pick(path);
             if sid.is_empty() {
@@ -702,11 +899,21 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
 
         // Task / action in payload (Roo Code, Cline, OpenHands).
         for path in [
-            "task_id", "taskId", "taskID",
-            "action_id", "actionId", "actionID",
-            "metadata.task_id", "metadata.taskId", "metadata.taskID",
-            "metadata.action_id", "metadata.actionId", "metadata.actionID",
-            "extra_body.task_id", "extra_body.taskId", "extra_body.taskID",
+            "task_id",
+            "taskId",
+            "taskID",
+            "action_id",
+            "actionId",
+            "actionID",
+            "metadata.task_id",
+            "metadata.taskId",
+            "metadata.taskID",
+            "metadata.action_id",
+            "metadata.actionId",
+            "metadata.actionID",
+            "extra_body.task_id",
+            "extra_body.taskId",
+            "extra_body.taskID",
         ] {
             let tid = r.pick(path);
             if tid.is_empty() {
@@ -775,7 +982,8 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
         if !conversation_id.is_empty() {
             info.client_type = "conv".into();
             info.session_id = conversation_id.clone();
-            if !parent_candidate.is_empty() && format!("conv:{parent_candidate}") != conversation_id {
+            if !parent_candidate.is_empty() && format!("conv:{parent_candidate}") != conversation_id
+            {
                 info.parent_session_id = format!("conv:{parent_candidate}");
                 info.agent_name = "subagent".into();
             } else {
@@ -795,8 +1003,12 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
 
         // Legacy conversation string paths.
         for path in [
-            "conversation_id", "conversationId", "chat_id", "chatId",
-            "metadata.conversation_id", "extra_body.conversation_id",
+            "conversation_id",
+            "conversationId",
+            "chat_id",
+            "chatId",
+            "metadata.conversation_id",
+            "extra_body.conversation_id",
         ] {
             let cid = r.pick(path);
             if cid.is_empty() {
@@ -836,7 +1048,11 @@ pub fn extract_session_info(headers: &HeaderMap, payload: &[u8], metadata: &Meta
                     let parent = normalize_explicit_id(&parent);
                     if !parent.is_empty() && parent != lcp_id {
                         info.parent_session_id = parent;
-                        if metadata.get(meta::IS_COMPACTION).and_then(Value::as_bool).unwrap_or(false) {
+                        if metadata
+                            .get(meta::IS_COMPACTION)
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                        {
                             info.is_compaction = true;
                             info.is_fork = false;
                             info.node_kind = "compaction".into();
@@ -876,7 +1092,10 @@ mod tests {
 
     #[test]
     fn claude_header_session_with_agent() {
-        let h = headers(&[("x-claude-code-session-id", "s1"), ("x-claude-code-agent-id", "a1")]);
+        let h = headers(&[
+            ("x-claude-code-session-id", "s1"),
+            ("x-claude-code-agent-id", "a1"),
+        ]);
         let info = extract_session_info(&h, b"", &Metadata::new()).unwrap();
         assert_eq!(info.session_id, "claude:s1:agent:a1");
         assert_eq!(info.parent_session_id, "claude:s1");
@@ -885,9 +1104,13 @@ mod tests {
 
     #[test]
     fn claude_user_id_json_and_legacy() {
-        let body = br#"{"metadata":{"user_id":"{\"session_id\":\"abc\",\"parent_session_id\":\"p\"}"}}"#;
+        let body =
+            br#"{"metadata":{"user_id":"{\"session_id\":\"abc\",\"parent_session_id\":\"p\"}"}}"#;
         let info = extract_session_info(&HeaderMap::new(), body, &Metadata::new()).unwrap();
-        assert_eq!((info.session_id.as_str(), info.parent_session_id.as_str()), ("claude:abc", "claude:p"));
+        assert_eq!(
+            (info.session_id.as_str(), info.parent_session_id.as_str()),
+            ("claude:abc", "claude:p")
+        );
         let legacy = br#"{"metadata":{"user_id":"user_x_account__session_0a1b-2c"}}"#;
         let info = extract_session_info(&HeaderMap::new(), legacy, &Metadata::new()).unwrap();
         assert_eq!(info.session_id, "claude:0a1b-2c");
@@ -896,12 +1119,30 @@ mod tests {
     #[test]
     fn header_priority_codex_then_generic_then_body() {
         let h = headers(&[("session-id", "c1"), ("x-session-id", "g1")]);
-        assert_eq!(extract_session_info(&h, b"", &Metadata::new()).unwrap().session_id, "codex:c1");
+        assert_eq!(
+            extract_session_info(&h, b"", &Metadata::new())
+                .unwrap()
+                .session_id,
+            "codex:c1"
+        );
         let h = headers(&[("x-session-id", "g1")]);
-        assert_eq!(extract_session_info(&h, b"", &Metadata::new()).unwrap().session_id, "header:g1");
+        assert_eq!(
+            extract_session_info(&h, b"", &Metadata::new())
+                .unwrap()
+                .session_id,
+            "header:g1"
+        );
         let body = br#"{"prompt_cache_key":"k","conversation":{"id":"c"}}"#;
-        assert_eq!(extract_session_info(&HeaderMap::new(), body, &Metadata::new()).unwrap().session_id, "pck:k");
-        assert!(extract_session_info(&HeaderMap::new(), br#"{"messages":[]}"#, &Metadata::new()).is_none());
+        assert_eq!(
+            extract_session_info(&HeaderMap::new(), body, &Metadata::new())
+                .unwrap()
+                .session_id,
+            "pck:k"
+        );
+        assert!(
+            extract_session_info(&HeaderMap::new(), br#"{"messages":[]}"#, &Metadata::new())
+                .is_none()
+        );
     }
 
     #[test]
@@ -918,6 +1159,9 @@ mod tests {
         let h = headers(&[("session-id", "root"), ("thread-id", "child")]);
         let info = extract_session_info(&h, b"", &Metadata::new()).unwrap();
         assert!(info.is_subagent);
-        assert_eq!((info.session_id.as_str(), info.parent_session_id.as_str()), ("codex:child", "codex:root"));
+        assert_eq!(
+            (info.session_id.as_str(), info.parent_session_id.as_str()),
+            ("codex:child", "codex:root")
+        );
     }
 }

@@ -72,7 +72,11 @@ impl FileCooldownStateStore {
 
     /// `.cds` paths mirror auth file paths relative to `auth_dir` when possible.
     pub fn with_auth_dir(dir: impl Into<PathBuf>, auth_dir: impl Into<PathBuf>) -> Self {
-        FileCooldownStateStore { dir: dir.into(), auth_dir: auth_dir.into(), lock: parking_lot::Mutex::new(()) }
+        FileCooldownStateStore {
+            dir: dir.into(),
+            auth_dir: auth_dir.into(),
+            lock: parking_lot::Mutex::new(()),
+        }
     }
 
     fn state_relative_path(&self, record: &CooldownStateRecord) -> String {
@@ -89,7 +93,11 @@ impl FileCooldownStateStore {
             if !p.is_absolute() {
                 return cds_path_for_rel(p);
             }
-            return sanitize_file_name(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+            return sanitize_file_name(
+                &p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            );
         }
         sanitize_file_name(record.auth_id.trim())
     }
@@ -103,7 +111,10 @@ impl FileCooldownStateStore {
     }
 
     fn walk_cds(&self, visit: &mut dyn FnMut(&Path) -> Result<(), String>) -> Result<(), String> {
-        fn rec(dir: &Path, visit: &mut dyn FnMut(&Path) -> Result<(), String>) -> Result<(), String> {
+        fn rec(
+            dir: &Path,
+            visit: &mut dyn FnMut(&Path) -> Result<(), String>,
+        ) -> Result<(), String> {
             let entries = match fs::read_dir(dir) {
                 Ok(e) => e,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -115,7 +126,10 @@ impl FileCooldownStateStore {
                 let ft = entry.file_type().map_err(|e| e.to_string())?;
                 if ft.is_dir() {
                     rec(&path, visit)?;
-                } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("cds")) {
+                } else if path
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("cds"))
+                {
                     visit(&path)?;
                 }
             }
@@ -162,7 +176,12 @@ fn cds_path_for_rel(rel: &Path) -> String {
     if clean.as_os_str().is_empty() || rel.components().any(|c| matches!(c, Component::ParentDir)) {
         return String::new();
     }
-    let base = sanitize_file_name(&clean.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+    let base = sanitize_file_name(
+        &clean
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    );
     if base.is_empty() {
         return String::new();
     }
@@ -194,7 +213,11 @@ fn sanitize_file_name(name: &str) -> String {
         }
     }
     let out = out.trim_matches(|c| matches!(c, '.' | '_' | '-'));
-    if out.is_empty() { String::new() } else { format!("{out}.cds") }
+    if out.is_empty() {
+        String::new()
+    } else {
+        format!("{out}.cds")
+    }
 }
 
 impl CooldownStateStore for FileCooldownStateStore {
@@ -237,7 +260,8 @@ impl CooldownStateStore for FileCooldownStateStore {
         if groups.is_empty() {
             return self.remove_stale(&HashMap::new());
         }
-        fs::create_dir_all(&self.dir).map_err(|e| format!("create cooldown state directory: {e}"))?;
+        fs::create_dir_all(&self.dir)
+            .map_err(|e| format!("create cooldown state directory: {e}"))?;
         let mut desired = HashMap::new();
         for (path, mut group) in groups {
             group.sort_by(|a, b| a.model.cmp(&b.model));
@@ -248,15 +272,19 @@ impl CooldownStateStore for FileCooldownStateStore {
                 updated_at: Some(Utc::now()),
                 records: group,
             };
-            let mut data = serde_json::to_vec_pretty(&envelope).map_err(|e| format!("marshal cooldown state: {e}"))?;
+            let mut data = serde_json::to_vec_pretty(&envelope)
+                .map_err(|e| format!("marshal cooldown state: {e}"))?;
             data.push(b'\n');
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| format!("create cooldown state directory: {e}"))?;
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("create cooldown state directory: {e}"))?;
             }
             let tmp = path.with_extension(format!("cds.{}.tmp", std::process::id()));
             {
-                let mut f = fs::File::create(&tmp).map_err(|e| format!("create cooldown state temp file: {e}"))?;
-                f.write_all(&data).map_err(|e| format!("write cooldown state temp file: {e}"))?;
+                let mut f = fs::File::create(&tmp)
+                    .map_err(|e| format!("create cooldown state temp file: {e}"))?;
+                f.write_all(&data)
+                    .map_err(|e| format!("write cooldown state temp file: {e}"))?;
             }
             fs::rename(&tmp, &path).map_err(|e| {
                 let _ = fs::remove_file(&tmp);
@@ -294,9 +322,18 @@ fn auth_record(auth: &Auth, now: DateTime<Utc>) -> Option<CooldownStateRecord> {
     })
 }
 
-fn model_record(auth: &Auth, model: &str, state: &ModelState, now: DateTime<Utc>) -> Option<CooldownStateRecord> {
+fn model_record(
+    auth: &Auth,
+    model: &str,
+    state: &ModelState,
+    now: DateTime<Utc>,
+) -> Option<CooldownStateRecord> {
     let model = model.trim();
-    if model.is_empty() || !state.unavailable || state.next_retry_after.is_none() || !after(state.next_retry_after, now) {
+    if model.is_empty()
+        || !state.unavailable
+        || state.next_retry_after.is_none()
+        || !after(state.next_retry_after, now)
+    {
         return None;
     }
     Some(CooldownStateRecord {
@@ -306,7 +343,11 @@ fn model_record(auth: &Auth, model: &str, state: &ModelState, now: DateTime<Utc>
         model: model.to_string(),
         status: "cooling".into(),
         next_retry_after: state.next_retry_after,
-        reason: cooldown_reason(&state.status_message, &state.quota, state.last_error.as_ref()),
+        reason: cooldown_reason(
+            &state.status_message,
+            &state.quota,
+            state.last_error.as_ref(),
+        ),
         quota: cooldown_fields_of(&state.quota),
         last_error: state.last_error.clone(),
         updated_at: state.updated_at,
@@ -359,14 +400,26 @@ mod tests {
 
     fn cooling_auth() -> Auth {
         let mut a = Auth::new("sub/claude-a@b.json", "claude");
-        a.attributes.insert("path".into(), "sub/claude-a@b.json".into());
+        a.attributes
+            .insert("path".into(), "sub/claude-a@b.json".into());
         a.model_states.insert(
             "m".into(),
             ModelState {
                 unavailable: true,
                 next_retry_after: Some(t(100)),
-                quota: QuotaState { exceeded: true, reason: "quota".into(), next_recover_at: Some(t(100)), backoff_level: 2, ..Default::default() },
-                last_error: Some(AuthError { code: String::new(), message: "slow".into(), retryable: false, http_status: 429 }),
+                quota: QuotaState {
+                    exceeded: true,
+                    reason: "quota".into(),
+                    next_recover_at: Some(t(100)),
+                    backoff_level: 2,
+                    ..Default::default()
+                },
+                last_error: Some(AuthError {
+                    code: String::new(),
+                    message: "slow".into(),
+                    retryable: false,
+                    http_status: 429,
+                }),
                 updated_at: Some(t(0)),
                 ..Default::default()
             },
@@ -379,7 +432,14 @@ mod tests {
         let a = cooling_auth();
         let recs = records_for_auth(&a, t(10));
         assert_eq!(recs.len(), 1);
-        assert_eq!((recs[0].model.as_str(), recs[0].reason.as_str(), recs[0].status.as_str()), ("m", "quota", "cooling"));
+        assert_eq!(
+            (
+                recs[0].model.as_str(),
+                recs[0].reason.as_str(),
+                recs[0].status.as_str()
+            ),
+            ("m", "quota", "cooling")
+        );
         assert!(records_for_auth(&a, t(100) + Duration::seconds(1)).is_empty());
     }
 

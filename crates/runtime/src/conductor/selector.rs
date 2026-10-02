@@ -91,7 +91,9 @@ impl SmoothWeightedState {
         for (id, w) in weights {
             self.weights.insert(id.clone(), *w);
         }
-        if self.current.len() > MAX_WEIGHT_STATE_ENTRIES || self.weights.len() > MAX_WEIGHT_STATE_ENTRIES {
+        if self.current.len() > MAX_WEIGHT_STATE_ENTRIES
+            || self.weights.len() > MAX_WEIGHT_STATE_ENTRIES
+        {
             self.current.retain(|id, _| weights.contains_key(id));
             self.weights.retain(|id, _| weights.contains_key(id));
         }
@@ -101,13 +103,18 @@ impl SmoothWeightedState {
         if self.weights.is_empty() {
             return false;
         }
-        right.iter().any(|(id, w)| self.weights.get(id).is_some_and(|prev| prev != w))
+        right
+            .iter()
+            .any(|(id, w)| self.weights.get(id).is_some_and(|prev| prev != w))
     }
 
     /// Smooth WRR step over `cands` (first max wins ties, in slice order).
     fn pick(&mut self, cands: &[Cand<'_>]) -> Option<usize> {
-        let weights: HashMap<String, i64> =
-            cands.iter().filter(|c| c.weight > 0).map(|c| (c.id.to_string(), c.weight)).collect();
+        let weights: HashMap<String, i64> = cands
+            .iter()
+            .filter(|c| c.weight > 0)
+            .map(|c| (c.id.to_string(), c.weight))
+            .collect();
         self.prepare(&weights);
         let mut picked: Option<usize> = None;
         let mut picked_current = 0i64;
@@ -159,7 +166,11 @@ impl Selector {
         let affinity = config
             .session_affinity
             .then(|| SessionAffinity::new(config.affinity_ttl, config.subagent_affinity, clock));
-        Selector { config, rotation: Mutex::new(Rotation::default()), affinity }
+        Selector {
+            config,
+            rotation: Mutex::new(Rotation::default()),
+            affinity,
+        }
     }
 
     pub fn affinity(&self) -> Option<&SessionAffinity> {
@@ -183,11 +194,13 @@ impl Selector {
             }
             Strategy::RoundRobin => {
                 let mut rot = self.rotation.lock();
-                if !rot.last_picked.contains_key(key) && rot.last_picked.len() >= MAX_ROTATION_KEYS {
+                if !rot.last_picked.contains_key(key) && rot.last_picked.len() >= MAX_ROTATION_KEYS
+                {
                     rot.last_picked.clear();
                 }
                 let i = successor_index(cands, rot.last_picked.get(key).map(String::as_str));
-                rot.last_picked.insert(key.to_string(), cands[i].id.to_string());
+                rot.last_picked
+                    .insert(key.to_string(), cands[i].id.to_string());
                 Some(i)
             }
         }
@@ -197,7 +210,13 @@ impl Selector {
     /// of all requested `providers`, sorted by id. Fill-first uses the first provider with a
     /// ready credential; weighted uses one accumulator over the union; round-robin rotates a
     /// provider cursor weighted by credential count, then each provider's own rotation.
-    pub fn pick_mixed(&self, providers: &[String], model_key: &str, priority: i64, cands: &[Cand<'_>]) -> Option<usize> {
+    pub fn pick_mixed(
+        &self,
+        providers: &[String],
+        model_key: &str,
+        priority: i64,
+        cands: &[Cand<'_>],
+    ) -> Option<usize> {
         if cands.is_empty() {
             return None;
         }
@@ -208,12 +227,17 @@ impl Selector {
                 .find_map(|p| cands.iter().position(|c| c.provider == p)),
             Strategy::WeightedRoundRobin => {
                 let mut rot = self.rotation.lock();
-                rot.weighted.entry(format!("mixed:{cursor_key}")).or_default().pick(cands)
+                rot.weighted
+                    .entry(format!("mixed:{cursor_key}"))
+                    .or_default()
+                    .pick(cands)
             }
             Strategy::RoundRobin => {
                 let mut rot = self.rotation.lock();
-                let weights: Vec<usize> =
-                    providers.iter().map(|p| cands.iter().filter(|c| c.provider == p).count()).collect();
+                let weights: Vec<usize> = providers
+                    .iter()
+                    .map(|p| cands.iter().filter(|c| c.provider == p).count())
+                    .collect();
                 let total: usize = weights.iter().sum();
                 if total == 0 {
                     return None;
@@ -227,7 +251,8 @@ impl Selector {
                     seg_ends.push(acc);
                 }
                 let start_slot = rot.mixed_cursors.get(&cursor_key).copied().unwrap_or(0) % total;
-                let start_idx = (0..providers.len()).find(|&i| weights[i] > 0 && start_slot < seg_ends[i])?;
+                let start_idx =
+                    (0..providers.len()).find(|&i| weights[i] > 0 && start_slot < seg_ends[i])?;
                 let mut slot = start_slot;
                 for offset in 0..providers.len() {
                     let pi = (start_idx + offset) % providers.len();
@@ -238,14 +263,23 @@ impl Selector {
                         slot = seg_starts[pi];
                     }
                     let provider = &providers[pi];
-                    let shard: Vec<(usize, Cand<'_>)> =
-                        cands.iter().copied().enumerate().filter(|(_, c)| c.provider == provider).collect();
+                    let shard: Vec<(usize, Cand<'_>)> = cands
+                        .iter()
+                        .copied()
+                        .enumerate()
+                        .filter(|(_, c)| c.provider == provider)
+                        .collect();
                     let shard_cands: Vec<Cand<'_>> = shard.iter().map(|(_, c)| *c).collect();
                     let key = format!("{provider}:{model_key}:{priority}");
-                    if !rot.last_picked.contains_key(&key) && rot.last_picked.len() >= MAX_ROTATION_KEYS {
+                    if !rot.last_picked.contains_key(&key)
+                        && rot.last_picked.len() >= MAX_ROTATION_KEYS
+                    {
                         rot.last_picked.clear();
                     }
-                    let i = successor_index(&shard_cands, rot.last_picked.get(&key).map(String::as_str));
+                    let i = successor_index(
+                        &shard_cands,
+                        rot.last_picked.get(&key).map(String::as_str),
+                    );
                     rot.last_picked.insert(key, shard_cands[i].id.to_string());
                     rot.mixed_cursors.insert(cursor_key.clone(), slot + 1);
                     return Some(shard[i].0);
@@ -283,7 +317,10 @@ pub struct SessionAffinity {
 
 impl SessionAffinity {
     pub fn new(ttl: Duration, subagent_affinity: bool, clock: Arc<dyn Clock>) -> Self {
-        SessionAffinity { cache: SessionCache::new(ttl, clock), subagent_affinity }
+        SessionAffinity {
+            cache: SessionCache::new(ttl, clock),
+            subagent_affinity,
+        }
     }
 
     pub fn cache(&self) -> &SessionCache {
@@ -309,9 +346,15 @@ impl SessionAffinity {
         metadata.insert(meta::SESSION_AFFINITY_PROVIDER.into(), provider.into());
         metadata.insert(meta::SESSION_AFFINITY_MODEL.into(), model.into());
 
-        let (explicit_id, explicit_fallback) = session::explicit_session_ids(headers, original_request, metadata);
+        let (explicit_id, explicit_fallback) =
+            session::explicit_session_ids(headers, original_request, metadata);
         if !explicit_id.is_empty() {
-            for k in [meta::IS_COMPACTION, "node_kind", super::session::info::LCP_AFFINITY_SESSION_ID, "lcp_access_generation"] {
+            for k in [
+                meta::IS_COMPACTION,
+                "node_kind",
+                super::session::info::LCP_AFFINITY_SESSION_ID,
+                "lcp_access_generation",
+            ] {
                 metadata.remove(k);
             }
             if explicit_fallback.is_empty() {
@@ -322,7 +365,10 @@ impl SessionAffinity {
                     session::bound_session_identity(&explicit_fallback).into(),
                 );
             }
-            let is_fork = metadata.get(meta::IS_FORK).and_then(|v| v.as_bool()).unwrap_or(false);
+            let is_fork = metadata
+                .get(meta::IS_FORK)
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             if !is_fork {
                 metadata.remove(meta::IS_FORK);
             }
@@ -343,11 +389,19 @@ impl SessionAffinity {
 
         let model_key = canonical_model_key(model);
         let cache_key = format!("{provider}::{primary}::{model_key}");
-        let is_fork = metadata.get(meta::IS_FORK).and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_fork = metadata
+            .get(meta::IS_FORK)
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let is_subagent = !is_fork && session::is_subagent_session(&primary, &fallback);
         let fallback_key = (!fallback.is_empty() && fallback != primary)
             .then(|| format!("{provider}::{fallback}::{model_key}"));
-        let binder = AffinityBinder { cache_key: cache_key.clone(), fallback_key: fallback_key.clone(), is_subagent, is_fork };
+        let binder = AffinityBinder {
+            cache_key: cache_key.clone(),
+            fallback_key: fallback_key.clone(),
+            is_subagent,
+            is_fork,
+        };
 
         if let Some(cached) = self.cache.get_and_refresh(&cache_key) {
             if available_ids.contains(&cached.as_str()) {
@@ -372,7 +426,8 @@ impl SessionAffinity {
     pub fn bind(&self, binder: &AffinityBinder, auth_id: &str) {
         match &binder.fallback_key {
             Some(fkey) if !binder.is_subagent && !binder.is_fork => {
-                self.cache.set_aliases(auth_id, &[binder.cache_key.clone(), fkey.clone()]);
+                self.cache
+                    .set_aliases(auth_id, &[binder.cache_key.clone(), fkey.clone()]);
             }
             _ => self.cache.set(&binder.cache_key, auth_id),
         }
@@ -384,13 +439,22 @@ impl SessionAffinity {
         if res.auth_id.is_empty() {
             return;
         }
-        if res.error.as_ref().is_some_and(|e| should_skip_credential_cooldown(Some(e))) {
+        if res
+            .error
+            .as_ref()
+            .is_some_and(|e| should_skip_credential_cooldown(Some(e)))
+        {
             return;
         }
         let mut md = res.options.metadata.clone();
-        let (mut primary, mut fallback) = session::explicit_session_ids(&res.options.headers, &res.options.original_request, &mut md);
+        let (mut primary, mut fallback) = session::explicit_session_ids(
+            &res.options.headers,
+            &res.options.original_request,
+            &mut md,
+        );
         if primary.is_empty() {
-            (primary, fallback) = session::session_ids(&res.options.headers, &res.options.original_request, &mut md);
+            (primary, fallback) =
+                session::session_ids(&res.options.headers, &res.options.original_request, &mut md);
         }
         if primary.is_empty() && fallback.is_empty() {
             return;
@@ -418,8 +482,10 @@ impl SessionAffinity {
             fallback = session::bound_session_identity(&fallback);
         }
         let cache_key = format!("{ns}::{primary}::{ns_model}");
-        let fallback_key = (!fallback.is_empty() && fallback != primary && !session::is_subagent_session(&primary, &fallback))
-            .then(|| format!("{ns}::{fallback}::{ns_model}"));
+        let fallback_key = (!fallback.is_empty()
+            && fallback != primary
+            && !session::is_subagent_session(&primary, &fallback))
+        .then(|| format!("{ns}::{fallback}::{ns_model}"));
         if res.success {
             self.cache.touch(&cache_key, &res.auth_id);
             if let Some(f) = &fallback_key {
@@ -454,10 +520,16 @@ impl SessionAffinity {
         if provider != "mixed" {
             providers.push("mixed");
         }
-        let known = session::CANDIDATE_SESSION_PREFIXES.iter().any(|p| session_id.starts_with(p));
+        let known = session::CANDIDATE_SESSION_PREFIXES
+            .iter()
+            .any(|p| session_id.starts_with(p));
         let mut candidates = vec![session_id.to_string()];
         if !known {
-            candidates.extend(session::CANDIDATE_SESSION_PREFIXES.iter().map(|p| format!("{p}{session_id}")));
+            candidates.extend(
+                session::CANDIDATE_SESSION_PREFIXES
+                    .iter()
+                    .map(|p| format!("{p}{session_id}")),
+            );
         }
         let mut found: Vec<String> = Vec::new();
         for prov in providers {
@@ -488,11 +560,20 @@ mod tests {
     use chrono::DateTime;
 
     fn clock() -> Arc<ManualClock> {
-        Arc::new(ManualClock::new(DateTime::from_timestamp(1_800_000_000, 0).unwrap()))
+        Arc::new(ManualClock::new(
+            DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        ))
     }
 
     fn cands<'a>(ids: &'a [&'a str], weights: &[i64]) -> Vec<Cand<'a>> {
-        ids.iter().zip(weights).map(|(id, w)| Cand { id, provider: "p", weight: *w }).collect()
+        ids.iter()
+            .zip(weights)
+            .map(|(id, w)| Cand {
+                id,
+                provider: "p",
+                weight: *w,
+            })
+            .collect()
     }
 
     #[test]
@@ -500,7 +581,9 @@ mod tests {
         let sel = Selector::new(SelectorConfig::default(), clock());
         let ids = ["a", "b", "c"];
         let all = cands(&ids, &[1, 1, 1]);
-        let picks: Vec<usize> = (0..4).map(|_| sel.pick_ordered("k", &all).unwrap()).collect();
+        let picks: Vec<usize> = (0..4)
+            .map(|_| sel.pick_ordered("k", &all).unwrap())
+            .collect();
         assert_eq!(picks, [0, 1, 2, 0]);
         // After picking "a" the set shrinks to [a, c]: rotation continues at the successor of "a".
         let shrunk = cands(&["a", "c"], &[1, 1]);
@@ -510,17 +593,31 @@ mod tests {
 
     #[test]
     fn fill_first_always_takes_lowest_id() {
-        let sel = Selector::new(SelectorConfig { strategy: Strategy::FillFirst, ..Default::default() }, clock());
+        let sel = Selector::new(
+            SelectorConfig {
+                strategy: Strategy::FillFirst,
+                ..Default::default()
+            },
+            clock(),
+        );
         let all = cands(&["a", "b"], &[1, 1]);
         assert!((0..5).all(|_| sel.pick_ordered("k", &all) == Some(0)));
     }
 
     #[test]
     fn smooth_weighted_distribution_is_proportional_and_interleaved() {
-        let sel = Selector::new(SelectorConfig { strategy: Strategy::WeightedRoundRobin, ..Default::default() }, clock());
+        let sel = Selector::new(
+            SelectorConfig {
+                strategy: Strategy::WeightedRoundRobin,
+                ..Default::default()
+            },
+            clock(),
+        );
         let ids = ["a", "b"];
         let all = cands(&ids, &[5, 1]);
-        let picks: Vec<&str> = (0..6).map(|_| ids[sel.pick_ordered("k", &all).unwrap()]).collect();
+        let picks: Vec<&str> = (0..6)
+            .map(|_| ids[sel.pick_ordered("k", &all).unwrap()])
+            .collect();
         assert_eq!(picks.iter().filter(|p| **p == "a").count(), 5);
         assert_eq!(picks.iter().filter(|p| **p == "b").count(), 1);
         // nginx-style smooth sequence for weights 5:1 (ties go to the first credential).
@@ -531,16 +628,39 @@ mod tests {
     fn mixed_round_robin_rotates_providers_by_count() {
         let sel = Selector::new(SelectorConfig::default(), clock());
         let list = [
-            Cand { id: "a1", provider: "pa", weight: 1 },
-            Cand { id: "a2", provider: "pa", weight: 1 },
-            Cand { id: "b1", provider: "pb", weight: 1 },
+            Cand {
+                id: "a1",
+                provider: "pa",
+                weight: 1,
+            },
+            Cand {
+                id: "a2",
+                provider: "pa",
+                weight: 1,
+            },
+            Cand {
+                id: "b1",
+                provider: "pb",
+                weight: 1,
+            },
         ];
         let providers = vec!["pa".to_string(), "pb".to_string()];
-        let picks: Vec<&str> = (0..6).map(|_| list[sel.pick_mixed(&providers, "m", 0, &list).unwrap()].id).collect();
+        let picks: Vec<&str> = (0..6)
+            .map(|_| list[sel.pick_mixed(&providers, "m", 0, &list).unwrap()].id)
+            .collect();
         assert_eq!(picks, ["a1", "a2", "b1", "a1", "a2", "b1"]);
-        let ff = Selector::new(SelectorConfig { strategy: Strategy::FillFirst, ..Default::default() }, clock());
+        let ff = Selector::new(
+            SelectorConfig {
+                strategy: Strategy::FillFirst,
+                ..Default::default()
+            },
+            clock(),
+        );
         let reversed = vec!["pb".to_string(), "pa".to_string()];
-        assert_eq!(list[ff.pick_mixed(&reversed, "m", 0, &list).unwrap()].id, "b1");
+        assert_eq!(
+            list[ff.pick_mixed(&reversed, "m", 0, &list).unwrap()].id,
+            "b1"
+        );
     }
 
     #[test]
@@ -549,18 +669,25 @@ mod tests {
         let mut md = Metadata::new();
         let headers = http::HeaderMap::new();
         let body = br#"{"prompt_cache_key":"s1"}"#;
-        let AffinityPick::Fallback(binder) = aff.decide("mixed", "m", &headers, body, &mut md, &["a", "b"]) else {
+        let AffinityPick::Fallback(binder) =
+            aff.decide("mixed", "m", &headers, body, &mut md, &["a", "b"])
+        else {
             panic!("cold session must use the fallback strategy");
         };
         aff.bind(&binder, "b");
         assert_eq!(md[meta::CANONICAL_SESSION_ID], "pck:s1");
         // Same session sticks to b even when a would be next in rotation.
-        let AffinityPick::Bound(id) = aff.decide("mixed", "m", &headers, body, &mut md, &["a", "b"]) else {
+        let AffinityPick::Bound(id) =
+            aff.decide("mixed", "m", &headers, body, &mut md, &["a", "b"])
+        else {
             panic!("expected binding");
         };
         assert_eq!(id, "b");
         // b unavailable -> fallback; a failure result drops the binding.
-        assert!(matches!(aff.decide("mixed", "m", &headers, body, &mut md, &["a"]), AffinityPick::Fallback(_)));
+        assert!(matches!(
+            aff.decide("mixed", "m", &headers, body, &mut md, &["a"]),
+            AffinityPick::Fallback(_)
+        ));
         let mut opts = crate::executor::Options::new(cpa_translator::Format::OpenAI);
         opts.original_request = bytes::Bytes::from_static(body);
         opts.metadata = md.clone();
@@ -572,7 +699,11 @@ mod tests {
             success: false,
             retry_after: None,
             credential_scope: false,
-            error: Some(cpa_auth::types::AuthError { http_status: 500, message: "x".into(), ..Default::default() }),
+            error: Some(cpa_auth::types::AuthError {
+                http_status: 500,
+                message: "x".into(),
+                ..Default::default()
+            }),
             options: opts,
             skip_quota_observation: true,
             response_headers: Default::default(),
@@ -588,11 +719,16 @@ mod tests {
         let mut md = Metadata::new();
         let body = br#"{"prompt_cache_key":"s2"}"#;
         let headers = http::HeaderMap::new();
-        let AffinityPick::Fallback(binder) = aff.decide("mixed", "m", &headers, body, &mut md, &["a"]) else {
+        let AffinityPick::Fallback(binder) =
+            aff.decide("mixed", "m", &headers, body, &mut md, &["a"])
+        else {
             panic!()
         };
         aff.bind(&binder, "a");
         c.advance(Duration::from_secs(11));
-        assert!(matches!(aff.decide("mixed", "m", &headers, body, &mut md, &["a"]), AffinityPick::Fallback(_)));
+        assert!(matches!(
+            aff.decide("mixed", "m", &headers, body, &mut md, &["a"]),
+            AffinityPick::Fallback(_)
+        ));
     }
 }

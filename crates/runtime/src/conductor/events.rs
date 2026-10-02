@@ -93,7 +93,11 @@ fn is_zero(v: &i32) -> bool {
 }
 
 fn quota_status(q: &QuotaState) -> Option<QuotaStatus> {
-    if !q.exceeded && q.reason.trim().is_empty() && q.next_recover_at.is_none() && q.backoff_level == 0 {
+    if !q.exceeded
+        && q.reason.trim().is_empty()
+        && q.next_recover_at.is_none()
+        && q.backoff_level == 0
+    {
         return None;
     }
     Some(QuotaStatus {
@@ -105,19 +109,26 @@ fn quota_status(q: &QuotaState) -> Option<QuotaStatus> {
 }
 
 /// JSON event for a failed attempt, with the credential/model state after the failure was applied.
-pub fn build_error_event_payload(result: &ExecResult, auth: &Auth, now: DateTime<Utc>) -> Option<Vec<u8>> {
+pub fn build_error_event_payload(
+    result: &ExecResult,
+    auth: &Auth,
+    now: DateTime<Utc>,
+) -> Option<Vec<u8>> {
     if result.success {
         return None;
     }
     let model = result.model.trim();
-    let model_status = (!model.is_empty()).then(|| auth.model_states.get(model)).flatten().map(|s| ModelStatus {
-        name: model.to_string(),
-        status: s.status,
-        status_message: s.status_message.trim().to_string(),
-        unavailable: s.unavailable,
-        next_retry_after: s.next_retry_after,
-        quota: quota_status(&s.quota),
-    });
+    let model_status = (!model.is_empty())
+        .then(|| auth.model_states.get(model))
+        .flatten()
+        .map(|s| ModelStatus {
+            name: model.to_string(),
+            status: s.status,
+            status_message: s.status_message.trim().to_string(),
+            unavailable: s.unavailable,
+            next_retry_after: s.next_retry_after,
+            quota: quota_status(&s.quota),
+        });
     let (status_code, body, code, retryable) = match &result.error {
         Some(e) => {
             let body = if !e.message.trim().is_empty() {
@@ -127,7 +138,16 @@ pub fn build_error_event_payload(result: &ExecResult, auth: &Auth, now: DateTime
             } else {
                 "request failed".to_string()
             };
-            (if e.http_status > 0 { e.http_status } else { 500 }, body, e.code.trim().to_string(), e.retryable)
+            (
+                if e.http_status > 0 {
+                    e.http_status
+                } else {
+                    500
+                },
+                body,
+                e.code.trim().to_string(),
+                e.retryable,
+            )
         }
         None => (500, "request failed".to_string(), String::new(), false),
     };
@@ -171,7 +191,12 @@ mod tests {
             success: false,
             retry_after: None,
             credential_scope: false,
-            error: Some(AuthError { message: "boom".into(), http_status: 503, retryable: true, ..Default::default() }),
+            error: Some(AuthError {
+                message: "boom".into(),
+                http_status: 503,
+                retryable: true,
+                ..Default::default()
+            }),
             options: crate::executor::Options::new(cpa_translator::Format::OpenAI),
             skip_quota_observation: false,
             response_headers: Default::default(),

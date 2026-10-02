@@ -15,12 +15,13 @@ use serde_json::Value;
 
 use super::cooldown::ExecResult;
 use super::errors::{
-    CODE_FORCE_COOLDOWN, Failure, auth_not_found, executor_not_found, is_count_tokens_endpoint_not_found,
-    is_responses_compact_availability_neutral, is_responses_compact_request_fault, provider_not_found,
-    result_error_from_error,
+    CODE_FORCE_COOLDOWN, Failure, auth_not_found, executor_not_found,
+    is_count_tokens_endpoint_not_found, is_responses_compact_availability_neutral,
+    is_responses_compact_request_fault, provider_not_found, result_error_from_error,
 };
 use super::models::{
-    AliasResult, attach_resolved_execution_model_info, resolve_attempt_alias_result, rewrite_model_in_response,
+    AliasResult, attach_resolved_execution_model_info, resolve_attempt_alias_result,
+    rewrite_model_in_response,
 };
 use super::pick::{Eligibility, Picked};
 use super::rules;
@@ -28,7 +29,9 @@ use super::session;
 use super::usage::{UsageFacts, tokens_from_response};
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
-use crate::executor::{DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta};
+use crate::executor::{
+    DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -54,13 +57,21 @@ pub(crate) struct Fail {
 
 impl From<ExecError> for Fail {
     fn from(err: ExecError) -> Self {
-        Fail { err, stop: false, bootstrap_headers: None }
+        Fail {
+            err,
+            stop: false,
+            bootstrap_headers: None,
+        }
     }
 }
 
 impl Fail {
     pub fn stop(err: ExecError) -> Self {
-        Fail { err, stop: true, bootstrap_headers: None }
+        Fail {
+            err,
+            stop: true,
+            bootstrap_headers: None,
+        }
     }
 }
 
@@ -91,7 +102,11 @@ pub(crate) fn normalize_providers(providers: &[String]) -> Vec<String> {
 
 pub(crate) fn auth_selection_model(opts: &Options, fallback: &str) -> String {
     let m = meta_string(&opts.metadata, meta::AUTH_SELECTION_MODEL);
-    if m.is_empty() { fallback.trim().to_string() } else { m }
+    if m.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        m
+    }
 }
 
 /// `(model, true)` when the executor must be called with the original model although routing used
@@ -112,26 +127,43 @@ pub(crate) fn ensure_requested_model_metadata(mut opts: Options, requested: &str
     if requested.is_empty() || !meta_string(&opts.metadata, meta::REQUESTED_MODEL).is_empty() {
         return opts;
     }
-    opts.metadata.insert(meta::REQUESTED_MODEL.into(), Value::String(requested.into()));
+    opts.metadata.insert(
+        meta::REQUESTED_MODEL.into(),
+        Value::String(requested.into()),
+    );
     opts
 }
 
 pub(crate) fn requested_model_alias(opts: &Options, fallback: &str) -> String {
     let m = meta_string(&opts.metadata, meta::REQUESTED_MODEL);
-    if m.is_empty() { fallback.trim().to_string() } else { m }
+    if m.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        m
+    }
 }
 
 pub(crate) fn publish_selected_auth_metadata(metadata: &mut Metadata, auth: &Auth) {
     if !auth.id.trim().is_empty() {
-        metadata.insert(meta::SELECTED_AUTH_ID.into(), Value::String(auth.id.trim().into()));
+        metadata.insert(
+            meta::SELECTED_AUTH_ID.into(),
+            Value::String(auth.id.trim().into()),
+        );
     }
     if !auth.index.trim().is_empty() {
-        metadata.insert(meta::SELECTED_AUTH_INDEX.into(), Value::String(auth.index.trim().into()));
+        metadata.insert(
+            meta::SELECTED_AUTH_INDEX.into(),
+            Value::String(auth.index.trim().into()),
+        );
     }
 }
 
 /// Fills `canonical_session_id` from the request when no stage did (Go: ensureCanonicalSessionMetadata).
-pub(crate) fn ensure_canonical_session_metadata(metadata: &mut Metadata, headers: &HeaderMap, payload: &[u8]) {
+pub(crate) fn ensure_canonical_session_metadata(
+    metadata: &mut Metadata,
+    headers: &HeaderMap,
+    payload: &[u8],
+) {
     if metadata
         .get(meta::CANONICAL_SESSION_ID)
         .and_then(Value::as_str)
@@ -192,7 +224,16 @@ impl Manager {
         let last: Fail = loop {
             let mut round_attempted = HashSet::new();
             match self
-                .mixed_once(RoundKind::Unary(kind), &normalized, &req, &opts, rs.max_retry_credentials, attempt, rs.request_retry, &mut round_attempted)
+                .mixed_once(
+                    RoundKind::Unary(kind),
+                    &normalized,
+                    &req,
+                    &opts,
+                    rs.max_retry_credentials,
+                    attempt,
+                    rs.request_retry,
+                    &mut round_attempted,
+                )
                 .await
             {
                 Ok(Outcome::Response(resp)) => return Ok(resp),
@@ -250,7 +291,16 @@ impl Manager {
         let last: Fail = loop {
             let mut round_attempted = HashSet::new();
             match self
-                .mixed_once(RoundKind::Stream, &normalized, &req, &opts, rs.max_retry_credentials, attempt, rs.request_retry, &mut round_attempted)
+                .mixed_once(
+                    RoundKind::Stream,
+                    &normalized,
+                    &req,
+                    &opts,
+                    rs.max_retry_credentials,
+                    attempt,
+                    rs.request_retry,
+                    &mut round_attempted,
+                )
                 .await
             {
                 Ok(Outcome::Stream(s)) => return Ok(s),
@@ -282,7 +332,9 @@ impl Manager {
         };
         let last = preferred(last, preferred_upstream.as_ref());
         if self.should_attempt_antigravity_credits_fallback(&last.err, &normalized)
-            && let Some(stream) = self.try_antigravity_credits_execute_stream(&req, &opts).await?
+            && let Some(stream) = self
+                .try_antigravity_credits_execute_stream(&req, &opts)
+                .await?
         {
             return Ok(stream);
         }
@@ -309,7 +361,8 @@ impl Manager {
             return Err(provider_not_found("no provider supplied").into());
         }
         let route_model = auth_selection_model(opts, &req.model);
-        let (execution_model, restore_execution_model) = execution_model_for_auth_selection(opts, &req.model);
+        let (execution_model, restore_execution_model) =
+            execution_model_for_auth_selection(opts, &req.model);
         let mut opts = ensure_requested_model_metadata(opts.clone(), &route_model);
         let eligibility = Eligibility::from_meta(&opts.metadata);
         let mut tried = self.request_retry_round_exclusions(retry_round, default_retry);
@@ -340,12 +393,17 @@ impl Manager {
                     });
                 }
             };
-            let Picked { auth, executor, provider } = picked;
+            let Picked {
+                auth,
+                executor,
+                provider,
+            } = picked;
             publish_selected_auth_metadata(&mut opts.metadata, &auth);
             round_attempted.insert(auth.id.clone());
             tried.insert(auth.id.clone());
 
-            let (models, pooled, alias_result) = self.prepared_execution_models_with_alias(&auth, &route_model);
+            let (models, pooled, alias_result) =
+                self.prepared_execution_models_with_alias(&auth, &route_model);
             if models.is_empty() {
                 continue;
             }
@@ -444,28 +502,48 @@ impl Manager {
         let mut auth_err: Option<ExecError> = None;
         let mut did_refresh = false;
         for upstream_model in models {
-            let result_model = self.state_model_for_execution(&auth, route_model, upstream_model, pooled);
+            let result_model =
+                self.state_model_for_execution(&auth, route_model, upstream_model, pooled);
             let mut exec_req = req.clone();
             exec_req.model = restore_model.map_or_else(|| upstream_model.clone(), str::to_string);
             let mut exec_opts = opts.clone();
-            let payload: Bytes =
-                if exec_opts.original_request.is_empty() { exec_req.payload.clone() } else { exec_opts.original_request.clone() };
-            ensure_canonical_session_metadata(&mut exec_opts.metadata, &exec_opts.headers, &payload);
+            let payload: Bytes = if exec_opts.original_request.is_empty() {
+                exec_req.payload.clone()
+            } else {
+                exec_opts.original_request.clone()
+            };
+            ensure_canonical_session_metadata(
+                &mut exec_opts.metadata,
+                &exec_opts.headers,
+                &payload,
+            );
             let cfg = self.cfg();
-            attach_resolved_execution_model_info(&cfg, &mut exec_req, &auth, route_model, upstream_model, restore_model.is_some());
+            attach_resolved_execution_model_info(
+                &cfg,
+                &mut exec_req,
+                &auth,
+                route_model,
+                upstream_model,
+                restore_model.is_some(),
+            );
 
             let started = Instant::now();
-            let mut res = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
+            let mut res =
+                call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
             let mut latency = started.elapsed();
             if let Err(err) = &res {
                 if err.upstream_attempted {
                     *upstream_err = Some(err.clone().into());
                 }
-                if let Some(refreshed) = self.try_refresh_after_unauthorized(&auth, err, did_refresh).await {
+                if let Some(refreshed) = self
+                    .try_refresh_after_unauthorized(&auth, err, did_refresh)
+                    .await
+                {
                     auth = refreshed;
                     did_refresh = true;
                     let started = Instant::now();
-                    res = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
+                    res = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone())
+                        .await;
                     latency = started.elapsed();
                     if let Err(err2) = &res
                         && err2.upstream_attempted
@@ -511,10 +589,17 @@ impl Manager {
                     let action = rules::match_action(&auth, &err, &cfg);
                     rules::apply_action_to_result(action, &mut result);
                     let neutral = match kind {
-                        Kind::Execute => is_responses_compact_availability_neutral(&exec_opts.alt, &err, result.error.as_ref()),
+                        Kind::Execute => is_responses_compact_availability_neutral(
+                            &exec_opts.alt,
+                            &err,
+                            result.error.as_ref(),
+                        ),
                         Kind::Count => {
                             is_count_tokens_endpoint_not_found(&err, &exec_req.model)
-                                && result.error.as_ref().is_none_or(|e| e.code != CODE_FORCE_COOLDOWN)
+                                && result
+                                    .error
+                                    .as_ref()
+                                    .is_none_or(|e| e.code != CODE_FORCE_COOLDOWN)
                         }
                     };
                     if !neutral && kind == Kind::Count && err.credential_scoped {
@@ -538,7 +623,8 @@ impl Manager {
                         }
                         continue;
                     }
-                    let compact_fault = kind == Kind::Execute && is_responses_compact_request_fault(&exec_opts.alt, &err);
+                    let compact_fault = kind == Kind::Execute
+                        && is_responses_compact_request_fault(&exec_opts.alt, &err);
                     if compact_fault || Failure::of_exec(&err).is_request_invalid() {
                         return AuthAttempt::Return(err.into());
                     }
@@ -549,11 +635,26 @@ impl Manager {
                 }
                 Ok(mut resp) => {
                     result.response_headers = resp.headers.clone();
-                    facts.tokens = tokens_from_response(exec_opts.response_format_or_source(), &resp.payload, &resp.metadata);
+                    facts.tokens = tokens_from_response(
+                        exec_opts.response_format_or_source(),
+                        &resp.payload,
+                        &resp.metadata,
+                    );
                     self.mark_result_inner(result, (kind == Kind::Execute).then_some(facts));
-                    let attempt_alias = resolve_attempt_alias_result(&cfg, &auth, route_model, upstream_model, alias_result);
-                    if attempt_alias.force_mapping && !attempt_alias.original_alias.trim().is_empty() {
-                        resp.payload = Bytes::from(rewrite_model_in_response(&resp.payload, attempt_alias.original_alias.trim()));
+                    let attempt_alias = resolve_attempt_alias_result(
+                        &cfg,
+                        &auth,
+                        route_model,
+                        upstream_model,
+                        alias_result,
+                    );
+                    if attempt_alias.force_mapping
+                        && !attempt_alias.original_alias.trim().is_empty()
+                    {
+                        resp.payload = Bytes::from(rewrite_model_in_response(
+                            &resp.payload,
+                            attempt_alias.original_alias.trim(),
+                        ));
                     }
                     return AuthAttempt::Success(Outcome::Response(resp));
                 }
@@ -566,7 +667,13 @@ impl Manager {
     }
 }
 
-async fn call_unary(kind: Kind, executor: &DynExecutor, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+async fn call_unary(
+    kind: Kind,
+    executor: &DynExecutor,
+    auth: &Auth,
+    req: Request,
+    opts: Options,
+) -> Result<Response, ExecError> {
     match kind {
         Kind::Execute => executor.execute(auth, req, opts).await,
         Kind::Count => executor.count_tokens(auth, req, opts).await,
@@ -578,5 +685,8 @@ pub(crate) fn stream_error_result(headers: HeaderMap, err: ExecError) -> StreamR
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     // The channel has capacity for the single error chunk, so this cannot block or fail.
     let _ = tx.try_send(Err(err));
-    StreamResult { headers, chunks: rx }
+    StreamResult {
+        headers,
+        chunks: rx,
+    }
 }

@@ -14,7 +14,11 @@ use super::cooldown::is_disabled;
 use super::util::after;
 
 fn trimmed_meta_str(auth: &Auth, key: &str) -> String {
-    auth.metadata.get(key).and_then(Value::as_str).map(|s| s.trim().to_string()).unwrap_or_default()
+    auth.metadata
+        .get(key)
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Merges request-preparation results without touching refresh lifecycle fields.
@@ -24,7 +28,12 @@ pub fn merge_prepared_auth(base: Option<&Auth>, current: &Auth, updated: &Auth) 
 
 /// Merges refresh results from `updated` (derived from `base`) into the latest `current`,
 /// preserving concurrent user edits and active cooldowns.
-pub fn merge_refreshed_auth(base: Option<&Auth>, current: &Auth, updated: &Auth, now: DateTime<Utc>) -> Auth {
+pub fn merge_refreshed_auth(
+    base: Option<&Auth>,
+    current: &Auth,
+    updated: &Auth,
+    now: DateTime<Utc>,
+) -> Auth {
     let mut merged = merge_auth_content(base, current, updated);
     if base.is_some_and(|b| current.registration_epoch != b.registration_epoch) {
         return merged;
@@ -34,13 +43,21 @@ pub fn merge_refreshed_auth(base: Option<&Auth>, current: &Auth, updated: &Auth,
     if updated.last_refreshed_at.is_some() {
         merged.last_refreshed_at = updated.last_refreshed_at;
     }
-    if updated.next_refresh_after.is_some() || base.is_some_and(|b| b.next_refresh_after.is_some()) {
+    if updated.next_refresh_after.is_some() || base.is_some_and(|b| b.next_refresh_after.is_some())
+    {
         merged.next_refresh_after = updated.next_refresh_after;
     }
 
     // 2. Error and status recovery.
-    let base_err = base.and_then(|b| b.last_error.as_ref()).map(|e| e.message.as_str()).unwrap_or("");
-    let current_err = current.last_error.as_ref().map(|e| e.message.as_str()).unwrap_or("");
+    let base_err = base
+        .and_then(|b| b.last_error.as_ref())
+        .map(|e| e.message.as_str())
+        .unwrap_or("");
+    let current_err = current
+        .last_error
+        .as_ref()
+        .map(|e| e.message.as_str())
+        .unwrap_or("");
     let has_new_concurrent_error = !current_err.is_empty() && current_err != base_err;
 
     // Disabled status three-way merge.
@@ -62,7 +79,9 @@ pub fn merge_refreshed_auth(base: Option<&Auth>, current: &Auth, updated: &Auth,
         if merged.status == Status::Disabled {
             merged.status = Status::Active;
         }
-        merged.metadata.insert("disabled".into(), Value::Bool(false));
+        merged
+            .metadata
+            .insert("disabled".into(), Value::Bool(false));
 
         if has_new_concurrent_error {
             // A new error landed concurrently (503, 429, timeout): preserve it.
@@ -103,7 +122,10 @@ pub fn merge_refreshed_auth(base: Option<&Auth>, current: &Auth, updated: &Auth,
         }
         for (model, base_state) in base_models {
             if !updated.model_states.contains_key(model)
-                && current.model_states.get(model).is_some_and(|cur| cur == base_state)
+                && current
+                    .model_states
+                    .get(model)
+                    .is_some_and(|cur| cur == base_state)
             {
                 merged.model_states.remove(model);
             }
@@ -129,7 +151,8 @@ fn merge_auth_content(base: Option<&Auth>, current: &Auth, updated: &Auth) -> Au
         let base_val = base_meta.get(k);
         let current_val = current.metadata.get(k);
         let changed_by_executor = base_val.is_none() || base_val != Some(v);
-        let changed_by_user = base_val.is_some() != current_val.is_some() || (base_val.is_some() && base_val != current_val);
+        let changed_by_user = base_val.is_some() != current_val.is_some()
+            || (base_val.is_some() && base_val != current_val);
         if changed_by_executor && (!changed_by_user || is_auth_token_payload_key(k)) {
             merged.metadata.insert(k.clone(), v.clone());
         }
@@ -139,7 +162,9 @@ fn merge_auth_content(base: Option<&Auth>, current: &Auth, updated: &Auth) -> Au
         if k.trim().eq_ignore_ascii_case("proxy_url") {
             continue;
         }
-        if !updated.metadata.contains_key(k) && current.metadata.get(k).is_some_and(|c| c == base_val) {
+        if !updated.metadata.contains_key(k)
+            && current.metadata.get(k).is_some_and(|c| c == base_val)
+        {
             merged.metadata.shift_remove(k);
         }
     }
@@ -153,10 +178,14 @@ fn merge_auth_content(base: Option<&Auth>, current: &Auth, updated: &Auth) -> Au
     }
 
     // 3. Proxy URL three-way merge across the struct field and metadata copy.
-    let base_struct = base.map(|b| b.proxy_url.trim().to_string()).unwrap_or_default();
+    let base_struct = base
+        .map(|b| b.proxy_url.trim().to_string())
+        .unwrap_or_default();
     let current_struct = current.proxy_url.trim().to_string();
     let updated_struct = updated.proxy_url.trim().to_string();
-    let base_meta_proxy = base.map(|b| trimmed_meta_str(b, "proxy_url")).unwrap_or_default();
+    let base_meta_proxy = base
+        .map(|b| trimmed_meta_str(b, "proxy_url"))
+        .unwrap_or_default();
     let current_meta_proxy = trimmed_meta_str(current, "proxy_url");
     let updated_meta_proxy = trimmed_meta_str(updated, "proxy_url");
 
@@ -195,14 +224,22 @@ fn merge_auth_content(base: Option<&Auth>, current: &Auth, updated: &Auth) -> Au
         merged.metadata.shift_remove("proxy_url");
     } else {
         merged.proxy_url = final_proxy.clone();
-        merged.metadata.insert("proxy_url".into(), Value::String(final_proxy));
+        merged
+            .metadata
+            .insert("proxy_url".into(), Value::String(final_proxy));
     }
 
     // 4. Prefix: user edits win.
-    let base_prefix = base.map(|b| b.prefix.trim().to_string()).unwrap_or_default();
+    let base_prefix = base
+        .map(|b| b.prefix.trim().to_string())
+        .unwrap_or_default();
     let current_prefix = current.prefix.trim().to_string();
     let updated_prefix = updated.prefix.trim().to_string();
-    merged.prefix = if updated_prefix != base_prefix && current_prefix == base_prefix { updated_prefix } else { current_prefix };
+    merged.prefix = if updated_prefix != base_prefix && current_prefix == base_prefix {
+        updated_prefix
+    } else {
+        current_prefix
+    };
 
     // 5. Attributes three-way merge.
     if !updated.attributes.is_empty() || base.is_some_and(|b| !b.attributes.is_empty()) {
@@ -212,13 +249,16 @@ fn merge_auth_content(base: Option<&Auth>, current: &Auth, updated: &Auth) -> Au
             let base_val = base_attrs.get(k);
             let current_val = current.attributes.get(k);
             let changed_by_executor = base_val.is_none() || base_val != Some(v);
-            let changed_by_user = base_val.is_some() != current_val.is_some() || (base_val.is_some() && base_val != current_val);
+            let changed_by_user = base_val.is_some() != current_val.is_some()
+                || (base_val.is_some() && base_val != current_val);
             if changed_by_executor && !changed_by_user {
                 merged.attributes.insert(k.clone(), v.clone());
             }
         }
         for (k, base_val) in base_attrs {
-            if !updated.attributes.contains_key(k) && current.attributes.get(k).is_some_and(|c| c == base_val) {
+            if !updated.attributes.contains_key(k)
+                && current.attributes.get(k).is_some_and(|c| c == base_val)
+            {
                 merged.attributes.remove(k);
             }
         }
@@ -244,13 +284,20 @@ mod tests {
     fn refresh_keeps_concurrent_user_edits_and_takes_tokens() {
         let base = auth_with("old", "");
         let mut current = base.clone();
-        current.metadata.insert("note".into(), json!("edited by operator"));
+        current
+            .metadata
+            .insert("note".into(), json!("edited by operator"));
         current.proxy_url = "http://proxy".into();
         let mut updated = base.clone();
         updated.metadata.insert("access_token".into(), json!("new"));
         updated.metadata.insert("note".into(), json!("exec note"));
         updated.last_refreshed_at = Some(DateTime::from_timestamp(1_800_000_000, 0).unwrap());
-        let merged = merge_refreshed_auth(Some(&base), &current, &updated, DateTime::from_timestamp(1_800_000_010, 0).unwrap());
+        let merged = merge_refreshed_auth(
+            Some(&base),
+            &current,
+            &updated,
+            DateTime::from_timestamp(1_800_000_010, 0).unwrap(),
+        );
         assert_eq!(merged.metadata["access_token"], "new");
         assert_eq!(merged.metadata["note"], "edited by operator");
         assert_eq!(merged.proxy_url, "http://proxy");
@@ -261,12 +308,21 @@ mod tests {
     fn refresh_preserves_concurrent_cooldown_error() {
         let base = auth_with("old", "");
         let mut current = base.clone();
-        current.last_error = Some(cpa_auth::types::AuthError { message: "429".into(), http_status: 429, ..Default::default() });
+        current.last_error = Some(cpa_auth::types::AuthError {
+            message: "429".into(),
+            http_status: 429,
+            ..Default::default()
+        });
         current.unavailable = true;
         current.status = Status::Error;
         let mut updated = base.clone();
         updated.status = Status::Active;
-        let merged = merge_refreshed_auth(Some(&base), &current, &updated, DateTime::from_timestamp(1_800_000_000, 0).unwrap());
+        let merged = merge_refreshed_auth(
+            Some(&base),
+            &current,
+            &updated,
+            DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+        );
         assert!(merged.unavailable && merged.status == Status::Error);
         assert_eq!(merged.last_error.unwrap().http_status, 429);
     }
@@ -276,9 +332,13 @@ mod tests {
         let base = auth_with("old", "");
         let mut current = base.clone();
         current.registration_epoch = 2;
-        current.metadata.insert("access_token".into(), json!("current"));
+        current
+            .metadata
+            .insert("access_token".into(), json!("current"));
         let mut updated = base.clone();
-        updated.metadata.insert("access_token".into(), json!("stale-exec"));
+        updated
+            .metadata
+            .insert("access_token".into(), json!("stale-exec"));
         let merged = merge_prepared_auth(Some(&base), &current, &updated);
         assert_eq!(merged.metadata["access_token"], "current");
     }

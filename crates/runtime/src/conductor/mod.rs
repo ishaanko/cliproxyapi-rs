@@ -24,9 +24,9 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
+use cpa_auth::Store;
 use cpa_config::Config;
 use cpa_core::registry::{ModelRegistry, global_registry};
-use cpa_auth::Store;
 use parking_lot::{Mutex, RwLock};
 
 use crate::executor::{DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult};
@@ -44,10 +44,10 @@ pub mod merge;
 pub mod models;
 mod pick;
 mod refresh;
-mod routing;
-pub mod rewriter;
 mod results;
 mod retry;
+pub mod rewriter;
+mod routing;
 pub mod rules;
 pub mod selector;
 pub mod session;
@@ -61,8 +61,8 @@ pub use clock::{Clock, ManualClock, SystemClock};
 pub use cooldown::{CooldownView, CoolingPolicy, ExecResult};
 pub use cooldown_state::{CooldownStateRecord, CooldownStateStore, FileCooldownStateStore};
 pub use credits::{
-    ANTIGRAVITY_CREDITS_METADATA_KEY, AntigravityCreditsHint, antigravity_credits_hint, has_known_antigravity_credits_hint,
-    set_antigravity_credits_hint,
+    ANTIGRAVITY_CREDITS_METADATA_KEY, AntigravityCreditsHint, antigravity_credits_hint,
+    has_known_antigravity_credits_hint, set_antigravity_credits_hint,
 };
 pub use errors::{enrich_auth_selection_error, safe_response_headers};
 pub use events::{ErrorEventSink, Hook, ResultPolicy};
@@ -147,11 +147,19 @@ impl Manager {
     pub fn with_parts(clock: Arc<dyn Clock>, registry: &'static ModelRegistry) -> Self {
         let selector_config = SelectorConfig::default();
         let core = Core {
-            state: RwLock::new(State { auths: HashMap::new(), auth_epochs: HashMap::new(), executors: HashMap::new() }),
+            state: RwLock::new(State {
+                auths: HashMap::new(),
+                auth_epochs: HashMap::new(),
+                executors: HashMap::new(),
+            }),
             config: RwLock::new(Arc::new(Config::default())),
             selector: RwLock::new(Arc::new(Selector::new(selector_config, clock.clone()))),
             oauth_alias: RwLock::new(Arc::new(models::OAuthAliasTable::default())),
-            retry: RwLock::new(RetrySettings { request_retry: 0, max_retry_credentials: 0, max_retry_interval: Duration::ZERO }),
+            retry: RwLock::new(RetrySettings {
+                request_retry: 0,
+                max_retry_credentials: 0,
+                max_retry_interval: Duration::ZERO,
+            }),
             clock: RwLock::new(clock),
             registry,
             usage: RwLock::new(None),
@@ -167,7 +175,9 @@ impl Manager {
             refresh_state: Mutex::new(refresh::RefreshState::default()),
             selector_config: Mutex::new(selector_config),
         };
-        Manager { core: Arc::new(core) }
+        Manager {
+            core: Arc::new(core),
+        }
     }
 
     pub(crate) fn now(&self) -> DateTime<Utc> {
@@ -198,7 +208,12 @@ impl Manager {
     }
 
     /// Credential retry rounds, per-round credential limit and cooldown wait ceiling.
-    pub fn set_retry_config(&self, retry: i64, max_retry_interval: Duration, max_retry_credentials: i64) {
+    pub fn set_retry_config(
+        &self,
+        retry: i64,
+        max_retry_interval: Duration,
+        max_retry_credentials: i64,
+    ) {
         *self.retry.write() = RetrySettings {
             request_retry: retry.max(0),
             max_retry_credentials: max_retry_credentials.max(0),
@@ -211,7 +226,10 @@ impl Manager {
     }
 
     /// Replaces the global OAuth model alias table (channel -> aliases).
-    pub fn set_oauth_model_alias(&self, aliases: &std::collections::BTreeMap<String, Vec<cpa_config::OAuthModelAlias>>) {
+    pub fn set_oauth_model_alias(
+        &self,
+        aliases: &std::collections::BTreeMap<String, Vec<cpa_config::OAuthModelAlias>>,
+    ) {
         *self.oauth_alias.write() = Arc::new(models::compile_oauth_model_alias_table(aliases));
     }
 
@@ -224,14 +242,17 @@ impl Manager {
         let ttl = cpa_config::GoDuration::parse(cfg.routing.session_affinity_ttl.trim())
             .ok()
             .filter(|d| d.0 > 0)
-            .map_or(Duration::from_secs(3600), |d| d.to_std().max(Duration::from_secs(1)));
+            .map_or(Duration::from_secs(3600), |d| {
+                d.to_std().max(Duration::from_secs(1))
+            });
         let session_affinity = cfg.routing.session_affinity;
         let next = SelectorConfig {
             strategy: Strategy::parse(&cfg.routing.strategy),
             session_affinity,
             affinity_ttl: ttl,
             // The subagent switch only matters (and only compares) with affinity on.
-            subagent_affinity: !session_affinity || cfg.routing.session_affinity_subagents.unwrap_or(true),
+            subagent_affinity: !session_affinity
+                || cfg.routing.session_affinity_subagents.unwrap_or(true),
         };
         let mut current = self.selector_config.lock();
         if *current == next {
@@ -250,7 +271,8 @@ impl Manager {
 
     /// Global switch for cooldown scheduling (Go: SetQuotaCooldownDisabled).
     pub fn set_quota_cooldown_disabled(&self, disabled: bool) {
-        self.cooldown_disabled.store(disabled, std::sync::atomic::Ordering::Relaxed);
+        self.cooldown_disabled
+            .store(disabled, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Usage accounting sink; one record per finished upstream attempt.
@@ -343,7 +365,8 @@ impl Manager {
         if matches!(provider.trim().to_lowercase().as_str(), "codex" | "xai")
             && let Some(exec) = self.executor(provider)
         {
-            exec.close_execution_session(CLOSE_ALL_EXECUTION_SESSIONS_ID).await;
+            exec.close_execution_session(CLOSE_ALL_EXECUTION_SESSIONS_ID)
+                .await;
         }
     }
 
@@ -352,28 +375,46 @@ impl Manager {
         if providers.is_empty() {
             return false;
         }
-        providers
-            .iter()
-            .all(|p| self.executor(p).is_some_and(|e| e.supports_apply_patch(model)))
+        providers.iter().all(|p| {
+            self.executor(p)
+                .is_some_and(|e| e.supports_apply_patch(model))
+        })
     }
 
     // ---- Execution entry points ----
 
     /// Non-streaming execution across the candidate `providers` (Go: Manager.Execute).
-    pub async fn execute(&self, providers: &[String], req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.execute_unary(exec::Kind::Execute, providers, req, opts).await
+    pub async fn execute(
+        &self,
+        providers: &[String],
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError> {
+        self.execute_unary(exec::Kind::Execute, providers, req, opts)
+            .await
     }
 
     /// Streaming execution; failover is only possible before the first chunk. When every
     /// credential fails during bootstrap the error is returned as a one-chunk stream carrying
     /// the upstream headers (Go behavior), otherwise as `Err`.
-    pub async fn execute_stream(&self, providers: &[String], req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+    pub async fn execute_stream(
+        &self,
+        providers: &[String],
+        req: Request,
+        opts: Options,
+    ) -> Result<StreamResult, ExecError> {
         self.execute_stream_rounds(providers, req, opts).await
     }
 
     /// Token counting (Go: Manager.ExecuteCount).
-    pub async fn execute_count(&self, providers: &[String], req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.execute_unary(exec::Kind::Count, providers, req, opts).await
+    pub async fn execute_count(
+        &self,
+        providers: &[String],
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError> {
+        self.execute_unary(exec::Kind::Count, providers, req, opts)
+            .await
     }
 
     // ---- Snapshots ----
@@ -411,23 +452,32 @@ impl Manager {
         if key.is_empty() {
             return false;
         }
-        self.state
-            .read()
-            .auths
-            .values()
-            .any(|a| !cooldown::is_disabled(a) && models::canonical_scheduling_provider(&a.provider) == key)
+        self.state.read().auths.values().any(|a| {
+            !cooldown::is_disabled(a) && models::canonical_scheduling_provider(&a.provider) == key
+        })
     }
 
     /// Side-effect free lookup of the session-affinity binding (Go: LookupSessionAffinity).
     /// Returns `(auth, status)`; status is `bound`, `unbound`, `ambiguous` or `unsupported`.
-    pub fn lookup_session_affinity(&self, provider: &str, model: &str, session_id: &str) -> (Option<Auth>, &'static str) {
+    pub fn lookup_session_affinity(
+        &self,
+        provider: &str,
+        model: &str,
+        session_id: &str,
+    ) -> (Option<Auth>, &'static str) {
         let selector = self.selector();
         let Some(affinity) = selector.affinity() else {
             return (None, "unsupported");
         };
-        let providers: HashMap<String, String> =
-            self.state.read().auths.iter().map(|(id, a)| (id.clone(), a.provider.clone())).collect();
-        let filter = |id: &str| provider == "mixed" || providers.get(id).is_some_and(|p| p == provider);
+        let providers: HashMap<String, String> = self
+            .state
+            .read()
+            .auths
+            .iter()
+            .map(|(id, a)| (id.clone(), a.provider.clone()))
+            .collect();
+        let filter =
+            |id: &str| provider == "mixed" || providers.get(id).is_some_and(|p| p == provider);
         let (auth_id, status) = affinity.lookup(provider, model, session_id, Some(&filter));
         if status != "bound" || auth_id.is_empty() {
             return (None, status);
@@ -473,12 +523,17 @@ pub(crate) fn executor_locked(st: &State, provider: &str) -> Option<DynExecutor>
 fn close_all_sessions(executor: DynExecutor) {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(async move {
-            executor.close_execution_session(CLOSE_ALL_EXECUTION_SESSIONS_ID).await;
+            executor
+                .close_execution_session(CLOSE_ALL_EXECUTION_SESSIONS_ID)
+                .await;
         });
     }
 }
 
 /// Request metadata value as trimmed string (strings only).
 pub(crate) fn meta_trimmed(meta: &Metadata, key: &str) -> String {
-    meta.get(key).and_then(|v| v.as_str()).map(|s| s.trim().to_string()).unwrap_or_default()
+    meta.get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
