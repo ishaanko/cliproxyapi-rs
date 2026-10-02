@@ -1,76 +1,9 @@
-//! Request translation entry points shared by the OpenAI-compatible and xAI executors (Go:
-//! helps/codex_multi_agent_v2.go `TranslateRequest*WithAPIKeyModelCompatibility*` and
-//! helps/claude_code_session.go `ClaudeCodePromptCache`).
-//!
-//! The Codex multi-agent v2 / orphan delegation rewrites (config `optimize-multi-agent-v2`) are
-//! not ported; every other step matches Go.
+//! Claude Code session scope and prompt cache id derivation shared by the OpenAI-compatible and
+//! xAI executors (Go: helps/claude_code_session.go `ClaudeCodePromptCache`).
 
-use cpa_translator::{Ctx, Format, RequestEnvelope};
 use http::HeaderMap;
 use uuid::Uuid;
 
-use crate::helps::codex_tool_integers::{is_codex_user_agent, normalize_codex_tool_integer_types};
-
-/// Translates `payload` from the client format to the upstream one. With `is_compat` the
-/// compatibility-aware Claude translators keep thinking blocks with unusable signatures. Returns
-/// the body plus whether a normalizer rewrote `configuration_update` items.
-pub fn translate_request(
-    headers: &HeaderMap,
-    from: Format,
-    to: Format,
-    model: &str,
-    payload: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> (Vec<u8>, bool) {
-    let mut body = payload.to_vec();
-    if is_codex_user_agent(Some(headers)) {
-        body = normalize_codex_tool_integer_types(&body, Some(headers));
-    }
-    if is_compat && from == Format::Claude {
-        let compat: Option<fn(&str, &[u8], bool) -> Vec<u8>> = match to {
-            Format::Codex => Some(cpa_translator::codex::claude::convert_claude_request_to_codex_with_compat),
-            Format::Gemini => Some(cpa_translator::gemini::claude::convert_claude_request_to_gemini_with_compat),
-            Format::Interactions => {
-                Some(cpa_translator::interactions::claude::convert_claude_request_to_interactions_with_compat)
-            }
-            Format::OpenAI => Some(cpa_translator::openai::claude::convert_claude_request_to_openai_with_compat),
-            _ => None,
-        };
-        if let Some(convert) = compat {
-            let translated = convert(model, &body, stream);
-            let summary = cpa_core::thinking::extract_translated_summary_config(&body, from.as_str(), to.as_str());
-            let translated = cpa_core::thinking::apply_summary_config_for_model(translated, to.as_str(), model, &summary);
-            return (translated, false);
-        }
-    }
-    let env = RequestEnvelope { model: model.to_string(), stream, body, ..Default::default() };
-    let out = cpa_translator::translate_request_envelope(&Ctx::default(), from, to, env);
-    (out.body, out.configuration_updates_changed)
-}
-
-/// Translates the pristine client payload and the working one (Go:
-/// TranslateRequestPairWithAPIKeyModelCompatibilityAndUpdateIntent). The update-intent flag
-/// belongs to the working payload.
-#[allow(clippy::too_many_arguments)]
-pub fn translate_request_pair(
-    headers: &HeaderMap,
-    from: Format,
-    to: Format,
-    model: &str,
-    original: &[u8],
-    request: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> (Vec<u8>, Vec<u8>, bool) {
-    let (original_translated, changed) = translate_request(headers, from, to, model, original, stream, is_compat);
-    if original == request {
-        let working = original_translated.clone();
-        return (original_translated, working, changed);
-    }
-    let (working, changed) = translate_request(headers, from, to, model, request, stream, is_compat);
-    (original_translated, working, changed)
-}
 
 const CLAUDE_CODE_SESSION_HEADER: &str = "x-claude-code-session-id";
 const CLAUDE_CODE_AGENT_HEADER: &str = "x-claude-code-agent-id";

@@ -168,8 +168,8 @@ impl AiStudioExecutor {
         let to = Format::Gemini;
         let original_source = original_payload(req, opts);
         let original_translated =
-            translate_request(&opts.headers, from, to, &base_model, original_source, stream, false);
-        let payload = translate_request(&opts.headers, from, to, &base_model, &req.payload, stream, false);
+            translate_request(cfg, &opts.headers, from, to, &base_model, original_source, stream, false);
+        let payload = translate_request(cfg, &opts.headers, from, to, &base_model, &req.payload, stream, false);
         let payload = apply_thinking_with_source_payload(
             &payload,
             &req.payload,

@@ -37,7 +37,8 @@ use crate::helps::payload::{
 };
 use crate::helps::session::derived_session_uuid;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
-use crate::openai_compat::translate::{claude_code_prompt_cache_id, source_handler_type, translate_request};
+use crate::helps::translate::{RequestTranslation, translate_request};
+use crate::openai_compat::translate::{claude_code_prompt_cache_id, source_handler_type};
 
 pub const IDENTIFIER: &str = "xai";
 pub const IMAGE_HANDLER_TYPE: &str = "openai-image";
@@ -488,11 +489,12 @@ pub fn prepare_responses_request_to(
     let original_source: &[u8] = if opts.original_request.is_empty() { &req.payload } else { &opts.original_request };
     let original_payload = original_source.to_vec();
     let is_compat = api_key_model_is_compat(req);
-    let (original_translated, _) =
-        translate_request(&opts.headers, from, to, &base_model, &original_payload, stream, is_compat);
+    let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, to, &base_model, stream)
+        .compat(is_compat)
+        .target_executor(IDENTIFIER);
+    let (original_translated, _) = translate_request(&translation, &original_payload);
     let original_translated = preserve_output_controls(&original_translated, &original_payload, from);
-    let (body, updates_changed) =
-        translate_request(&opts.headers, from, to, &base_model, &req.payload, stream, is_compat);
+    let (body, updates_changed) = translate_request(&translation, &req.payload);
     let body = preserve_output_controls(&body, &req.payload, from);
 
     let body = apply_request_thinking(&body, req, opts, from.as_str(), IDENTIFIER, IDENTIFIER, updates_changed)

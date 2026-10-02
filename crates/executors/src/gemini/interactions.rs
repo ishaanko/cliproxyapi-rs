@@ -30,15 +30,16 @@ use crate::helps::usage::{parse_interactions_stream_usage, parse_interactions_us
 const API_REVISION: &str = "2026-05-20";
 
 /// Translates the client payload to Interactions; native Interactions payloads pass through.
-fn translate_body(opts: &Options, model: &str, payload: &[u8], stream: bool, is_compat: bool) -> Vec<u8> {
+fn translate_body(cfg: &Config, opts: &Options, model: &str, payload: &[u8], stream: bool, is_compat: bool) -> Vec<u8> {
     if opts.source_format == Format::Interactions {
         return payload.to_vec();
     }
-    translate_request(&opts.headers, opts.source_format, Format::Interactions, model, payload, stream, is_compat)
+    translate_request(cfg, &opts.headers, opts.source_format, Format::Interactions, model, payload, stream, is_compat)
 }
 
 /// Returns `(payload-config baseline, working payload)`; identical inputs translate once.
 fn translate_request_pair(
+    cfg: &Config,
     opts: &Options,
     model: &str,
     payload: &[u8],
@@ -46,11 +47,11 @@ fn translate_request_pair(
     is_compat: bool,
 ) -> (Vec<u8>, Vec<u8>) {
     let source: &[u8] = if opts.original_request.is_empty() { payload } else { &opts.original_request };
-    let working = translate_body(opts, model, payload, stream, is_compat);
+    let working = translate_body(cfg, opts, model, payload, stream, is_compat);
     if source == payload {
         return (working.clone(), working);
     }
-    (translate_body(opts, model, source, stream, is_compat), working)
+    (translate_body(cfg, opts, model, source, stream, is_compat), working)
 }
 
 /// Aligns step ids with the Interactions schema: `function_call` takes `id` (not `call_id`),
@@ -110,7 +111,7 @@ fn prepare(
     stream: bool,
 ) -> Result<InteractionsRequest, ExecError> {
     let is_compat = api_key_model_is_compat(req);
-    let (original_translated, mut body) = translate_request_pair(opts, target_name, &req.payload, stream, is_compat);
+    let (original_translated, mut body) = translate_request_pair(cfg, opts, target_name, &req.payload, stream, is_compat);
     if cpa_json::parse(&body).g("model").exists() && !target_name.is_empty() {
         let mut v = cpa_json::parse(&body);
         set_model(&mut v, target_name);

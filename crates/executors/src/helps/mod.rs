@@ -35,6 +35,7 @@ pub mod status;
 pub mod stream_response_model_observer;
 pub mod text;
 pub mod thinking;
+pub mod translate;
 pub mod token_count;
 pub mod ttft;
 pub mod usage;

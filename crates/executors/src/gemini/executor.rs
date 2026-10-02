@@ -121,6 +121,7 @@ impl GeminiExecutor {
         let is_compat = api_key_model_is_compat(req);
         let original_source = original_payload(req, opts);
         let (original_translated, body) = translate_request_pair(
+            cfg,
             &opts.headers,
             from,
             to,
@@ -215,6 +216,7 @@ impl Executor for GeminiExecutor {
         let to = Format::Gemini;
 
         let (_, translated) = translate_request_pair(
+            &cfg,
             &opts.headers,
             from,
             to,

@@ -10,7 +10,7 @@ use cpa_config::Config;
 use cpa_core::thinking::parse_suffix;
 use cpa_runtime::conductor::{ANTIGRAVITY_CREDITS_METADATA_KEY, resolved_model_info};
 use cpa_runtime::executor::{ExecError, Options, Request};
-use cpa_translator::{Ctx, Format, RequestEnvelope, translate_request_envelope};
+use cpa_translator::{Ctx, Format};
 use serde_json::Value;
 
 use super::AntigravityExecutor;
@@ -29,6 +29,7 @@ use super::transport::close_auth_idle_transports;
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::session::derived_antigravity_session_id;
 use crate::helps::thinking::apply_request_thinking;
+use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::usage::UsageReporter;
 
 /// Which of the three upstream call shapes is being prepared.
@@ -165,15 +166,10 @@ impl AntigravityExecutor {
         };
 
         let model_info = resolved_model_info(req).map(|r| r.info);
-        let envelope = RequestEnvelope {
-            model: base_model.to_string(),
-            stream: mode.upstream_stream(),
-            body: original_payload.clone(),
-            model_info,
-            ..Default::default()
-        };
-        let ctx = Ctx { alt: Some(opts.alt.clone()) };
-        let original_translated = translate_request_envelope(&ctx, from, to, envelope).body;
+        let mut translation = RequestTranslation::new(&opts.headers, Some(&cfg), from, to, base_model, mode.upstream_stream());
+        translation.ctx = Ctx { alt: Some(opts.alt.clone()) };
+        translation.envelope.model_info = model_info;
+        let original_translated = translate_request(&translation, &original_payload).0;
         let mut translated = original_translated.clone();
 
         translated = apply_request_thinking(&translated, req, opts, from.as_str(), to.as_str(), "antigravity", false)

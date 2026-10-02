@@ -282,8 +282,8 @@ impl GeminiVertexExecutor {
         let from = opts.source_format;
         let to = Format::Gemini;
         let original_translated =
-            translate_request(&opts.headers, from, to, base_model, original_payload(req, opts), stream, false);
-        let body = translate_request(&opts.headers, from, to, base_model, &req.payload, stream, false);
+            translate_request(cfg, &opts.headers, from, to, base_model, original_payload(req, opts), stream, false);
+        let body = translate_request(cfg, &opts.headers, from, to, base_model, &req.payload, stream, false);
         let body = apply_request_thinking(&body, req, opts, from.as_str(), to.as_str(), "vertex", false)
             .map_err(thinking_error)?;
         let body = fix_gemini_image_aspect_ratio(base_model, body);
@@ -369,7 +369,7 @@ impl Executor for GeminiVertexExecutor {
         let response_format = opts.response_format_or_source();
         let to = Format::Gemini;
 
-        let translated = translate_request(&opts.headers, from, to, &base_model, &req.payload, false, false);
+        let translated = translate_request(&cfg, &opts.headers, from, to, &base_model, &req.payload, false, false);
         let translated = apply_request_thinking(&translated, &req, &opts, from.as_str(), to.as_str(), "vertex", false)
             .map_err(thinking_error)?;
         let translated = fix_gemini_image_aspect_ratio(&base_model, translated);

@@ -7,11 +7,12 @@ use std::future::Future;
 
 use bytes::Bytes;
 use cpa_auth::Auth;
+use cpa_config::Config;
 use cpa_core::registry::lookup_model_info;
 use cpa_core::thinking::ThinkingError;
 use cpa_json::{J, Value, json};
 use cpa_runtime::executor::{ExecError, Options, Request};
-use cpa_translator::{Ctx, Format, Param, RequestEnvelope};
+use cpa_translator::{Ctx, Format, Param};
 use futures_util::StreamExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value as Json;
@@ -21,7 +22,7 @@ use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_cl
 use crate::helps::apply_patch::{
     APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream, record_apply_patch_stream_failure,
 };
-use crate::helps::codex_tool_integers::{is_codex_user_agent, normalize_codex_tool_integer_types};
+use crate::helps::translate::{RequestTranslation, translate_request as translate_request_shared};
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter};
@@ -71,13 +72,12 @@ pub(crate) fn original_payload<'a>(req: &'a Request, opts: &'a Options) -> &'a [
 
 // ---------------------------------------------------------------- request translation
 
-/// Translates a client payload to `to`. With `is_compat` (an API-key model flagged for
-/// compatibility) the Claude-to-Gemini/Interactions pairs use the compat converters (Go:
-/// TranslateRequestWithAPIKeyModelCompatibility). Codex clients get integer-typed tool schemas
-/// normalized first.
-///
-/// Not ported: the Codex multi-agent v2 input rewrites and plugin request normalizers.
+/// Translates a client payload to `to` through the shared stages (see
+/// [`crate::helps::translate`]). Only a native Gemini client's malformed JSON is special: Go's
+/// sjson-based normalizer leaves such a body as unusable fragments that the later body edits
+/// discard, so nothing from the normalizer (default safety settings) survives; pass it through.
 pub(crate) fn translate_request(
+    cfg: &Config,
     headers: &HeaderMap,
     from: Format,
     to: Format,
@@ -86,43 +86,17 @@ pub(crate) fn translate_request(
     stream: bool,
     is_compat: bool,
 ) -> Vec<u8> {
-    let payload = if is_codex_user_agent(Some(headers)) {
-        normalize_codex_tool_integer_types(payload, Some(headers))
-    } else {
-        payload.to_vec()
-    };
-    // A native Gemini client may send malformed JSON. Go's sjson-based normalizer leaves such a
-    // body as unusable fragments that the later body edits discard, so nothing from the
-    // normalizer (default safety settings) survives; pass it through untouched.
-    if from == Format::Gemini && to == Format::Gemini && !cpa_json::valid(&payload) {
-        return payload;
+    if from == Format::Gemini && to == Format::Gemini && !cpa_json::valid(payload) {
+        return payload.to_vec();
     }
-    if is_compat {
-        let compat = match (from, to) {
-            (Format::Claude, Format::Gemini) => Some(
-                cpa_translator::gemini::claude::convert_claude_request_to_gemini_with_compat(model, &payload, stream),
-            ),
-            (Format::Claude, Format::Interactions) => {
-                Some(cpa_translator::interactions::claude::convert_claude_request_to_interactions_with_compat(
-                    model, &payload, stream,
-                ))
-            }
-            _ => None,
-        };
-        if let Some(translated) = compat {
-            let summary = cpa_core::thinking::extract_translated_summary_config(&payload, from.as_str(), to.as_str());
-            return cpa_core::thinking::apply_summary_config_for_model(translated, to.as_str(), model, &summary);
-        }
-    }
-    let req = RequestEnvelope { model: model.to_string(), stream, body: payload, ..Default::default() };
-    cpa_translator::translate_request_envelope(&Ctx::default(), from, to, req).body
+    let translation = RequestTranslation::new(headers, Some(cfg), from, to, model, stream).compat(is_compat);
+    translate_request_shared(&translation, payload).0
 }
 
 /// Translates the payload-config baseline and the working payload; identical inputs are
-/// translated once (Go: TranslateRequestPairWithAPIKeyModelCompatibility). Returns
-/// `(original, working)`.
-#[allow(clippy::too_many_arguments)]
+/// translated once. Returns `(original, working)`.
 pub(crate) fn translate_request_pair(
+    cfg: &Config,
     headers: &HeaderMap,
     from: Format,
     to: Format,
@@ -132,12 +106,12 @@ pub(crate) fn translate_request_pair(
     stream: bool,
     is_compat: bool,
 ) -> (Vec<u8>, Vec<u8>) {
-    let translated_original = translate_request(headers, from, to, model, original, stream, is_compat);
+    let translated_original = translate_request(cfg, headers, from, to, model, original, stream, is_compat);
     if original == working {
         let copy = translated_original.clone();
         return (translated_original, copy);
     }
-    let translated_working = translate_request(headers, from, to, model, working, stream, is_compat);
+    let translated_working = translate_request(cfg, headers, from, to, model, working, stream, is_compat);
     (translated_original, translated_working)
 }
 

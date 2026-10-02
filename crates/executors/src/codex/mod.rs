@@ -18,7 +18,7 @@ mod exec_http;
 mod input_ids;
 // Handler-facing API (tool preparation, quota header parsing) is exported but not all used here.
 #[allow(dead_code)]
-mod multi_agent_v2;
+pub(crate) mod multi_agent_v2;
 #[allow(dead_code)]
 mod quota;
 mod reasoning;

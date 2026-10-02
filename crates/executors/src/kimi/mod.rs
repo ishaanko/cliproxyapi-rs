@@ -48,6 +48,7 @@ use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{KIMI_SCANNER_BUFFER, LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::{status_err, transport_error};
+use crate::helps::translate::{RequestTranslation, translate_request_pair};
 use crate::helps::thinking::apply_request_thinking;
 use crate::helps::usage::{
     StreamUsageBuffer, UsageReporter, parse_codex_usage, parse_openai_usage,
@@ -129,24 +130,6 @@ fn kimi_creds(auth: &Auth) -> String {
         }
     }
     String::new()
-}
-
-fn translate_chat_request(
-    opts: &Options,
-    from: Format,
-    model: &str,
-    payload: &[u8],
-    stream: bool,
-) -> Vec<u8> {
-    let headers = Some(&opts.headers);
-    let normalized;
-    let payload = if crate::helps::codex_tool_integers::is_codex_user_agent(headers) {
-        normalized = crate::helps::codex_tool_integers::normalize_codex_tool_integer_types(payload, headers);
-        &normalized[..]
-    } else {
-        payload
-    };
-    cpa_translator::translate_request(from, Format::OpenAI, model, payload, stream)
 }
 
 fn usage_response_metadata(detail: &crate::helps::usage::Detail) -> Metadata {
@@ -238,8 +221,8 @@ impl KimiExecutor {
     ) -> Result<Vec<u8>, ExecError> {
         let from = opts.source_format;
         let original_source: &[u8] = if opts.original_request.is_empty() { &req.payload } else { &opts.original_request };
-        let original_translated = translate_chat_request(opts, from, base_model, original_source, stream);
-        let mut body = translate_chat_request(opts, from, base_model, &req.payload, stream);
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, Format::OpenAI, base_model, stream);
+        let (original_translated, mut body, _) = translate_request_pair(&translation, original_source, &req.payload);
 
         // Strip kimi- prefix and any [1m] suffix for the upstream API.
         let upstream_model = normalize_kimi_upstream_model(base_model);

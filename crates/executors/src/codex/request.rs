@@ -110,34 +110,6 @@ pub fn translate_pair(from: Format, to: Format, model: &str, original: &[u8], pa
     (original_translated, body, changed)
 }
 
-/// Translation for token counting (Go: TranslateRequestWithAPIKeyModelCompatibilityAndUpdateIntentForExecutor
-/// with the Codex executor as target): Responses sources get the orphan-delegation rewrite
-/// first; compat Claude requests use the compat converter.
-pub fn translate_for_count(
-    cfg: &Config,
-    headers: &HeaderMap,
-    from: Format,
-    to: Format,
-    model: &str,
-    payload: &[u8],
-    is_compat: bool,
-) -> (Vec<u8>, bool) {
-    if !is_compat || (to == Format::Codex && from != Format::Claude) {
-        let mut body = payload.to_vec();
-        if from == Format::OpenAIResponse {
-            body = multi_agent_v2::rewrite_orphan_delegation_input_for_config(headers, &body, Some(cfg));
-        }
-        let env = cpa_translator::translate_request_envelope(
-            &Ctx::default(),
-            from,
-            to,
-            RequestEnvelope { model: model.to_string(), stream: false, body, ..Default::default() },
-        );
-        return (env.body, env.configuration_updates_changed);
-    }
-    translate_one(from, to, model, payload, false, is_compat)
-}
-
 /// Runs `edit` on the parsed body and re-serializes only when it reports a change.
 fn edit(body: Vec<u8>, f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
     let mut value = cpa_json::parse(&body);
