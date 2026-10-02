@@ -960,6 +960,7 @@ dependencies = [
  "cpa-core",
  "cpa-executors",
  "cpa-json",
+ "cpa-live",
  "cpa-management",
  "cpa-runtime",
  "cpa-translator",
