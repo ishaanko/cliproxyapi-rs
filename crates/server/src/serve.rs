@@ -14,10 +14,16 @@ use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 use tokio_rustls::server::TlsStream;
 
-/// `host:port`, defaulting to port 8317 when unset.
+/// `host:port`, defaulting to port 8317 when unset. An empty host binds every interface
+/// (Go's `:port`); `[::]` is dual-stack on Linux. Bare IPv6 hosts are bracketed.
 pub fn listen_addr(cfg: &Config) -> String {
     let port = if cfg.port > 0 { cfg.port } else { 8317 };
-    format!("{}:{}", cfg.host, port)
+    let host = cfg.host.trim();
+    match host {
+        "" => format!("[::]:{port}"),
+        h if h.contains(':') && !h.starts_with('[') => format!("[{h}]:{port}"),
+        h => format!("{h}:{port}"),
+    }
 }
 
 /// TLS listener: handshakes inside `accept` (bounded) and yields decrypted streams.
