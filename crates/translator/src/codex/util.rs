@@ -16,7 +16,7 @@ pub fn truncate_bytes(s: &str, n: usize) -> String {
 }
 
 /// Decodes bytes like Go's JSON encoder: each invalid UTF-8 byte becomes one U+FFFD.
-fn go_lossy(bytes: &[u8]) -> String {
+pub fn go_lossy(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len());
     let mut rest = bytes;
     loop {
@@ -57,7 +57,10 @@ pub fn shorten_name_if_needed(name: &str) -> String {
 
 /// Unique shortened names (original -> short) within one request. `base` is the per-name
 /// shortening rule; collisions get `_1`, `_2`, ... suffixes inside the 64 byte limit.
-pub fn build_short_name_map(names: &[String], base: impl Fn(&str) -> String) -> HashMap<String, String> {
+pub fn build_short_name_map(
+    names: &[String],
+    base: impl Fn(&str) -> String,
+) -> HashMap<String, String> {
     let mut used: HashSet<String> = HashSet::new();
     let mut m = HashMap::new();
     for n in names {
@@ -76,7 +79,11 @@ fn make_unique(used: &HashSet<String>, cand: String) -> String {
     for i in 1.. {
         let suffix = format!("_{i}");
         let allowed = NAME_LIMIT.saturating_sub(suffix.len());
-        let tmp = if cand.len() > allowed { truncate_bytes(&cand, allowed) } else { cand.clone() } + &suffix;
+        let tmp = if cand.len() > allowed {
+            truncate_bytes(&cand, allowed)
+        } else {
+            cand.clone()
+        } + &suffix;
         if !used.contains(&tmp) {
             return tmp;
         }
@@ -134,7 +141,9 @@ pub fn mime_type_from_output_format(output_format: &str) -> String {
 /// Go `time.Unix(secs, 0).Format(time.RFC3339Nano)` in the local zone ("Z" for UTC).
 pub fn rfc3339_local(secs: i64) -> String {
     match Local.timestamp_opt(secs, 0).single() {
-        Some(t) if t.offset().fix().local_minus_utc() != 0 => t.format("%Y-%m-%dT%H:%M:%S%:z").to_string(),
+        Some(t) if t.offset().fix().local_minus_utc() != 0 => {
+            t.format("%Y-%m-%dT%H:%M:%S%:z").to_string()
+        }
         Some(t) => t.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
         None => "1970-01-01T00:00:00Z".into(),
     }

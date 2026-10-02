@@ -2,7 +2,7 @@
 
 use cpa_json::J;
 
-use crate::common::{request_model_name, ApplyPatchResponsesBridge};
+use crate::common::{ApplyPatchResponsesBridge, request_model_name};
 use crate::registry::{Ctx, Param};
 
 /// Go: ConvertCodexResponseToOpenAIResponses. Codex already speaks Responses SSE; only the
@@ -33,20 +33,27 @@ pub fn convert_codex_response_to_openai_responses(
         };
     };
     let input = updated.as_deref().unwrap_or(raw);
-    let (mut outputs, err) = bridge.transform(input);
+    let (mut outputs, _) = bridge.transform(input);
+    let tool_input_error = bridge.tool_input_error().map(str::to_string);
     if sse {
         for out in outputs.iter_mut() {
             out.splice(0..0, b"data: ".iter().copied());
         }
     }
-    if let Some(err) = err {
-        param.tool_input_error = Some(err);
+    // Go exposes the bridge's error through the param's ToolInputError contract.
+    if tool_input_error.is_some() {
+        param.tool_input_error = tool_input_error;
     }
     outputs
 }
 
 /// Fills `response.model` on created/in_progress events lacking it. `None` when unchanged.
-fn set_responses_model(raw: &[u8], model_name: &str, original_request: &[u8], request: &[u8]) -> Option<Vec<u8>> {
+fn set_responses_model(
+    raw: &[u8],
+    model_name: &str,
+    original_request: &[u8],
+    request: &[u8],
+) -> Option<Vec<u8>> {
     let mut root = cpa_json::parse(raw);
     let event_type = root.g("type").str();
     if event_type != "response.created" && event_type != "response.in_progress" {

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use cpa_core::applypatch;
 use cpa_core::util::{collect_responses_tool_winners, qualify_responses_namespace_tool_name};
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::request::{build_short_name_map_for, collect_request_tool_names};
@@ -106,13 +106,21 @@ pub fn convert_codex_response_to_openai(
         set_usage(&mut template, &usage);
     }
 
-    if data_type == "response.reasoning_summary_text.delta" || data_type == "response.reasoning_text.delta" {
+    if data_type == "response.reasoning_summary_text.delta"
+        || data_type == "response.reasoning_text.delta"
+    {
         let delta = root.g("delta");
         if delta.exists() {
             cpa_json::set(&mut template, "choices.0.delta.role", "assistant");
-            cpa_json::set(&mut template, "choices.0.delta.reasoning_content", delta.str());
+            cpa_json::set(
+                &mut template,
+                "choices.0.delta.reasoning_content",
+                delta.str(),
+            );
         }
-    } else if data_type == "response.reasoning_summary_text.done" || data_type == "response.reasoning_text.done" {
+    } else if data_type == "response.reasoning_summary_text.done"
+        || data_type == "response.reasoning_text.done"
+    {
         cpa_json::set(&mut template, "choices.0.delta.role", "assistant");
         cpa_json::set(&mut template, "choices.0.delta.reasoning_content", "\n\n");
     } else if data_type == "response.output_text.delta" {
@@ -147,7 +155,11 @@ pub fn convert_codex_response_to_openai(
             native_finish_reason = finish_reason.clone();
         }
         cpa_json::set(&mut template, "choices.0.finish_reason", finish_reason);
-        cpa_json::set(&mut template, "choices.0.native_finish_reason", native_finish_reason);
+        cpa_json::set(
+            &mut template,
+            "choices.0.native_finish_reason",
+            native_finish_reason,
+        );
     } else if data_type == "response.output_item.added" {
         let item = root.g("item");
         if !item.exists() || !is_tool_call_type(&item.g("type").str()) {
@@ -168,8 +180,12 @@ pub fn convert_codex_response_to_openai(
         let call = json!({"index": index, "id": item.g("call_id").str(), "type": "function", "function": {"name": name, "arguments": ""}});
         cpa_json::set(&mut template, "choices.0.delta.role", "assistant");
         cpa_json::set(&mut template, "choices.0.delta.tool_calls", json!([call]));
-    } else if data_type == "response.function_call_arguments.delta" || data_type == "response.custom_tool_call_input.delta" {
-        let Some(si) = find_tool_call_state(p, &root, &Res::NONE) else { return vec![] };
+    } else if data_type == "response.function_call_arguments.delta"
+        || data_type == "response.custom_tool_call_input.delta"
+    {
+        let Some(si) = find_tool_call_state(p, &root, &Res::NONE) else {
+            return vec![];
+        };
         let mut delta_value = root.g("delta").str();
         let state = &mut p.states[si];
         if state.done || delta_value.is_empty() {
@@ -184,15 +200,23 @@ pub fn convert_codex_response_to_openai(
             }
         }
         set_arguments_chunk(&mut template, state.index, &delta_value);
-    } else if data_type == "response.function_call_arguments.done" || data_type == "response.custom_tool_call_input.done" {
-        let Some(si) = find_tool_call_state(p, &root, &Res::NONE) else { return vec![] };
+    } else if data_type == "response.function_call_arguments.done"
+        || data_type == "response.custom_tool_call_input.done"
+    {
+        let Some(si) = find_tool_call_state(p, &root, &Res::NONE) else {
+            return vec![];
+        };
         let state = &mut p.states[si];
         if state.done || state.input_closed || (state.arguments_emitted && !state.patch) {
             return vec![];
         }
 
         // Fallback: no delta events were received, emit the full arguments as a single chunk.
-        let full_args_field = if data_type == "response.custom_tool_call_input.done" { "input" } else { "arguments" };
+        let full_args_field = if data_type == "response.custom_tool_call_input.done" {
+            "input"
+        } else {
+            "arguments"
+        };
         state.arguments_emitted = true;
         let mut full_args = root.g(full_args_field).str();
         if state.patch {
@@ -292,12 +316,20 @@ fn set_usage(template: &mut Value, usage: &Res<'_>) {
     }
     let cached = usage.g("input_tokens_details.cached_tokens");
     if cached.exists() {
-        cpa_json::set(template, "usage.prompt_tokens_details.cached_tokens", cached.int());
+        cpa_json::set(
+            template,
+            "usage.prompt_tokens_details.cached_tokens",
+            cached.int(),
+        );
     }
     set_cache_write_tokens(template, usage);
     let reasoning = usage.g("output_tokens_details.reasoning_tokens");
     if reasoning.exists() {
-        cpa_json::set(template, "usage.completion_tokens_details.reasoning_tokens", reasoning.int());
+        cpa_json::set(
+            template,
+            "usage.completion_tokens_details.reasoning_tokens",
+            reasoning.int(),
+        );
     }
 }
 
@@ -429,7 +461,11 @@ pub fn convert_codex_response_to_openai_non_stream(
                     }
                     let name = item.g("name");
                     if name.exists() {
-                        cpa_json::set(&mut call, "function.name", restore_tool_name(original_request, &name.str()));
+                        cpa_json::set(
+                            &mut call,
+                            "function.name",
+                            restore_tool_name(original_request, &name.str()),
+                        );
                     }
                     let mut full_args = tool_call_arguments(&item);
                     if is_original_custom_patch(original_request, &item) {
@@ -455,13 +491,25 @@ pub fn convert_codex_response_to_openai_non_stream(
             cpa_json::set(&mut template, "choices.0.message.content", content_text);
         }
         if !reasoning_text.is_empty() {
-            cpa_json::set(&mut template, "choices.0.message.reasoning_content", reasoning_text);
+            cpa_json::set(
+                &mut template,
+                "choices.0.message.reasoning_content",
+                reasoning_text,
+            );
         }
         if !tool_calls.is_empty() {
-            cpa_json::set(&mut template, "choices.0.message.tool_calls", Value::Array(tool_calls.clone()));
+            cpa_json::set(
+                &mut template,
+                "choices.0.message.tool_calls",
+                Value::Array(tool_calls.clone()),
+            );
         }
         if !images.is_empty() {
-            cpa_json::set(&mut template, "choices.0.message.images", Value::Array(images));
+            cpa_json::set(
+                &mut template,
+                "choices.0.message.images",
+                Value::Array(images),
+            );
         }
     }
 
@@ -492,7 +540,11 @@ pub fn convert_codex_response_to_openai_non_stream(
         }
         if !finish_reason.is_empty() {
             cpa_json::set(&mut template, "choices.0.finish_reason", finish_reason);
-            cpa_json::set(&mut template, "choices.0.native_finish_reason", native_finish_reason);
+            cpa_json::set(
+                &mut template,
+                "choices.0.native_finish_reason",
+                native_finish_reason,
+            );
         }
     }
 
@@ -512,7 +564,8 @@ fn register_tool_call_state(p: &mut State, event: &Value, item: &Res<'_>, state:
     }
     let output_index = event.g("output_index");
     if output_index.exists() {
-        p.tool_call_states.insert(format!("output:{}", output_index.raw()), si);
+        p.tool_call_states
+            .insert(format!("output:{}", output_index.raw()), si);
     }
     p.current_tool_call = Some(si);
 }
@@ -532,7 +585,9 @@ fn find_tool_call_state(p: &State, event: &Value, item: &Res<'_>) -> Option<usiz
     }
     let output_index = event.g("output_index");
     if output_index.exists()
-        && let Some(&si) = p.tool_call_states.get(&format!("output:{}", output_index.raw()))
+        && let Some(&si) = p
+            .tool_call_states
+            .get(&format!("output:{}", output_index.raw()))
     {
         return Some(si);
     }
@@ -582,11 +637,22 @@ fn set_cache_write_tokens(template: &mut Value, usage: &Res<'_>) {
     let raw = value.raw();
     let valid = value.is_number() && !raw.is_empty() && raw.bytes().all(|b| b.is_ascii_digit());
     if !valid {
-        tracing::warn!(field = "usage.input_tokens_details.cache_write_tokens", "Ignoring invalid Codex cache write token count");
+        tracing::warn!(
+            field = "usage.input_tokens_details.cache_write_tokens",
+            "Ignoring invalid Codex cache write token count"
+        );
         return;
     }
-    cpa_json::set(template, "usage.prompt_tokens_details.cache_write_tokens", value.value());
-    cpa_json::set(template, "usage.prompt_tokens_details.cached_creation_tokens", value.value());
+    cpa_json::set(
+        template,
+        "usage.prompt_tokens_details.cache_write_tokens",
+        value.value(),
+    );
+    cpa_json::set(
+        template,
+        "usage.prompt_tokens_details.cached_creation_tokens",
+        value.value(),
+    );
 }
 
 /// A custom `apply_patch` call is bridged only when the original request declared it as a
@@ -595,7 +661,8 @@ fn is_original_custom_patch(original: &[u8], item: &Res<'_>) -> bool {
     if item.g("type").str() != "custom_tool_call" {
         return false;
     }
-    let name = qualify_responses_namespace_tool_name(&item.g("namespace").str(), &item.g("name").str());
+    let name =
+        qualify_responses_namespace_tool_name(&item.g("namespace").str(), &item.g("name").str());
     let root = cpa_json::parse(original);
     // Chat Completions prefers ordinary functions for ambiguous names, regardless of order.
     let tools = root.g("tools");

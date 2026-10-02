@@ -1,10 +1,12 @@
 //! Interactions request -> Codex Responses request (Go: interactions_codex_request.go).
 
 use cpa_core::thinking;
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 
 use crate::codex::raw::raw_at;
-use crate::codex::util::{file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed};
+use crate::codex::util::{
+    file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
+};
 
 /// Source bytes plus the output item list being built. `path` arguments below are gjson-style
 /// paths into `src`, used to copy client values verbatim where Go uses `Raw` in a string.
@@ -14,7 +16,11 @@ struct Ctx<'a> {
 }
 
 /// Go: ConvertInteractionsRequestToCodex.
-pub fn convert_interactions_request_to_codex(model_name: &str, input_raw_json: &[u8], stream: bool) -> Vec<u8> {
+pub fn convert_interactions_request_to_codex(
+    model_name: &str,
+    input_raw_json: &[u8],
+    stream: bool,
+) -> Vec<u8> {
     let root = cpa_json::parse(input_raw_json);
     let mut out = cpa_json::parse_str(r#"{"model":"","instructions":"","input":[]}"#);
     cpa_json::set(&mut out, "model", model_name);
@@ -23,7 +29,10 @@ pub fn convert_interactions_request_to_codex(model_name: &str, input_raw_json: &
     }
     copy_system(&mut out, &root);
     copy_generation_config(&mut out, &root);
-    let mut cx = Ctx { src: input_raw_json, items: Vec::new() };
+    let mut cx = Ctx {
+        src: input_raw_json,
+        items: Vec::new(),
+    };
     append_input(&mut cx, &root.g("input"), "input");
     if !cx.items.is_empty() {
         cpa_json::set(&mut out, "input", Value::Array(cx.items));
@@ -61,7 +70,10 @@ fn copy_system(out: &mut Value, root: &Value) {
 
 /// Non-empty texts joined with newlines.
 fn join_texts(texts: impl Iterator<Item = String>) -> String {
-    texts.filter(|t| !t.is_empty()).collect::<Vec<_>>().join("\n")
+    texts
+        .filter(|t| !t.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn copy_generation_config(out: &mut Value, root: &Value) {
@@ -155,7 +167,11 @@ fn reasoning_effort(cfg: &Res<'_>) -> Option<String> {
 }
 
 fn reasoning_summary(cfg: &Res<'_>) -> Option<&'static str> {
-    for path in ["thinking_summaries", "thinkingSummaries", "reasoning.summary"] {
+    for path in [
+        "thinking_summaries",
+        "thinkingSummaries",
+        "reasoning.summary",
+    ] {
         if let Some(s) = cfg.g(path).as_str() {
             match s.trim().to_lowercase().as_str() {
                 "auto" => return Some("auto"),
@@ -355,7 +371,13 @@ fn copy_top_level(out: &mut Value, root: &Value) {
     if tool_choice.exists() {
         set_if_different(out, "tool_choice", &tool_choice);
     }
-    for path in ["parallel_tool_calls", "store", "metadata", "include", "truncation"] {
+    for path in [
+        "parallel_tool_calls",
+        "store",
+        "metadata",
+        "include",
+        "truncation",
+    ] {
         let value = root.g(path);
         if value.exists() {
             set_if_different(out, path, &value);
@@ -388,24 +410,35 @@ fn append_thought(cx: &mut Ctx<'_>, step: &Res<'_>) {
 }
 
 fn append_text(cx: &mut Ctx<'_>, role: &str, text: &str) {
-    let part_type = if role == "assistant" { "output_text" } else { "input_text" };
+    let part_type = if role == "assistant" {
+        "output_text"
+    } else {
+        "input_text"
+    };
     append_message_part(cx, role, json!({"type": part_type, "text": text}));
 }
 
 fn append_message_part(cx: &mut Ctx<'_>, role: &str, part: Value) {
-    cx.items.push(json!({"type": "message", "role": role, "content": [part]}));
+    cx.items
+        .push(json!({"type": "message", "role": role, "content": [part]}));
 }
 
 fn message_part(part: &Res<'_>, role: &str) -> Option<Value> {
     let text = part.g("text");
     if text.exists() {
-        let part_type = if role == "assistant" { "output_text" } else { "input_text" };
+        let part_type = if role == "assistant" {
+            "output_text"
+        } else {
+            "input_text"
+        };
         return Some(json!({"type": part_type, "text": text.str()}));
     }
     match part.g("type").str().trim().to_lowercase().as_str() {
         "text" | "" => None,
         "image" => image_part(part),
-        "image_url" => Some(json!({"type": "input_image", "image_url": part.g("image_url.url").str()})),
+        "image_url" => {
+            Some(json!({"type": "input_image", "image_url": part.g("image_url.url").str()}))
+        }
         "audio" => audio_part(part),
         "input_audio" => {
             let mut item = json!({"type": "input_audio", "input_audio": {}});
@@ -457,24 +490,32 @@ fn audio_part(part: &Res<'_>) -> Option<Value> {
     if mime_type.is_empty() || data.is_empty() {
         return None;
     }
-    Some(json!({"type": "input_audio", "input_audio": {"data": data, "format": input_audio_format_from_mime(&mime_type)}}))
+    Some(
+        json!({"type": "input_audio", "input_audio": {"data": data, "format": input_audio_format_from_mime(&mime_type)}}),
+    )
 }
 
 fn file_part(part: &Res<'_>) -> Option<Value> {
     let file_data = part.g("file.file_data").str();
     if !file_data.is_empty() {
-        return Some(json!({"type": "input_file", "file_data": file_data, "filename": part.g("file.filename").str()}));
+        return Some(
+            json!({"type": "input_file", "file_data": file_data, "filename": part.g("file.filename").str()}),
+        );
     }
     let mime_type = first_string(part, &["mime_type", "mimeType"]);
     let file_uri = first_string(part, &["file_uri", "fileUri", "url"]);
     if !file_uri.is_empty() {
-        return Some(json!({"type": "input_file", "file_url": file_uri, "filename": file_name_from_mime(&mime_type)}));
+        return Some(
+            json!({"type": "input_file", "file_url": file_uri, "filename": file_name_from_mime(&mime_type)}),
+        );
     }
     let data = part.g("data").str();
     if mime_type.is_empty() || data.is_empty() {
         return None;
     }
-    Some(json!({"type": "input_file", "file_data": data, "filename": file_name_from_mime(&mime_type)}))
+    Some(
+        json!({"type": "input_file", "file_data": data, "filename": file_name_from_mime(&mime_type)}),
+    )
 }
 
 fn inline_part(inline: &Res<'_>) -> Option<Value> {
@@ -484,9 +525,12 @@ fn inline_part(inline: &Res<'_>) -> Option<Value> {
         return None;
     }
     let simple = Value::Object(
-        [("mime_type".to_string(), Value::String(mime_type.clone())), ("data".to_string(), Value::String(data))]
-            .into_iter()
-            .collect(),
+        [
+            ("mime_type".to_string(), Value::String(mime_type.clone())),
+            ("data".to_string(), Value::String(data)),
+        ]
+        .into_iter()
+        .collect(),
     );
     let simple = Res::of(&simple);
     let lower = mime_type.to_lowercase();
@@ -508,7 +552,9 @@ fn file_data_part(file: &Res<'_>) -> Option<Value> {
     if mime_type.to_lowercase().starts_with("image/") {
         return Some(json!({"type": "input_image", "image_url": file_uri}));
     }
-    Some(json!({"type": "input_file", "file_url": file_uri, "filename": file_name_from_mime(&mime_type)}))
+    Some(
+        json!({"type": "input_file", "file_url": file_uri, "filename": file_name_from_mime(&mime_type)}),
+    )
 }
 
 fn append_tool_declarations(normalized: &mut Vec<Value>, declarations: &Res<'_>) {
@@ -529,7 +575,11 @@ fn tool_from_declaration(declaration: &Res<'_>) -> Value {
     if desc.exists() {
         cpa_json::set(&mut tool, "description", desc.str());
     }
-    cpa_json::set(&mut tool, "name", shorten_name_if_needed(&declaration.g("name").str()));
+    cpa_json::set(
+        &mut tool,
+        "name",
+        shorten_name_if_needed(&declaration.g("name").str()),
+    );
     let mut params = declaration.g("parameters");
     if !params.exists() {
         params = declaration.g("parametersJsonSchema");

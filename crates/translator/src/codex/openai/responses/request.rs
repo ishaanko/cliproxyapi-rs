@@ -1,15 +1,21 @@
 //! OpenAI Responses request -> Codex Responses request (Go: codex_openai-responses_request.go).
 
-use cpa_json::{json, Value, J};
+use cpa_json::{J, Value, json};
 
 /// Go: ConvertOpenAIResponsesRequestToCodex. The Responses body is already Codex shaped; this
 /// forces the fields Codex requires and strips the ones it rejects.
-pub fn convert_openai_responses_request_to_codex(_model: &str, input_raw_json: &[u8], _stream: bool) -> Vec<u8> {
+pub fn convert_openai_responses_request_to_codex(
+    _model: &str,
+    input_raw_json: &[u8],
+    _stream: bool,
+) -> Vec<u8> {
     let mut root = cpa_json::parse(input_raw_json);
 
     let input = root.g("input");
     if input.is_string() {
-        let mut msg = cpa_json::parse_str(r#"[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]"#);
+        let mut msg = cpa_json::parse_str(
+            r#"[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]"#,
+        );
         cpa_json::set(&mut msg, "0.content.0.text", input.str());
         cpa_json::set(&mut root, "input", msg);
     }
@@ -19,7 +25,15 @@ pub fn convert_openai_responses_request_to_codex(_model: &str, input_raw_json: &
     set_required_bool(&mut root, "parallel_tool_calls", true);
     set_required_include(&mut root);
     // Codex Responses rejects token limit fields, so strip them out before forwarding.
-    delete_fields(&mut root, &["max_output_tokens", "max_completion_tokens", "temperature", "top_p"]);
+    delete_fields(
+        &mut root,
+        &[
+            "max_output_tokens",
+            "max_completion_tokens",
+            "temperature",
+            "top_p",
+        ],
+    );
     let service_tier = root.g("service_tier");
     if service_tier.exists() {
         if service_tier.is_string() {
@@ -42,7 +56,14 @@ pub fn convert_openai_responses_request_to_codex(_model: &str, input_raw_json: &
         }
     }
 
-    delete_fields(&mut root, &["truncation", "prompt_cache_options", "prompt_cache_retention"]);
+    delete_fields(
+        &mut root,
+        &[
+            "truncation",
+            "prompt_cache_options",
+            "prompt_cache_retention",
+        ],
+    );
     strip_cache_breakpoints(&mut root);
     // Codex /responses rejects context_management.
     delete_fields(&mut root, &["context_management"]);
@@ -60,11 +81,16 @@ pub fn convert_openai_responses_request_to_codex(_model: &str, input_raw_json: &
 /// Blank string `arguments` on history function_call items become "{}": parameter-less calls
 /// serialized as "" are rejected upstream. Non-blank strings pass through untouched.
 fn normalize_empty_function_call_arguments(root: &mut Value) {
-    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else { return };
+    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else {
+        return;
+    };
     for item in items {
         if item.is_object()
             && item.g("type").str() == "function_call"
-            && item.g("arguments").as_str().is_some_and(|a| a.trim().is_empty())
+            && item
+                .g("arguments")
+                .as_str()
+                .is_some_and(|a| a.trim().is_empty())
         {
             cpa_json::set(item, "arguments", "{}");
         }
@@ -99,7 +125,9 @@ fn delete_fields(root: &mut Value, paths: &[&str]) {
 /// Removes `prompt_cache_breakpoint` from input items and from their `content` / `output`
 /// parts; Codex rejects it outright.
 fn strip_cache_breakpoints(root: &mut Value) {
-    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else { return };
+    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else {
+        return;
+    };
     for item in items {
         for array_path in ["content", "output"] {
             if let Some(Value::Array(parts)) = cpa_json::get_mut(item, array_path) {
@@ -118,7 +146,9 @@ fn strip_cache_breakpoints(root: &mut Value) {
 
 /// Codex does not accept the "system" role in input; rewrite it to "developer".
 fn convert_system_role_to_developer(root: &mut Value) {
-    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else { return };
+    let Some(Value::Array(items)) = cpa_json::get_mut(root, "input") else {
+        return;
+    };
     for item in items {
         if item.is_object() && item.g("role").str() == "system" {
             cpa_json::set(item, "role", "developer");
@@ -134,7 +164,9 @@ fn normalize_builtin_tools(root: &mut Value) {
 }
 
 fn normalize_builtin_tool_array(root: &mut Value, path: &str) {
-    let Some(Value::Array(tools)) = cpa_json::get_mut(root, path) else { return };
+    let Some(Value::Array(tools)) = cpa_json::get_mut(root, path) else {
+        return;
+    };
     for tool in tools {
         if let Some(normalized) = normalize_builtin_tool_type(&tool.g("type").str()) {
             cpa_json::set(tool, "type", normalized);

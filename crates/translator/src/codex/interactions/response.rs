@@ -1,8 +1,10 @@
 //! Codex Responses -> Interactions response (Go: interactions_codex_response.go).
 
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 
-use crate::codex::util::{mime_type_from_output_format, rfc3339_utc, unix_nano_now, unix_now, values};
+use crate::codex::util::{
+    mime_type_from_output_format, rfc3339_utc, unix_nano_now, unix_now, values,
+};
 use crate::common::sse_event_data;
 use crate::registry::{Ctx, Param};
 
@@ -71,7 +73,9 @@ pub fn convert_codex_response_to_interactions(
         }
         "response.output_item.added" => output_item_added(st, &root),
         "response.output_text.delta" => output_text_delta(st, &root),
-        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => reasoning_delta(st, &root),
+        "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" => {
+            reasoning_delta(st, &root)
+        }
         "response.function_call_arguments.delta" => function_arguments_delta(st, &root),
         "response.output_item.done" => output_item_done(st, &root.g("item")),
         "response.completed" | "response.incomplete" => {
@@ -100,7 +104,9 @@ pub fn convert_codex_response_to_interactions_non_stream(
     if !response.exists() {
         response = Res::of(&root);
     }
-    let mut out = cpa_json::parse_str(r#"{"id":"","object":"interaction","status":"completed","model":"","steps":[]}"#);
+    let mut out = cpa_json::parse_str(
+        r#"{"id":"","object":"interaction","status":"completed","model":"","steps":[]}"#,
+    );
     let status = response.g("status").str();
     if !status.is_empty() {
         cpa_json::set(&mut out, "status", status);
@@ -111,7 +117,15 @@ pub fn convert_codex_response_to_interactions_non_stream(
     }
     cpa_json::set(&mut out, "id", id);
     let model = response.g("model").str();
-    cpa_json::set(&mut out, "model", if model.is_empty() { model_name.to_string() } else { model });
+    cpa_json::set(
+        &mut out,
+        "model",
+        if model.is_empty() {
+            model_name.to_string()
+        } else {
+            model
+        },
+    );
     let mut steps: Vec<Value> = Vec::new();
     let output_items = response.g("output");
     for item in values(&output_items) {
@@ -157,9 +171,15 @@ fn append_created(out: &mut Out, st: &mut State, response: &Res<'_>) {
         st.created_at = created_at.int();
     }
     let created = json!({"interaction": {"id": st.id, "status": "in_progress", "object": "interaction", "model": st.model}, "event_type": "interaction.created"});
-    out.push(sse_event_data("interaction.created", &cpa_json::to_vec(&created)));
+    out.push(sse_event_data(
+        "interaction.created",
+        &cpa_json::to_vec(&created),
+    ));
     let status_update = json!({"interaction_id": st.id, "status": "in_progress", "event_type": "interaction.status_update"});
-    out.push(sse_event_data("interaction.status_update", &cpa_json::to_vec(&status_update)));
+    out.push(sse_event_data(
+        "interaction.status_update",
+        &cpa_json::to_vec(&status_update),
+    ));
     st.started = true;
 }
 
@@ -167,20 +187,36 @@ fn append_completed(out: &mut Out, st: &mut State, response: &Res<'_>) {
     if st.completed {
         return;
     }
-    let created = if st.created_at > 0 { st.created_at } else { unix_now() };
+    let created = if st.created_at > 0 {
+        st.created_at
+    } else {
+        unix_now()
+    };
     let mut completed = cpa_json::parse_str(
         r#"{"interaction":{"id":"","status":"completed","usage":{},"created":"","updated":"","service_tier":"standard","object":"interaction","model":""},"event_type":"interaction.completed"}"#,
     );
     cpa_json::set(&mut completed, "interaction.id", st.id.clone());
     cpa_json::set(&mut completed, "interaction.created", rfc3339_utc(created));
-    cpa_json::set(&mut completed, "interaction.updated", rfc3339_utc(unix_now()));
+    cpa_json::set(
+        &mut completed,
+        "interaction.updated",
+        rfc3339_utc(unix_now()),
+    );
     cpa_json::set(&mut completed, "interaction.model", st.model.clone());
     let status = response.g("status").str();
     if !status.is_empty() {
         cpa_json::set(&mut completed, "interaction.status", status);
     }
-    set_usage(&mut completed, "interaction.usage", &response.g("usage"), true);
-    out.push(sse_event_data("interaction.completed", &cpa_json::to_vec(&completed)));
+    set_usage(
+        &mut completed,
+        "interaction.usage",
+        &response.g("usage"),
+        true,
+    );
+    out.push(sse_event_data(
+        "interaction.completed",
+        &cpa_json::to_vec(&completed),
+    ));
     st.completed = true;
 }
 
@@ -369,7 +405,9 @@ fn build_image_item(item: &Res<'_>) -> Option<Value> {
         return None;
     }
     let mime = mime_type_from_output_format(&item.g("output_format").str());
-    Some(json!({"type": "model_output", "content": [{"type": "image", "mime_type": mime, "data": result}]}))
+    Some(
+        json!({"type": "model_output", "content": [{"type": "image", "mime_type": mime, "data": result}]}),
+    )
 }
 
 fn append_message_item_stream(out: &mut Out, st: &mut State, item: &Res<'_>) {
@@ -421,7 +459,12 @@ fn reasoning_text(item: &Res<'_>) -> String {
             return summary.str();
         }
         if summary.is_array() {
-            let parts: Vec<String> = summary.array().iter().map(content_text).filter(|t| !t.is_empty()).collect();
+            let parts: Vec<String> = summary
+                .array()
+                .iter()
+                .map(content_text)
+                .filter(|t| !t.is_empty())
+                .collect();
             return parts.join("\n");
         }
     }
@@ -481,7 +524,11 @@ fn set_usage(out: &mut Value, path: &str, usage: &Res<'_>, stream: bool) {
     if stream {
         cpa_json::set(out, &format!("{path}.total_tokens"), total);
         cpa_json::set(out, &format!("{path}.total_input_tokens"), input);
-        cpa_json::set(out, &format!("{path}.input_tokens_by_modality"), json!([{"modality": "text", "tokens": input}]));
+        cpa_json::set(
+            out,
+            &format!("{path}.input_tokens_by_modality"),
+            json!([{"modality": "text", "tokens": input}]),
+        );
         cpa_json::set(out, &format!("{path}.total_cached_tokens"), cached);
         cpa_json::set(out, &format!("{path}.total_output_tokens"), output);
         cpa_json::set(out, &format!("{path}.total_tool_use_tokens"), 0);

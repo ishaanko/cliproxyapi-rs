@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::applypatch;
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 
 use crate::codex::raw::raw_at;
 use crate::codex::util::{build_short_name_map, truncate_bytes};
@@ -67,16 +67,27 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
         original_tool_name_map = build_short_name_map_for(&all_names);
     }
     let short_name = |name: &str| -> String {
-        original_tool_name_map.get(name).cloned().unwrap_or_else(|| shorten_name_if_needed(name))
+        original_tool_name_map
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| shorten_name_if_needed(name))
     };
 
     // Returns (call type, name, input) for function and custom calls; None for anything else.
     let resolve_tool_call = |tool_call: &Res<'_>| -> Option<(&'static str, String, String)> {
         match tool_call.g("type").str().as_str() {
-            "custom" => Some(("custom", tool_call.g("custom.name").str(), tool_call.g("custom.input").str())),
+            "custom" => Some((
+                "custom",
+                tool_call.g("custom.name").str(),
+                tool_call.g("custom.input").str(),
+            )),
             "function" => {
                 let name = tool_call.g("function.name").str();
-                let call_type = if custom_tool_names.contains(&name) { "custom" } else { "function" };
+                let call_type = if custom_tool_names.contains(&name) {
+                    "custom"
+                } else {
+                    "function"
+                };
                 let mut input = tool_call.g("function.arguments").str();
                 if call_type == "custom"
                     && name.trim() == "apply_patch"
@@ -108,16 +119,30 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
                     continue;
                 }
                 let pending_index = pending_tool_calls.iter().position(|p| {
-                    !p.consumed && (tool_call_id.is_empty() || p.source_call_id == tool_call_id || p.call_id == tool_call_id)
+                    !p.consumed
+                        && (tool_call_id.is_empty()
+                            || p.source_call_id == tool_call_id
+                            || p.call_id == tool_call_id)
                 });
-                let Some(pending_index) = pending_index else { continue };
+                let Some(pending_index) = pending_index else {
+                    continue;
+                };
                 let pending = &mut pending_tool_calls[pending_index];
                 pending.consumed = true;
                 tool_call_id = pending.call_id.clone();
-                let output_type = if pending.call_type == "custom" { "custom_tool_call_output" } else { "function_call_output" };
+                let output_type = if pending.call_type == "custom" {
+                    "custom_tool_call_output"
+                } else {
+                    "function_call_output"
+                };
 
                 let mut tool_output = json!({"type": output_type, "call_id": tool_call_id});
-                set_tool_call_output_content(&mut tool_output, &m.g("content"), raw_json, &format!("messages.{i}.content"));
+                set_tool_call_output_content(
+                    &mut tool_output,
+                    &m.g("content"),
+                    raw_json,
+                    &format!("messages.{i}.content"),
+                );
                 input_items.push(tool_output);
                 continue;
             }
@@ -127,52 +152,60 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
             ambiguous_tool_call_ids.clear();
 
             let mut msg = json!({"type": "message"});
-            cpa_json::set(&mut msg, "role", if role == "system" { "developer" } else { role.as_str() });
+            cpa_json::set(
+                &mut msg,
+                "role",
+                if role == "system" {
+                    "developer"
+                } else {
+                    role.as_str()
+                },
+            );
 
             let mut content_items: Vec<Value> = Vec::new();
             let c = m.g("content");
-            let text_part_type = if role == "assistant" { "output_text" } else { "input_text" };
+            let text_part_type = if role == "assistant" {
+                "output_text"
+            } else {
+                "input_text"
+            };
             if c.exists() && c.is_string() && !c.str().is_empty() {
                 content_items.push(json!({"type": text_part_type, "text": c.str()}));
             } else if c.exists() && c.is_array() {
                 for it in c.array() {
                     match it.g("type").str().as_str() {
-                        "text" => content_items.push(json!({"type": text_part_type, "text": it.g("text").str()})),
-                        "image_url" => {
-                            // Image inputs map to input_image for the Responses API.
-                            if role == "user" {
-                                let mut part = json!({"type": "input_image"});
-                                let u = it.g("image_url.url");
-                                if u.exists() {
-                                    cpa_json::set(&mut part, "image_url", u.str());
+                        "text" => content_items
+                            .push(json!({"type": text_part_type, "text": it.g("text").str()})),
+                        // Image, file and audio inputs are user-only.
+                        "image_url" if role == "user" => {
+                            let mut part = json!({"type": "input_image"});
+                            let u = it.g("image_url.url");
+                            if u.exists() {
+                                cpa_json::set(&mut part, "image_url", u.str());
+                            }
+                            content_items.push(part);
+                        }
+                        "file" if role == "user" => {
+                            let file_data = it.g("file.file_data").str();
+                            let filename = it.g("file.filename").str();
+                            if !file_data.is_empty() {
+                                let mut part =
+                                    json!({"type": "input_file", "file_data": file_data});
+                                if !filename.is_empty() {
+                                    cpa_json::set(&mut part, "filename", filename);
                                 }
                                 content_items.push(part);
                             }
                         }
-                        "file" => {
-                            if role == "user" {
-                                let file_data = it.g("file.file_data").str();
-                                let filename = it.g("file.filename").str();
-                                if !file_data.is_empty() {
-                                    let mut part = json!({"type": "input_file", "file_data": file_data});
-                                    if !filename.is_empty() {
-                                        cpa_json::set(&mut part, "filename", filename);
-                                    }
-                                    content_items.push(part);
+                        "input_audio" if role == "user" => {
+                            let data = it.g("input_audio.data").str();
+                            let format = it.g("input_audio.format").str();
+                            if !data.is_empty() {
+                                let mut part = json!({"type": "input_audio", "data": data});
+                                if !format.is_empty() {
+                                    cpa_json::set(&mut part, "format", format);
                                 }
-                            }
-                        }
-                        "input_audio" => {
-                            if role == "user" {
-                                let data = it.g("input_audio.data").str();
-                                let format = it.g("input_audio.format").str();
-                                if !data.is_empty() {
-                                    let mut part = json!({"type": "input_audio", "data": data});
-                                    if !format.is_empty() {
-                                        cpa_json::set(&mut part, "format", format);
-                                    }
-                                    content_items.push(part);
-                                }
+                                content_items.push(part);
                             }
                         }
                         _ => {}
@@ -213,7 +246,9 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
             }
 
             for (j, tc) in tool_calls_arr.iter().enumerate() {
-                let Some((call_type, call_name, call_input)) = resolve_tool_call(tc) else { continue };
+                let Some((call_type, call_name, call_input)) = resolve_tool_call(tc) else {
+                    continue;
+                };
                 let source_call_id = tc.g("id").str();
                 if !source_call_id.is_empty() && ambiguous_tool_call_ids.contains(&source_call_id) {
                     continue;
@@ -379,7 +414,12 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
 
 /// Sets `output` of a tool output item from a Chat Completions tool message `content`. `src` and
 /// `path` locate `content` in the source text for the verbatim fallbacks.
-fn set_tool_call_output_content(func_output: &mut Value, content: &Res<'_>, src: &[u8], path: &str) {
+fn set_tool_call_output_content(
+    func_output: &mut Value,
+    content: &Res<'_>,
+    src: &[u8],
+    path: &str,
+) {
     if content.is_string() {
         // A string holding a JSON array with image parts is unpacked into content parts.
         let s = content.str();
@@ -398,7 +438,11 @@ fn set_tool_call_output_content(func_output: &mut Value, content: &Res<'_>, src:
             .collect();
         cpa_json::set(func_output, "output", Value::Array(items));
     } else {
-        let mut fallback = if content.exists() { raw_at(src, path).unwrap_or_else(|| content.raw()) } else { String::new() };
+        let mut fallback = if content.exists() {
+            raw_at(src, path).unwrap_or_else(|| content.raw())
+        } else {
+            String::new()
+        };
         if fallback.is_empty() {
             fallback = content.str();
         }
@@ -407,19 +451,28 @@ fn set_tool_call_output_content(func_output: &mut Value, content: &Res<'_>, src:
 }
 
 fn join_path(path: &str, index: usize) -> String {
-    if path.is_empty() { index.to_string() } else { format!("{path}.{index}") }
+    if path.is_empty() {
+        index.to_string()
+    } else {
+        format!("{path}.{index}")
+    }
 }
 
 fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
     let item_type = item.g("type").str();
     match item_type.as_str() {
-        "text" | "input_text" | "output_text" => json!({"type": "input_text", "text": item.g("text").str()}),
+        "text" | "input_text" | "output_text" => {
+            json!({"type": "input_text", "text": item.g("text").str()})
+        }
         "image_url" | "input_image" => {
             let input_image = item_type == "input_image";
             let (image_url, file_id) = if input_image {
                 (item.g("image_url").str(), item.g("file_id").str())
             } else {
-                (item.g("image_url.url").str(), item.g("image_url.file_id").str())
+                (
+                    item.g("image_url.url").str(),
+                    item.g("image_url.file_id").str(),
+                )
             };
             if image_url.is_empty() && file_id.is_empty() {
                 return tool_output_fallback_part(item, src, path);
@@ -431,7 +484,11 @@ fn tool_output_content_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
             if !file_id.is_empty() {
                 cpa_json::set(&mut part, "file_id", file_id);
             }
-            let detail = if input_image { item.g("detail").str() } else { item.g("image_url.detail").str() };
+            let detail = if input_image {
+                item.g("detail").str()
+            } else {
+                item.g("image_url.detail").str()
+            };
             if !detail.is_empty() {
                 cpa_json::set(&mut part, "detail", detail);
             }
@@ -468,16 +525,28 @@ fn has_tool_output_image_part(content: &Res<'_>) -> bool {
     if !content.is_array() {
         return false;
     }
-    content.array().iter().any(|item| match item.g("type").str().as_str() {
-        "image_url" => !item.g("image_url.url").str().is_empty() || !item.g("image_url.file_id").str().is_empty(),
-        "input_image" => !item.g("image_url").str().is_empty() || !item.g("file_id").str().is_empty(),
-        _ => false,
-    })
+    content
+        .array()
+        .iter()
+        .any(|item| match item.g("type").str().as_str() {
+            "image_url" => {
+                !item.g("image_url.url").str().is_empty()
+                    || !item.g("image_url.file_id").str().is_empty()
+            }
+            "input_image" => {
+                !item.g("image_url").str().is_empty() || !item.g("file_id").str().is_empty()
+            }
+            _ => false,
+        })
 }
 
 /// Unsupported tool output parts are forwarded as their source text.
 fn tool_output_fallback_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
-    let mut text = if item.exists() { raw_at(src, path).unwrap_or_else(|| item.raw()) } else { String::new() };
+    let mut text = if item.exists() {
+        raw_at(src, path).unwrap_or_else(|| item.raw())
+    } else {
+        String::new()
+    };
     if text.is_empty() {
         text = item.str();
     }
@@ -486,7 +555,15 @@ fn tool_output_fallback_part(item: &Res<'_>, src: &[u8], path: &str) -> Value {
 
 /// Replaces every character outside `[a-zA-Z0-9_-]` with `_` (one per character).
 fn sanitize_tool_name(name: &str) -> String {
-    name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 /// Sanitizes, then applies the 64 byte shortening rule: keeps the `mcp__` prefix and last

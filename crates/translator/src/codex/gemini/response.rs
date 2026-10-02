@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::request::short_name_map_from_tools;
-use crate::codex::util::{mime_type_from_output_format, rfc3339_local, reverse_map};
+use crate::codex::util::{mime_type_from_output_format, reverse_map, rfc3339_local};
 use crate::common::gemini_token_count_json;
 use crate::registry::{Ctx, Param};
 
@@ -54,7 +54,11 @@ pub fn convert_codex_response_to_gemini(
     let created_at = root.g("response.created_at");
     if created_at.exists() {
         params.created_at = created_at.int();
-        cpa_json::set(&mut template, "createTime", rfc3339_local(params.created_at));
+        cpa_json::set(
+            &mut template,
+            "createTime",
+            rfc3339_local(params.created_at),
+        );
     }
     cpa_json::set(&mut template, "responseId", params.response_id.clone());
 
@@ -89,7 +93,11 @@ pub fn convert_codex_response_to_gemini(
             return vec![cpa_json::to_vec(&template)];
         }
         if item_type == "function_call" {
-            let function_call = function_call_part(&item, original_request, r#"{"functionCall":{"name":"","args":{}}}"#);
+            let function_call = function_call_part(
+                &item,
+                original_request,
+                r#"{"functionCall":{"name":"","args":{}}}"#,
+            );
             set_parts(&mut template, vec![function_call]);
             cpa_json::set(&mut template, "candidates.0.finishReason", "STOP");
             // Hold the call back: it is emitted ahead of the next chunk.
@@ -99,11 +107,18 @@ pub fn convert_codex_response_to_gemini(
     }
 
     if type_str == "response.created" {
-        cpa_json::set(&mut template, "modelVersion", root.g("response.model").str());
+        cpa_json::set(
+            &mut template,
+            "modelVersion",
+            root.g("response.model").str(),
+        );
         cpa_json::set(&mut template, "responseId", root.g("response.id").str());
         params.response_id = root.g("response.id").str();
     } else if type_str == "response.reasoning_summary_text.delta" {
-        set_parts(&mut template, vec![json!({"thought": true, "text": root.g("delta").str()})]);
+        set_parts(
+            &mut template,
+            vec![json!({"thought": true, "text": root.g("delta").str()})],
+        );
     } else if type_str == "response.output_text.delta" {
         params.has_output_text_delta = true;
         set_parts(&mut template, vec![json!({"text": root.g("delta").str()})]);
@@ -126,7 +141,11 @@ pub fn convert_codex_response_to_gemini(
             if text.is_empty() {
                 continue;
             }
-            cpa_json::set(&mut template, "candidates.0.content.parts.-1", json!({"text": text}));
+            cpa_json::set(
+                &mut template,
+                "candidates.0.content.parts.-1",
+                json!({"text": text}),
+            );
             wrote_text = true;
         }
         if wrote_text {
@@ -139,10 +158,18 @@ pub fn convert_codex_response_to_gemini(
         let output = root.g("response.usage.output_tokens").int();
         cpa_json::set(&mut template, "usageMetadata.promptTokenCount", input);
         cpa_json::set(&mut template, "usageMetadata.candidatesTokenCount", output);
-        cpa_json::set(&mut template, "usageMetadata.totalTokenCount", input + output);
+        cpa_json::set(
+            &mut template,
+            "usageMetadata.totalTokenCount",
+            input + output,
+        );
         if type_str == "response.incomplete" {
             let reason = root.g("response.incomplete_details.reason").str();
-            cpa_json::set(&mut template, "candidates.0.finishReason", incomplete_finish_reason(&reason));
+            cpa_json::set(
+                &mut template,
+                "candidates.0.finishReason",
+                incomplete_finish_reason(&reason),
+            );
         }
     } else {
         return vec![];
@@ -180,7 +207,9 @@ fn set_parts(template: &mut Value, parts: Vec<Value>) {
 fn function_call_part(item: &Res<'_>, original_request: &[u8], template: &str) -> Value {
     let mut function_call = cpa_json::parse_str(template);
     let mut n = item.g("name").str();
-    let rev = reverse_map(short_name_map_from_tools(&cpa_json::parse(original_request)));
+    let rev = reverse_map(short_name_map_from_tools(&cpa_json::parse(
+        original_request,
+    )));
     if let Some(orig) = rev.get(&n) {
         n = orig.clone();
     }
@@ -242,7 +271,11 @@ pub fn convert_codex_response_to_gemini_non_stream(
     if data.exists() {
         if response_type == "response.incomplete" {
             let reason = data.g("incomplete_details.reason").str();
-            cpa_json::set(&mut template, "candidates.0.finishReason", incomplete_finish_reason(&reason));
+            cpa_json::set(
+                &mut template,
+                "candidates.0.finishReason",
+                incomplete_finish_reason(&reason),
+            );
         }
         let id = data.g("id");
         if id.exists() {
@@ -258,7 +291,11 @@ pub fn convert_codex_response_to_gemini_non_stream(
             let output = usage.g("output_tokens").int();
             cpa_json::set(&mut template, "usageMetadata.promptTokenCount", input);
             cpa_json::set(&mut template, "usageMetadata.candidatesTokenCount", output);
-            cpa_json::set(&mut template, "usageMetadata.totalTokenCount", input + output);
+            cpa_json::set(
+                &mut template,
+                "usageMetadata.totalTokenCount",
+                input + output,
+            );
         }
 
         let mut parts: Vec<Value> = Vec::new();
@@ -290,12 +327,17 @@ pub fn convert_codex_response_to_gemini_non_stream(
                         if b64.is_empty() {
                             continue;
                         }
-                        let mime_type = mime_type_from_output_format(&value.g("output_format").str());
+                        let mime_type =
+                            mime_type_from_output_format(&value.g("output_format").str());
                         parts.push(inline_image_part(&b64, &mime_type));
                     }
                     "function_call" => {
                         // Consecutive calls stay grouped in output order.
-                        parts.push(function_call_part(&value, original_request, r#"{"functionCall":{"args":{},"name":""}}"#));
+                        parts.push(function_call_part(
+                            &value,
+                            original_request,
+                            r#"{"functionCall":{"args":{},"name":""}}"#,
+                        ));
                     }
                     _ => {}
                 }

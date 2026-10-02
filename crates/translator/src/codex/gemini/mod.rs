@@ -9,7 +9,8 @@ use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_gemini_request_to_codex;
 pub use response::{
-    convert_codex_response_to_gemini, convert_codex_response_to_gemini_non_stream, gemini_token_count,
+    convert_codex_response_to_gemini, convert_codex_response_to_gemini_non_stream,
+    gemini_token_count,
 };
 
 /// Go init(): Gemini -> Codex.

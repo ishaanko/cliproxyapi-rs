@@ -8,7 +8,10 @@ use cpa_core::format::Format;
 use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_openai_responses_request_to_codex;
-pub use response::{convert_codex_response_to_openai_responses, convert_codex_response_to_openai_responses_non_stream};
+pub use response::{
+    convert_codex_response_to_openai_responses,
+    convert_codex_response_to_openai_responses_non_stream,
+};
 
 /// Go init(): OpenaiResponse -> Codex (no token count transform).
 pub fn register(r: &mut Registry) {
@@ -23,3 +26,6 @@ pub fn register(r: &mut Registry) {
         },
     );
 }
+
+#[cfg(test)]
+mod tests;

@@ -4,18 +4,22 @@ use std::collections::HashMap;
 
 use cpa_core::thinking;
 use cpa_core::util::walk;
-use cpa_json::{json, Res, Value, J};
+use cpa_json::{J, Res, Value, json};
 
+use crate::codex::raw::raw_at;
 use crate::codex::util::{
     build_short_name_map, file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
 };
-use crate::codex::raw::raw_at;
 use crate::common::is_gemini_thought_part;
 
 /// Go: ConvertGeminiRequestToCodex. Maps system instruction, contents (text, media, function
 /// calls and responses paired through a FIFO of call ids), tools, tool config and thinking
 /// config onto a Codex Responses request.
-pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _stream: bool) -> Vec<u8> {
+pub fn convert_gemini_request_to_codex(
+    model_name: &str,
+    raw_json: &[u8],
+    _stream: bool,
+) -> Vec<u8> {
     let mut out = cpa_json::parse_str(r#"{"model":"","instructions":"","input":[]}"#);
     let root = cpa_json::parse(raw_json);
     let mut input_items: Vec<Value> = Vec::new();
@@ -48,7 +52,8 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
             }
         }
         if !content_items.is_empty() {
-            input_items.push(json!({"type": "message", "role": "developer", "content": content_items}));
+            input_items
+                .push(json!({"type": "message", "role": "developer", "content": content_items}));
         }
     }
 
@@ -73,8 +78,15 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
 
                 let t = p.g("text");
                 if t.exists() {
-                    let part_type = if role == "assistant" { "output_text" } else { "input_text" };
-                    input_items.push(message_with_part(&role, json!({"type": part_type, "text": t.str()})));
+                    let part_type = if role == "assistant" {
+                        "output_text"
+                    } else {
+                        "input_text"
+                    };
+                    input_items.push(message_with_part(
+                        &role,
+                        json!({"type": part_type, "text": t.str()}),
+                    ));
                     continue;
                 }
                 if let Some(part) = content_part_from_inline_data(p) {
@@ -93,12 +105,16 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
                     let name = fc.g("name");
                     if name.exists() {
                         let n = name.str();
-                        let n = short_map.get(&n).cloned().unwrap_or_else(|| shorten_name_if_needed(&n));
+                        let n = short_map
+                            .get(&n)
+                            .cloned()
+                            .unwrap_or_else(|| shorten_name_if_needed(&n));
                         cpa_json::set(&mut f, "name", n);
                     }
                     let args = fc.g("args");
                     if args.exists() {
-                        let raw_args = raw_at(raw_json, &format!("{part_path}.functionCall.args")).unwrap_or_else(|| args.raw());
+                        let raw_args = raw_at(raw_json, &format!("{part_path}.functionCall.args"))
+                            .unwrap_or_else(|| args.raw());
                         cpa_json::set(&mut f, "arguments", raw_args);
                     }
                     // Reuse gateway-provided ids when present, otherwise generate one for pairing.
@@ -123,7 +139,9 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
                     if res.exists() {
                         cpa_json::set(&mut fno, "output", res.str());
                     } else if resp.exists() {
-                        let raw_resp = raw_at(raw_json, &format!("{part_path}.functionResponse.response")).unwrap_or_else(|| resp.raw());
+                        let raw_resp =
+                            raw_at(raw_json, &format!("{part_path}.functionResponse.response"))
+                                .unwrap_or_else(|| resp.raw());
                         cpa_json::set(&mut fno, "output", raw_resp);
                     }
                     // Pair with the oldest queued call id; generate one if the queue is empty.
@@ -165,7 +183,10 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
                 let v = f.g("name");
                 if v.exists() {
                     let name = v.str();
-                    let name = short_map.get(&name).cloned().unwrap_or_else(|| shorten_name_if_needed(&name));
+                    let name = short_map
+                        .get(&name)
+                        .cloned()
+                        .unwrap_or_else(|| shorten_name_if_needed(&name));
                     cpa_json::set(&mut tool, "name", name);
                 }
                 let v = f.g("description");
@@ -246,7 +267,9 @@ pub fn convert_gemini_request_to_codex(model_name: &str, raw_json: &[u8], _strea
     for p in paths_to_lower {
         let full_path = format!("tools.{p}");
         let type_value = out.g(&full_path);
-        let Some(current) = type_value.as_str() else { continue };
+        let Some(current) = type_value.as_str() else {
+            continue;
+        };
         let normalized = current.to_lowercase();
         if normalized == current {
             continue;
@@ -310,7 +333,8 @@ fn set_tool_choice_from_tool_config(out: &mut Value, cfg: &Res<'_>) {
             let allowed = cfg.g("allowedFunctionNames");
             let items = allowed.array();
             if allowed.is_array() && items.len() == 1 {
-                let choice = json!({"type": "function", "name": shorten_name_if_needed(&items[0].str())});
+                let choice =
+                    json!({"type": "function", "name": shorten_name_if_needed(&items[0].str())});
                 out_set(out, "tool_choice", choice);
             } else {
                 out_set(out, "tool_choice", "required");
@@ -390,8 +414,13 @@ fn content_part_from_file_data(part: &Res<'_>) -> Option<Value> {
     if lower.starts_with("image/") {
         return Some(json!({"type": "input_image", "image_url": uri}));
     }
-    if lower.starts_with("video/") || lower.starts_with("application/") || lower.starts_with("text/") {
-        return Some(json!({"type": "input_file", "file_url": uri, "filename": file_name_from_mime(&mime_type)}));
+    if lower.starts_with("video/")
+        || lower.starts_with("application/")
+        || lower.starts_with("text/")
+    {
+        return Some(
+            json!({"type": "input_file", "file_url": uri, "filename": file_name_from_mime(&mime_type)}),
+        );
     }
     let mut info = format!("File: {uri}");
     if !mime_type.is_empty() {

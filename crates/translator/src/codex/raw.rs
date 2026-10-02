@@ -17,7 +17,9 @@ pub fn raw_at(src: &[u8], path: &str) -> Option<String> {
             end = e;
         }
     }
-    std::str::from_utf8(&src[start..end]).ok().map(str::to_string)
+    std::str::from_utf8(&src[start..end])
+        .ok()
+        .map(str::to_string)
 }
 
 fn skip_ws(src: &[u8], mut i: usize) -> usize {
@@ -55,7 +57,9 @@ fn skip_value(src: &[u8], i: usize) -> Option<usize> {
         }
         _ => {
             let mut j = i;
-            while j < src.len() && !matches!(src[j], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r') {
+            while j < src.len()
+                && !matches!(src[j], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r')
+            {
                 j += 1;
             }
             Some(j)
@@ -81,7 +85,11 @@ fn child_span(src: &[u8], start: usize, end: usize, comp: &str) -> Option<(usize
     if !is_object && src[start] != b'[' {
         return None;
     }
-    let want_index: Option<usize> = if is_object { None } else { Some(comp.parse().ok()?) };
+    let want_index: Option<usize> = if is_object {
+        None
+    } else {
+        Some(comp.parse().ok()?)
+    };
     let mut i = skip_ws(src, start + 1);
     let mut idx = 0usize;
     while i < end {
