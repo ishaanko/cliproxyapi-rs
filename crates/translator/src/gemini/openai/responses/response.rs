@@ -417,7 +417,7 @@ pub fn convert_gemini_response_to_openai_responses(
 /// Rejects a patch-enabled stream that ended without its source terminator (Go:
 /// FinalizeToolInput, found by the executor through an interface). Returns the failure event, if
 /// any.
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(crate) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<GeminiToResponsesState>() else { return Vec::new() };
     if st.err.tool_input_error().is_some() || st.completed {
         return Vec::new();

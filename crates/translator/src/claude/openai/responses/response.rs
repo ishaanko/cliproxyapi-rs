@@ -14,7 +14,7 @@ use super::web_search::{
     CLAUDE_WEB_SEARCH_TOOL_NAME, build_responses_web_search_call_item, claude_web_search_query,
     claude_web_search_results_to_responses, responses_web_search_call_id,
 };
-use crate::claude::openai::chat_completions::raw_at;
+use cpa_json::raw_at;
 use crate::common::{self, ApplyPatchCallState, ApplyPatchErrorState};
 use crate::registry::{Ctx, Param};
 
@@ -1360,7 +1360,7 @@ pub fn convert_claude_response_to_openai_responses(
 
 /// For executors at stream end: a patch-enabled stream that lacks its source terminator fails the
 /// response. Returns the `response.failed` event, if any.
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(super) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<State>() else { return vec![] };
     if st.has_error() || st.completed_emitted {
         return vec![];

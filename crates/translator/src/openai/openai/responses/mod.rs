@@ -16,8 +16,9 @@ use crate::registry::{Registry, ResponseFns};
 pub use request::convert_openai_responses_request_to_openai_chat_completions;
 pub use response::{
     convert_openai_chat_completions_response_to_openai_responses,
-    convert_openai_chat_completions_response_to_openai_responses_non_stream, finalize_tool_input,
+    convert_openai_chat_completions_response_to_openai_responses_non_stream,
 };
+use response::finalize_tool_input;
 
 pub fn register(r: &mut Registry) {
     r.register(
@@ -28,6 +29,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_openai_chat_completions_response_to_openai_responses),
             non_stream: Some(convert_openai_chat_completions_response_to_openai_responses_non_stream),
             token_count: None,
+            finalize: Some(finalize_tool_input),
         },
     );
 }

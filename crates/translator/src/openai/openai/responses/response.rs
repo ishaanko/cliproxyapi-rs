@@ -1267,7 +1267,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
 /// Rejects a patch-enabled stream that lacks its source terminator: when the request declares an
 /// apply_patch custom tool and the stream ended before completion, returns the `response.failed`
 /// frame (executors call this at stream EOF; Go: `FinalizeToolInput`).
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(super) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<State>() else { return vec![] };
     if st.err.tool_input_error().is_some() || st.completed_emitted {
         return vec![];

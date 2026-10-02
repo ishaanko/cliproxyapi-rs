@@ -1,25 +1,12 @@
 //! Media blocks (image, audio, video, file) of OpenAI Responses input mapped to Gemini
 //! `inline_data` / `file_data` parts (Go: gemini_openai-responses_request.go, media helpers).
 
-use base64::alphabet::STANDARD;
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use base64::Engine;
 use cpa_core::misc::mime_type_for_extension;
+use cpa_core::signature::b64;
 use cpa_json::{json, Res, Value};
 
 use super::lenient::RawTexts;
 use crate::common::normalize_openai_file_data;
-
-/// Go `base64.StdEncoding`: padding required, non-zero trailing bits tolerated.
-const STD_PADDED: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::RequireCanonical).with_decode_allow_trailing_bits(true),
-);
-/// Go `base64.RawStdEncoding`.
-const STD_RAW: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::RequireNone).with_decode_allow_trailing_bits(true),
-);
 
 pub(super) fn gemini_responses_inline_data_part(mime_type: &str, data: &str) -> Value {
     json!({"inline_data": {"mime_type": mime_type, "data": data}})
@@ -68,9 +55,7 @@ fn parse_openai_responses_data_url(raw_url: &str) -> Option<(String, String)> {
     if !fields.any(|f| f.trim().eq_ignore_ascii_case("base64")) {
         return None;
     }
-    // Go's decoder skips CR/LF.
-    let stripped: Vec<u8> = payload.bytes().filter(|b| *b != b'\r' && *b != b'\n').collect();
-    if STD_PADDED.decode(&stripped).is_err() && STD_RAW.decode(&stripped).is_err() {
+    if b64::std(payload).is_err() && b64::raw_std(payload).is_err() {
         return None;
     }
     Some((mime_type, payload.to_string()))

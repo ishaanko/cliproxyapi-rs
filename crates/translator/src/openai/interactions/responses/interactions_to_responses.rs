@@ -139,7 +139,7 @@ pub(super) fn convert_interactions_response_to_openai_responses(
 
 /// Executors call this at stream EOF: a patch-enabled stream that never reached its source
 /// terminator fails closed with `response.failed` (Go: `FinalizeToolInput`).
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(super) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<StreamState>() else { return vec![] };
     if st.tool_input_error.is_some() || st.terminal || !st.has_patch_bridge() {
         return vec![];

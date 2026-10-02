@@ -23,6 +23,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(openai_interactions_response::convert_interactions_response_to_openai),
             non_stream: Some(openai_interactions_response::convert_interactions_response_to_openai_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
     r.register(
@@ -33,6 +34,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(interactions_openai_response::convert_openai_response_to_interactions),
             non_stream: Some(interactions_openai_response::convert_openai_response_to_interactions_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

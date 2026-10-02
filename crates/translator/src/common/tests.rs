@@ -171,7 +171,7 @@ fn run_case(fn_name: &str, i: &Value) -> Value {
         }
         "structuredOutput" => {
             let format = if s(i).is_empty() { Res::NONE } else { res_owned(s(i)) };
-            json!(build_claude_structured_output_instruction(&format))
+            json!(build_claude_structured_output_instruction(&format, None))
         }
         "attachCacheControl" => {
             json!(text(&attach_cache_control(s(&i["dst"]).as_bytes(), &res_owned(s(&i["src"])))))

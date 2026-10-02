@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::cache;
-use cpa_core::signature::{self, SignatureProvider};
+use cpa_core::signature::{self, b64, SignatureProvider};
 use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
 
@@ -30,7 +30,7 @@ fn decode_signature(signature: &str) -> String {
         return String::new();
     }
     if signature.starts_with('R') {
-        return match crate::antigravity::b64::decode_std(signature) {
+        return match b64::std(signature).ok() {
             Some(decoded) => String::from_utf8_lossy(&decoded).into_owned(),
             None => {
                 tracing::warn!("antigravity claude response: failed to decode signature, skipping");

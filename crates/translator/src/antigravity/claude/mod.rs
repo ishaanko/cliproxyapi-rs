@@ -28,6 +28,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_antigravity_response_to_claude),
             non_stream: Some(convert_antigravity_response_to_claude_non_stream),
             token_count: Some(claude_token_count),
+            finalize: None,
         },
     );
 }

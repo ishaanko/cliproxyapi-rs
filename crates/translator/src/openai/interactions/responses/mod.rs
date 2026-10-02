@@ -11,7 +11,7 @@ pub(crate) mod raw_text;
 mod request;
 mod responses_to_interactions;
 
-pub use interactions_to_responses::finalize_tool_input;
+use interactions_to_responses::finalize_tool_input;
 
 use cpa_core::format::Format;
 use cpa_json::{Res, Value, J};
@@ -27,6 +27,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(interactions_to_responses::convert_interactions_response_to_openai_responses),
             non_stream: Some(interactions_to_responses::convert_interactions_response_to_openai_responses_non_stream),
             token_count: None,
+            finalize: Some(finalize_tool_input),
         },
     );
     r.register(
@@ -37,6 +38,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(responses_to_interactions::convert_openai_responses_response_to_interactions),
             non_stream: Some(responses_to_interactions::convert_openai_responses_response_to_interactions_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

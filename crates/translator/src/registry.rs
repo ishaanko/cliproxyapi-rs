@@ -64,12 +64,19 @@ pub type StreamFn = fn(ctx: &Ctx, model: &str, original: &[u8], translated: &[u8
 /// `None` mirrors a Go translator returning a nil body.
 pub type NonStreamFn = fn(ctx: &Ctx, model: &str, original: &[u8], translated: &[u8], raw: &[u8], param: &mut Param) -> Option<Vec<u8>>;
 pub type TokenCountFn = fn(ctx: &Ctx, count: i64) -> Vec<u8>;
+/// Stream end hook: events to emit when the upstream stream ended (Go: the optional
+/// `ToolInputError`/`FinalizeToolInput` contract behind `helps.FinalizeApplyPatchStream`).
+pub type FinalizeFn = fn(param: &mut Param) -> Vec<Vec<u8>>;
 
 #[derive(Clone, Copy, Default)]
 pub struct ResponseFns {
     pub stream: Option<StreamFn>,
     pub non_stream: Option<NonStreamFn>,
     pub token_count: Option<TokenCountFn>,
+    /// Called by executors at upstream EOF, before any synthetic success event, so a stream
+    /// that stopped mid apply_patch becomes a failure. Not a response transformer: it does not
+    /// count for [`Registry::has_response_transformer`].
+    pub finalize: Option<FinalizeFn>,
 }
 
 #[derive(Clone, Copy)]
@@ -107,6 +114,15 @@ impl Registry {
         self.responses
             .get(&(client, upstream))
             .is_some_and(|r| r.stream.is_some() || r.non_stream.is_some() || r.token_count.is_some())
+    }
+
+    /// Finalizes a stream at upstream EOF (see [`ResponseFns::finalize`]). Records the failure in
+    /// `param.tool_input_error` and returns the events to send; empty when the pair has no hook.
+    pub fn finalize_stream(&self, upstream: Format, client: Format, param: &mut Param) -> Vec<Vec<u8>> {
+        match self.responses.get(&(client, upstream)).and_then(|r| r.finalize) {
+            Some(f) => f(param),
+            None => vec![],
+        }
     }
 
     pub fn translate_request_envelope(&self, ctx: &Ctx, client: Format, upstream: Format, mut req: RequestEnvelope) -> RequestEnvelope {
@@ -220,6 +236,12 @@ pub fn translate_stream(ctx: &Ctx, upstream: Format, client: Format, model: &str
 #[allow(clippy::too_many_arguments)]
 pub fn translate_non_stream(ctx: &Ctx, upstream: Format, client: Format, model: &str, original: &[u8], translated: &[u8], raw: &[u8], param: &mut Param) -> Option<Vec<u8>> {
     global().translate_non_stream(ctx, upstream, client, model, original, translated, raw, param)
+}
+
+/// Stream end hook of the global registry; executors call it at upstream EOF before emitting any
+/// synthetic success (Go: `helps.FinalizeApplyPatchStream`).
+pub fn translate_finalize(upstream: Format, client: Format, param: &mut Param) -> Vec<Vec<u8>> {
+    global().finalize_stream(upstream, client, param)
 }
 
 pub fn translate_token_count(ctx: &Ctx, upstream: Format, client: Format, count: i64, raw: &[u8]) -> Vec<u8> {
