@@ -155,7 +155,7 @@ impl Manager {
                 Ok(prepared) => c.auth = prepared,
                 Err(_) => continue,
             }
-            publish_selected_auth_metadata(&mut credits_opts.metadata, &c.auth);
+            publish_selected_auth_metadata(&mut credits_opts, &c.auth);
             let (models, pooled, alias) =
                 self.execution_model_candidates_with_alias(&c.auth, &route_model);
             for upstream_model in &models {
@@ -244,7 +244,7 @@ impl Manager {
                 Ok(prepared) => c.auth = prepared,
                 Err(_) => continue,
             }
-            publish_selected_auth_metadata(&mut credits_opts.metadata, &c.auth);
+            publish_selected_auth_metadata(&mut credits_opts, &c.auth);
             let (models, pooled, alias) =
                 self.execution_model_candidates_with_alias(&c.auth, &route_model);
             if models.is_empty() {

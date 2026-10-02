@@ -16,9 +16,10 @@ use tokio::sync::mpsc;
 
 use super::Manager;
 use super::cooldown::ExecResult;
-use super::errors::{Failure, empty_stream, executor_not_found, result_error_from_error};
+use super::errors::{Failure, empty_stream, result_error_from_error};
 use super::exec::{
-    AuthAttempt, Fail, Outcome, ensure_canonical_session_metadata, preferred, requested_model_alias,
+    AuthAttempt, Fail, Outcome, ensure_canonical_session_metadata, is_claude_oauth, preferred,
+    publish_selected_auth_metadata, requested_model_alias,
 };
 use super::models::{
     AliasResult, attach_resolved_execution_model_info, resolve_attempt_alias_result,
@@ -197,6 +198,7 @@ impl Manager {
                 {
                     auth = refreshed;
                     did_refresh = true;
+                    publish_selected_auth_metadata(&mut exec_opts, &auth);
                     res = executor
                         .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
                         .await;
@@ -256,6 +258,7 @@ impl Manager {
                     drop(std::mem::replace(&mut stream.chunks, mpsc::channel(1).1));
                     auth = refreshed;
                     did_refresh = true;
+                    publish_selected_auth_metadata(&mut exec_opts, &auth);
                     match executor
                         .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
                         .await
@@ -363,6 +366,8 @@ impl Manager {
                 alias: attempt_alias,
                 started,
                 response_headers: stream.headers.clone(),
+                cfg: cfg.clone(),
+                claude_oauth: is_claude_oauth(&auth),
             };
             return Ok(wrap_stream(
                 wrap,
@@ -376,7 +381,6 @@ impl Manager {
             e.upstream_attempted = false;
             e
         });
-        let _ = executor_not_found;
         Err(preferred(err.into(), upstream_err.as_ref()))
     }
 }
@@ -394,6 +398,9 @@ struct WrapCtx {
     started: Instant,
     /// Upstream response headers, for passive quota observation.
     response_headers: http::HeaderMap,
+    cfg: std::sync::Arc<cpa_config::Config>,
+    /// Claude OAuth credentials record no success for a stream the client abandoned.
+    claude_oauth: bool,
 }
 
 /// Forwards the bootstrapped stream, then records one result.
@@ -417,12 +424,15 @@ fn wrap_stream(
             alias,
             started,
             response_headers,
+            cfg,
+            claude_oauth,
         } = ctx;
         let mut rewriter = (alias.force_mapping && !alias.original_alias.trim().is_empty())
             .then(|| StreamRewriter::new(alias.original_alias.trim()));
         let mut usage = StreamUsage::new(options.response_format_or_source());
         let mut ttft: Option<Duration> = None;
         let mut failed = false;
+        let mut client_gone = false;
         let mut pending: VecDeque<Chunk> = buffered.into_iter().map(Ok).collect();
         let mut remaining = remaining;
 
@@ -447,7 +457,7 @@ fn wrap_stream(
                     },
                 };
                 if let Some(auth) = auth {
-                    let action = rules::match_action(&auth, err, &manager.cfg());
+                    let action = rules::match_action(&auth, err, &cfg);
                     rules::apply_action_to_result(action, &mut result);
                 }
                 let facts = UsageFacts {
@@ -465,9 +475,17 @@ fn wrap_stream(
             let item = match pending.pop_front() {
                 Some(i) => i,
                 None => match remaining.as_mut() {
-                    Some(rx) => match rx.recv().await {
-                        Some(i) => i,
-                        None => break,
+                    // Waiting on an idle upstream: notice the client leaving so the upstream
+                    // stream is dropped (closed) promptly instead of at its next chunk.
+                    Some(rx) => tokio::select! {
+                        _ = tx.closed() => {
+                            client_gone = true;
+                            break;
+                        }
+                        item = rx.recv() => match item {
+                            Some(i) => i,
+                            None => break,
+                        },
                     },
                     None => break,
                 },
@@ -504,14 +522,16 @@ fn wrap_stream(
                 }
             }
         }
-        if let Some(r) = rewriter.as_mut()
+        drop(remaining);
+        if !client_gone
+            && let Some(r) = rewriter.as_mut()
             && let Some(tail) = r.finish()
             && !tail.is_empty()
             && tx.send(Ok(Bytes::from(tail))).await.is_err()
         {
             return;
         }
-        if !failed {
+        if !failed && !(client_gone && claude_oauth) {
             let result = ExecResult {
                 auth_id,
                 provider,

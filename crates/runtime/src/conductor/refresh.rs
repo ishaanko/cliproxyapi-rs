@@ -27,10 +27,12 @@ use super::cooldown::{
 };
 use super::errors::{Failure, refresh_error_from_error};
 use super::models::executor_key_from_auth;
-use super::util::chrono_to_std;
+use super::util::{add_chrono, chrono_to_std, to_chrono};
 use super::{Manager, executor_locked};
 use crate::executor::{DynExecutor, ExecError};
 
+/// Upper bound for operator-supplied intervals (100 years); keeps time math from overflowing.
+const MAX_INTERVAL: Duration = Duration::from_secs(100 * 365 * 24 * 3600);
 const REFRESH_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 const REFRESH_MAX_CONCURRENCY: usize = 16;
 /// Cap on the loop's sleep so the loop re-evaluates promptly after a suspend/resume.
@@ -60,6 +62,23 @@ struct JobInfo {
     running: bool,
 }
 
+struct RefreshPool {
+    queue: Arc<Semaphore>,
+    workers: Arc<Semaphore>,
+}
+
+/// Ends a refresh job on drop (normal completion or panic).
+struct JobGuard {
+    manager: Manager,
+    id: String,
+}
+
+impl Drop for JobGuard {
+    fn drop(&mut self) {
+        self.manager.finish_refresh_job(&self.id, None);
+    }
+}
+
 struct LoopShared {
     dirty: Mutex<HashSet<String>>,
     removed: Mutex<HashSet<String>>,
@@ -77,7 +96,9 @@ fn parse_duration_string(raw: &str) -> Duration {
         return d.to_std();
     }
     match s.parse::<f64>() {
-        Ok(secs) if secs > 0.0 => Duration::from_secs_f64(secs),
+        Ok(secs) if secs > 0.0 => {
+            Duration::try_from_secs_f64(secs).map_or(MAX_INTERVAL, |d| d.min(MAX_INTERVAL))
+        }
         _ => Duration::ZERO,
     }
 }
@@ -85,7 +106,9 @@ fn parse_duration_string(raw: &str) -> Duration {
 fn parse_duration_value(v: &Value) -> Duration {
     match v {
         Value::Number(n) => match n.as_f64() {
-            Some(f) if f > 0.0 => Duration::from_secs_f64(f),
+            Some(f) if f > 0.0 => {
+                Duration::try_from_secs_f64(f).map_or(MAX_INTERVAL, |d| d.min(MAX_INTERVAL))
+            }
             _ => Duration::ZERO,
         },
         Value::String(s) => parse_duration_string(s),
@@ -170,7 +193,7 @@ pub(crate) fn should_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
     let expiry = auth.expiration_time();
     let interval = auth_preferred_interval(auth);
     if !interval.is_zero() {
-        let interval = chrono::Duration::from_std(interval).unwrap_or(chrono::Duration::MAX);
+        let interval = to_chrono(interval);
         if let Some(exp) = expiry {
             if exp <= now || exp - now <= interval {
                 return true;
@@ -184,7 +207,7 @@ pub(crate) fn should_refresh(auth: &Auth, now: DateTime<Utc>) -> bool {
     let Some(lead) = cpa_auth::refresh::provider_refresh_lead(&auth.provider.to_lowercase()) else {
         return false;
     };
-    let lead = chrono::Duration::from_std(lead).unwrap_or(chrono::Duration::MAX);
+    let lead = to_chrono(lead);
     if lead <= chrono::Duration::zero() {
         return expiry.is_some_and(|exp| now > exp);
     }
@@ -216,29 +239,29 @@ fn next_refresh_check_at(now: DateTime<Utc>, auth: &Auth) -> Option<DateTime<Utc
     let expiry = auth.expiration_time();
     let pref = auth_preferred_interval(auth);
     if !pref.is_zero() {
-        let pref = chrono::Duration::from_std(pref).unwrap_or(chrono::Duration::MAX);
+        let pref = to_chrono(pref);
         let mut candidates = Vec::new();
         if let Some(exp) = expiry {
             if exp <= now || exp - now <= pref {
                 return Some(now);
             }
-            candidates.push(exp - pref);
+            candidates.push(add_chrono(exp, -pref));
         }
         let Some(l) = last_refresh else {
             return Some(now);
         };
-        candidates.push(l + pref);
+        candidates.push(add_chrono(l, pref));
         let next = candidates.into_iter().min()?;
         return Some(if next <= now { now } else { next });
     }
     let lead = cpa_auth::refresh::provider_refresh_lead(&auth.provider.to_lowercase())?;
-    let lead = chrono::Duration::from_std(lead).unwrap_or(chrono::Duration::MAX);
+    let lead = to_chrono(lead);
     if let Some(exp) = expiry {
-        let due = exp - lead;
+        let due = add_chrono(exp, -lead);
         return Some(if due <= now { now } else { due });
     }
     if let Some(l) = last_refresh {
-        let due = l + lead;
+        let due = add_chrono(l, lead);
         return Some(if due <= now { now } else { due });
     }
     Some(now)
@@ -618,7 +641,6 @@ impl Manager {
         } else {
             interval
         };
-        self.stop_auto_refresh();
         let shared = Arc::new(LoopShared {
             dirty: Mutex::new(HashSet::new()),
             removed: Mutex::new(HashSet::new()),
@@ -626,10 +648,16 @@ impl Manager {
         });
         let this = self.clone();
         let sh = shared.clone();
-        let handle = tokio::spawn(async move { this.auto_refresh_loop(sh, interval).await });
+        // Replace the old loop and install the new one under a single lock so a concurrent
+        // start/stop can never leave a handle without its shared state (or the reverse).
         let mut rs = self.refresh_state.lock();
+        if let Some(old) = rs.handle.take() {
+            old.abort();
+        }
+        rs.handle = Some(tokio::spawn(async move {
+            this.auto_refresh_loop(sh, interval).await
+        }));
         rs.shared = Some(shared);
-        rs.handle = Some(handle);
     }
 
     /// Stops the loop (running refreshes finish).
@@ -662,7 +690,12 @@ impl Manager {
     }
 
     async fn auto_refresh_loop(&self, shared: Arc<LoopShared>, interval: Duration) {
-        let sem = Arc::new(Semaphore::new(self.refresh_workers()));
+        let workers = self.refresh_workers();
+        let pool = RefreshPool {
+            // Queued + running jobs; further due credentials are re-checked after `interval`.
+            queue: Arc::new(Semaphore::new((workers * 4).max(64))),
+            workers: Arc::new(Semaphore::new(workers)),
+        };
         let mut queue: BinaryHeap<Reverse<(DateTime<Utc>, String)>> = BinaryHeap::new();
         let mut scheduled: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
         let now = self.now();
@@ -699,7 +732,7 @@ impl Manager {
                         }
                     }
                     for id in due {
-                        if let Some(next) = self.handle_due_auth(now, &id, interval, &sem).await {
+                        if let Some(next) = self.handle_due_auth(now, &id, interval, &pool).await {
                             scheduled.insert(id.clone(), next);
                             queue.push(Reverse((next, id)));
                         }
@@ -743,9 +776,9 @@ impl Manager {
         now: DateTime<Utc>,
         id: &str,
         interval: Duration,
-        sem: &Arc<Semaphore>,
+        pool: &RefreshPool,
     ) -> Option<DateTime<Utc>> {
-        let interval_chrono = chrono::Duration::from_std(interval).unwrap_or_default();
+        let interval_chrono = to_chrono(interval);
         let (auth, exec) = {
             let st = self.state.read();
             let auth = st.auths.get(id).cloned()?;
@@ -768,19 +801,27 @@ impl Manager {
                 now + interval_chrono
             });
         };
-        let Ok(permit) = sem.clone().try_acquire_owned() else {
+        let Ok(queue_permit) = pool.queue.clone().try_acquire_owned() else {
             // Queue full: do not hold the dispatcher.
             self.finish_refresh_job(id, Some(now + interval_chrono));
             return Some(now + interval_chrono);
         };
         let this = self.clone();
         let id_owned = id.to_string();
+        let workers = pool.workers.clone();
         tokio::spawn(async move {
-            let _permit = permit;
+            let _queue_permit = queue_permit;
+            // Clears the job entry even if the refresh panics.
+            let _job = JobGuard {
+                manager: this.clone(),
+                id: id_owned.clone(),
+            };
+            let Ok(_worker) = workers.acquire_owned().await else {
+                return;
+            };
             if this.begin_refresh_job(&id_owned, epoch) {
                 let _ = this.refresh_auth_at_epoch(&id_owned, "", epoch).await;
             }
-            this.finish_refresh_job(&id_owned, None);
         });
         // The job's completion reschedules via `queue_refresh_reschedule`.
         None

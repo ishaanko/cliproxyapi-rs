@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::executor::Request;
 
-use super::util::{canonical_model_key, eq_fold, parse_suffix, rewrite_model_for_prefix};
+use super::util::{eq_fold, parse_suffix, rewrite_model_for_prefix};
 
 pub const OAUTH_MODEL_ALIASES_ATTRIBUTE_KEY: &str = "model_aliases";
 pub const RESOLVED_API_KEY_MODEL_INFO: &str = "cliproxy.resolved_api_key_model_info";
@@ -602,6 +602,12 @@ macro_rules! models_of {
 
 /// `models[]` of the config entry backing `auth` (Go: configuredModelAliasEntries).
 pub fn configured_models(cfg: &Config, auth: &Auth) -> Vec<ConfiguredModel> {
+    configured_models_for(cfg, auth, true)
+}
+
+/// `require_compat`: alias lookups only consult a compat entry for compat auths; the capability
+/// lookup (Go: compileAPIKeyModelCapabilitiesForAuth) tries it for any unknown provider.
+fn configured_models_for(cfg: &Config, auth: &Auth, require_compat: bool) -> Vec<ConfiguredModel> {
     match auth.provider.trim().to_lowercase().as_str() {
         "gemini" => resolve_api_key_config(&cfg.gemini_key, auth)
             .map(|e| {
@@ -655,7 +661,8 @@ pub fn configured_models(cfg: &Config, auth: &Auth) -> Vec<ConfiguredModel> {
             .unwrap_or_default(),
         _ => {
             let compat_name = auth.attr("compat_name");
-            if compat_name.is_empty()
+            if require_compat
+                && compat_name.is_empty()
                 && !auth
                     .provider
                     .trim()
@@ -912,35 +919,9 @@ pub fn execution_result_model(route_model: &str, upstream_model: &str, pooled: b
 
 // ---- Response model rewrite for force-mapped aliases ----
 
-const MODEL_FIELD_PATHS: [&str; 5] = [
-    "model",
-    "modelVersion",
-    "response.model",
-    "response.modelVersion",
-    "message.model",
-];
-
 /// Rewrites the model field(s) of a JSON response to `target_model`.
 pub fn rewrite_model_in_response(data: &[u8], target_model: &str) -> Vec<u8> {
-    use cpa_json::J;
-    if target_model.is_empty() || data.is_empty() {
-        return data.to_vec();
-    }
-    let mut v = cpa_json::parse(data);
-    if v.is_null() {
-        return data.to_vec();
-    }
-    let mut changed = false;
-    for path in MODEL_FIELD_PATHS {
-        if v.g(path).exists() {
-            cpa_json::set(&mut v, path, target_model);
-            changed = true;
-        }
-    }
-    if !changed {
-        return data.to_vec();
-    }
-    cpa_json::to_vec(&v)
+    super::rewriter::rewrite_model(data, target_model)
 }
 
 // ---- Capability snapshot attached to requests ----
@@ -1020,7 +1001,7 @@ fn capability_model_type(auth: &Auth) -> &'static str {
 /// Capability routes of an auth keyed by lookup candidates (Go: compileAPIKeyModelCapabilitiesForAuth,
 /// evaluated lazily for the candidates of one request).
 fn capability_routes(cfg: &Config, auth: &Auth, candidates: &[String]) -> Vec<CapabilityRoute> {
-    let models = configured_models(cfg, auth);
+    let models = configured_models_for(cfg, auth, false);
     let model_type = capability_model_type(auth);
     let wanted: Vec<String> = candidates.iter().map(|c| c.trim().to_lowercase()).collect();
     let mut by_key: HashMap<String, Vec<CapabilityRoute>> = HashMap::new();
@@ -1086,7 +1067,10 @@ fn route_model_info(route: &CapabilityRoute) -> ModelInfo {
         route.model.thinking.as_ref(),
     );
     info.is_compat = route.model.is_compat;
-    info.support_configuration_update = route.model.support_configuration_update;
+    // Only codex-api-key entries carry `support-configuration-update`.
+    if route.model_type == "codex" {
+        info.support_configuration_update = route.model.support_configuration_update;
+    }
     info
 }
 
@@ -1293,10 +1277,6 @@ pub fn codex_api_key_model_is_compat(cfg: &Config, auth: &Auth, model: &str) -> 
         }
     }
     false
-}
-
-pub fn state_key(model: &str) -> String {
-    canonical_model_key(model)
 }
 
 #[cfg(test)]

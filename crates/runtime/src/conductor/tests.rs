@@ -26,6 +26,8 @@ enum Step {
     Err(ExecError),
     /// Stream chunks; an `Err` item is delivered as an error chunk.
     Stream(Vec<Result<&'static str, ExecError>>),
+    /// One chunk, then the upstream stays open and idle (sender kept in `held`).
+    Idle(&'static str),
 }
 
 /// Scripted executor: per-credential queues of steps; credentials without a script succeed with
@@ -37,6 +39,8 @@ struct Mock {
     refreshes: Mutex<Vec<String>>,
     /// Whether each execute call carried the Antigravity credits flag.
     credit_flags: Mutex<Vec<bool>>,
+    /// Senders of idle streams, kept alive so tests can watch them close.
+    held: Mutex<Vec<mpsc::Sender<Result<Bytes, ExecError>>>>,
 }
 
 impl Mock {
@@ -47,6 +51,7 @@ impl Mock {
             calls: Mutex::new(Vec::new()),
             refreshes: Mutex::new(Vec::new()),
             credit_flags: Mutex::new(Vec::new()),
+            held: Mutex::new(Vec::new()),
         })
     }
 
@@ -101,7 +106,7 @@ impl Executor for Mock {
                 ..Default::default()
             }),
             Step::Err(e) => Err(e),
-            Step::Stream(_) => panic!("stream step used for execute"),
+            Step::Stream(_) | Step::Idle(_) => panic!("stream step used for execute"),
         }
     }
 
@@ -116,6 +121,16 @@ impl Executor for Mock {
             Step::Ok(p) => {
                 let (tx, rx) = mpsc::channel(8);
                 tx.try_send(Ok(payload_for(p, auth))).unwrap();
+                Ok(StreamResult {
+                    headers: Default::default(),
+                    chunks: rx,
+                })
+            }
+            Step::Idle(first) => {
+                let (tx, rx) = mpsc::channel(4);
+                tx.try_send(Ok(Bytes::from_static(first.as_bytes())))
+                    .unwrap();
+                self.held.lock().push(tx);
                 Ok(StreamResult {
                     headers: Default::default(),
                     chunks: rx,
@@ -156,7 +171,7 @@ impl Executor for Mock {
                 ..Default::default()
             }),
             Step::Err(e) => Err(e),
-            Step::Stream(_) => panic!("stream step used for count"),
+            Step::Stream(_) | Step::Idle(_) => panic!("stream step used for count"),
         }
     }
 }
@@ -1649,5 +1664,39 @@ async fn streams_record_usage_when_they_finish_and_count_tokens_does_not() {
         tracker.requests(10, None).events.len(),
         1,
         "token counting is not usage"
+    );
+}
+
+#[tokio::test]
+async fn client_disconnect_closes_idle_upstream_and_claude_oauth_records_nothing() {
+    let h = Harness::with_executor("claude");
+    h.add("a", &["m"], |a| {
+        a.attributes.insert("auth_kind".into(), "oauth".into());
+    })
+    .await;
+    h.exec.script("a", vec![Step::Idle("first")]);
+    let mut stream = h
+        .mgr
+        .execute_stream(
+            &["claude".into()],
+            request("m"),
+            Options::new(Format::OpenAI),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stream.chunks.recv().await.unwrap().unwrap(), "first");
+    let upstream = h.exec.held.lock().pop().unwrap();
+    // The client goes away while the upstream is idle: the upstream stream must be dropped
+    // promptly, not at its next chunk.
+    drop(stream);
+    tokio::time::timeout(Duration::from_secs(1), upstream.closed())
+        .await
+        .expect("upstream closed after client disconnect");
+    tokio::task::yield_now().await;
+    let st = h.mgr.get("a").unwrap();
+    assert_eq!(
+        (st.success, st.failed),
+        (0, 0),
+        "no result for an abandoned Claude OAuth stream"
     );
 }

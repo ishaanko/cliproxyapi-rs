@@ -24,23 +24,6 @@ struct RefreshRequest {
     all: bool,
 }
 
-/// `ForceRefreshAuth`: exchange the credential's refresh token now and store the result.
-async fn force_refresh_auth(st: &ManagementState, id: &str) -> Result<Auth, String> {
-    let auth = st
-        .registry
-        .get(id)
-        .ok_or_else(|| format!("auth not found: {id}"))?;
-    let global_proxy = st.cfg().proxy_url.trim().to_string();
-    let mut refreshed = cpa_auth::refresh_auth(&auth, &global_proxy)
-        .await
-        .map_err(|e| e.to_string())?;
-    let now = Utc::now();
-    refreshed.last_refreshed_at = Some(now);
-    refreshed.updated_at = Some(now);
-    refreshed.refresh_failures = 0;
-    st.registry.update(refreshed).await
-}
-
 fn has_refresh_credential(auth: &Auth) -> bool {
     !auth.refresh_token().is_empty() && cpa_auth::refresh::supports_refresh(auth)
 }
@@ -83,7 +66,7 @@ async fn refresh_inner(st: ManagementState, uri: axum::http::Uri, body: Bytes) -
             .collect();
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
-            match force_refresh_auth(&st, &id).await {
+            match st.registry.force_refresh_auth(&id).await {
                 Ok(_) => results.push(json!({"id": id, "success": true})),
                 Err(e) => results.push(json!({"id": id, "success": false, "error": e})),
             }
@@ -98,7 +81,9 @@ async fn refresh_inner(st: ManagementState, uri: axum::http::Uri, body: Bytes) -
     let Some(target) = lookup_auth_file(&st, name, &parsed.auth_index) else {
         return Err(ApiError::new(404, ERR_NOT_FOUND));
     };
-    let refreshed = force_refresh_auth(&st, &target.id)
+    let refreshed = st
+        .registry
+        .force_refresh_auth(&target.id)
         .await
         .map_err(|e| ApiError::new(500, e))?;
     Ok(ok_json(

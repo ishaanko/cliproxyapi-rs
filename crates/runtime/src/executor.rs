@@ -76,6 +76,20 @@ pub struct Options {
     pub metadata: Metadata,
     /// Per-execution proxy override; refresh/token exchange must ignore it.
     pub proxy_url: String,
+    /// Called with `(auth_id, auth_index)` each time the conductor picks a credential for this
+    /// call, including failover picks (Go: selected-auth callbacks in metadata). Handlers use it
+    /// for websocket pinning and request logs.
+    pub selected_auth: Option<SelectedAuthCallback>,
+}
+
+/// Callback invoked with `(auth_id, auth_index)` when a credential is selected.
+#[derive(Clone)]
+pub struct SelectedAuthCallback(pub Arc<dyn Fn(&str, &str) + Send + Sync>);
+
+impl std::fmt::Debug for SelectedAuthCallback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SelectedAuthCallback")
+    }
 }
 
 impl Options {
@@ -90,6 +104,7 @@ impl Options {
             response_format: None,
             metadata: Metadata::new(),
             proxy_url: String::new(),
+            selected_auth: None,
         }
     }
 
@@ -196,7 +211,8 @@ impl ExecError {
     }
 
     pub fn is_request_scoped(&self) -> bool {
-        self.code == Some(ErrorCode::RequestScoped) || self.auth_code.as_deref() == Some("request_scoped")
+        self.code == Some(ErrorCode::RequestScoped)
+            || self.auth_code.as_deref() == Some("request_scoped")
     }
 }
 
@@ -206,14 +222,29 @@ pub trait Executor: Send + Sync {
     /// Provider key handled by this executor (matches `Auth::provider`).
     fn identifier(&self) -> &str;
 
-    async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError>;
+    async fn execute(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError>;
 
-    async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError>;
+    async fn execute_stream(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<StreamResult, ExecError>;
 
     /// Refresh credentials, returning the updated auth.
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError>;
 
-    async fn count_tokens(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError>;
+    async fn count_tokens(
+        &self,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+    ) -> Result<Response, ExecError>;
 
     /// Release per-session resources (e.g. pooled websockets) when a client session ends.
     async fn close_execution_session(&self, _session_id: &str) {}

@@ -292,6 +292,57 @@ impl Selector {
 
 // ---- Session affinity ----
 
+/// Metadata key holding the session ids derived once per request (see [`resolve_affinity_ids`]).
+pub const AFFINITY_IDS_KEY: &str = "cpa.session_affinity_ids";
+
+/// Session ids affinity binds on: explicit client ids, and the primary/fallback pair (explicit,
+/// else derived/hash).
+#[derive(Debug, Clone, Default)]
+pub struct AffinityIds {
+    pub explicit: (String, String),
+    pub primary: String,
+    pub fallback: String,
+}
+
+/// Parses the request for session ids and stores the result in `metadata` so later picks and the
+/// result bookkeeping do not parse the body again. Also records fork/parent hints.
+pub fn resolve_affinity_ids(
+    headers: &http::HeaderMap,
+    body: &[u8],
+    metadata: &mut Metadata,
+) -> AffinityIds {
+    let explicit = session::explicit_session_ids(headers, body, metadata);
+    let (primary, fallback) = if explicit.0.is_empty() {
+        session::session_ids(headers, body, metadata)
+    } else {
+        explicit.clone()
+    };
+    let ids = AffinityIds {
+        explicit,
+        primary,
+        fallback,
+    };
+    metadata.insert(
+        AFFINITY_IDS_KEY.into(),
+        serde_json::json!([ids.explicit.0, ids.explicit.1, ids.primary, ids.fallback]),
+    );
+    ids
+}
+
+fn affinity_ids(headers: &http::HeaderMap, body: &[u8], metadata: &mut Metadata) -> AffinityIds {
+    if let Some(serde_json::Value::Array(v)) = metadata.get(AFFINITY_IDS_KEY)
+        && v.len() == 4
+    {
+        let s = |i: usize| v[i].as_str().unwrap_or("").to_string();
+        return AffinityIds {
+            explicit: (s(0), s(1)),
+            primary: s(2),
+            fallback: s(3),
+        };
+    }
+    resolve_affinity_ids(headers, body, metadata)
+}
+
 /// Result of the affinity decision for one pick.
 pub enum AffinityPick {
     /// Use this candidate id (from the all-tier list).
@@ -346,8 +397,8 @@ impl SessionAffinity {
         metadata.insert(meta::SESSION_AFFINITY_PROVIDER.into(), provider.into());
         metadata.insert(meta::SESSION_AFFINITY_MODEL.into(), model.into());
 
-        let (explicit_id, explicit_fallback) =
-            session::explicit_session_ids(headers, original_request, metadata);
+        let ids = affinity_ids(headers, original_request, metadata);
+        let (explicit_id, explicit_fallback) = ids.explicit.clone();
         if !explicit_id.is_empty() {
             for k in [
                 meta::IS_COMPACTION,
@@ -374,10 +425,7 @@ impl SessionAffinity {
             }
         }
 
-        let (mut primary, mut fallback) = (explicit_id, explicit_fallback);
-        if primary.is_empty() {
-            (primary, fallback) = session::session_ids(headers, original_request, metadata);
-        }
+        let (mut primary, mut fallback) = (ids.primary, ids.fallback);
         if primary.is_empty() {
             return AffinityPick::Unbound;
         }
@@ -447,15 +495,8 @@ impl SessionAffinity {
             return;
         }
         let mut md = res.options.metadata.clone();
-        let (mut primary, mut fallback) = session::explicit_session_ids(
-            &res.options.headers,
-            &res.options.original_request,
-            &mut md,
-        );
-        if primary.is_empty() {
-            (primary, fallback) =
-                session::session_ids(&res.options.headers, &res.options.original_request, &mut md);
-        }
+        let ids = affinity_ids(&res.options.headers, &res.options.original_request, &mut md);
+        let (mut primary, mut fallback) = (ids.primary, ids.fallback);
         if primary.is_empty() && fallback.is_empty() {
             return;
         }

@@ -143,11 +143,11 @@ fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
         || u.g("candidatesTokenCount").exists()
         || u.g("totalTokenCount").exists()
     {
-        let input = int(u, "promptTokenCount") + int(u, "toolUsePromptTokenCount");
+        let input = int(u, "promptTokenCount").saturating_add(int(u, "toolUsePromptTokenCount"));
         let output = int(u, "candidatesTokenCount");
         let reasoning = int(u, "thoughtsTokenCount");
         let total = match int(u, "totalTokenCount") {
-            0 => input + output + reasoning,
+            0 => input.saturating_add(output).saturating_add(reasoning),
             t => t,
         };
         return TokenUsage {
@@ -182,7 +182,10 @@ fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
             output_tokens: output,
             reasoning_tokens: reasoning,
             cached_tokens: cached,
-            total_tokens: input + output + cache_read + cache_create,
+            total_tokens: input
+                .saturating_add(output)
+                .saturating_add(cache_read)
+                .saturating_add(cache_create),
         };
     }
     let cached = first_nonzero(
@@ -200,7 +203,7 @@ fn tokens_from_usage_object(format: Format, u: &Value) -> TokenUsage {
         ],
     );
     let total = match int(u, "total_tokens") {
-        0 => input + output,
+        0 => input.saturating_add(output),
         t => t,
     };
     TokenUsage {
@@ -324,6 +327,16 @@ fn merge(dst: &mut TokenUsage, src: TokenUsage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn huge_token_counts_saturate() {
+        let t = tokens_from_response(
+            Format::Claude,
+            br#"{"usage":{"input_tokens":9223372036854775807,"output_tokens":9223372036854775807,"cache_read_input_tokens":5}}"#,
+            &Metadata::new(),
+        );
+        assert_eq!(t.total_tokens, i64::MAX);
+    }
 
     #[test]
     fn openai_chat_and_responses_usage() {
