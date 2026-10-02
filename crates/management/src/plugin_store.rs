@@ -92,7 +92,8 @@ fn sources(configured: &[String]) -> Result<Vec<Source>, String> {
         url: DEFAULT_REGISTRY_URL.into(),
     }];
     let mut seen_urls: BTreeSet<String> = BTreeSet::from([DEFAULT_REGISTRY_URL.to_string()]);
-    let mut seen_ids: Vec<(String, String)> = vec![("official".into(), DEFAULT_REGISTRY_URL.into())];
+    let mut seen_ids: Vec<(String, String)> =
+        vec![("official".into(), DEFAULT_REGISTRY_URL.into())];
     for raw in configured {
         let url = raw.trim().to_string();
         if url.is_empty() || !seen_urls.insert(url.clone()) {
@@ -178,7 +179,10 @@ fn parse_registry(data: &[u8]) -> Result<Registry, String> {
             return Err(format!("plugins[{i}]: invalid plugin id {:?}", p.id));
         }
         if !p.version.is_empty() && !valid_version(&p.version) {
-            return Err(format!("plugins[{i}]: invalid plugin version {:?}", p.version));
+            return Err(format!(
+                "plugins[{i}]: invalid plugin version {:?}",
+                p.version
+            ));
         }
         if !seen.insert(p.id.clone()) {
             return Err(format!("plugins[{i}]: duplicate plugin id {:?}", p.id));
@@ -230,7 +234,10 @@ async fn fetch_registry(proxy_url: &str, url: &str) -> Result<Registry, String> 
     if !status.is_success() {
         return Err(format!("unexpected status {}", status.as_u16()));
     }
-    let data = resp.bytes().await.map_err(|e| e.without_url().to_string())?;
+    let data = resp
+        .bytes()
+        .await
+        .map_err(|e| e.without_url().to_string())?;
     parse_registry(&data)
 }
 
@@ -273,7 +280,10 @@ pub(crate) async fn list(st: &ManagementState) -> ApiResult {
         let configured = cfg.plugins.configs.get(&p.id);
         let enabled = configured.and_then(|c| c.enabled).unwrap_or(false);
         let mut m = Map::new();
-        m.insert("store_id".into(), esc(&format!("{}/{}", source.id, p.id)).into());
+        m.insert(
+            "store_id".into(),
+            esc(&format!("{}/{}", source.id, p.id)).into(),
+        );
         m.insert("source_id".into(), esc(&source.id).into());
         m.insert("source_name".into(), esc(&source.name).into());
         m.insert("source_url".into(), esc(&source.url).into());

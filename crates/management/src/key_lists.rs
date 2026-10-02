@@ -255,7 +255,13 @@ async fn list_response<T: Serialize>(
     Ok(ok_json(&json!({ key: out })))
 }
 
-fn key_parts(key: &str, base: &str, proxy: &str, prefix: &str, headers: &BTreeMap<String, String>) -> Option<Vec<String>> {
+fn key_parts(
+    key: &str,
+    base: &str,
+    proxy: &str,
+    prefix: &str,
+    headers: &BTreeMap<String, String>,
+) -> Option<Vec<String>> {
     let (key, base) = (key.trim(), base.trim());
     (!key.is_empty() || !base.is_empty()).then(|| {
         vec![
@@ -377,7 +383,11 @@ fn normalize_gemini_target(entry: &mut GeminiKey, p: &KeyPatch) -> ApiResult<()>
     if let Some(m) = &p.excluded_models {
         entry.excluded_models = normalize_excluded_models(m);
     }
-    apply_bool_patch(&p.disable_cooling, &mut entry.disable_cooling, "disable-cooling")?;
+    apply_bool_patch(
+        &p.disable_cooling,
+        &mut entry.disable_cooling,
+        "disable-cooling",
+    )?;
     if let Some(v) = p.request_retry {
         entry.request_retry = Some(v);
     }
@@ -525,10 +535,11 @@ gemini_like!(
 
 fn normalize_claude_key(entry: &mut ClaudeKey) {
     entry.api_key = trim(&entry.api_key);
-    entry.fingerprint_profile = match cpa_config::normalize_claude_fingerprint_profile(&entry.fingerprint_profile) {
-        (normalized, true) => normalized.to_string(),
-        _ => trim(&entry.fingerprint_profile),
-    };
+    entry.fingerprint_profile =
+        match cpa_config::normalize_claude_fingerprint_profile(&entry.fingerprint_profile) {
+            (normalized, true) => normalized.to_string(),
+            _ => trim(&entry.fingerprint_profile),
+        };
     entry.base_url = trim(&entry.base_url);
     entry.proxy_url = trim(&entry.proxy_url);
     entry.headers = normalize_headers(&entry.headers);
@@ -551,7 +562,14 @@ fn normalize_claude_key(entry: &mut ClaudeKey) {
 
 /// Go: `findExistingClaudeKey` (exact identity tuple, exactly one match).
 fn find_existing_claude<'a>(existing: &'a [ClaudeKey], item: &ClaudeKey) -> Option<&'a ClaudeKey> {
-    let tuple = |k: &ClaudeKey| (trim(&k.api_key), trim(&k.base_url), trim(&k.prefix), trim(&k.proxy_url));
+    let tuple = |k: &ClaudeKey| {
+        (
+            trim(&k.api_key),
+            trim(&k.base_url),
+            trim(&k.prefix),
+            trim(&k.proxy_url),
+        )
+    };
     let want = tuple(item);
     let mut matches = existing.iter().filter(|k| tuple(k) == want);
     let first = matches.next()?;
@@ -560,9 +578,13 @@ fn find_existing_claude<'a>(existing: &'a [ClaudeKey], item: &ClaudeKey) -> Opti
 
 pub(crate) async fn get_claude_keys(State(st): State<ManagementState>) -> ApiResult {
     let entries = st.cfg().claude_key.clone();
-    list_response(&st, "claude-api-key", &entries, "claude:apikey", |e: &ClaudeKey| {
-        key_parts(&e.api_key, &e.base_url, &e.proxy_url, &e.prefix, &e.headers)
-    })
+    list_response(
+        &st,
+        "claude-api-key",
+        &entries,
+        "claude:apikey",
+        |e: &ClaudeKey| key_parts(&e.api_key, &e.base_url, &e.proxy_url, &e.prefix, &e.headers),
+    )
     .await
 }
 
@@ -633,10 +655,17 @@ pub(crate) async fn patch_claude_key(State(st): State<ManagementState>, body: By
         };
         let old = list[target].clone();
         let mut entry = old.clone();
-        let identity_changed = p.api_key.as_deref().is_some_and(|v| v.trim() != old.api_key)
-            || p.base_url.as_deref().is_some_and(|v| v.trim() != old.base_url)
+        let identity_changed = p
+            .api_key
+            .as_deref()
+            .is_some_and(|v| v.trim() != old.api_key)
+            || p.base_url
+                .as_deref()
+                .is_some_and(|v| v.trim() != old.base_url)
             || p.prefix.as_deref().is_some_and(|v| v.trim() != old.prefix)
-            || p.proxy_url.as_deref().is_some_and(|v| v.trim() != old.proxy_url);
+            || p.proxy_url
+                .as_deref()
+                .is_some_and(|v| v.trim() != old.proxy_url);
         if let Some(v) = &p.api_key {
             entry.api_key = trim(v);
         }
@@ -645,7 +674,9 @@ pub(crate) async fn patch_claude_key(State(st): State<ManagementState>, body: By
         }
         if let Some(v) = &p.fingerprint_profile {
             reject_fingerprint("fingerprint-profile", v)?;
-            entry.fingerprint_profile = cpa_config::normalize_claude_fingerprint_profile(v).0.to_string();
+            entry.fingerprint_profile = cpa_config::normalize_claude_fingerprint_profile(v)
+                .0
+                .to_string();
         }
         if let Some(w) = &p.weight {
             entry.weight = parse_weight_patch(w)?;
@@ -671,7 +702,11 @@ pub(crate) async fn patch_claude_key(State(st): State<ManagementState>, body: By
         if let Some(v) = p.rebuild_mid_system_message {
             entry.rebuild_mid_system_message = v;
         }
-        apply_bool_patch(&p.disable_cooling, &mut entry.disable_cooling, "disable-cooling")?;
+        apply_bool_patch(
+            &p.disable_cooling,
+            &mut entry.disable_cooling,
+            "disable-cooling",
+        )?;
         if let Some(v) = p.request_retry {
             entry.request_retry = Some(v);
         }
@@ -690,7 +725,11 @@ pub(crate) async fn patch_claude_key(State(st): State<ManagementState>, body: By
                 if let Some(mode) = &cp.mode {
                     let mode = trim(mode);
                     if mode.is_empty() && !identity_changed && old.cloak.is_some() {
-                        cloak.mode = old.cloak.as_ref().map(|o| o.mode.clone()).unwrap_or_default();
+                        cloak.mode = old
+                            .cloak
+                            .as_ref()
+                            .map(|o| o.mode.clone())
+                            .unwrap_or_default();
                     } else {
                         cloak.mode = mode;
                     }
@@ -804,11 +843,7 @@ fn codex_parts(e: &CodexKey) -> Option<Vec<String>> {
 
 /// PUT body of codex/xai/meta: normalized entries; `drop_empty_base` removes entries without a
 /// base URL (meta defaults it instead). Weights are validated against the original position.
-fn codex_put_entries(
-    body: &[u8],
-    label: &str,
-    drop_empty_base: bool,
-) -> ApiResult<Vec<CodexKey>> {
+fn codex_put_entries(body: &[u8], label: &str, drop_empty_base: bool) -> ApiResult<Vec<CodexKey>> {
     let arr: Vec<CodexKey> = items(body)?;
     let mut out = Vec::with_capacity(arr.len());
     for (i, mut entry) in arr.into_iter().enumerate() {
@@ -884,7 +919,11 @@ fn codex_patch_apply(
     if let Some(m) = &p.excluded_models {
         entry.excluded_models = normalize_excluded_models(m);
     }
-    apply_bool_patch(&p.disable_cooling, &mut entry.disable_cooling, "disable-cooling")?;
+    apply_bool_patch(
+        &p.disable_cooling,
+        &mut entry.disable_cooling,
+        "disable-cooling",
+    )?;
     if flavor == CodexFlavor::Codex {
         apply_bool_patch(
             &p.disable_codex_cloaking,
@@ -1010,9 +1049,19 @@ fn normalize_vertex_key(entry: &mut VertexCompatKey) {
 
 pub(crate) async fn get_vertex_keys(State(st): State<ManagementState>) -> ApiResult {
     let entries = st.cfg().vertex_compat_api_key.clone();
-    list_response(&st, "vertex-api-key", &entries, "vertex:apikey", |e: &VertexCompatKey| {
-        Some(vec![e.api_key.clone(), e.base_url.clone(), e.proxy_url.clone()])
-    })
+    list_response(
+        &st,
+        "vertex-api-key",
+        &entries,
+        "vertex:apikey",
+        |e: &VertexCompatKey| {
+            Some(vec![
+                e.api_key.clone(),
+                e.base_url.clone(),
+                e.proxy_url.clone(),
+            ])
+        },
+    )
     .await
 }
 
@@ -1086,7 +1135,11 @@ pub(crate) async fn patch_vertex_key(State(st): State<ManagementState>, body: By
         if let Some(m) = &p.excluded_models {
             entry.excluded_models = normalize_excluded_models(m);
         }
-        apply_bool_patch(&p.disable_cooling, &mut entry.disable_cooling, "disable-cooling")?;
+        apply_bool_patch(
+            &p.disable_cooling,
+            &mut entry.disable_cooling,
+            "disable-cooling",
+        )?;
         if let Some(v) = p.request_retry {
             entry.request_retry = Some(v);
         }
@@ -1150,16 +1203,29 @@ pub(crate) async fn get_openai_compat(State(st): State<ManagementState>) -> ApiR
         } else {
             let mut keys = Vec::new();
             for k in &entry.api_key_entries {
-                let idx = lookup(&mut ids, &[k.api_key.as_str(), entry.base_url.as_str(), k.proxy_url.as_str()]);
+                let idx = lookup(
+                    &mut ids,
+                    &[
+                        k.api_key.as_str(),
+                        entry.base_url.as_str(),
+                        k.proxy_url.as_str(),
+                    ],
+                );
                 keys.push(entry_value(k, &idx));
             }
             m.insert("api-key-entries".into(), Value::Array(keys));
         }
         if !entry.models.is_empty() {
-            m.insert("models".into(), serde_json::to_value(&entry.models).unwrap_or(Value::Null));
+            m.insert(
+                "models".into(),
+                serde_json::to_value(&entry.models).unwrap_or(Value::Null),
+            );
         }
         if !entry.headers.is_empty() {
-            m.insert("headers".into(), serde_json::to_value(&entry.headers).unwrap_or(Value::Null));
+            m.insert(
+                "headers".into(),
+                serde_json::to_value(&entry.headers).unwrap_or(Value::Null),
+            );
         }
         if entry.support_prompt_cache_key {
             m.insert("support-prompt-cache-key".into(), true.into());
@@ -1233,7 +1299,10 @@ struct OpenAiPatch {
     request_scoped_errors: Option<Vec<RequestScopedErrorRule>>,
 }
 
-pub(crate) async fn patch_openai_compat(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn patch_openai_compat(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     #[derive(Deserialize, Default)]
     #[serde(default)]
     struct Body {
@@ -1268,7 +1337,11 @@ pub(crate) async fn patch_openai_compat(State(st): State<ManagementState>, body:
         if let Some(v) = p.disabled {
             entry.disabled = v;
         }
-        apply_bool_patch(&p.disable_cooling, &mut entry.disable_cooling, "disable-cooling")?;
+        apply_bool_patch(
+            &p.disable_cooling,
+            &mut entry.disable_cooling,
+            "disable-cooling",
+        )?;
         if let Some(v) = p.request_retry {
             entry.request_retry = Some(v);
         }
@@ -1390,7 +1463,10 @@ pub(crate) async fn get_oauth_excluded_models(State(st): State<ManagementState>)
     map_response("oauth-excluded-models", &m)
 }
 
-pub(crate) async fn put_oauth_excluded_models(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn put_oauth_excluded_models(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     let entries: BTreeMap<String, Vec<String>> = map_body(&body)?;
     persist(&st, move |c| {
         c.oauth_excluded_models = cpa_config::normalize_oauth_excluded_models(&entries);
@@ -1399,7 +1475,10 @@ pub(crate) async fn put_oauth_excluded_models(State(st): State<ManagementState>,
     .await
 }
 
-pub(crate) async fn patch_oauth_excluded_models(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn patch_oauth_excluded_models(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     #[derive(Deserialize, Default)]
     #[serde(default)]
     struct Body {
@@ -1425,7 +1504,10 @@ pub(crate) async fn patch_oauth_excluded_models(State(st): State<ManagementState
     .await
 }
 
-pub(crate) async fn delete_oauth_excluded_models(State(st): State<ManagementState>, uri: Uri) -> ApiResult {
+pub(crate) async fn delete_oauth_excluded_models(
+    State(st): State<ManagementState>,
+    uri: Uri,
+) -> ApiResult {
     let provider = crate::v0_util::q_trim(&uri, "provider").to_lowercase();
     if provider.is_empty() {
         return Err(ApiError::bad_request("missing provider"));
@@ -1444,7 +1526,10 @@ pub(crate) async fn get_oauth_model_alias(State(st): State<ManagementState>) -> 
     map_response("oauth-model-alias", &m)
 }
 
-pub(crate) async fn put_oauth_model_alias(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn put_oauth_model_alias(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     let entries: BTreeMap<String, Vec<OAuthModelAlias>> = map_body(&body)?;
     persist(&st, move |c| {
         c.oauth_model_alias = sanitized_model_alias(entries);
@@ -1463,7 +1548,10 @@ fn channel_of(channel: Option<String>, provider: Option<String>) -> String {
         .to_lowercase()
 }
 
-pub(crate) async fn patch_oauth_model_alias(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn patch_oauth_model_alias(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     #[derive(Deserialize, Default)]
     #[serde(default)]
     struct Body {
@@ -1478,7 +1566,9 @@ pub(crate) async fn patch_oauth_model_alias(State(st): State<ManagementState>, b
     }
     let mut one = BTreeMap::new();
     one.insert(channel.clone(), b.aliases.unwrap_or_default());
-    let normalized = sanitized_model_alias(one).remove(&channel).unwrap_or_default();
+    let normalized = sanitized_model_alias(one)
+        .remove(&channel)
+        .unwrap_or_default();
     persist(&st, move |c| {
         if normalized.is_empty() {
             if c.oauth_model_alias.remove(&channel).is_none() {
@@ -1502,7 +1592,10 @@ fn channel_query(uri: &Uri) -> String {
     }
 }
 
-pub(crate) async fn delete_oauth_model_alias(State(st): State<ManagementState>, uri: Uri) -> ApiResult {
+pub(crate) async fn delete_oauth_model_alias(
+    State(st): State<ManagementState>,
+    uri: Uri,
+) -> ApiResult {
     let channel = channel_query(&uri);
     if channel.is_empty() {
         return Err(ApiError::bad_request("missing channel"));
@@ -1516,12 +1609,17 @@ pub(crate) async fn delete_oauth_model_alias(State(st): State<ManagementState>, 
     .await
 }
 
-pub(crate) async fn get_oauth_request_scoped_errors(State(st): State<ManagementState>) -> ApiResult {
+pub(crate) async fn get_oauth_request_scoped_errors(
+    State(st): State<ManagementState>,
+) -> ApiResult {
     let m = sanitized_scoped_errors(st.cfg().oauth_request_scoped_errors.clone());
     map_response("oauth-request-scoped-errors", &m)
 }
 
-pub(crate) async fn put_oauth_request_scoped_errors(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn put_oauth_request_scoped_errors(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     let entries: BTreeMap<String, Vec<RequestScopedErrorRule>> = map_body(&body)?;
     persist(&st, move |c| {
         c.oauth_request_scoped_errors = sanitized_scoped_errors(entries);
@@ -1530,7 +1628,10 @@ pub(crate) async fn put_oauth_request_scoped_errors(State(st): State<ManagementS
     .await
 }
 
-pub(crate) async fn patch_oauth_request_scoped_errors(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+pub(crate) async fn patch_oauth_request_scoped_errors(
+    State(st): State<ManagementState>,
+    body: Bytes,
+) -> ApiResult {
     #[derive(Deserialize, Default)]
     #[serde(default)]
     struct Body {
@@ -1545,7 +1646,9 @@ pub(crate) async fn patch_oauth_request_scoped_errors(State(st): State<Managemen
     }
     let mut one = BTreeMap::new();
     one.insert(channel.clone(), b.rules.unwrap_or_default());
-    let normalized = sanitized_scoped_errors(one).remove(&channel).unwrap_or_default();
+    let normalized = sanitized_scoped_errors(one)
+        .remove(&channel)
+        .unwrap_or_default();
     persist(&st, move |c| {
         if normalized.is_empty() {
             if c.oauth_request_scoped_errors.remove(&channel).is_none() {
@@ -1559,7 +1662,10 @@ pub(crate) async fn patch_oauth_request_scoped_errors(State(st): State<Managemen
     .await
 }
 
-pub(crate) async fn delete_oauth_request_scoped_errors(State(st): State<ManagementState>, uri: Uri) -> ApiResult {
+pub(crate) async fn delete_oauth_request_scoped_errors(
+    State(st): State<ManagementState>,
+    uri: Uri,
+) -> ApiResult {
     let channel = channel_query(&uri);
     if channel.is_empty() {
         return Err(ApiError::bad_request("missing channel"));

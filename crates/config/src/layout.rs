@@ -1056,7 +1056,11 @@ pub fn marshal_document(root: &Value, original: &str) -> Result<String> {
 /// Serialises a document in yaml.v3 layout (see [`crate::emit`]) and re-attaches comments (see
 /// [`Comments`]).
 pub(crate) fn render_yaml(root: &Value, comments: &Comments) -> Result<String> {
-    let indent = if comments.indent == 0 { 2 } else { comments.indent };
+    let indent = if comments.indent == 0 {
+        2
+    } else {
+        comments.indent
+    };
     let mut text = comments.apply(&crate::emit::emit(root, indent, &comments.styles));
     if !comments.foot.is_empty() {
         if !text.ends_with('\n') {

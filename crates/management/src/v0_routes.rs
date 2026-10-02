@@ -29,7 +29,10 @@ macro_rules! auth_url {
 pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
     let routes = Router::new()
         .route("/config", get(s::get_config))
-        .route("/config.yaml", get(s::get_config_yaml).put(s::put_config_yaml))
+        .route(
+            "/config.yaml",
+            get(s::get_config_yaml).put(s::put_config_yaml),
+        )
         .route("/latest-version", get(tools::latest_version))
         .route("/plugins", get(tools::list_plugins))
         .route("/plugin-store", get(plugins_v0::store))
@@ -49,7 +52,10 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
                 .delete(plugins_v0::reset_quota),
         )
         .route("/plugins/{id}/quota/reset", post(plugins_v0::reset_quota))
-        .route("/debug", get(s::get_debug).put(s::put_debug).patch(s::put_debug))
+        .route(
+            "/debug",
+            get(s::get_debug).put(s::put_debug).patch(s::put_debug),
+        )
         .route(
             "/logging-to-file",
             get(s::get_logging_to_file)
@@ -133,7 +139,9 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
         )
         .route(
             "/ws-auth",
-            get(s::get_ws_auth).put(s::put_ws_auth).patch(s::put_ws_auth),
+            get(s::get_ws_auth)
+                .put(s::put_ws_auth)
+                .patch(s::put_ws_auth),
         )
         .route(
             "/request-retry",
@@ -235,7 +243,10 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
                 .delete(credentials::delete),
         )
         .route("/auth-files/models", get(credentials::models))
-        .route("/model-definitions/{channel}", get(routing::model_definitions))
+        .route(
+            "/model-definitions/{channel}",
+            get(routing::model_definitions),
+        )
         .route("/auth-files/download", get(credentials::download))
         .route("/auth-files/status", patch(credential_edit::patch_status))
         .route("/auth-files/fields", patch(credential_edit::patch_fields))
@@ -243,7 +254,10 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
         .route("/vertex/import", post(oauth::import_vertex_v0))
         .route("/anthropic-auth-url", get(auth_url!(Provider::Claude)))
         .route("/codex-auth-url", get(auth_url!(Provider::Codex)))
-        .route("/antigravity-auth-url", get(auth_url!(Provider::Antigravity)))
+        .route(
+            "/antigravity-auth-url",
+            get(auth_url!(Provider::Antigravity)),
+        )
         .route("/kimi-auth-url", get(auth_url!(Provider::Kimi)))
         .route("/kimi-ai-auth-url", get(auth_url!(Provider::KimiAi)))
         .route("/xai-auth-url", get(auth_url!(Provider::Xai)))
@@ -268,7 +282,10 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
             state.clone(),
             gate::authenticate,
         ))
-        .layer(axum::middleware::from_fn_with_state(state, gate::availability));
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            gate::availability,
+        ));
     let no_route = move |req: Request| {
         let svc = gate_then_404.clone();
         async move {

@@ -78,9 +78,7 @@ fn instance_mapping(item: &cpa_config::PluginInstanceConfig) -> serde_yaml_ng::M
     }
 }
 
-fn instance_from_mapping(
-    m: serde_yaml_ng::Mapping,
-) -> ApiResult<cpa_config::PluginInstanceConfig> {
+fn instance_from_mapping(m: serde_yaml_ng::Mapping) -> ApiResult<cpa_config::PluginInstanceConfig> {
     cpa_config::PluginInstanceConfig::from_yaml(serde_yaml_ng::Value::Mapping(m))
         .map_err(|e| ApiError::with_message(400, "invalid_config", e))
 }
@@ -191,10 +189,7 @@ pub(crate) async fn patch_config(
 }
 
 /// `DELETE /plugins/:id`: drops the saved config (no plugin files are ever discovered here).
-pub(crate) async fn delete(
-    State(st): State<ManagementState>,
-    Path(id): Path<String>,
-) -> ApiResult {
+pub(crate) async fn delete(State(st): State<ManagementState>, Path(id): Path<String>) -> ApiResult {
     let id = plugin_id(&id)?;
     if !st.cfg().plugins.configs.contains_key(&id) {
         return Err(plugin_not_found());
@@ -325,7 +320,10 @@ pub(crate) async fn fetch_credential_quota(
 ) -> ApiResult {
     let obj = quota_body(&body)?;
     require_auth(&st, &body_auth_index(&obj))?;
-    Err(ApiError::new(501, "no quota provider available for credential"))
+    Err(ApiError::new(
+        501,
+        "no quota provider available for credential",
+    ))
 }
 
 /// `POST /quota/reset`.

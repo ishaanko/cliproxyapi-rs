@@ -79,7 +79,11 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
 
 /// v0 `GET /<provider>-auth-url` (`RequestAnthropicToken` and friends): the provider is fixed by
 /// the route.
-pub(crate) async fn auth_url_for(st: ManagementState, req: Request, provider: Provider) -> ApiResult {
+pub(crate) async fn auth_url_for(
+    st: ManagementState,
+    req: Request,
+    provider: Provider,
+) -> ApiResult {
     start_login(&st, req.uri(), provider).await
 }
 

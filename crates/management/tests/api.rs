@@ -1025,11 +1025,12 @@ async fn usage_requests_feed_pages_forward_and_honors_the_statistics_gate() {
             "{path}"
         );
     }
+    // With statistics off nothing is queued.
     assert_eq!(
         get(&h.app, "/v8/management/observability/usage/queue")
             .await
-            .status,
-        501
+            .json(),
+        json!([])
     );
 }
 
@@ -1300,4 +1301,113 @@ async fn non_ascii_keys_authenticate_and_missing_peer_info_fails_closed() {
         .body(Body::empty())
         .unwrap();
     assert_eq!(h.app.clone().oneshot(req).await.unwrap().status(), 500);
+}
+
+// ---- v0 tree ----
+
+#[tokio::test]
+async fn v0_settings_and_key_lists_persist_through_the_legacy_layout() {
+    let h = harness();
+    let app = &h.app;
+    let r = with_json(
+        app,
+        Method::PUT,
+        "/v0/management/request-retry",
+        json!({"value": 4}),
+    )
+    .await;
+    assert_eq!(
+        (r.status.as_u16(), r.json()),
+        (200, json!({"status": "ok"}))
+    );
+    assert_eq!(
+        get(app, "/v0/management/request-retry").await.json(),
+        json!({"request-retry": 4})
+    );
+    let r = with_json(
+        app,
+        Method::PUT,
+        "/v0/management/request-retry",
+        json!({"value": "x"}),
+    )
+    .await;
+    assert_eq!(
+        (r.status.as_u16(), r.json()),
+        (400, json!({"error": "invalid body"}))
+    );
+
+    // Keys written through v0 land in the file and survive a reload; comments stay.
+    let r = with_json(
+        app,
+        Method::PATCH,
+        "/v0/management/api-keys",
+        json!({"old": "k1", "new": "k2"}),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(
+        get(app, "/v0/management/api-keys").await.json(),
+        json!({"api-keys": ["k2"]})
+    );
+    let text = std::fs::read_to_string(&h.config_path).unwrap();
+    assert!(text.contains("# client keys"), "{text}");
+
+    // gin.H answers are written in key order.
+    let r = send(
+        app,
+        Method::DELETE,
+        "/v0/management/oauth-session?state=nope",
+        LOCAL,
+        &bearer(),
+        Vec::new(),
+    )
+    .await;
+    let keys: Vec<String> = r.json().as_object().unwrap().keys().cloned().collect();
+    let mut sorted = keys.clone();
+    sorted.sort();
+    assert_eq!(keys, sorted);
+}
+
+#[tokio::test]
+async fn v0_unrouted_paths_pass_the_gate_before_the_404() {
+    let h = harness();
+    let uri = "/v0/management/no-such-thing";
+    let r = send(&h.app, Method::GET, uri, LOCAL, &[], Vec::new()).await;
+    assert_eq!(
+        r.status, 401,
+        "an unauthenticated caller learns nothing about routes"
+    );
+    let r = get(&h.app, uri).await;
+    assert!(r.status == 404 && r.body.is_empty() && r.headers.contains_key("x-cpa-version"));
+    // v8 misses are plain 404s without management headers.
+    let r = get(&h.app, "/v8/management/no-such-thing").await;
+    assert_eq!(r.status, 404);
+}
+
+#[tokio::test]
+async fn usage_queue_pops_each_event_once() {
+    let h = harness();
+    for model in ["m1", "m2", "m3"] {
+        h.usage.record(record(model, false));
+    }
+    let r = get(&h.app, "/v0/management/usage-queue?count=2").await;
+    let models: Vec<String> = r
+        .json()
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["model"].as_str().unwrap().into())
+        .collect();
+    assert_eq!(models, ["m1", "m2"]);
+    let r = get(&h.app, "/v8/management/observability/usage/queue").await;
+    assert_eq!(r.json().as_array().unwrap()[0]["model"], "m3");
+    assert_eq!(
+        get(&h.app, "/v0/management/usage-queue").await.json(),
+        json!([])
+    );
+    let r = get(&h.app, "/v0/management/usage-queue?count=0").await;
+    assert_eq!(
+        (r.status.as_u16(), r.json()),
+        (400, json!({"error": "count must be a positive integer"}))
+    );
 }

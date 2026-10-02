@@ -365,7 +365,10 @@ mod tests {
         assert_eq!(msg("{\"a\" 1}"), "invalid character '1' after object key");
         assert_eq!(msg("[1 2]"), "invalid character '2' after array element");
         assert_eq!(msg("{} x"), "invalid character 'x' after top-level value");
-        assert_eq!(msg("tru!"), "invalid character '!' in literal true (expecting 'e')");
+        assert_eq!(
+            msg("tru!"),
+            "invalid character '!' in literal true (expecting 'e')"
+        );
         assert!(check_valid(br#"{"a":[1,2.5e3,"xy",null,true]}"#).is_ok());
     }
 }

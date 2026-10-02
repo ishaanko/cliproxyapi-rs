@@ -163,7 +163,11 @@ fn queue_record(e: &UsageEvent, sources: &HashMap<String, String>) -> serde_json
     let model = non_empty(&r.model, "unknown");
     let alias = non_empty(&r.alias, &model);
     let fail = if r.failed {
-        let status = if r.fail.status_code == 0 { 500 } else { r.fail.status_code };
+        let status = if r.fail.status_code == 0 {
+            500
+        } else {
+            r.fail.status_code
+        };
         json!({"status_code": status, "body": r.fail.body.trim()})
     } else {
         json!({"status_code": 200, "body": ""})

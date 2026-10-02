@@ -46,7 +46,10 @@ pub const GIN_ROUTES: &[(&str, &str)] = &[
     ("PATCH", "/v0/management/quota-exceeded/switch-project"),
     ("GET", "/v0/management/quota-exceeded/switch-preview-model"),
     ("PUT", "/v0/management/quota-exceeded/switch-preview-model"),
-    ("PATCH", "/v0/management/quota-exceeded/switch-preview-model"),
+    (
+        "PATCH",
+        "/v0/management/quota-exceeded/switch-preview-model",
+    ),
     ("POST", "/v0/management/reset-quota"),
     ("GET", "/v0/management/quota/providers"),
     ("POST", "/v0/management/quota/fetch"),

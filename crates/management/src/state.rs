@@ -69,7 +69,9 @@ impl AuthRegistry for Manager {
     }
 
     async fn force_refresh_auth(&self, id: &str) -> Result<Auth, String> {
-        Manager::force_refresh_auth(self, id).await.map_err(|e| e.message)
+        Manager::force_refresh_auth(self, id)
+            .await
+            .map_err(|e| e.message)
     }
 }
 

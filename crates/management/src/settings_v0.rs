@@ -132,16 +132,24 @@ macro_rules! int_setter {
 getter!(get_debug, "debug", |c| c.debug);
 bool_setter!(put_debug, |c, v| c.debug = v);
 
-getter!(get_usage_statistics_enabled, "usage-statistics-enabled", |c| c
-    .usage_statistics_enabled);
-bool_setter!(put_usage_statistics_enabled, |c, v| c.usage_statistics_enabled = v);
+getter!(
+    get_usage_statistics_enabled,
+    "usage-statistics-enabled",
+    |c| c.usage_statistics_enabled
+);
+bool_setter!(put_usage_statistics_enabled, |c, v| c
+    .usage_statistics_enabled =
+    v);
 
-getter!(get_logging_to_file, "logging-to-file", |c| c.logging_to_file);
+getter!(get_logging_to_file, "logging-to-file", |c| c
+    .logging_to_file);
 bool_setter!(put_logging_to_file, |c, v| c.logging_to_file = v);
 
 getter!(get_logs_max_total_size_mb, "logs-max-total-size-mb", |c| c
     .logs_max_total_size_mb);
-int_setter!(put_logs_max_total_size_mb, |c, v| c.logs_max_total_size_mb = v.max(0));
+int_setter!(put_logs_max_total_size_mb, |c, v| c
+    .logs_max_total_size_mb =
+    v.max(0));
 
 getter!(get_error_logs_max_files, "error-logs-max-files", |c| c
     .error_logs_max_files);
@@ -159,21 +167,30 @@ int_setter!(put_request_retry, |c, v| c.request_retry = v);
 
 getter!(get_max_retry_credentials, "max-retry-credentials", |c| c
     .max_retry_credentials);
-int_setter!(put_max_retry_credentials, |c, v| c.max_retry_credentials = v);
+int_setter!(put_max_retry_credentials, |c, v| c.max_retry_credentials =
+    v);
 
-getter!(get_max_retry_interval, "max-retry-interval", |c| c.max_retry_interval);
+getter!(get_max_retry_interval, "max-retry-interval", |c| c
+    .max_retry_interval);
 int_setter!(put_max_retry_interval, |c, v| c.max_retry_interval = v);
 
-getter!(get_force_model_prefix, "force-model-prefix", |c| c.force_model_prefix);
+getter!(get_force_model_prefix, "force-model-prefix", |c| c
+    .force_model_prefix);
 bool_setter!(put_force_model_prefix, |c, v| c.force_model_prefix = v);
 
-getter!(get_switch_project, "switch-project", |c| c.quota_exceeded.switch_project);
-bool_setter!(put_switch_project, |c, v| c.quota_exceeded.switch_project = v);
+getter!(get_switch_project, "switch-project", |c| c
+    .quota_exceeded
+    .switch_project);
+bool_setter!(put_switch_project, |c, v| c.quota_exceeded.switch_project =
+    v);
 
 getter!(get_switch_preview_model, "switch-preview-model", |c| c
     .quota_exceeded
     .switch_preview_model);
-bool_setter!(put_switch_preview_model, |c, v| c.quota_exceeded.switch_preview_model = v);
+bool_setter!(put_switch_preview_model, |c, v| c
+    .quota_exceeded
+    .switch_preview_model =
+    v);
 
 getter!(get_proxy_url, "proxy-url", |c| c.proxy_url);
 

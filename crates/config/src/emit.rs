@@ -135,19 +135,15 @@ fn analyze(value: &str) -> Analysis {
             if "#,[]{}&*!|>'\"%@`".contains(c) {
                 block_indicators = true;
             }
-            if c == '?' || c == ':' {
-                if followed_by_whitespace {
-                    block_indicators = true;
-                }
+            if (c == '?' || c == ':') && followed_by_whitespace {
+                block_indicators = true;
             }
             if c == '-' && followed_by_whitespace {
                 block_indicators = true;
             }
         } else {
-            if c == ':' {
-                if followed_by_whitespace {
-                    block_indicators = true;
-                }
+            if c == ':' && followed_by_whitespace {
+                block_indicators = true;
             }
             if c == '#' && preceded_by_whitespace {
                 block_indicators = true;
@@ -254,8 +250,21 @@ fn is_base60_float(s: &str) -> bool {
 fn is_old_bool(s: &str) -> bool {
     matches!(
         s,
-        "y" | "Y" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "n" | "N" | "no" | "No" | "NO"
-            | "off" | "Off" | "OFF"
+        "y" | "Y"
+            | "yes"
+            | "Yes"
+            | "YES"
+            | "on"
+            | "On"
+            | "ON"
+            | "n"
+            | "N"
+            | "no"
+            | "No"
+            | "NO"
+            | "off"
+            | "Off"
+            | "OFF"
     )
 }
 
@@ -270,7 +279,8 @@ fn looks_like_timestamp(s: &str) -> bool {
         None => (s, None),
     };
     let nums: Vec<&str> = date.split('-').collect();
-    let digits = |p: &str, max: usize| (1..=max).contains(&p.len()) && p.bytes().all(|c| c.is_ascii_digit());
+    let digits =
+        |p: &str, max: usize| (1..=max).contains(&p.len()) && p.bytes().all(|c| c.is_ascii_digit());
     if nums.len() != 3 || !digits(nums[0], 4) || !digits(nums[1], 2) || !digits(nums[2], 2) {
         return false;
     }
@@ -307,10 +317,18 @@ fn format_float(f: f64) -> String {
         return ".nan".into();
     }
     if f.is_infinite() {
-        return if f > 0.0 { ".inf".into() } else { "-.inf".into() };
+        return if f > 0.0 {
+            ".inf".into()
+        } else {
+            "-.inf".into()
+        };
     }
     if f == 0.0 {
-        return if f.is_sign_negative() { "-0".into() } else { "0".into() };
+        return if f.is_sign_negative() {
+            "-0".into()
+        } else {
+            "0".into()
+        };
     }
     // Shortest round-trip digits and exponent from Rust's `{:e}`.
     let sci = format!("{f:e}");
@@ -321,7 +339,7 @@ fn format_float(f: f64) -> String {
     let negative = mantissa.starts_with('-');
     let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
     let sign = if negative { "-" } else { "" };
-    if exp < -4 || exp >= 6 {
+    if !(-4..6).contains(&exp) {
         let frac = if digits.len() > 1 {
             format!(".{}", &digits[1..])
         } else {
@@ -351,7 +369,10 @@ struct Emitter<'a> {
 enum Rendered {
     Inline(String),
     /// A literal block: header hints (`-`, `+`, indent digit) and the content.
-    Block { hints: String, content: String },
+    Block {
+        hints: String,
+        content: String,
+    },
 }
 
 impl<'a> Emitter<'a> {
@@ -394,10 +415,8 @@ impl<'a> Emitter<'a> {
         } else {
             self.requested(s)
         };
-        if style == Style::Plain {
-            if !a.block_plain_allowed || (s.is_empty() && simple_key) {
-                style = Style::Single;
-            }
+        if style == Style::Plain && (!a.block_plain_allowed || (s.is_empty() && simple_key)) {
+            style = Style::Single;
         }
         if style == Style::Single && !a.single_quoted_allowed {
             style = Style::Double;
@@ -475,7 +494,13 @@ impl<'a> Emitter<'a> {
     }
 
     /// `parent_indent` is the indent of the enclosing collection (-1 at the root).
-    fn mapping(&mut self, map: &Mapping, parent_indent: i32, in_seq_item: bool, inline_first: bool) {
+    fn mapping(
+        &mut self,
+        map: &Mapping,
+        parent_indent: i32,
+        in_seq_item: bool,
+        inline_first: bool,
+    ) {
         let indent = self.increase(parent_indent, in_seq_item);
         for (i, (k, v)) in map.iter().enumerate() {
             if !(i == 0 && inline_first) {
@@ -500,7 +525,13 @@ impl<'a> Emitter<'a> {
         }
     }
 
-    fn sequence(&mut self, items: &[Value], parent_indent: i32, in_seq_item: bool, inline_first: bool) {
+    fn sequence(
+        &mut self,
+        items: &[Value],
+        parent_indent: i32,
+        in_seq_item: bool,
+        inline_first: bool,
+    ) {
         let indent = self.increase(parent_indent, in_seq_item);
         for (i, item) in items.iter().enumerate() {
             if !(i == 0 && inline_first) {
@@ -610,7 +641,9 @@ mod tests {
     use super::*;
 
     fn parse(text: &str) -> Value {
-        crate::rawparse::parse_first_document(text).unwrap().unwrap()
+        crate::rawparse::parse_first_document(text)
+            .unwrap()
+            .unwrap()
     }
 
     #[test]
@@ -628,7 +661,9 @@ mod tests {
     fn quoting_follows_the_source_and_yaml_v3_rules() {
         let src = "host: \"127.0.0.1\"\nname: plain\n";
         let styles = Styles::from_text(src);
-        let v = parse("host: 127.0.0.1\nname: plain\nempty: ''\nnum: '123'\nflag: 'yes'\ncolon: 'a: b'\n");
+        let v = parse(
+            "host: 127.0.0.1\nname: plain\nempty: ''\nnum: '123'\nflag: 'yes'\ncolon: 'a: b'\n",
+        );
         assert_eq!(
             emit(&v, 2, &styles),
             "host: \"127.0.0.1\"\nname: plain\nempty: \"\"\nnum: \"123\"\nflag: \"yes\"\ncolon: 'a: b'\n"
