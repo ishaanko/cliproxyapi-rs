@@ -201,9 +201,8 @@ fn precompute_carrier_context(blocks: &[Value]) -> CarrierContext {
                     continue;
                 }
                 current_next = CARRIER_TEXT;
-                if active_valid && (active_kind == CARRIER_ANY || active_kind == CARRIER_TEXT) {
-                    ctx.has_trailing_previous_carrier[i] = true;
-                } else if latest_semantic.is_some_and(|l| ctx.has_trailing_previous_carrier[l]) {
+                let binds_text = active_valid && (active_kind == CARRIER_ANY || active_kind == CARRIER_TEXT);
+                if binds_text || latest_semantic.is_some_and(|l| ctx.has_trailing_previous_carrier[l]) {
                     ctx.has_trailing_previous_carrier[i] = true;
                 }
                 active_kind.clear();

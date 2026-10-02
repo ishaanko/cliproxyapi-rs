@@ -275,11 +275,10 @@ fn normalize(v: &Value) -> Value {
             if (t.starts_with('{') || t.starts_with('[')) && cpa_json::valid(st.as_bytes()) {
                 return Value::String(cpa_json::to_string(&parse_res(st)));
             }
-            if st.starts_with("decode apply_patch") {
-                if let Some(colon) = st.find(':') {
+            if st.starts_with("decode apply_patch")
+                && let Some(colon) = st.find(':') {
                     return Value::String(st[..=colon].to_string());
                 }
-            }
             v.clone()
         }
         Value::Array(a) => Value::Array(a.iter().map(normalize).collect()),

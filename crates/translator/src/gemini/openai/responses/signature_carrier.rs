@@ -148,12 +148,11 @@ pub(super) fn normalize_gemini_responses_carriers<'a>(items: &[Res<'a>]) -> (Vec
     for (item_index, original_item) in items.iter().enumerate() {
         let mut item = original_item.clone();
         let mut item_json: Option<Value> = None;
-        if has_internal_carrier_fields(original_item) {
-            if let Some(stripped) = strip_gemini_responses_carrier_metadata(original_item) {
+        if has_internal_carrier_fields(original_item)
+            && let Some(stripped) = strip_gemini_responses_carrier_metadata(original_item) {
                 item = Res::owned(stripped.clone());
                 item_json = Some(stripped);
             }
-        }
         if item.g("type").str() != "reasoning" {
             normalized.push(item);
             continue;

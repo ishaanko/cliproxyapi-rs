@@ -521,11 +521,10 @@ fn normalize_thinking_config(out: &mut Value) {
 }
 
 fn set_bool_if_valid(out: &mut Value, path: &str, value: &Value) {
-    if let Value::Bool(b) = value {
-        if out.g(path).v() != Some(&Value::Bool(*b)) {
+    if let Value::Bool(b) = value
+        && out.g(path).v() != Some(&Value::Bool(*b)) {
             cpa_json::set(out, path, *b);
         }
-    }
 }
 
 fn set_raw_if_different(out: &mut Value, path: &str, value: &Value) {

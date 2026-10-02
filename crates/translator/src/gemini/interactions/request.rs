@@ -543,11 +543,10 @@ fn copy_interactions_tools(out: &mut Value, root: &Value) {
                                 ("google_search", "googleSearch"),
                                 ("web_search", "googleSearch"),
                             ] {
-                                if let Value::Object(map) = &mut raw_map {
-                                    if let Some(v) = map.shift_remove(from) {
+                                if let Value::Object(map) = &mut raw_map
+                                    && let Some(v) = map.shift_remove(from) {
                                         map.insert(to.into(), v);
                                     }
-                                }
                             }
                             go_json_canonicalize(&raw_map.to_string())
                                 .map(|c| cpa_json::parse_str(&c))

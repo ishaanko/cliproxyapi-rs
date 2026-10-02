@@ -221,13 +221,12 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         }
 
         // Strip a trailing model turn with unanswered function calls.
-        if let Some(last) = content_items.last() {
-            if last.g("role").str() == "model"
+        if let Some(last) = content_items.last()
+            && last.g("role").str() == "model"
                 && last.g("parts").array().iter().any(|part| part.g("functionCall").exists())
             {
                 content_items.pop();
             }
-        }
         let items: Vec<Vec<u8>> = content_items.iter().map(cpa_json::to_vec).collect();
         let merged = merge_adjacent_gemini_contents(&items);
         // SetRawArrayItems is a no-op for an empty list, keeping the template's `contents`.

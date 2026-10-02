@@ -451,11 +451,10 @@ impl Stream<'_> {
         if self.st.web_search_query.is_empty() && !self.st.web_search_queries.is_empty() {
             self.st.web_search_query = self.st.web_search_queries[0].clone();
         }
-        if self.st.web_search_query.is_empty() {
-            if let Some(req) = self.req_json.map(cpa_json::parse) {
+        if self.st.web_search_query.is_empty()
+            && let Some(req) = self.req_json.map(cpa_json::parse) {
                 self.st.web_search_query = extract_responses_web_search_query(unwrap_request_root(&req));
             }
-        }
     }
 
     fn finalize_web_search(&mut self) {
@@ -643,11 +642,10 @@ impl Stream<'_> {
         if let Some(gm) = &self.st.raw_grounding_metadata {
             let c_map = build_responses_url_citations_for_messages(gm, &self.st.part_mappings, std::slice::from_ref(&full_text));
             msg_citations = c_map.get(&(self.st.msg_index as i64)).cloned().unwrap_or_default();
-            if msg_citations.is_empty() && self.st.completed_messages.is_empty() {
-                if let Some(first) = c_map.get(&0).filter(|c| !c.is_empty()) {
+            if msg_citations.is_empty() && self.st.completed_messages.is_empty()
+                && let Some(first) = c_map.get(&0).filter(|c| !c.is_empty()) {
                     msg_citations = first.clone();
                 }
-            }
         }
         let (msg_id, msg_index) = (self.st.current_msg_id.clone(), self.st.msg_index);
         self.emit_new_citation_annotations(msg_index, &msg_id, &msg_citations);
@@ -691,18 +689,16 @@ impl Stream<'_> {
         for idx in 0..self.st.next_index {
             let Some(completed_message) = self.st.completed_messages.get(&idx).cloned() else { continue };
             let mut late_cites = late_map.get(&(idx as i64)).cloned().unwrap_or_default();
-            if late_cites.is_empty() && self.st.completed_messages.len() == 1 {
-                if let Some(first) = late_map.get(&0).filter(|c| !c.is_empty()) {
+            if late_cites.is_empty() && self.st.completed_messages.len() == 1
+                && let Some(first) = late_map.get(&0).filter(|c| !c.is_empty()) {
                     late_cites = first.clone();
                 }
-            }
             let annotations = merge_citation_annotations(&completed_message.annotations, &late_cites);
             self.emit_new_citation_annotations(idx, &completed_message.id, &annotations);
-            if !annotations.is_empty() {
-                if let Some(m) = self.st.completed_messages.get_mut(&idx) {
+            if !annotations.is_empty()
+                && let Some(m) = self.st.completed_messages.get_mut(&idx) {
                     m.annotations = annotations;
                 }
-            }
         }
     }
 
@@ -784,11 +780,10 @@ impl Stream<'_> {
                 self.st.response_id = format!("resp_{}", self.st.response_id);
             }
             let create_time = root.g("createTime");
-            if create_time.exists() {
-                if let Some(t) = parse_create_time(&create_time.str()) {
+            if create_time.exists()
+                && let Some(t) = parse_create_time(&create_time.str()) {
                     self.st.created_at = t;
                 }
-            }
             if self.st.created_at == 0 {
                 self.st.created_at = unix_now();
             }
@@ -1038,11 +1033,7 @@ impl Stream<'_> {
                 self.st.text_part_run_active = true;
             }
         } else {
-            if part_idx_in_chunk > 0 {
-                self.st.current_logical_part_index += 1;
-                self.st.current_part_kind = part_kind.to_string();
-                self.st.text_part_run_active = part_kind == "text";
-            } else if part_kind != self.st.current_part_kind {
+            if part_idx_in_chunk > 0 || part_kind != self.st.current_part_kind {
                 self.st.current_logical_part_index += 1;
                 self.st.current_part_kind = part_kind.to_string();
                 self.st.text_part_run_active = part_kind == "text";
@@ -1288,15 +1279,14 @@ impl Stream<'_> {
         let name = identity.name.clone();
         let namespace = identity.namespace.clone();
         let is_custom = identity.custom;
-        if evidence_apply_patch {
-            if let Some(patch_call) = self.st.evidence.entries[evidence_idx].patch_call.as_mut() {
+        if evidence_apply_patch
+            && let Some(patch_call) = self.st.evidence.entries[evidence_idx].patch_call.as_mut() {
                 if let Err(err) = patch_call.finish_arguments(&args_text) {
                     self.fail(err);
                     return false;
                 }
                 return true;
             }
-        }
 
         let idx = self.st.next_index;
         self.st.next_index += 1;
@@ -1313,11 +1303,10 @@ impl Stream<'_> {
         let call_id = self.st.func_call_ids.get(&idx).cloned().unwrap_or_default();
 
         let args_json = if args.exists() { args_text.clone() } else { "{}".to_string() };
-        if let Some(buf) = self.st.func_args_buf.get_mut(&idx) {
-            if buf.is_empty() && !args_json.is_empty() {
+        if let Some(buf) = self.st.func_args_buf.get_mut(&idx)
+            && buf.is_empty() && !args_json.is_empty() {
                 buf.push_str(&args_json);
             }
-        }
 
         if is_custom {
             let mut input_str = unwrap_responses_custom_tool_input(&args_json);
@@ -1355,13 +1344,12 @@ impl Stream<'_> {
             self.push("response.output_item.added", &added);
 
             // Gemini delivers complete arguments; this delta is not an early preview.
-            if let Some(pc) = &patch_call {
-                if !input_str.is_empty() {
+            if let Some(pc) = &patch_call
+                && !input_str.is_empty() {
                     let seq = self.next_seq();
                     let delta = cpa_json::parse(&apply_patch_input_delta(pc, &input_str, seq));
                     self.push("response.custom_tool_call_input.delta", &delta);
                 }
-            }
             if !self.st.func_done.get(&idx).copied().unwrap_or(false) {
                 let seq = self.next_seq();
                 let input_done = match &patch_call {

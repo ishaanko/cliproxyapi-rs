@@ -96,11 +96,10 @@ pub fn convert_antigravity_response_to_openai(
     }
 
     let create_time = raw.g("response.createTime");
-    if create_time.exists() {
-        if let Ok(t) = chrono::DateTime::parse_from_rfc3339(&create_time.str()) {
+    if create_time.exists()
+        && let Ok(t) = chrono::DateTime::parse_from_rfc3339(&create_time.str()) {
             params.unix_timestamp = t.timestamp();
         }
-    }
     cpa_json::set(&mut template, "created", params.unix_timestamp);
 
     let response_id = raw.g("response.responseId");

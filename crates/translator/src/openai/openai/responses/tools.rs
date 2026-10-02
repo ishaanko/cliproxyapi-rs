@@ -293,7 +293,7 @@ fn parse_lenient(text: &str) -> Value {
         return strict;
     }
     let Some(start) = lenient_start(text) else { return strict };
-    cpa_json::parse(text[start..].as_bytes())
+    cpa_json::parse(&text.as_bytes()[start..])
 }
 
 /// Offset of the first object or array when `text` is not valid JSON as a whole.

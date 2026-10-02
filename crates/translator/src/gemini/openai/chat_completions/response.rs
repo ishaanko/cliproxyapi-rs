@@ -116,11 +116,10 @@ pub fn convert_gemini_response_to_openai(
     }
 
     let create_time = root.g("createTime");
-    if create_time.exists() {
-        if let Some(ts) = parse_create_time(&create_time.str()) {
+    if create_time.exists()
+        && let Some(ts) = parse_create_time(&create_time.str()) {
             p.unix_timestamp = ts;
         }
-    }
     cpa_json::set(&mut base_template, "created", p.unix_timestamp);
 
     let response_id = root.g("responseId");
@@ -281,11 +280,10 @@ pub fn convert_gemini_response_to_openai_non_stream(
     }
 
     let create_time = root.g("createTime");
-    if create_time.exists() {
-        if let Some(ts) = parse_create_time(&create_time.str()) {
+    if create_time.exists()
+        && let Some(ts) = parse_create_time(&create_time.str()) {
             unix_timestamp = ts;
         }
-    }
     cpa_json::set(&mut template, "created", unix_timestamp);
 
     let response_id = root.g("responseId");
@@ -347,14 +345,13 @@ pub fn convert_gemini_response_to_openai_non_stream(
                             cpa_json::set(&mut call, "function.arguments", args_raw(part_raws.get(part_pos), &args));
                         }
                         tool_calls.push(call);
-                    } else if inline_data.exists() {
-                        if let Some(image_url) = inline_image_url(&inline_data) {
+                    } else if inline_data.exists()
+                        && let Some(image_url) = inline_image_url(&inline_data) {
                             let mut payload = json!({ "type": "image_url", "image_url": { "url": "" } });
                             cpa_json::set(&mut payload, "index", images.len());
                             cpa_json::set(&mut payload, "image_url.url", image_url);
                             images.push(payload);
                         }
-                    }
                 }
 
                 if has_text {

@@ -279,8 +279,8 @@ pub fn convert_antigravity_response_to_claude(
     }
 
     let mut handled_web_search_grounding = false;
-    if web_search_stream_mode && !em.p.has_web_search_tool {
-        if let Some(grounding) = grounding_metadata(&root) {
+    if web_search_stream_mode && !em.p.has_web_search_tool
+        && let Some(grounding) = grounding_metadata(&root) {
             let tool_use_id = new_web_search_tool_use_id();
             let text = std::mem::take(&mut em.p.web_search_text_buffer) + &text_content(&root);
             let mut out = std::mem::take(&mut em.out);
@@ -293,7 +293,6 @@ pub fn convert_antigravity_response_to_claude(
             em.p.response_type = 0;
             handled_web_search_grounding = true;
         }
-    }
 
     // Each part can carry text, thinking, a thought signature or a function call.
     let parts_result = root.g("response.candidates.0.content.parts");
@@ -566,15 +565,14 @@ pub fn convert_antigravity_response_to_claude_non_stream(
     }
 
     let original = cpa_json::parse(original_request_raw_json);
-    if should_translate_grounding(&original, &request) {
-        if let Some(grounding) = grounding_metadata(&root) {
+    if should_translate_grounding(&original, &request)
+        && let Some(grounding) = grounding_metadata(&root) {
             let tool_use_id = new_web_search_tool_use_id();
             cpa_json::set(&mut response, "content", build_claude_web_search_content(&tool_use_id, &text_content(&root), &grounding));
             cpa_json::set(&mut response, "stop_reason", "end_turn");
             cpa_json::set(&mut response, "usage.server_tool_use.web_search_requests", 1);
             return Some(cpa_json::to_vec(&response));
         }
-    }
 
     let mut blocks: Vec<Value> = Vec::new();
     let parts = root.g("response.candidates.0.content.parts");

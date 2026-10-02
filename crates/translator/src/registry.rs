@@ -158,6 +158,7 @@ impl Registry {
     }
 
     /// Stream response translation. `upstream` produced `raw`; output is in `client` dialect.
+    #[allow(clippy::too_many_arguments)]
     pub fn translate_stream(
         &self,
         ctx: &Ctx,
@@ -177,6 +178,7 @@ impl Registry {
     }
 
     /// Non-stream response translation; `None` mirrors a nil Go result.
+    #[allow(clippy::too_many_arguments)]
     pub fn translate_non_stream(
         &self,
         ctx: &Ctx,

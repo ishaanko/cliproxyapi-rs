@@ -169,11 +169,10 @@ pub fn convert_gemini_request_to_claude(model_name: &str, raw_json: &[u8], strea
                     }
 
                     let file_data = first_existing(&part, "fileData", "file_data");
-                    if file_data.exists() {
-                        if let Some(content_part) = content_part_from_file_data(&file_data) {
+                    if file_data.exists()
+                        && let Some(content_part) = content_part_from_file_data(&file_data) {
                             content_items.push(content_part);
                         }
-                    }
                 }
             }
 

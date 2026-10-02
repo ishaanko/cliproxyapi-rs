@@ -666,11 +666,10 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
                     continue;
                 }
                 let mut client_content = claude_content(role, parts.items.clone());
-                if role == "model" && parts.items.len() > 1 {
-                    if let Some(new_parts) = reorder_model_parts(&parts.items) {
+                if role == "model" && parts.items.len() > 1
+                    && let Some(new_parts) = reorder_model_parts(&parts.items) {
                         cpa_json::set(&mut client_content, "parts", Value::Array(new_parts));
                     }
-                }
                 content_items.push(cpa_json::to_vec(&client_content));
             } else if contents_result.is_string() {
                 let mut part = json!({});
@@ -767,11 +766,10 @@ pub fn convert_claude_request_to_antigravity(model: &str, input_raw_json: &[u8],
         };
         cpa_json::set(&mut out, "request.contents", Value::Array(merged.iter().map(|c| cpa_json::parse(c)).collect()));
     }
-    if tool_decl_count > 0 && !is_tool_choice_none {
-        if let Some(t) = tools_json {
+    if tool_decl_count > 0 && !is_tool_choice_none
+        && let Some(t) = tools_json {
             cpa_json::set(&mut out, "request.tools", t);
         }
-    }
 
     // tool_choice
     if tool_choice.exists() {

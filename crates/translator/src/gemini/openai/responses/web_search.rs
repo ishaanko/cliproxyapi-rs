@@ -363,14 +363,13 @@ pub fn merge_grounding_metadata(existing: Option<&Value>, new: Option<&Value>) -
             // resolve strictly through the cumulative remap. Indices of the current frame are
             // stream-wide raw chunk indices, resolved the same way.
             let should_remap = !is_existing || existing_chunk_count == 0 || old_idx >= existing_chunk_count;
-            if should_remap {
-                if let Some(&t) = cumulative_remap.get(&old_idx) {
+            if should_remap
+                && let Some(&t) = cumulative_remap.get(&old_idx) {
                     target = t;
                     if target != old_idx {
                         need_rewrite = true;
                     }
                 }
-            }
             if !remapped.contains(&target) {
                 remapped.push(target);
             }
@@ -411,11 +410,10 @@ pub fn merge_grounding_metadata(existing: Option<&Value>, new: Option<&Value>) -
 
     // 5. retrievalQueries is kept from the first frame that has it.
     let rq = new_gm.g("retrievalQueries");
-    if let Some(v) = rq.v() {
-        if !existing_gm.g("retrievalQueries").exists() {
+    if let Some(v) = rq.v()
+        && !existing_gm.g("retrievalQueries").exists() {
             cpa_json::set(&mut merged, "retrievalQueries", v.clone());
         }
-    }
 
     Some(merged)
 }
@@ -437,8 +435,8 @@ pub fn merge_citation_annotations(existing: &[Value], late: &[Value]) -> Vec<Val
     let mut key_to_index: HashMap<String, usize> = HashMap::new();
     for a in existing {
         let key = citation_key(a);
-        if !key_to_index.contains_key(&key) {
-            key_to_index.insert(key, result.len());
+        if let std::collections::hash_map::Entry::Vacant(e) = key_to_index.entry(key) {
+            e.insert(result.len());
             result.push(a.clone());
         }
     }

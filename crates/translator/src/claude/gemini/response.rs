@@ -270,7 +270,7 @@ pub fn convert_claude_response_to_gemini_non_stream(
 
     let streaming_events: Vec<&[u8]> = raw_json
         .split(|&b| b == b'\n')
-        .map(|line| line.strip_suffix(b"\r").map(|l| l).unwrap_or(line))
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line))
         .filter(|line| line.starts_with(DATA_TAG))
         .map(|line| trim_space(&line[5..]))
         .collect();

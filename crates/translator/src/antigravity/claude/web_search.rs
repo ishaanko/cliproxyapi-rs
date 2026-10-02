@@ -210,11 +210,10 @@ pub fn text_content(root: &Value) -> String {
 
 fn query_from_grounding(grounding: &Value) -> String {
     let queries = grounding.g("webSearchQueries");
-    if queries.is_array() {
-        if let Some(first) = queries.array().first() {
+    if queries.is_array()
+        && let Some(first) = queries.array().first() {
             return first.str();
         }
-    }
     String::new()
 }
 

@@ -68,11 +68,10 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
     // tool_choice only applies when function declarations exist.
     if !function_declarations.is_empty() {
         let tool_choice = root.g("tool_choice");
-        if let Some(tc) = tool_choice.v() {
-            if let Some(tool_config) = convert_responses_tool_choice_to_gemini(Some(tc), &forward_map) {
+        if let Some(tc) = tool_choice.v()
+            && let Some(tool_config) = convert_responses_tool_choice_to_gemini(Some(tc), &forward_map) {
                 cpa_json::set(&mut out, "toolConfig.functionCallingConfig", tool_config);
             }
-        }
     }
 
     // System instruction from "instructions".
@@ -99,14 +98,14 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
             let item_type = item.g("type").str();
             if item_type == "function_call" || item_type == "custom_tool_call" {
                 let call_id = extract_responses_call_id(item);
-                if !function_names_by_call_id.contains_key(&call_id) {
+                function_names_by_call_id.entry(call_id).or_insert_with(|| {
                     let mut name = item.g("name").str();
                     let ns = item.g("namespace").str();
                     if !ns.is_empty() {
                         name = qualify_responses_namespace_tool_name(&ns, &name);
                     }
-                    function_names_by_call_id.insert(call_id, map_responses_tool_name(&forward_map, &name));
-                }
+                    map_responses_tool_name(&forward_map, &name)
+                });
             }
         }
 

@@ -383,15 +383,14 @@ fn part_to_steps(part: &Res<'_>) -> Vec<Value> {
     }
     for key in ["inlineData", "inline_data"] {
         let inline = part.g(key);
-        if inline.exists() {
-            if let Some(step) = inline_data_to_step(&inline) {
+        if inline.exists()
+            && let Some(step) = inline_data_to_step(&inline) {
                 let mut steps = vec![step];
                 if !sig.is_empty() {
                     steps.push(thought_step(&sig, ""));
                 }
                 return steps;
             }
-        }
     }
     if !sig.is_empty() {
         return vec![thought_step(&sig, "")];

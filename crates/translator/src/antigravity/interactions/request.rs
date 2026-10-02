@@ -124,11 +124,10 @@ fn copy_reasoning(out: &mut Value, root: &Value) {
         }
     }
     let summary = reasoning.g("summary");
-    if summary.exists() {
-        if let Some(include) = thinking_summaries_include_thoughts(&summary) {
+    if summary.exists()
+        && let Some(include) = thinking_summaries_include_thoughts(&summary) {
             cpa_json::set(out, "request.generationConfig.thinkingConfig.includeThoughts", include);
         }
-    }
 }
 
 fn copy_response_modalities(out: &mut Value, root: &Value) {

@@ -451,11 +451,10 @@ pub(super) fn open_ai_responses_part_from_block(block: &Res<'_>) -> Option<Value
     ]);
     if is_remote_url(&raw_url) {
         let mut filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
-        if filename.is_empty() {
-            if let Some(path) = url_path(&raw_url) {
+        if filename.is_empty()
+            && let Some(path) = url_path(&raw_url) {
                 filename = path_base(&path);
             }
-        }
         let format = first_non_generic_format(
             &[
                 "format",
@@ -553,11 +552,10 @@ fn open_ai_responses_image_mime_type(format: &str, filename: &str) -> String {
         if ext == "jpg" || ext == "jpeg" {
             return "image/jpeg".to_string();
         }
-        if !ext.is_empty() {
-            if let Some(mapped) = mime_type_for_extension(&ext) {
+        if !ext.is_empty()
+            && let Some(mapped) = mime_type_for_extension(&ext) {
                 return mapped.to_string();
             }
-        }
     }
     "image/png".to_string()
 }
