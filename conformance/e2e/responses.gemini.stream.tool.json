@@ -42,7 +42,8 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-cache",
           "connection": "keep-alive",
-          "content-type": "text/event-stream"
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
         },
         "body": {
           "type": "sse",
@@ -86,11 +87,11 @@
                 "sequence_number": 3,
                 "output_index": 0,
                 "item": {
-                  "id": "<fc:1>",
+                  "id": "fc_call_<nanos>_1",
                   "type": "function_call",
                   "status": "in_progress",
                   "arguments": "",
-                  "call_id": "<call:1>",
+                  "call_id": "call_<id:1>_1",
                   "name": "get_weather"
                 }
               }
@@ -100,7 +101,7 @@
               "data": {
                 "type": "response.function_call_arguments.delta",
                 "sequence_number": 4,
-                "item_id": "<fc:1>",
+                "item_id": "fc_call_<nanos>_1",
                 "output_index": 0,
                 "delta": "{\"city\":\"Paris\"}"
               }
@@ -110,7 +111,7 @@
               "data": {
                 "type": "response.function_call_arguments.done",
                 "sequence_number": 5,
-                "item_id": "<fc:1>",
+                "item_id": "fc_call_<nanos>_1",
                 "output_index": 0,
                 "arguments": "{\"city\":\"Paris\"}"
               }
@@ -122,11 +123,11 @@
                 "sequence_number": 6,
                 "output_index": 0,
                 "item": {
-                  "id": "<fc:1>",
+                  "id": "fc_call_<nanos>_1",
                   "type": "function_call",
                   "status": "completed",
                   "arguments": "{\"city\":\"Paris\"}",
-                  "call_id": "<call:1>",
+                  "call_id": "call_<id:1>_1",
                   "name": "get_weather"
                 }
               }
@@ -165,11 +166,11 @@
                   ],
                   "output": [
                     {
-                      "id": "<fc:1>",
+                      "id": "fc_call_<nanos>_1",
                       "type": "function_call",
                       "status": "completed",
                       "arguments": "{\"city\":\"Paris\"}",
-                      "call_id": "<call:1>",
+                      "call_id": "call_<id:1>_1",
                       "name": "get_weather"
                     }
                   ],
@@ -203,6 +204,7 @@
       "query": "alt=sse",
       "credential": "sk-gemini-1",
       "headers": {
+        "accept-encoding": "gzip",
         "content-type": "application/json",
         "user-agent": "<go-default-ua>",
         "x-goog-api-key": "sk-gemini-1"

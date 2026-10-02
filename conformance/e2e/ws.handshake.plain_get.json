@@ -18,6 +18,7 @@
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "content-type": "text/plain; charset=utf-8",
+          "sec-websocket-version": "13",
           "x-content-type-options": "nosniff"
         },
         "body": {

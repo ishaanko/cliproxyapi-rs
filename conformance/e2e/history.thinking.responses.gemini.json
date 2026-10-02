@@ -1,0 +1,283 @@
+{
+  "id": "history.thinking.responses.gemini",
+  "desc": "turn carrying previous reasoning: responses client -> gemini upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gemini-2.5-flash",
+          "reasoning": {
+            "effort": "high"
+          },
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Weather in Paris?"
+                }
+              ]
+            },
+            {
+              "type": "reasoning",
+              "id": "rs_abc123",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "Need the weather tool."
+                }
+              ],
+              "encrypted_content": "gAAAAAAAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA=="
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_abc123",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_abc123",
+              "output": "18C"
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "And Rome?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "resp_mockresp01",
+            "object": "response",
+            "created_at": "<now>",
+            "status": "completed",
+            "background": false,
+            "error": null,
+            "incomplete_details": null,
+            "model": "gemini-2.5-flash",
+            "reasoning": {
+              "effort": "high"
+            },
+            "tools": [
+              {
+                "name": "get_weather",
+                "parameters": {
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ],
+                  "type": "object"
+                },
+                "type": "function"
+              }
+            ],
+            "output": [
+              {
+                "id": "rs_mockresp01",
+                "type": "reasoning",
+                "encrypted_content": "",
+                "summary": [
+                  {
+                    "type": "summary_text",
+                    "text": "Let me think."
+                  }
+                ]
+              },
+              {
+                "id": "msg_mockresp01_0",
+                "type": "message",
+                "status": "completed",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "logprobs": [],
+                    "text": "Hello from mock"
+                  }
+                ],
+                "role": "assistant"
+              }
+            ],
+            "usage": {
+              "input_tokens": 11,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 10,
+              "output_tokens_details": {
+                "reasoning_tokens": 3
+              },
+              "total_tokens": 21
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:generateContent",
+      "query": "",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "accept-encoding": "gzip",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "Weather in Paris?"
+              }
+            ]
+          },
+          {
+            "role": "model",
+            "parts": [
+              {
+                "text": "Need the weather tool.",
+                "thought": true
+              },
+              {
+                "functionCall": {
+                  "name": "get_weather",
+                  "args": {
+                    "city": "Paris"
+                  },
+                  "id": "call_abc123"
+                },
+                "thoughtSignature": "skip_thought_signature_validator"
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "functionResponse": {
+                  "name": "get_weather",
+                  "response": {
+                    "result": "18C"
+                  },
+                  "id": "call_abc123"
+                }
+              }
+            ]
+          },
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "And Rome?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "functionDeclarations": [
+              {
+                "name": "get_weather",
+                "description": "",
+                "parametersJsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "city": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "city"
+                  ]
+                }
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 24576
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ],
+        "model": "gemini-2.5-flash"
+      }
+    }
+  ]
+}

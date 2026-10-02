@@ -1,0 +1,154 @@
+{
+  "id": "err.responses.claude.429_all",
+  "desc": "responses client -> claude upstream: 429_all",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "claude-sonnet-4-5-20250929",
+          "input": "What is the weather in Paris?",
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-904eeaa86b64bbcf-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "type": "error",
+            "error": {
+              "type": "rate_limit_error",
+              "message": "mock upstream error 429"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "claude-sonnet-4-5-20250929",
+          "input": "What is the weather in Paris?",
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "retry-after": "<cooldown>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "code": "model_cooldown",
+              "last_upstream_error": "rate_limit_error: mock upstream error 429",
+              "message": "All credentials for model claude-sonnet-4-5-20250929 are cooling down via provider claude (last error: rate_limit_error: mock upstream error 429)",
+              "model": "claude-sonnet-4-5-20250929",
+              "provider": "claude",
+              "reset_seconds": "<reset_seconds>",
+              "reset_time": "<reset_time>"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-2",
+      "headers": {
+        "accept": "*/*",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-2",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    }
+  ]
+}

@@ -29,7 +29,8 @@
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "cache-control": "no-cache",
           "connection": "keep-alive",
-          "content-type": "text/event-stream"
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
         },
         "body": {
           "type": "sse",
@@ -127,6 +128,7 @@
       "credential": "sk-compat-2",
       "headers": {
         "accept": "text/event-stream",
+        "accept-encoding": "gzip",
         "authorization": "Bearer sk-compat-2",
         "cache-control": "no-cache",
         "content-type": "application/json",

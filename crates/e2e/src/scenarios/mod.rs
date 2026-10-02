@@ -2,6 +2,8 @@
 
 mod access;
 mod bodies;
+mod chunking;
+mod history;
 mod interactions;
 mod management;
 mod errors;
@@ -21,6 +23,8 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(errors::scenarios());
     v.extend(routing::scenarios());
     v.extend(rich::scenarios());
+    v.extend(history::scenarios());
+    v.extend(chunking::scenarios());
     v.extend(interactions::scenarios());
     v.extend(access::scenarios());
     v.extend(websocket::scenarios());

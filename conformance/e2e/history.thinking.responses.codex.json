@@ -1,0 +1,241 @@
+{
+  "id": "history.thinking.responses.codex",
+  "desc": "turn carrying previous reasoning: responses client -> codex upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "reasoning": {
+            "effort": "high"
+          },
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "Weather in Paris?"
+                }
+              ]
+            },
+            {
+              "type": "reasoning",
+              "id": "rs_abc123",
+              "summary": [
+                {
+                  "type": "summary_text",
+                  "text": "Need the weather tool."
+                }
+              ],
+              "encrypted_content": "gAAAAAAAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA=="
+            },
+            {
+              "type": "function_call",
+              "call_id": "call_abc123",
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            },
+            {
+              "type": "function_call_output",
+              "call_id": "call_abc123",
+              "output": "18C"
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "And Rome?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "type": "function",
+              "name": "get_weather",
+              "parameters": {
+                "type": "object",
+                "properties": {
+                  "city": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "city"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "resp_mock01",
+            "object": "response",
+            "created_at": 1700000000,
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [
+              {
+                "id": "rs_mock01",
+                "type": "reasoning",
+                "summary": [
+                  {
+                    "type": "summary_text",
+                    "text": "Let me think."
+                  }
+                ]
+              },
+              {
+                "id": "msg_mock01",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "text": "Hello from mock"
+                  }
+                ]
+              }
+            ],
+            "parallel_tool_calls": true,
+            "store": false,
+            "usage": {
+              "input_tokens": 11,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 7,
+              "output_tokens_details": {
+                "reasoning_tokens": 3
+              },
+              "total_tokens": 18
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "e16d5532-feb2-51d4-b086-cdf4f4349c96",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "reasoning": {
+          "effort": "high"
+        },
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Weather in Paris?"
+              }
+            ]
+          },
+          {
+            "type": "reasoning",
+            "id": "rs_abc123",
+            "summary": [
+              {
+                "type": "summary_text",
+                "text": "Need the weather tool."
+              }
+            ],
+            "encrypted_content": "gAAAAAAAAAAAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyAhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5Ojs8PT4_QA=="
+          },
+          {
+            "type": "function_call",
+            "call_id": "call_abc123",
+            "name": "get_weather",
+            "arguments": "{\"city\":\"Paris\"}"
+          },
+          {
+            "type": "function_call_output",
+            "call_id": "call_abc123",
+            "output": "18C"
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "And Rome?"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "function",
+            "name": "get_weather",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "city": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "city"
+              ]
+            }
+          },
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "stream": true,
+        "store": false,
+        "parallel_tool_calls": true,
+        "instructions": "",
+        "prompt_cache_key": "e16d5532-feb2-51d4-b086-cdf4f4349c96"
+      }
+    }
+  ]
+}

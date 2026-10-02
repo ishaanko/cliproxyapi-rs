@@ -30,7 +30,8 @@
       "response": {
         "status": 101,
         "headers": {
-          "connection": "Upgrade"
+          "connection": "Upgrade",
+          "upgrade": "websocket"
         },
         "body": {
           "type": "ws",
@@ -49,12 +50,13 @@
       "credential": "sk-codex-2",
       "headers": {
         "authorization": "Bearer sk-codex-2",
-        "conversation_id": "<uuid:1>",
+        "connection": "Upgrade",
+        "conversation_id": "<volatile>",
         "openai-beta": "responses_websockets=2026-02-06",
         "originator": "codex-tui",
         "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
         "sec-websocket-version": "13",
-        "session_id": "<uuid:1>",
+        "session_id": "<volatile>",
         "upgrade": "websocket",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
@@ -87,7 +89,7 @@
               "output_format": "png"
             }
           ],
-          "prompt_cache_key": "<uuid:1>",
+          "prompt_cache_key": "<volatile>",
           "type": "response.create"
         }
       ]
@@ -100,12 +102,13 @@
       "credential": "sk-codex-1",
       "headers": {
         "authorization": "Bearer sk-codex-1",
-        "conversation_id": "<uuid:1>",
+        "connection": "Upgrade",
+        "conversation_id": "<volatile>",
         "openai-beta": "responses_websockets=2026-02-06",
         "originator": "codex-tui",
         "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
         "sec-websocket-version": "13",
-        "session_id": "<uuid:1>",
+        "session_id": "<volatile>",
         "upgrade": "websocket",
         "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
       },
@@ -138,10 +141,18 @@
               "output_format": "png"
             }
           ],
-          "prompt_cache_key": "<uuid:1>",
+          "prompt_cache_key": "<volatile>",
           "type": "response.create"
         }
       ]
     }
+  ],
+  "volatile": [
+    "/upstream/0/headers/conversation_id",
+    "/upstream/0/headers/session_id",
+    "/upstream/0/ws_frames/0/prompt_cache_key",
+    "/upstream/1/headers/conversation_id",
+    "/upstream/1/headers/session_id",
+    "/upstream/1/ws_frames/0/prompt_cache_key"
   ]
 }

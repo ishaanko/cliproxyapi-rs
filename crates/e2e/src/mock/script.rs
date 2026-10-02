@@ -16,6 +16,27 @@ pub enum Content {
     ToolCall,
     /// Reasoning/thinking followed by a text answer.
     Thinking,
+    /// Two tool calls in one turn.
+    Parallel,
+    /// Text followed by a tool call.
+    Mixed,
+    /// Text cut off by the output token limit (`max_tokens` / `length` stop reason).
+    Length,
+    /// Text with cached prompt tokens in the usage.
+    Cached,
+}
+
+/// How a stream's events are split over network writes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Chunking {
+    /// One write per event.
+    #[default]
+    Whole,
+    /// Every event is split in the middle (mid-line, mid-JSON) over two writes.
+    Split,
+    /// Three events per write.
+    Merged,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,6 +90,9 @@ pub struct Step {
     /// For streams: pause this long after the first chunk (to exercise keep-alives).
     #[serde(default)]
     pub stall_ms: u64,
+    /// Network write pattern for streams.
+    #[serde(default)]
+    pub chunking: Chunking,
     /// Extra response headers added to whatever reply this step produces.
     #[serde(default)]
     pub headers: Vec<(String, String)>,
@@ -77,21 +101,26 @@ pub struct Step {
 
 impl Step {
     pub fn once(reply: Reply) -> Self {
-        Step { credential: None, times: Some(1), delay_ms: 0, stall_ms: 0, headers: vec![], reply }
+        Step { credential: None, times: Some(1), delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![], reply }
     }
 
     pub fn always(reply: Reply) -> Self {
-        Step { credential: None, times: None, delay_ms: 0, stall_ms: 0, headers: vec![], reply }
+        Step { credential: None, times: None, delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![], reply }
     }
 
     /// Answer `times` requests (any credential) with `reply`.
     pub fn times(times: u32, reply: Reply) -> Self {
-        Step { credential: None, times: Some(times), delay_ms: 0, stall_ms: 0, headers: vec![], reply }
+        Step { credential: None, times: Some(times), delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![], reply }
     }
 
 
     pub fn delayed(mut self, delay_ms: u64) -> Self {
         self.delay_ms = delay_ms;
+        self
+    }
+
+    pub fn chunked(mut self, chunking: Chunking) -> Self {
+        self.chunking = chunking;
         self
     }
 
@@ -136,6 +165,7 @@ pub struct Pick {
     pub reply: Reply,
     pub delay_ms: u64,
     pub stall_ms: u64,
+    pub chunking: Chunking,
     pub headers: Vec<(String, String)>,
 }
 
@@ -163,8 +193,8 @@ impl ScriptState {
             if let Some(n) = self.remaining[i].as_mut() {
                 *n -= 1;
             }
-            return Pick { reply: step.reply.clone(), delay_ms: step.delay_ms, stall_ms: step.stall_ms, headers: step.headers.clone() };
+            return Pick { reply: step.reply.clone(), delay_ms: step.delay_ms, stall_ms: step.stall_ms, chunking: step.chunking, headers: step.headers.clone() };
         }
-        Pick { reply: self.script.fallback.clone(), delay_ms: 0, stall_ms: 0, headers: vec![] }
+        Pick { reply: self.script.fallback.clone(), delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![] }
     }
 }

@@ -1,0 +1,191 @@
+{
+  "id": "chunking.merged.gemini.gemini",
+  "desc": "upstream stream written merged: gemini client -> gemini upstream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "contents": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "text": "What is the weather in Paris?"
+                }
+              ]
+            }
+          ],
+          "generationConfig": {
+            "thinkingConfig": {
+              "thinkingBudget": 1024,
+              "includeThoughts": true
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "data": {
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "mockresp01",
+                "candidates": [
+                  {
+                    "content": {
+                      "role": "model",
+                      "parts": [
+                        {
+                          "text": "Let me ",
+                          "thought": true
+                        }
+                      ]
+                    },
+                    "index": 0
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "mockresp01",
+                "candidates": [
+                  {
+                    "content": {
+                      "role": "model",
+                      "parts": [
+                        {
+                          "text": "think.",
+                          "thought": true
+                        }
+                      ]
+                    },
+                    "index": 0
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "mockresp01",
+                "candidates": [
+                  {
+                    "content": {
+                      "role": "model",
+                      "parts": [
+                        {
+                          "text": "Hello from "
+                        }
+                      ]
+                    },
+                    "index": 0
+                  }
+                ]
+              }
+            },
+            {
+              "data": {
+                "modelVersion": "gemini-2.5-flash",
+                "responseId": "mockresp01",
+                "usageMetadata": {
+                  "promptTokenCount": 11,
+                  "candidatesTokenCount": 7,
+                  "totalTokenCount": 21,
+                  "thoughtsTokenCount": 3
+                },
+                "candidates": [
+                  {
+                    "content": {
+                      "role": "model",
+                      "parts": [
+                        {
+                          "text": "mock"
+                        }
+                      ]
+                    },
+                    "index": 0,
+                    "finishReason": "STOP"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "gemini",
+      "method": "POST",
+      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
+      "query": "alt=sse",
+      "credential": "sk-gemini-1",
+      "headers": {
+        "accept-encoding": "gzip",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>",
+        "x-goog-api-key": "sk-gemini-1"
+      },
+      "body": {
+        "contents": [
+          {
+            "role": "user",
+            "parts": [
+              {
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "generationConfig": {
+          "thinkingConfig": {
+            "thinkingBudget": 1024,
+            "includeThoughts": true
+          }
+        },
+        "safetySettings": [
+          {
+            "category": "HARM_CATEGORY_HARASSMENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_HATE_SPEECH",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+            "threshold": "OFF"
+          },
+          {
+            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+            "threshold": "BLOCK_NONE"
+          }
+        ],
+        "model": "gemini-2.5-flash"
+      }
+    }
+  ]
+}

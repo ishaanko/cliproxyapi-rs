@@ -28,7 +28,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-904eeaa86b64bbcf-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -85,7 +86,8 @@
           "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-904eeaa86b64bbcf-<uuid:2>"
         },
         "body": {
           "type": "json",
@@ -126,6 +128,7 @@
       "credential": "sk-claude-1",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
@@ -162,6 +165,7 @@
       "credential": "sk-claude-2",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
         "content-type": "application/json",
@@ -198,6 +202,7 @@
       "credential": "sk-claude-2",
       "headers": {
         "accept": "*/*",
+        "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
         "content-type": "application/json",
