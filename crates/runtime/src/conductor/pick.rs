@@ -22,7 +22,7 @@ use serde_json::Value;
 
 use super::cooldown::{BlockReason, has_unauthorized_auth_failure, is_auth_blocked_for_model};
 use super::errors::{
-    AuthErrorExt, auth_not_found, auth_not_found_with_cause, auth_unavailable, model_cooldown_error, terminal_auth_error,
+    AuthErrorExt, auth_not_found, auth_unavailable, model_cooldown_error, terminal_auth_error,
 };
 use super::models::{canonical_scheduling_provider, executor_key_from_auth};
 use super::selector::{AffinityPick, Cand, Strategy};
@@ -431,15 +431,6 @@ impl Manager {
             &elig,
         )?;
         Ok(picked.auth)
-    }
-
-    /// Go: authSelectionModelFromOptions is in `exec`; this logs why nothing was selectable.
-    #[allow(dead_code)]
-    pub(crate) fn warn_auth_unavailable(&self, err: &ExecError, model: &str) {
-        if super::errors::is_auth_unavailable_error(err) {
-            tracing::warn!("auth unavailable for model {model:?}: {}", err.message);
-        }
-        let _ = auth_not_found_with_cause;
     }
 }
 

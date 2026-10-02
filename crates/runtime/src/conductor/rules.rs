@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use super::cooldown::ExecResult;
 use super::errors::{CODE_FORCE_COOLDOWN, CODE_REQUEST_SCOPED, auth_error_base_message};
-use super::models::{resolve_api_key_config, resolve_openai_compat_config_for_auth};
+use super::models::resolve_openai_compat_config_for_auth;
 use crate::executor::ExecError;
 
 pub const ACTION_STOP: &str = "stop";
@@ -139,14 +139,6 @@ pub fn apply_action_to_result(action: Option<&str>, result: &mut ExecResult) {
 
 pub fn is_stop(action: Option<&str>) -> bool {
     matches!(action, Some(ACTION_STOP) | Some(ACTION_STOP_AND_COOLDOWN))
-}
-
-#[allow(dead_code)]
-fn _assert_vertex_has_no_rules(_k: &cpa_config::VertexCompatKey) {}
-
-#[allow(dead_code)]
-fn _keep_resolve(cfg: &Config, auth: &Auth) {
-    let _ = resolve_api_key_config(&cfg.claude_key, auth);
 }
 
 #[cfg(test)]

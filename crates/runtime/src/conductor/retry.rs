@@ -14,7 +14,7 @@ use rand::Rng;
 
 use super::cooldown::{BlockReason, MIN_QUOTA_COOLDOWN_FLOOR, availability_block, is_auth_blocked_for_model, is_disabled};
 use super::errors::{is_credential_retry_round_status, is_request_retry_round_error};
-use super::models::{canonical_scheduling_provider, executor_key_from_auth};
+use super::models::executor_key_from_auth;
 use super::pick::{Eligibility, pinned_auth_id};
 use super::util::{canonical_model_key, chrono_to_std};
 use super::{Manager, Metadata};
@@ -284,11 +284,6 @@ impl Manager {
         let clock = self.clock.read().clone();
         clock.sleep(jittered_cooldown_wait(wait, max_wait)).await;
     }
-}
-
-#[allow(dead_code)]
-fn _unused(_: &str) -> String {
-    canonical_scheduling_provider("")
 }
 
 #[cfg(test)]

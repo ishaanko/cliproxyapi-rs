@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
 use cpa_auth::credmeta::{normalize_credential_metadata, validate_auth_weight};
 use cpa_auth::store::SaveOptions;
 use cpa_auth::types::{ATTRIBUTE_API_KEY, Auth, Status};
@@ -415,6 +414,3 @@ impl Manager {
         res.map(|_| ()).map_err(|e| e.to_string())
     }
 }
-
-#[allow(dead_code)]
-fn _time(_: DateTime<Utc>) {}

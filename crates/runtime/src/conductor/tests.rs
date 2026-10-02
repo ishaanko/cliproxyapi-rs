@@ -35,6 +35,8 @@ struct Mock {
     steps: Mutex<HashMap<String, VecDeque<Step>>>,
     calls: Mutex<Vec<(String, String)>>,
     refreshes: Mutex<Vec<String>>,
+    /// Whether each execute call carried the Antigravity credits flag.
+    credit_flags: Mutex<Vec<bool>>,
 }
 
 impl Mock {
@@ -44,6 +46,7 @@ impl Mock {
             steps: Mutex::new(HashMap::new()),
             calls: Mutex::new(Vec::new()),
             refreshes: Mutex::new(Vec::new()),
+            credit_flags: Mutex::new(Vec::new()),
         })
     }
 
@@ -79,7 +82,8 @@ impl Executor for Mock {
         &self.id
     }
 
-    async fn execute(&self, auth: &Auth, req: Request, _opts: Options) -> Result<Response, ExecError> {
+    async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+        self.credit_flags.lock().push(opts.metadata.contains_key(ANTIGRAVITY_CREDITS_METADATA_KEY));
         match self.next(auth, &req.model) {
             Step::Ok(p) => Ok(Response { payload: payload_for(p, auth), ..Default::default() }),
             Step::Err(e) => Err(e),
@@ -1073,4 +1077,70 @@ async fn payload_only_requests_still_get_session_affinity() {
     for _ in 0..3 {
         assert_eq!(h.mgr.execute(&providers, req.clone(), Options::new(Format::OpenAI)).await.unwrap().payload, first);
     }
+}
+
+// ---- Auto-refresh loop ----
+
+#[tokio::test]
+async fn auto_refresh_loop_refreshes_due_credentials_once_and_backs_off() {
+    let h = Harness::with_executor("claude");
+    let soon = (t0() + chrono::Duration::hours(1)).to_rfc3339();
+    let mut auth = Auth::new("loop-due", "claude");
+    auth.metadata.insert("access_token".into(), serde_json::json!("opaque"));
+    auth.metadata.insert("refresh_token".into(), serde_json::json!("rt"));
+    auth.metadata.insert("expired".into(), serde_json::json!(soon));
+    h.mgr.register(auth).await.unwrap();
+    h.mgr.start_auto_refresh(Duration::from_secs(1));
+    for _ in 0..100 {
+        if !h.exec.refreshes.lock().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    // Let any (incorrect) extra refresh happen before asserting there was exactly one.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    h.mgr.stop_auto_refresh();
+    assert_eq!(h.exec.refreshes.lock().as_slice(), ["loop-due"]);
+    let st = h.mgr.get("loop-due").unwrap();
+    assert!(st.last_refreshed_at.is_some());
+    // The mock does not move the expiry, so the refresh is "ineffective": the loop backs off 30s
+    // instead of spinning.
+    assert_eq!(st.next_refresh_after, Some(t0() + chrono::Duration::seconds(30)));
+}
+
+// ---- Antigravity credits fallback ----
+
+#[tokio::test]
+async fn antigravity_credits_fallback_retries_claude_models_with_credits_flag() {
+    let h = Harness::with_executor("antigravity");
+    h.config(|c| c.quota_exceeded.antigravity_credits = true);
+    h.add("ag-1", &["claude-sonnet-4-6"], |_| {}).await;
+    h.add("ag-2", &["claude-sonnet-4-6"], |_| {}).await;
+    set_antigravity_credits_hint("ag-2", AntigravityCreditsHint { known: true, available: true, ..Default::default() });
+    for id in ["ag-1", "ag-2"] {
+        h.exec.script(id, vec![Step::Err(status_err(429, "quota").with_retry_after(Duration::from_secs(3600))), Step::Ok("with-credits")]);
+    }
+    let resp = h
+        .mgr
+        .execute(&["antigravity".to_string()], request("claude-sonnet-4-6"), Options::new(Format::OpenAI))
+        .await
+        .unwrap();
+    assert_eq!(resp.payload, "with-credits");
+    assert_eq!(*h.exec.credit_flags.lock().last().unwrap(), true);
+    assert_eq!(h.exec.credit_flags.lock().iter().filter(|f| !**f).count(), 2, "both credentials were tried normally first");
+    // The credential known to have credits is preferred for the fallback.
+    assert_eq!(h.exec.call_ids().last().map(String::as_str), Some("ag-2"));
+
+    // Non-Claude models never use the credits path.
+    let h2 = Harness::with_executor("antigravity");
+    h2.config(|c| c.quota_exceeded.antigravity_credits = true);
+    h2.add("ag-3", &["gemini-3-flash"], |_| {}).await;
+    h2.exec.script("ag-3", vec![Step::Err(status_err(429, "quota").with_retry_after(Duration::from_secs(3600)))]);
+    let err = h2
+        .mgr
+        .execute(&["antigravity".to_string()], request("gemini-3-flash"), Options::new(Format::OpenAI))
+        .await
+        .unwrap_err();
+    assert_eq!(err.status, 429);
+    assert_eq!(h2.exec.call_ids().len(), 1);
 }

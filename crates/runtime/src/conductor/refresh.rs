@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
-use cpa_auth::credmeta::parse_int_any;
 use cpa_auth::types::{AUTH_KIND_API_KEY, Status, parse_time_value};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -603,12 +602,9 @@ impl Manager {
                         }
                     }
                     for id in due {
-                        match self.handle_due_auth(now, &id, interval, &sem).await {
-                            Some(next) => {
-                                scheduled.insert(id.clone(), next);
-                                queue.push(Reverse((next, id)));
-                            }
-                            None => {}
+                        if let Some(next) = self.handle_due_auth(now, &id, interval, &sem).await {
+                            scheduled.insert(id.clone(), next);
+                            queue.push(Reverse((next, id)));
                         }
                     }
                 }
@@ -754,11 +750,6 @@ impl Manager {
         }
         n
     }
-}
-
-#[allow(dead_code)]
-fn _int(v: &Value) -> Option<i64> {
-    parse_int_any(v)
 }
 
 #[cfg(test)]

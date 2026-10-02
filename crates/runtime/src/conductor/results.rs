@@ -527,6 +527,3 @@ impl Manager {
         changed
     }
 }
-
-#[allow(dead_code)]
-fn _store_marker(_: &dyn CooldownStateStore) {}

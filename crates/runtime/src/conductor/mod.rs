@@ -60,7 +60,10 @@ pub mod util;
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use cooldown::{CooldownView, CoolingPolicy, ExecResult};
 pub use cooldown_state::{CooldownStateRecord, CooldownStateStore, FileCooldownStateStore};
-pub use credits::{AntigravityCreditsHint, ANTIGRAVITY_CREDITS_METADATA_KEY};
+pub use credits::{
+    ANTIGRAVITY_CREDITS_METADATA_KEY, AntigravityCreditsHint, antigravity_credits_hint, has_known_antigravity_credits_hint,
+    set_antigravity_credits_hint,
+};
 pub use errors::{enrich_auth_selection_error, safe_response_headers};
 pub use events::{ErrorEventSink, Hook, ResultPolicy};
 pub use lifecycle::UpdateOptions;
@@ -125,7 +128,6 @@ pub struct Core {
     pub(crate) refresh_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub(crate) persist_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<(u64, u64)>>>>,
     pub(crate) refresh_state: Mutex<refresh::RefreshState>,
-    pub(crate) credits_hints: Mutex<HashMap<String, AntigravityCreditsHint>>,
     pub(crate) selector_config: Mutex<SelectorConfig>,
 }
 
@@ -163,7 +165,6 @@ impl Manager {
             refresh_locks: Mutex::new(HashMap::new()),
             persist_locks: Mutex::new(HashMap::new()),
             refresh_state: Mutex::new(refresh::RefreshState::default()),
-            credits_hints: Mutex::new(HashMap::new()),
             selector_config: Mutex::new(selector_config),
         };
         Manager { core: Arc::new(core) }

@@ -43,26 +43,31 @@ struct CreditsCandidate {
     provider: String,
 }
 
+static HINTS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, AntigravityCreditsHint>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Records the latest known AI-credits state of a credential. Process-wide (Go: a global sync.Map)
+/// so executors can report it without a manager handle.
+pub fn set_antigravity_credits_hint(auth_id: &str, mut hint: AntigravityCreditsHint) {
+    let id = auth_id.trim();
+    if id.is_empty() {
+        return;
+    }
+    if hint.updated_at.is_none() {
+        hint.updated_at = Some(Utc::now());
+    }
+    HINTS.lock().insert(id.to_string(), hint);
+}
+
+pub fn antigravity_credits_hint(auth_id: &str) -> Option<AntigravityCreditsHint> {
+    HINTS.lock().get(auth_id.trim()).cloned()
+}
+
+pub fn has_known_antigravity_credits_hint(auth_id: &str) -> bool {
+    antigravity_credits_hint(auth_id).is_some_and(|h| h.known)
+}
+
 impl Manager {
-    pub fn set_antigravity_credits_hint(&self, auth_id: &str, mut hint: AntigravityCreditsHint) {
-        let id = auth_id.trim();
-        if id.is_empty() {
-            return;
-        }
-        if hint.updated_at.is_none() {
-            hint.updated_at = Some(self.now());
-        }
-        self.credits_hints.lock().insert(id.to_string(), hint);
-    }
-
-    pub fn antigravity_credits_hint(&self, auth_id: &str) -> Option<AntigravityCreditsHint> {
-        self.credits_hints.lock().get(auth_id.trim()).cloned()
-    }
-
-    pub fn has_known_antigravity_credits_hint(&self, auth_id: &str) -> bool {
-        self.antigravity_credits_hint(auth_id).is_some_and(|h| h.known)
-    }
-
     pub(crate) fn should_attempt_antigravity_credits_fallback(&self, last_err: &ExecError, providers: &[String]) -> bool {
         if !providers.iter().any(|p| p.trim().eq_ignore_ascii_case("antigravity")) {
             return false;
@@ -90,7 +95,7 @@ impl Manager {
         let st = self.state.read();
         let mut known = Vec::new();
         let mut unknown = Vec::new();
-        let hints = self.credits_hints.lock();
+        let hints = HINTS.lock();
         for auth in st.auths.values() {
             if is_disabled(auth) || !auth.provider.trim().eq_ignore_ascii_case("antigravity") {
                 continue;

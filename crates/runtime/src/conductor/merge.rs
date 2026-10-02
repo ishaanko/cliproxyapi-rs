@@ -70,14 +70,12 @@ pub fn merge_refreshed_auth(base: Option<&Auth>, current: &Auth, updated: &Auth,
             merged.status = current.status;
             merged.unavailable = current.unavailable;
             merged.status_message = current.status_message.clone();
-        } else if current.quota.exceeded
+        } else if (current.quota.exceeded
             && current.quota.reason == "credential_quota"
-            && after(current.quota.next_recover_at, now)
+            && after(current.quota.next_recover_at, now))
+            || (current.unavailable && after(current.next_retry_after, now))
         {
-            merged.unavailable = current.unavailable;
-            merged.status = current.status;
-            merged.status_message = current.status_message.clone();
-        } else if current.unavailable && after(current.next_retry_after, now) {
+            // Preserve an active credential quota or cooldown.
             merged.unavailable = current.unavailable;
             merged.status = current.status;
             merged.status_message = current.status_message.clone();
