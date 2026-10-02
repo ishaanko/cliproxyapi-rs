@@ -12,7 +12,7 @@ use futures_util::StreamExt;
 use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
-use super::errors::{transport_error, transport_message};
+use crate::helps::status::{transport_error, transport_message};
 use super::translate::{end_apply_patch_stream, observe_body};
 use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
 use crate::helps::apply_patch::{

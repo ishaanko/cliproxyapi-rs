@@ -569,7 +569,7 @@ impl ClaudeExecutor {
         let resp_headers = resp.headers().clone();
         let body = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => Bytes::from(format!("failed to read error response body: {}", super::http::describe_body_error(&e))),
+            Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
         };
         tracing::debug!(
             "request error, error status: {status}, error message: {}",
@@ -603,7 +603,7 @@ impl ClaudeExecutor {
                 return Err(wrap_claude_fast_request_error(
                     p.fast_request,
                     status,
-                    ExecError::new(0, super::http::describe_body_error(&e)),
+                    ExecError::new(0, crate::helps::status::transport_message(&e)),
                 ));
             }
         };

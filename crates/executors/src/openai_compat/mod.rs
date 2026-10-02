@@ -7,7 +7,6 @@
 
 pub(crate) mod claude_input_tokens;
 mod compat_config;
-pub(crate) mod errors;
 mod images;
 pub(crate) mod translate;
 mod stream;
@@ -49,7 +48,7 @@ use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::{ensure_session_id, provider_session_uuid};
 use crate::helps::status::{openai_compat_status_error, status_err};
-use errors::transport_error;
+use crate::helps::status::transport_error;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 use crate::helps::token_count::{build_openai_usage_json, count_openai_chat_tokens, tokenizer_for_model};
 use crate::helps::usage::{UsageReporter, parse_openai_usage};

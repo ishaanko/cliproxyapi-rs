@@ -116,7 +116,7 @@ impl LineReader {
 
     /// Reads a reqwest response body (already decompressed by the client when applicable).
     pub fn from_response(resp: reqwest::Response, max_token_size: usize) -> Self {
-        Self::new(Box::pin(resp.bytes_stream().map(|r| r.map_err(|e| crate::openai_compat::errors::transport_message(&e)))), max_token_size)
+        Self::new(Box::pin(resp.bytes_stream().map(|r| r.map_err(|e| super::status::transport_message(&e)))), max_token_size)
     }
 
     /// Reads any byte stream whose errors render as text.

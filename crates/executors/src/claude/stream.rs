@@ -100,7 +100,7 @@ async fn run_stream(
 ) -> Result<(), ExecError> {
     let to = Format::Claude;
     let mut lines = LineReader::from_stream(
-        resp.bytes_stream().map_err(|e| super::http::describe_body_error(&e)),
+        resp.bytes_stream().map_err(|e| crate::helps::status::transport_message(&e)),
         STREAM_SCANNER_BUFFER,
     );
     let mut upstream_message_id = String::new();

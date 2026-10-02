@@ -104,7 +104,7 @@ impl AntigravityExecutor {
         if !(200..300).contains(&status) {
             let body = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => return Err((p, ExecError::new(0, e.without_url().to_string()))),
+                Err(e) => return Err((p, crate::helps::status::transport_error(&e))),
             };
             let err = self.handle_upstream_error(&p, status, &body);
             return Err((p, err));

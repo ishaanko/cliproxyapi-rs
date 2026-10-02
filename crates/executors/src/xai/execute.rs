@@ -28,7 +28,7 @@ use crate::helps::session::ensure_session_id;
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
 use crate::helps::usage::{UsageReporter, parse_codex_usage, parse_openai_usage};
-use crate::openai_compat::errors::transport_error;
+use crate::helps::status::transport_error;
 
 const EXECUTOR_TYPE: &str = "XAIExecutor";
 

@@ -70,10 +70,10 @@ impl AntigravityExecutor {
             .body(payload)
             .send()
             .await
-            .map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+            .map_err(|e| crate::helps::status::transport_error(&e))?;
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = resp.bytes().await.map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+        let body = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
 
         if (200..300).contains(&status) {
             let count = cpa_json::parse(&body).g("totalTokens").int();

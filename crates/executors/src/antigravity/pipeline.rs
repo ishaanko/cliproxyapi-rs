@@ -261,7 +261,7 @@ impl AntigravityExecutor {
             .body(p.built.body.clone())
             .send()
             .await
-            .map_err(|e| ExecError::new(0, e.without_url().to_string()))
+            .map_err(|e| crate::helps::status::transport_error(&e))
     }
 
     /// Non-2xx handling common to every path: 429 cooldown and credits bookkeeping, replay

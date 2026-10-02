@@ -45,7 +45,7 @@ use cpa_runtime::executor::{
     DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult,
 };
 use cpa_translator::Format;
-use futures_util::StreamExt;
+use futures_util::{StreamExt, TryStreamExt};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -64,7 +64,7 @@ use crate::helps::apply_patch::{
 use crate::helps::proxy::new_devin_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::ensure_session_id;
-use crate::helps::status::{status_err, transport_error};
+use crate::helps::status::{status_err, transport_error, transport_message};
 use crate::helps::usage::{UsageReporter, parse_interactions_usage};
 
 /// Provider key and usage executor type.
@@ -549,7 +549,7 @@ impl DevinExecutor {
         let headers = resp.headers().clone();
 
         let original = apply_patch_original_request(&req, &opts);
-        let reader = ConnectFrameReader::new(resp.bytes_stream().boxed());
+        let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
         let consumed = match consume_frames_to_interactions(reader, &req.model, &original).await {
             Ok(c) => c,
             // A declared apply_patch tool hides every upstream decoding failure behind the
@@ -628,7 +628,7 @@ impl DevinExecutor {
             chat_model_uid,
             reporter: reporter.clone(),
         };
-        let reader = ConnectFrameReader::new(resp.bytes_stream().boxed());
+        let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
         tokio::spawn(async move {
             stream_frames(reader, params, tx, usage_tx).await;
         });

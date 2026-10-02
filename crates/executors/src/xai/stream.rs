@@ -34,7 +34,7 @@ use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
 use crate::openai_compat::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
-use crate::openai_compat::errors::transport_message;
+use crate::helps::status::transport_message;
 use crate::openai_compat::translate::{observe_body, stop_apply_patch_stream};
 
 impl XaiExecutor {

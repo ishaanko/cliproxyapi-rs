@@ -238,11 +238,11 @@ impl ClaudeExecutor {
         if !(200..300).contains(&status) {
             let data = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => Bytes::from(format!("failed to read error response body: {}", super::http::describe_body_error(&e))),
+                Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
             };
             return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &data, cfg.claude.model_level_cooling));
         }
-        let data = resp.bytes().await.map_err(|e| ExecError::new(0, super::http::describe_body_error(&e)))?;
+        let data = resp.bytes().await.map_err(|e| ExecError::new(0, crate::helps::status::transport_message(&e)))?;
         let count = cpa_json::parse(&data).g("input_tokens").int();
         let out = cpa_translator::translate_token_count(&Ctx::default(), to, response_format, count, &data);
         Ok(Response { payload: Bytes::from(out), headers: resp_headers, ..Default::default() })

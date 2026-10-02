@@ -234,32 +234,8 @@ pub(crate) fn apply_custom_headers(headers: &mut HeaderMap, auth: &Auth, opts: &
     cpa_core::util::apply_custom_headers_from_attrs(headers, &attrs_map(auth), Some(&opts.headers), session_id);
 }
 
-/// A transport error and its sources as one line, the way Go renders `net/http` and `io` errors
-/// (`dial tcp ...: connection refused`). A body cut short reads `unexpected EOF`, which the
-/// conductor recognizes as a transient transport failure to retry.
-pub(crate) fn error_chain_text(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
-    while let Some(e) = current {
-        let text = e.to_string();
-        if parts.last() != Some(&text) {
-            parts.push(text);
-        }
-        current = e.source();
-    }
-    let text = parts.join(": ");
-    let lower = text.to_lowercase();
-    if ["unexpected end of file", "connection closed before message completed", "unexpected eof"]
-        .iter()
-        .any(|needle| lower.contains(needle))
-    {
-        return "unexpected EOF".into();
-    }
-    text
-}
-
 fn transport_failure(err: &reqwest::Error) -> ExecError {
-    ExecError::new(0, error_chain_text(err))
+    crate::helps::status::transport_error(err)
 }
 
 /// Sends a JSON POST; transport failures carry no status.
@@ -290,7 +266,7 @@ pub(crate) fn observed_lines(reporter: UsageReporter, resp: reqwest::Response) -
                 reporter.mark_first_response_byte();
             }
         })
-        .map(|item| item.map_err(|e| error_chain_text(&e)));
+        .map(|item| item.map_err(|e| crate::helps::status::transport_message(&e)));
     LineReader::from_stream(stream, STREAM_SCANNER_BUFFER)
 }
 
