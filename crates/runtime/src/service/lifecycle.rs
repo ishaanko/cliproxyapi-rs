@@ -45,8 +45,7 @@ pub enum ServiceError {
 }
 
 /// The conductor operations the service drives. [`Manager`] implements it by delegation; the
-/// hooks with default bodies are the places where Go calls conductor methods the Rust `Manager`
-/// does not expose yet (see the TODO notes on each).
+/// hooks with default bodies exist so tests can stub them.
 #[async_trait]
 pub trait ManagerPort: Send + Sync {
     fn register_executor(&self, executor: DynExecutor);
@@ -56,16 +55,15 @@ pub trait ManagerPort: Send + Sync {
     fn list(&self) -> Vec<Auth>;
     fn get(&self, id: &str) -> Option<Auth>;
 
-    /// A new config snapshot was committed. TODO(conductor): Go calls `SetConfig`,
-    /// `SetOAuthModelAlias`, `SetRetryConfig`, rebuilds the selector when `routing` changed and
-    /// refreshes cooldown storage here (`applyManagerConfig`, `applyRetryConfig`).
+    /// A new config snapshot was committed (Go: `SetConfig`, `SetOAuthModelAlias`,
+    /// `SetRetryConfig`, selector rebuild when `routing` changed).
     fn config_changed(&self, _config: &Arc<Config>) {}
 
-    /// Models of `auth_id` were (re)registered. TODO(conductor): Go calls
-    /// `ReconcileRegistryModelStates(id)` and `RefreshSchedulerEntry(id)`.
+    /// Models of `auth_id` were (re)registered (Go: `ReconcileRegistryModelStates`; there is no
+    /// scheduler index to refresh).
     async fn models_registered(&self, _auth_id: &str) {}
 
-    /// A batch of auth updates finished. TODO(conductor): Go calls `RefreshAPIKeyModelAlias()`.
+    /// A batch of auth updates finished (Go: `RefreshAPIKeyModelAlias`).
     fn auth_batch_applied(&self) {}
 }
 
@@ -85,6 +83,15 @@ impl ManagerPort for Manager {
     }
     fn get(&self, id: &str) -> Option<Auth> {
         Manager::get(self, id)
+    }
+    fn config_changed(&self, config: &Arc<Config>) {
+        Manager::set_config(self, config.clone());
+    }
+    async fn models_registered(&self, auth_id: &str) {
+        Manager::reconcile_registry_model_states(self, auth_id);
+    }
+    fn auth_batch_applied(&self) {
+        Manager::refresh_api_key_model_alias(self);
     }
 }
 

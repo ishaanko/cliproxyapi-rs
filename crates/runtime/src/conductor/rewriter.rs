@@ -254,7 +254,8 @@ impl StreamRewriter {
         let buf = normalize_glued_sse_events(&buf);
         let mut out = self.rewrite_chunk(&buf).unwrap_or_default();
         if !self.pending.is_empty() {
-            let tail = self.rewrite_sse_lines(&std::mem::take(&mut self.pending));
+            let leftover = std::mem::take(&mut self.pending);
+            let tail = self.rewrite_sse_lines(&leftover);
             out.extend(tail);
         }
         if out.is_empty() { None } else { Some(out) }

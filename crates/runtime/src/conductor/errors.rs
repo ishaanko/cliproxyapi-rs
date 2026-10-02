@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use cpa_auth::types::AuthError;
 use http::{HeaderMap, HeaderValue, header};
+use cpa_json::J;
 use regex::Regex;
 use serde_json::Value;
 
@@ -216,6 +217,51 @@ pub fn model_cooldown_error(model: &str, provider: &str, reset_in: Duration, cau
     err.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     err.headers.insert(header::RETRY_AFTER, HeaderValue::from(reset_seconds));
     err
+}
+
+/// Headers that are safe to relay for a conductor-generated error (retry/cooldown hints only);
+/// empty for upstream errors (Go: SafeResponseHeaders).
+pub fn safe_response_headers(err: &ExecError) -> HeaderMap {
+    if matches!(err.auth_code.as_deref(), Some(CODE_MODEL_COOLDOWN) | Some(CODE_AUTH_UNAVAILABLE)) {
+        err.headers.clone()
+    } else {
+        HeaderMap::new()
+    }
+}
+
+/// Adds routing context to `auth_not_found` / `auth_unavailable` errors for the client (Go:
+/// handlers enrichAuthSelectionError). `model_cooldown` and other errors pass through unchanged.
+pub fn enrich_auth_selection_error(err: ExecError, providers: &[String], model: &str) -> ExecError {
+    if is_model_cooldown(&err) {
+        return err;
+    }
+    let Some(code) = err.auth_code.clone() else {
+        return err;
+    };
+    if code != CODE_AUTH_NOT_FOUND && code != CODE_AUTH_UNAVAILABLE {
+        return err;
+    }
+    let provider_text = if providers.is_empty() { "unknown".to_string() } else { providers.join(",") };
+    let model_text = if model.trim().is_empty() { "unknown" } else { model.trim() };
+    let mut base = auth_error_base_message(&err).trim().to_string();
+    if base.is_empty() {
+        base = "no auth available".into();
+    }
+    let summary = err.cause_text.as_deref().map(extract_upstream_error_summary).unwrap_or_default();
+    let mut detail = if !summary.is_empty() && !base.contains(&summary) {
+        format!("{base} (providers={provider_text}, model={model_text}; last upstream error: {summary})")
+    } else {
+        format!("{base} (providers={provider_text}, model={model_text})")
+    };
+    if format!(",{provider_text},").contains(",claude,") {
+        detail.push_str("; check Claude auth/key session and cooldown state via /v0/management/auth-files");
+    }
+    let mut out = err.clone();
+    out.message = format!("{code}: {detail}");
+    if out.status == 0 {
+        out.status = 503;
+    }
+    out
 }
 
 /// Whether the error is one of the "no usable credential" outcomes (Go: isAuthUnavailableError).

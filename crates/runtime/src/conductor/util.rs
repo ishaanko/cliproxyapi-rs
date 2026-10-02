@@ -107,6 +107,19 @@ pub fn rewrite_model_for_prefix(model: &str, prefix: &str) -> String {
     }
 }
 
+/// Trims, drops empties and removes duplicates, keeping first occurrences (Go: dedupeStrings).
+pub fn dedupe_strings(values: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(values.len());
+    for v in values {
+        let v = v.trim().to_string();
+        if v.is_empty() || out.contains(&v) {
+            continue;
+        }
+        out.push(v);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
