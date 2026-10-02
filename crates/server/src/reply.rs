@@ -83,12 +83,3 @@ pub fn streaming_response(status: u16, headers: HeaderMap, rx: mpsc::Receiver<By
     *resp.headers_mut() = headers;
     resp
 }
-
-/// Response with headers and an already-complete body (e.g. the empty-stream footer).
-pub fn sse_reply(headers: HeaderMap, body: &'static str) -> Reply {
-    Reply {
-        status: 200,
-        headers,
-        body: Bytes::from_static(body.as_bytes()),
-    }
-}

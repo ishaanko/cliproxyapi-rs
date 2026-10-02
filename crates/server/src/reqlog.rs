@@ -12,7 +12,7 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -39,6 +39,8 @@ const MAX_RESPONSE_CAPTURE: usize = 128 << 20;
 pub struct ApiLog {
     pub(crate) data: Mutex<ApiLogData>,
     pub(crate) ws_done: Notify,
+    /// Set when `request-log` is off: Go only records `API_RESPONSE_ERROR` entries then.
+    errors_muted: AtomicBool,
 }
 
 #[derive(Default)]
@@ -52,8 +54,16 @@ pub struct ApiLogData {
 }
 
 impl ApiLog {
+    /// Per-request switch mirroring the `request-log` gate in `LoggingAPIResponseError`.
+    pub fn set_error_logging(&self, enabled: bool) {
+        self.errors_muted.store(!enabled, Ordering::Relaxed);
+    }
+
     /// `LoggingAPIResponseError`.
     pub fn record_error(&self, status: u16, text: &str) {
+        if self.errors_muted.load(Ordering::Relaxed) {
+            return;
+        }
         self.data.lock().errors.push((status, text.to_string()));
     }
 
@@ -219,7 +229,7 @@ impl RequestLogger {
         if files.len() <= max as usize {
             return;
         }
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|f| std::cmp::Reverse(f.1));
         for (path, _) in files.into_iter().skip(max as usize) {
             if let Err(e) = fs::remove_file(&path) {
                 tracing::warn!("failed to remove old error log: {}: {e}", path.display());
@@ -472,13 +482,16 @@ struct Captured {
 }
 
 /// Inner layer for handler routes: Go's `WriteErrorResponse` appends every error body it writes
-/// to `API_RESPONSE`, so the log gets an `API RESPONSE` section. Auth, 404 and 405 replies are
-/// produced outside the handlers and stay out of it (this layer is a `route_layer` under auth).
+/// to `API_RESPONSE`, so the log gets an `API RESPONSE` section. Auth, 404, 405 and `c.JSON`
+/// validation errors stay out of it (this layer is a `route_layer` under auth).
 pub async fn capture_handler_errors(req: Request, next: Next) -> Response {
     let api_log = req.extensions().get::<ApiLogHandle>().map(|h| h.0.clone());
     let resp = next.run(req).await;
     let Some(api_log) = api_log else { return resp };
-    if resp.status().as_u16() < 400 || resp.headers().get("content-type").is_some_and(|v| v.as_bytes().starts_with(b"text/event-stream")) {
+    // `WriteErrorResponse` sets a bare `application/json`; `c.JSON` errors carry a charset and
+    // never reach `API_RESPONSE`.
+    let from_error_writer = resp.headers().get("content-type").is_some_and(|v| v.as_bytes() == b"application/json");
+    if resp.status().as_u16() < 400 || !from_error_writer {
         return resp;
     }
     let (parts, body) = resp.into_parts();
@@ -583,7 +596,7 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
     let buffer_all = enabled;
     let buffer_errors = !enabled && status >= 400 && status != 499;
     let captured = Arc::new(Mutex::new(Captured::default()));
-    let on_chunk: Option<Box<dyn FnMut(&axum::body::Bytes) + Send>> = if buffer_all || buffer_errors {
+    let on_chunk: Option<crate::bodytee::OnChunk> = if buffer_all || buffer_errors {
         let captured = captured.clone();
         Some(Box::new(move |chunk| {
             let mut c = captured.lock();
@@ -610,7 +623,8 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
                 if ws_upgrade && status == 101 {
                     api_log.ws_done.notified().await;
                 }
-                finalize(&logger, exchange, &api_log, enabled, ws_upgrade);
+                // Rendering and the file write are blocking fs work.
+                let _ = tokio::task::spawn_blocking(move || finalize(&logger, exchange, &api_log, enabled, ws_upgrade)).await;
             };
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {

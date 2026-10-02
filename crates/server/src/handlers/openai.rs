@@ -73,14 +73,13 @@ async fn nonstream_chat(
     let passthrough = pipeline.settings.passthrough_headers;
     let model = model.to_string();
     let alt = alt.to_string();
-    let info = info.clone();
     with_nonstream_keepalive(interval, async move {
         let args = ExecArgs::new(Format::OpenAI, &model, raw, &alt);
         match pipeline.execute(args).await {
             Err(err) => openai_error_reply(&err, passthrough),
             Ok(ok) => {
                 let body = convert(ok.body.clone());
-                ok_reply(&info, ok, body)
+                ok_reply(ok, body)
             }
         }
     })

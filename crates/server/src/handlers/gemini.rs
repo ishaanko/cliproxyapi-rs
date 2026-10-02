@@ -71,13 +71,12 @@ async fn generate_content(st: &AppState, info: &ReqInfo, model: &str, body: Byte
     let passthrough = pipeline.settings.passthrough_headers;
     let alt = info.alt();
     let model = model.to_string();
-    let info = info.clone();
     with_nonstream_keepalive(interval, async move {
         match pipeline.execute(ExecArgs::new(Format::Gemini, &model, body, &alt)).await {
             Err(err) => openai_error_reply(&err, passthrough),
             Ok(ok) => {
                 let b = ok.body.clone();
-                ok_reply(&info, ok, b)
+                ok_reply(ok, b)
             }
         }
     })
@@ -92,7 +91,7 @@ async fn count_tokens(st: &AppState, info: &ReqInfo, model: &str, body: Bytes) -
         Err(err) => openai_error_reply(&err, passthrough).into_response(),
         Ok(ok) => {
             let b = ok.body.clone();
-            ok_reply(info, ok, b).into_response()
+            ok_reply(ok, b).into_response()
         }
     }
 }
@@ -257,7 +256,6 @@ pub async fn interactions(State(st): State<AppState>, info: ReqInfo, body: Bytes
 
     if !target.stream {
         let interval = pipeline.settings.nonstream_keepalive;
-        let info = info.clone();
         return with_nonstream_keepalive(interval, async move {
             let mut args = ExecArgs::new(Format::Interactions, &model, raw, &alt);
             args.forced_provider = forced;
@@ -266,7 +264,7 @@ pub async fn interactions(State(st): State<AppState>, info: ReqInfo, body: Bytes
                 Err(err) => openai_error_reply(&err, passthrough),
                 Ok(ok) => {
                     let b = ok.body.clone();
-                    ok_reply(&info, ok, b)
+                    ok_reply(ok, b)
                 }
             }
         })

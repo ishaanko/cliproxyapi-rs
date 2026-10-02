@@ -1,5 +1,5 @@
 //! Shared harness: a real `Manager` with a scripted fake executor behind the real router.
-#![allow(dead_code)]
+#![allow(dead_code, clippy::result_large_err)]
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -110,8 +110,10 @@ pub struct Harness {
 pub async fn harness(name: &str, edit: impl FnOnce(&mut Config)) -> Harness {
     let provider = format!("fake-{name}");
     let model = format!("model-{name}");
-    let mut cfg = Config::default();
-    cfg.api_keys = vec!["k1".into()];
+    let mut cfg = Config {
+        api_keys: vec!["k1".into()],
+        ..Config::default()
+    };
     edit(&mut cfg);
     let (cfg_tx, cfg_rx) = watch::channel(Arc::new(cfg));
 
