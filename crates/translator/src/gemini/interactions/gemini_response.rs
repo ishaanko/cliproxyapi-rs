@@ -6,7 +6,6 @@ use cpa_json::{json, Value, J};
 
 use super::shared::{gemini_part_to_interactions_steps, interactions_thought_signature};
 use crate::common::sse_event_data;
-use crate::gemini::claude::RawDoc;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream conversion state.
@@ -69,10 +68,9 @@ pub fn convert_gemini_response_to_interactions_stream(
         append_status_update(&mut out, st);
         st.started = true;
     }
-    let raw_doc = RawDoc::new(raw);
     for (part_index, part) in root.g("candidates.0.content.parts").array().into_iter().enumerate() {
         // Go copies `functionCall.args` as source text into the arguments delta.
-        let args_text = raw_doc.at(&format!("candidates.0.content.parts.{part_index}.functionCall.args"));
+        let args_text = cpa_json::raw_at(raw, &format!("candidates.0.content.parts.{part_index}.functionCall.args"));
         append_gemini_part_to_stream(&mut out, st, &part.value(), args_text);
     }
     let has_finish = root.g("candidates.0.finishReason").exists();

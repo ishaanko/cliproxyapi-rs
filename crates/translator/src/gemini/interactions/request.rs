@@ -9,7 +9,6 @@ use super::shared::{
     interactions_content_part_to_gemini_part,
 };
 use crate::common::{contains_json_ref, reorder_gemini_user_parts, set_gemini_function_response_result};
-use crate::gemini::claude::RawDoc;
 
 /// Converts an Interactions request into a Gemini request.
 pub fn convert_interactions_request_to_gemini(model_name: &str, raw: &[u8], _stream: bool) -> Vec<u8> {
@@ -24,7 +23,7 @@ pub fn convert_interactions_request_to_gemini(model_name: &str, raw: &[u8], _str
     copy_interactions_tools(&mut out, &root);
     copy_interactions_tool_choice(&mut out, &root);
     copy_interactions_service_tier(&mut out, &root);
-    let mut ctx = InputContext::new(RawDoc::new(raw));
+    let mut ctx = InputContext::new(raw);
     append_interactions_input(&mut ctx, &root.g("input"));
     // SetRawArrayItems is a no-op for an empty list.
     if !ctx.items.is_empty() {
@@ -574,10 +573,10 @@ fn copy_interactions_tools(out: &mut Value, root: &Value) {
 
 // ------------------------------------------------------------------ input
 
-/// Accumulates Gemini contents while walking Interactions input steps. `doc` is the request
+/// Accumulates Gemini contents while walking Interactions input steps. `src` is the request
 /// source, used to copy function results containing `$ref` as source text.
 struct InputContext<'a> {
-    doc: RawDoc<'a>,
+    src: &'a [u8],
     items: Vec<Value>,
     in_model_turn: bool,
     last_step_type: String,
@@ -585,8 +584,8 @@ struct InputContext<'a> {
 }
 
 impl<'a> InputContext<'a> {
-    fn new(doc: RawDoc<'a>) -> Self {
-        Self { doc, items: Vec::new(), in_model_turn: false, last_step_type: String::new(), pending_signature: String::new() }
+    fn new(src: &'a [u8]) -> Self {
+        Self { src, items: Vec::new(), in_model_turn: false, last_step_type: String::new(), pending_signature: String::new() }
     }
 
     fn last_role_is(&self, role: &str) -> bool {
@@ -766,7 +765,7 @@ fn append_interactions_step_to_gemini(ctx: &mut InputContext<'_>, item: &Value, 
         }
         "function_result" => {
             ctx.end_model_turn();
-            let part = build_gemini_function_result_part(item, ctx.doc.at(&format!("{path}.result")));
+            let part = build_gemini_function_result_part(item, cpa_json::raw_at(ctx.src, &format!("{path}.result")));
             if ctx.last_step_type == "function_result" && ctx.last_role_is("user") {
                 if let Some(last) = ctx.items.last_mut() {
                     append_user_content_part(last, part);

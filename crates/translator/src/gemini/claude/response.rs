@@ -9,7 +9,6 @@ use cpa_core::util::{
 };
 use cpa_json::{json, Res, Value, J};
 
-use super::RawDoc;
 use crate::common::{append_sse_event_string, claude_input_tokens_json};
 use crate::registry::{Ctx, Param};
 
@@ -53,8 +52,8 @@ fn part_signature<'a>(part: &'a Res<'_>) -> Res<'a> {
 }
 
 /// Source text of a part's `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(doc: &RawDoc<'_>, part_index: usize, args: &Res<'_>) -> String {
-    doc.at(&format!("candidates.0.content.parts.{part_index}.functionCall.args"))
+fn args_raw(src: &[u8], part_index: usize, args: &Res<'_>) -> String {
+    cpa_json::raw_at(src, &format!("candidates.0.content.parts.{part_index}.functionCall.args"))
         .map(str::to_string)
         .unwrap_or_else(|| args.raw())
 }
@@ -90,7 +89,6 @@ pub fn convert_gemini_response_to_claude(
     }
 
     let root = cpa_json::parse(raw);
-    let raw_doc = RawDoc::new(raw);
     let mut output: Vec<u8> = Vec::with_capacity(1024);
 
     // Initialize the streaming session with a message_start event (first chunk only).
@@ -195,7 +193,7 @@ pub fn convert_gemini_response_to_claude(
                     if args.exists() {
                         let data = delta_event(
                             p.response_index,
-                            json!({ "type": "input_json_delta", "partial_json": args_raw(&raw_doc, part_index, &args) }),
+                            json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
                         );
                         event(&mut output, "content_block_delta", &data);
                     }
@@ -231,7 +229,7 @@ pub fn convert_gemini_response_to_claude(
                 if args.exists() {
                     let data = delta_event(
                         p.response_index,
-                        json!({ "type": "input_json_delta", "partial_json": args_raw(&raw_doc, part_index, &args) }),
+                        json!({ "type": "input_json_delta", "partial_json": args_raw(raw, part_index, &args) }),
                     );
                     event(&mut output, "content_block_delta", &data);
                 }

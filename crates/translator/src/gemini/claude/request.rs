@@ -10,8 +10,7 @@ use cpa_core::util::{
 };
 use cpa_json::{json, Res, Value, J};
 
-use super::raw::set_function_response_from_text;
-use super::RawDoc;
+use super::set_function_response_from_text;
 use crate::common::{
     align_claude_tool_results, claude_message_system_reminder_text, join_raw_array,
     merge_adjacent_gemini_contents, reorder_gemini_user_parts, set_gemini_function_response_raw,
@@ -41,7 +40,6 @@ fn content_with_parts(role: &str, parts: Vec<Value>) -> Value {
 
 fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
     let root = cpa_json::parse(raw);
-    let raw_doc = RawDoc::new(raw);
     let mut out = json!({ "contents": [] });
     cpa_json::set(&mut out, "model", model_name);
 
@@ -173,7 +171,7 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
                             if tool_result.result_is_raw {
                                 // Results holding `$ref` are stored as text, so keep the source text.
                                 let source_text = if tool_result.result.contains("$ref") {
-                                    tool_result_source_text(&raw_doc, message_index, &original_contents, &content)
+                                    tool_result_source_text(raw, message_index, &original_contents, &content)
                                 } else {
                                     None
                                 };
@@ -374,23 +372,22 @@ fn is_base64_image(block: &Value) -> bool {
 /// the single non-image block, the `[a,b]` join of several, or the content itself. `original` is
 /// the message content before tool results were reordered.
 fn tool_result_source_text(
-    doc: &RawDoc<'_>,
+    src: &[u8],
     message_index: usize,
     original: &Res<'_>,
     element: &Res<'_>,
 ) -> Option<String> {
     let value = element.value();
     let position = original.array().iter().position(|e| e.v() == Some(&value))?;
-    let content_text = doc.at(&format!("messages.{message_index}.content.{position}.content"))?;
+    let content_text = cpa_json::raw_at(src, &format!("messages.{message_index}.content.{position}.content"))?;
     let Some(Value::Array(blocks)) = value.get("content") else {
         return Some(content_text.to_string());
     };
-    let inner = RawDoc::new(content_text.as_bytes());
     let texts: Vec<&str> = blocks
         .iter()
         .enumerate()
         .filter(|(_, block)| !is_base64_image(block))
-        .filter_map(|(k, _)| inner.at(&k.to_string()))
+        .filter_map(|(k, _)| cpa_json::raw_at(content_text.as_bytes(), &k.to_string()))
         .collect();
     match texts.len() {
         0 => None,

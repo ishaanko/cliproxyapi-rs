@@ -8,7 +8,6 @@ use cpa_core::util::{clean_json_schema_for_gemini_json_schema, sanitize_function
 use cpa_json::{json, Res, Value, J};
 
 use crate::common::{normalize_openai_file_data, system_reminder_text};
-use crate::gemini::claude::RawDoc;
 use crate::gemini::common::attach_default_safety_settings;
 
 const GEMINI_FUNCTION_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
@@ -19,7 +18,6 @@ const ALLOWED_NAMES_PATH: &str = "toolConfig.functionCallingConfig.allowedFuncti
 /// Converts an OpenAI Chat Completions request into a Gemini request body.
 pub fn convert_openai_request_to_gemini(model_name: &str, raw: &[u8], _stream: bool) -> Vec<u8> {
     let root = cpa_json::parse(raw);
-    let raw_doc = RawDoc::new(raw);
     let mut out = json!({ "contents": [] });
     cpa_json::set(&mut out, "model", model_name);
 
@@ -244,8 +242,7 @@ pub fn convert_openai_request_to_gemini(model_name: &str, raw: &[u8], _stream: b
                             let call_id = next.g("tool_call_id").str();
                             if !call_id.is_empty() {
                                 // Go stores the content's source text (Raw) as a string.
-                                let content_raw = raw_doc
-                                    .at(&format!("messages.{next_index}.content"))
+                                let content_raw = cpa_json::raw_at(raw, &format!("messages.{next_index}.content"))
                                     .map(str::to_string)
                                     .unwrap_or_else(|| next.g("content").raw());
                                 turn_tool_responses.insert(call_id, content_raw);

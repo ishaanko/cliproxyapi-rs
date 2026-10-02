@@ -8,7 +8,6 @@ use chrono::{DateTime, Utc};
 use cpa_core::util::{restore_sanitized_tool_name, sanitized_tool_name_map};
 use cpa_json::{json, Res, Value, J};
 
-use crate::gemini::claude::RawDoc;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream conversion state.
@@ -35,8 +34,8 @@ fn parse_create_time(s: &str) -> Option<i64> {
 }
 
 /// Source text of `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(doc: &RawDoc<'_>, path: &str, args: &Res<'_>) -> String {
-    doc.at(path).map(str::to_string).unwrap_or_else(|| args.raw())
+fn args_raw(src: &[u8], path: &str, args: &Res<'_>) -> String {
+    cpa_json::raw_at(src, path).map(str::to_string).unwrap_or_else(|| args.raw())
 }
 
 fn inline_data_of<'a>(part: &'a Res<'_>) -> Res<'a> {
@@ -120,7 +119,6 @@ pub fn convert_gemini_response_to_openai(
         r#"{"id":"","object":"chat.completion.chunk","created":12345,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}"#,
     );
     let root = cpa_json::parse(raw);
-    let raw_doc = RawDoc::new(raw);
 
     let model_version = root.g("modelVersion");
     if model_version.exists() {
@@ -225,7 +223,7 @@ pub fn convert_gemini_response_to_openai(
                         let args = function_call.g("args");
                         if args.exists() {
                             let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(&raw_doc, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
                         }
                         set_assistant_role(&mut template);
                         cpa_json::set(&mut template, "choices.0.delta.tool_calls.-1", call);
@@ -283,7 +281,6 @@ pub fn convert_gemini_response_to_openai_non_stream(
 ) -> Option<Vec<u8>> {
     let sanitized_name_map = sanitized_tool_name_map(original);
     let root = cpa_json::parse(raw);
-    let raw_doc = RawDoc::new(raw);
     let mut unix_timestamp: i64 = 0;
     // Empty choices array to support multiple candidates.
     let mut template = cpa_json::parse_str(r#"{"id":"","object":"chat.completion","created":123456,"model":"model","choices":[]}"#);
@@ -357,7 +354,7 @@ pub fn convert_gemini_response_to_openai_non_stream(
                         let args = function_call.g("args");
                         if args.exists() {
                             let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(&raw_doc, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
                         }
                         tool_calls.push(call);
                     } else if inline_data.exists() {

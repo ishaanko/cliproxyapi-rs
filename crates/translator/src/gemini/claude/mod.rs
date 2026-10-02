@@ -1,10 +1,10 @@
 //! Port of internal/translator/gemini/claude (Claude client, Gemini upstream).
 
-mod raw;
+mod function_response;
 mod request;
 mod response;
 
-pub(crate) use raw::{set_function_response_from_text, RawDoc};
+pub(crate) use function_response::set_function_response_from_text;
 
 pub use request::{convert_claude_request_to_gemini, convert_claude_request_to_gemini_with_compat};
 pub use response::{

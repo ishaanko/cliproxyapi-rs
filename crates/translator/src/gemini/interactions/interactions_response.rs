@@ -10,7 +10,7 @@ use super::shared::{
     first_non_empty_interaction_string, gemini_text_part_json, interactions_content_part_to_gemini_part,
 };
 use crate::common::{contains_json_ref, interactions_usage, set_gemini_function_response_result};
-use crate::gemini::claude::{set_function_response_from_text, RawDoc};
+use crate::gemini::claude::set_function_response_from_text;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream state for Interactions events converted to Gemini chunks.
@@ -98,10 +98,9 @@ pub fn convert_interactions_response_to_gemini_non_stream(
         steps = root.g("steps");
         steps_path = "steps";
     }
-    let doc = RawDoc::new(raw);
     let mut step_index = 0;
     steps.for_each(|_, step| {
-        parts.extend(step_to_gemini_parts(&step.value(), &doc, &format!("{steps_path}.{step_index}")));
+        parts.extend(step_to_gemini_parts(&step.value(), raw, &format!("{steps_path}.{step_index}")));
         step_index += 1;
         true
     });
@@ -280,11 +279,11 @@ fn step_delta_to_gemini_chunk(model_name: &str, root: &Value, st: &mut ToGeminiS
     }
 }
 
-/// `path` locates `step` in `doc`, for copying results as source text.
-fn step_to_gemini_parts(step: &Value, doc: &RawDoc<'_>, path: &str) -> Vec<Value> {
+/// `path` locates `step` in `src`, for copying results as source text.
+fn step_to_gemini_parts(step: &Value, src: &[u8], path: &str) -> Vec<Value> {
     match step.g("type").str().as_str() {
         "function_call" => vec![function_call_step_to_gemini_part(step)],
-        "function_result" => vec![function_response_step_to_gemini_part(step, doc, path)],
+        "function_result" => vec![function_response_step_to_gemini_part(step, src, path)],
         "thought" => content_to_gemini_parts(&step.g("content"), true),
         _ => content_to_gemini_parts(&step.g("content"), false),
     }
@@ -340,7 +339,7 @@ fn function_call_step_to_gemini_part(step: &Value) -> Value {
     part
 }
 
-fn function_response_step_to_gemini_part(step: &Value, doc: &RawDoc<'_>, path: &str) -> Value {
+fn function_response_step_to_gemini_part(step: &Value, src: &[u8], path: &str) -> Value {
     let mut part = json!({ "functionResponse": { "name": "", "response": {} } });
     cpa_json::set(&mut part, "functionResponse.name", step.g("name").str());
     let id = first_non_empty_interaction_string(&[&step.g("call_id").str(), &step.g("id").str()]);
@@ -348,7 +347,7 @@ fn function_response_step_to_gemini_part(step: &Value, doc: &RawDoc<'_>, path: &
         cpa_json::set(&mut part, "functionResponse.id", id);
     }
     let key = ["result", "response"].into_iter().find(|key| step.g(key).exists());
-    let text = key.and_then(|key| doc.at(&format!("{path}.{key}")));
+    let text = key.and_then(|key| cpa_json::raw_at(src, &format!("{path}.{key}")));
     set_function_response(&mut part, "functionResponse.response", &first_existing(step, &["result", "response"]), text);
     part
 }
