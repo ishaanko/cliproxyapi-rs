@@ -15,6 +15,7 @@ pub mod gemini;
 pub mod images;
 pub mod openai;
 pub mod responses;
+pub mod videos;
 
 
 /// `ReadRequestBody`: raw body plus `Content-Encoding` decoding; failures become the 400 reply.

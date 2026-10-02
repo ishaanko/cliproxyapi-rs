@@ -12,6 +12,9 @@ mod images;
 pub(crate) mod translate;
 mod stream;
 
+/// Metadata key naming a handler-level source type (`openai-image`, `openai-video`).
+pub use translate::META_HANDLER_TYPE;
+
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 

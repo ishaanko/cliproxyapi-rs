@@ -26,6 +26,7 @@ pub mod headers;
 pub mod logging;
 pub mod middleware;
 pub mod models;
+pub mod multipart;
 pub mod reply;
 pub mod req;
 pub mod reqlog;
