@@ -30,12 +30,13 @@ rand.workspace = true
 once_cell.workspace = true
 http = "1"
 futures-util = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
+ring = "0.17"
 httpdate = "1"
 url = "2"
 tiktoken-rs = "0.7"
-async-trait = "0.1"
 flate2 = "1"
-base64.workspace = true
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "http2", "gzip", "brotli", "deflate", "socks", "stream", "json"] }
 aes-gcm = "0.10"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

@@ -36,7 +36,10 @@ pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     let mut executors: Vec<DynExecutor> = Vec::new();
     executors.push(claude::new(cfg.clone()));
     // executors.push(codex::new(cfg.clone()));
-    // executors.push(gemini::new(cfg.clone()));
+    executors.push(gemini::new(cfg.clone()));
+    executors.push(gemini::new_interactions(cfg.clone()));
+    executors.push(gemini::new_vertex(cfg.clone()));
+    executors.push(gemini::new_aistudio(cfg.clone()));
     executors.push(antigravity::new(cfg.clone()));
     // executors.push(openai_compat::new(cfg.clone()));
     // executors.push(xai::new(cfg.clone()));

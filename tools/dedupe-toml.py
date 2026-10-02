@@ -14,7 +14,7 @@ for p in glob.glob('crates/*/Cargo.toml'):
             section = l
             out.append(l)
             continue
-        key = l.split('=')[0].strip() if '=' in l and not l.lstrip().startswith('#') else None
+        key = l.split('=')[0].strip().split('.')[0] if '=' in l and not l.lstrip().startswith('#') else None
         if key and (section, key) in seen:
             continue
         if key:
