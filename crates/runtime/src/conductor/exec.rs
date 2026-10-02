@@ -707,8 +707,5 @@ pub(crate) fn stream_error_result(headers: HeaderMap, err: ExecError) -> StreamR
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     // The channel has capacity for the single error chunk, so this cannot block or fail.
     let _ = tx.try_send(Err(err));
-    StreamResult {
-        headers,
-        chunks: rx,
-    }
+    StreamResult::new(headers, rx)
 }

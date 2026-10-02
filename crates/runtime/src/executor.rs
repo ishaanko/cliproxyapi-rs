@@ -128,6 +128,15 @@ pub struct Response {
 pub struct StreamResult {
     pub headers: HeaderMap,
     pub chunks: mpsc::Receiver<Result<Bytes, ExecError>>,
+    /// Executor-measured usage, sent before `chunks` closes. Same object shape as a
+    /// non-stream `Response.metadata["usage"]`; the conductor prefers it over parsing chunks.
+    pub usage: Option<tokio::sync::oneshot::Receiver<Value>>,
+}
+
+impl StreamResult {
+    pub fn new(headers: HeaderMap, chunks: mpsc::Receiver<Result<Bytes, ExecError>>) -> Self {
+        StreamResult { headers, chunks, usage: None }
+    }
 }
 
 /// Error classes the conductor treats specially (Go: auth.ErrorCode* constants).

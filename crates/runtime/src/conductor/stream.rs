@@ -12,7 +12,10 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use cpa_auth::Auth;
+use serde_json::Value;
 use tokio::sync::mpsc;
+
+use crate::executor::Metadata;
 
 use super::Manager;
 use super::cooldown::ExecResult;
@@ -268,10 +271,7 @@ impl Manager {
                                 upstream_err = Some(retry_err.clone().into());
                             }
                             boot = Err(retry_err);
-                            stream = StreamResult {
-                                headers: Default::default(),
-                                chunks: mpsc::channel(1).1,
-                            };
+                            stream = StreamResult::new(Default::default(), mpsc::channel(1).1);
                         }
                         Ok(retry_stream) => {
                             stream = retry_stream;
@@ -374,6 +374,7 @@ impl Manager {
                 stream.headers,
                 buffered,
                 if closed { None } else { Some(stream.chunks) },
+                stream.usage,
             ));
         }
         let err = last_err.unwrap_or_else(|| {
@@ -409,6 +410,7 @@ fn wrap_stream(
     headers: http::HeaderMap,
     buffered: Vec<Bytes>,
     remaining: Option<mpsc::Receiver<Chunk>>,
+    executor_usage: Option<tokio::sync::oneshot::Receiver<Value>>,
 ) -> StreamResult {
     let (tx, rx) = mpsc::channel::<Chunk>(1);
     tokio::spawn(async move {
@@ -532,6 +534,16 @@ fn wrap_stream(
             return;
         }
         if !failed && !(client_gone && claude_oauth) {
+            if let Some(mut rx) = executor_usage
+                && let Ok(u) = rx.try_recv()
+            {
+                let mut meta = Metadata::new();
+                meta.insert(super::usage::META_USAGE.to_string(), u);
+                let t = super::usage::tokens_from_response(options.response_format_or_source(), b"", &meta);
+                if t != Default::default() {
+                    usage.tokens = t;
+                }
+            }
             let result = ExecResult {
                 auth_id,
                 provider,
@@ -556,8 +568,5 @@ fn wrap_stream(
             manager.mark_result_inner(result, Some(facts));
         }
     });
-    StreamResult {
-        headers,
-        chunks: rx,
-    }
+    StreamResult::new(headers, rx)
 }
