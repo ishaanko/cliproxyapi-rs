@@ -60,11 +60,15 @@ impl DeviceCodeResponse {
     /// URL the user should open: the complete one when present.
     pub fn verification_url(&self) -> String {
         let c = self.verification_uri_complete.trim();
-        if c.is_empty() { self.verification_uri.trim().to_string() } else { c.to_string() }
+        if c.is_empty() {
+            self.verification_uri.trim().to_string()
+        } else {
+            c.to_string()
+        }
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct TokenData {
     pub access_token: String,
     pub refresh_token: String,
@@ -76,7 +80,7 @@ pub struct TokenData {
     pub subject: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct AuthBundle {
     pub token_data: TokenData,
     pub last_refresh: String,
@@ -89,15 +93,22 @@ pub struct AuthBundle {
 pub fn validate_oauth_endpoint(raw: &str, field: &str) -> Result<String> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err(AuthFlowError::other(format!("xai discovery {field} is empty")));
+        return Err(AuthFlowError::other(format!(
+            "xai discovery {field} is empty"
+        )));
     }
-    let parsed = url::Url::parse(raw).map_err(|e| AuthFlowError::other(format!("xai discovery {field} is invalid: {e}")))?;
+    let parsed = url::Url::parse(raw)
+        .map_err(|e| AuthFlowError::other(format!("xai discovery {field} is invalid: {e}")))?;
     if parsed.scheme() != "https" {
-        return Err(AuthFlowError::other(format!("xai discovery {field} must use https: {raw:?}")));
+        return Err(AuthFlowError::other(format!(
+            "xai discovery {field} must use https: {raw:?}"
+        )));
     }
     let host = parsed.host_str().unwrap_or("").trim().to_lowercase();
     if host != "x.ai" && !host.ends_with(".x.ai") {
-        return Err(AuthFlowError::other(format!("xai discovery {field} host {host:?} is not on x.ai")));
+        return Err(AuthFlowError::other(format!(
+            "xai discovery {field} host {host:?} is not on x.ai"
+        )));
     }
     Ok(raw.to_string())
 }
@@ -114,11 +125,20 @@ pub struct XaiAuth {
 
 impl XaiAuth {
     pub fn new(proxy_url: &str) -> Result<Self> {
-        Ok(Self::with_client(build_client_ext(proxy_url, Some(HTTP_TIMEOUT), None)?))
+        Ok(Self::with_client(build_client_ext(
+            proxy_url,
+            Some(HTTP_TIMEOUT),
+            None,
+        )?))
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client, discovery_url: DISCOVERY_URL.to_string(), min_poll_interval: None, skip_endpoint_validation: false }
+        Self {
+            client,
+            discovery_url: DISCOVERY_URL.to_string(),
+            min_poll_interval: None,
+            skip_endpoint_validation: false,
+        }
     }
 
     #[cfg(test)]
@@ -137,11 +157,20 @@ impl XaiAuth {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("xai discovery: request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("xai discovery: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "xai discovery: request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!("xai discovery: read response: {}", e.without_url()))
+        })?;
         if status != 200 {
-            return Err(AuthFlowError::other(format!("xai discovery failed with status {status}: {}", body.trim())));
+            return Err(AuthFlowError::other(format!(
+                "xai discovery failed with status {status}: {}",
+                body.trim()
+            )));
         }
         #[derive(Deserialize, Default)]
         struct Payload {
@@ -150,26 +179,39 @@ impl XaiAuth {
             #[serde(default)]
             token_endpoint: String,
         }
-        let p: Payload =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("xai discovery: parse response: {e}")))?;
+        let p: Payload = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("xai discovery: parse response: {e}")))?;
         if self.skip_endpoint_validation {
-            return Ok(Discovery { device_authorization_endpoint: p.device_authorization_endpoint, token_endpoint: p.token_endpoint });
+            return Ok(Discovery {
+                device_authorization_endpoint: p.device_authorization_endpoint,
+                token_endpoint: p.token_endpoint,
+            });
         }
         Ok(Discovery {
-            device_authorization_endpoint: validate_oauth_endpoint(&p.device_authorization_endpoint, "device_authorization_endpoint")?,
+            device_authorization_endpoint: validate_oauth_endpoint(
+                &p.device_authorization_endpoint,
+                "device_authorization_endpoint",
+            )?,
             token_endpoint: validate_oauth_endpoint(&p.token_endpoint, "token_endpoint")?,
         })
     }
 
     pub async fn start_device_flow(&self) -> Result<DeviceCodeResponse> {
         let d = self.discover().await?;
-        self.request_device_code(&d.device_authorization_endpoint, &d.token_endpoint).await
+        self.request_device_code(&d.device_authorization_endpoint, &d.token_endpoint)
+            .await
     }
 
-    pub async fn request_device_code(&self, device_authorization_endpoint: &str, token_endpoint: &str) -> Result<DeviceCodeResponse> {
+    pub async fn request_device_code(
+        &self,
+        device_authorization_endpoint: &str,
+        token_endpoint: &str,
+    ) -> Result<DeviceCodeResponse> {
         let endpoint = device_authorization_endpoint.trim();
         if endpoint.is_empty() {
-            return Err(AuthFlowError::other("xai device code: device authorization endpoint is required"));
+            return Err(AuthFlowError::other(
+                "xai device code: device authorization endpoint is required",
+            ));
         }
         let resp = self
             .client
@@ -179,22 +221,40 @@ impl XaiAuth {
             .body(encode_query(&[("client_id", CLIENT_ID), ("scope", SCOPE)]))
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("xai device code request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("xai device code: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "xai device code request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "xai device code: read response: {}",
+                e.without_url()
+            ))
+        })?;
         if status != 200 {
-            return Err(AuthFlowError::other(format!("xai device code request failed with status {status}: {}", body.trim())));
+            return Err(AuthFlowError::other(format!(
+                "xai device code request failed with status {status}: {}",
+                body.trim()
+            )));
         }
-        let mut dc: DeviceCodeResponse =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("xai device code: parse response: {e}")))?;
+        let mut dc: DeviceCodeResponse = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("xai device code: parse response: {e}")))?;
         if dc.device_code.trim().is_empty() {
-            return Err(AuthFlowError::other("xai device code: response missing device_code"));
+            return Err(AuthFlowError::other(
+                "xai device code: response missing device_code",
+            ));
         }
         if dc.user_code.trim().is_empty() {
-            return Err(AuthFlowError::other("xai device code: response missing user_code"));
+            return Err(AuthFlowError::other(
+                "xai device code: response missing user_code",
+            ));
         }
         if dc.verification_uri.trim().is_empty() && dc.verification_uri_complete.trim().is_empty() {
-            return Err(AuthFlowError::other("xai device code: response missing verification URI"));
+            return Err(AuthFlowError::other(
+                "xai device code: response missing verification URI",
+            ));
         }
         dc.token_endpoint = token_endpoint.trim().to_string();
         Ok(dc)
@@ -220,14 +280,13 @@ impl XaiAuth {
         }
         let min_interval = self.min_poll_interval.unwrap_or(DEFAULT_POLL_INTERVAL);
         let mut interval = Duration::from_secs(device.interval.max(0) as u64);
-        if self.min_poll_interval.is_some() && device.interval <= 0 {
-            interval = min_interval;
-        } else if interval < min_interval {
+        if interval < min_interval {
             interval = min_interval;
         }
         let mut deadline = tokio::time::Instant::now() + MAX_POLL_DURATION;
         if device.expires_in > 0 {
-            deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
+            deadline = deadline
+                .min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
         }
 
         let mut first = true;
@@ -239,7 +298,10 @@ impl XaiAuth {
                 }
             }
             first = false;
-            match self.exchange_device_code(&token_endpoint, &device.device_code).await? {
+            match self
+                .exchange_device_code(&token_endpoint, &device.device_code)
+                .await?
+            {
                 PollOutcome::Token(t) => return Ok(t),
                 PollOutcome::Pending => {}
                 PollOutcome::SlowDown => interval += min_interval,
@@ -247,7 +309,11 @@ impl XaiAuth {
         }
     }
 
-    async fn exchange_device_code(&self, token_endpoint: &str, device_code: &str) -> Result<PollOutcome> {
+    async fn exchange_device_code(
+        &self,
+        token_endpoint: &str,
+        device_code: &str,
+    ) -> Result<PollOutcome> {
         let resp = self
             .client
             .post(token_endpoint.trim())
@@ -260,9 +326,18 @@ impl XaiAuth {
             ]))
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("xai device token request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("xai device token: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "xai device token request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "xai device token: read response: {}",
+                e.without_url()
+            ))
+        })?;
 
         #[derive(Deserialize, Default)]
         struct Payload {
@@ -281,8 +356,8 @@ impl XaiAuth {
             #[serde(default)]
             expires_in: i64,
         }
-        let p: Payload =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("xai device token: parse response: {e}")))?;
+        let p: Payload = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("xai device token: parse response: {e}")))?;
         match p.error.as_str() {
             "" => {}
             "authorization_pending" => return Ok(PollOutcome::Pending),
@@ -299,21 +374,40 @@ impl XaiAuth {
             }
         }
         if status != 200 {
-            return Err(AuthFlowError::other(format!("xai device token request failed with status {status}: {}", body.trim())));
+            return Err(AuthFlowError::other(format!(
+                "xai device token request failed with status {status}: {}",
+                body.trim()
+            )));
         }
         if p.access_token.trim().is_empty() {
-            return Err(AuthFlowError::other("xai device token response missing access_token"));
+            return Err(AuthFlowError::other(
+                "xai device token response missing access_token",
+            ));
         }
         let (email, subject) = parse_jwt_identity(&p.id_token);
-        Ok(PollOutcome::Token(build_token_data(&p.access_token, &p.refresh_token, &p.id_token, &p.token_type, p.expires_in, email, subject)))
+        Ok(PollOutcome::Token(build_token_data(
+            &p.access_token,
+            &p.refresh_token,
+            &p.id_token,
+            &p.token_type,
+            p.expires_in,
+            email,
+            subject,
+        )))
     }
 
     /// Refreshes tokens, discovering the token endpoint when none is stored. Single-flight per
     /// refresh token.
-    pub async fn refresh_tokens(&self, refresh_token: &str, token_endpoint: &str) -> Result<TokenData> {
+    pub async fn refresh_tokens(
+        &self,
+        refresh_token: &str,
+        token_endpoint: &str,
+    ) -> Result<TokenData> {
         let refresh_token = refresh_token.trim();
         if refresh_token.is_empty() {
-            return Err(AuthFlowError::other("xai token refresh: refresh token is required"));
+            return Err(AuthFlowError::other(
+                "xai token refresh: refresh token is required",
+            ));
         }
         let mut endpoint = token_endpoint.trim().to_string();
         if endpoint.is_empty() {
@@ -325,14 +419,22 @@ impl XaiAuth {
             .run(refresh_token, move || async move {
                 this.post_token_form(
                     &endpoint,
-                    &[("grant_type", "refresh_token"), ("client_id", CLIENT_ID), ("refresh_token", &rt)],
+                    &[
+                        ("grant_type", "refresh_token"),
+                        ("client_id", CLIENT_ID),
+                        ("refresh_token", &rt),
+                    ],
                 )
                 .await
             })
             .await
     }
 
-    async fn post_token_form(&self, token_endpoint: &str, form: &[(&str, &str)]) -> Result<TokenData> {
+    async fn post_token_form(
+        &self,
+        token_endpoint: &str,
+        form: &[(&str, &str)],
+    ) -> Result<TokenData> {
         let resp = self
             .client
             .post(token_endpoint.trim())
@@ -341,13 +443,22 @@ impl XaiAuth {
             .body(encode_query(form))
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("xai token request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("xai token response: read body: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!("xai token request failed: {}", e.without_url()))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "xai token response: read body: {}",
+                e.without_url()
+            ))
+        })?;
         if status != 200 {
             return Err(AuthFlowError::Status {
                 status,
-                message: format!("xai token request failed with status {status}: {}", body.trim()),
+                message: format!(
+                    "xai token request failed with status {status}: {}",
+                    body.trim()
+                ),
             });
         }
         #[derive(Deserialize, Default)]
@@ -363,12 +474,23 @@ impl XaiAuth {
             #[serde(default)]
             expires_in: i64,
         }
-        let p: Payload = serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("xai token response: parse body: {e}")))?;
+        let p: Payload = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("xai token response: parse body: {e}")))?;
         if p.access_token.trim().is_empty() {
-            return Err(AuthFlowError::other("xai token response missing access_token"));
+            return Err(AuthFlowError::other(
+                "xai token response missing access_token",
+            ));
         }
         let (email, subject) = parse_jwt_identity(&p.id_token);
-        Ok(build_token_data(&p.access_token, &p.refresh_token, &p.id_token, &p.token_type, p.expires_in, email, subject))
+        Ok(build_token_data(
+            &p.access_token,
+            &p.refresh_token,
+            &p.id_token,
+            &p.token_type,
+            p.expires_in,
+            email,
+            subject,
+        ))
     }
 
     pub fn create_token_storage(&self, bundle: &AuthBundle) -> XaiTokenStorage {
@@ -384,7 +506,11 @@ impl XaiAuth {
             last_refresh: bundle.last_refresh.clone(),
             email: bundle.token_data.email.trim().to_string(),
             subject: bundle.token_data.subject.clone(),
-            base_url: if base.is_empty() { DEFAULT_API_BASE_URL.to_string() } else { base.to_string() },
+            base_url: if base.is_empty() {
+                DEFAULT_API_BASE_URL.to_string()
+            } else {
+                base.to_string()
+            },
             redirect_uri: bundle.redirect_uri.clone(),
             token_endpoint: bundle.token_endpoint.clone(),
             auth_kind: "oauth".into(),
@@ -398,7 +524,15 @@ enum PollOutcome {
     SlowDown,
 }
 
-fn build_token_data(access: &str, refresh: &str, id_token: &str, token_type: &str, expires_in: i64, email: String, subject: String) -> TokenData {
+fn build_token_data(
+    access: &str,
+    refresh: &str,
+    id_token: &str,
+    token_type: &str,
+    expires_in: i64,
+    email: String,
+    subject: String,
+) -> TokenData {
     let expire = if expires_in > 0 {
         format_rfc3339_utc(chrono::Utc::now() + chrono::Duration::seconds(expires_in))
     } else {
@@ -418,8 +552,17 @@ fn build_token_data(access: &str, refresh: &str, id_token: &str, token_type: &st
 
 /// `(email, sub)` from the id_token payload; empty when absent or unparseable.
 pub fn parse_jwt_identity(token: &str) -> (String, String) {
-    let Some(claims) = parse_claims_map(token) else { return (String::new(), String::new()) };
-    let get = |k: &str| claims.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let Some(claims) = parse_claims_map(token) else {
+        return (String::new(), String::new());
+    };
+    let get = |k: &str| {
+        claims
+            .get(k)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
     (get("email"), get("sub"))
 }
 
@@ -428,7 +571,13 @@ fn sanitize_file_segment(value: &str) -> String {
     let mapped: String = value
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-') { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
     mapped.trim_matches('-').to_string()
 }
@@ -449,10 +598,16 @@ pub fn credential_file_name(email: &str, subject: &str) -> String {
 /// Login tail of `XAIAuthenticator.Login`: storage + metadata + attributes.
 pub fn build_auth_record(storage: XaiTokenStorage) -> Result<Auth> {
     if storage.access_token.trim().is_empty() {
-        return Err(AuthFlowError::other("xai token storage missing access token"));
+        return Err(AuthFlowError::other(
+            "xai token storage missing access token",
+        ));
     }
     let file_name = credential_file_name(&storage.email, &storage.subject);
-    let label = if storage.email.trim().is_empty() { "xAI".to_string() } else { storage.email.trim().to_string() };
+    let label = if storage.email.trim().is_empty() {
+        "xAI".to_string()
+    } else {
+        storage.email.trim().to_string()
+    };
 
     let mut metadata = Metadata::new();
     metadata.insert("type".into(), "xai".into());
@@ -464,7 +619,10 @@ pub fn build_auth_record(storage: XaiTokenStorage) -> Result<Auth> {
     metadata.insert("expired".into(), storage.expire.clone().into());
     metadata.insert("last_refresh".into(), storage.last_refresh.clone().into());
     metadata.insert("base_url".into(), storage.base_url.clone().into());
-    metadata.insert("token_endpoint".into(), storage.token_endpoint.clone().into());
+    metadata.insert(
+        "token_endpoint".into(),
+        storage.token_endpoint.clone().into(),
+    );
     metadata.insert("auth_kind".into(), "oauth".into());
     if !storage.email.is_empty() {
         metadata.insert("email".into(), storage.email.clone().into());
@@ -476,7 +634,8 @@ pub fn build_auth_record(storage: XaiTokenStorage) -> Result<Auth> {
     let mut auth = Auth::new(file_name, "xai");
     auth.label = label;
     auth.attributes.insert("auth_kind".into(), "oauth".into());
-    auth.attributes.insert("base_url".into(), storage.base_url.clone());
+    auth.attributes
+        .insert("base_url".into(), storage.base_url.clone());
     auth.storage = Some(TokenStorage::Xai(storage));
     auth.metadata = metadata;
     Ok(auth)
@@ -504,7 +663,8 @@ pub fn apply_refresh_to_auth(auth: &mut Auth, td: &TokenData, token_endpoint: &s
     m.insert("last_refresh".into(), now_rfc3339_utc().into());
     auth.attributes.insert("auth_kind".into(), "oauth".into());
     if auth.attr("base_url").is_empty() {
-        auth.attributes.insert("base_url".into(), DEFAULT_API_BASE_URL.into());
+        auth.attributes
+            .insert("base_url".into(), DEFAULT_API_BASE_URL.into());
     }
 }
 
@@ -527,8 +687,14 @@ mod tests {
     #[test]
     fn identity_and_file_names() {
         let t = make_jwt(&json!({"email": " U@x.ai ", "sub": "sub-1"}));
-        assert_eq!(parse_jwt_identity(&t), ("U@x.ai".to_string(), "sub-1".to_string()));
-        assert_eq!(parse_jwt_identity("garbage"), (String::new(), String::new()));
+        assert_eq!(
+            parse_jwt_identity(&t),
+            ("U@x.ai".to_string(), "sub-1".to_string())
+        );
+        assert_eq!(
+            parse_jwt_identity("garbage"),
+            (String::new(), String::new())
+        );
         assert_eq!(credential_file_name("a b@x.ai", ""), "xai-a-b@x.ai.json");
         assert_eq!(credential_file_name("", "sub/1"), "xai-sub-1.json");
         assert!(credential_file_name("", "").starts_with("xai-"));
@@ -538,7 +704,15 @@ mod tests {
     fn auth_record_matches_go_shape() {
         let svc = XaiAuth::with_client(reqwest::Client::new());
         let bundle = AuthBundle {
-            token_data: build_token_data("at", "rt", "", "Bearer", 3600, "u@x.ai".into(), "sub".into()),
+            token_data: build_token_data(
+                "at",
+                "rt",
+                "",
+                "Bearer",
+                3600,
+                "u@x.ai".into(),
+                "sub".into(),
+            ),
             last_refresh: "2026-10-01T00:00:00Z".into(),
             base_url: "".into(),
             redirect_uri: "".into(),

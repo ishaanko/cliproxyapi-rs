@@ -69,10 +69,17 @@ impl CallbackServer {
     /// Binds the provider's port (all interfaces, like Go's `:port`; Devin binds loopback) and
     /// starts serving. Fails with `PortInUse` when the port is taken.
     pub async fn start(flavor: Flavor, port: u16) -> Result<CallbackServer, AuthFlowError> {
-        let port = if port == 0 && flavor != Flavor::Devin { flavor.default_port() } else { port };
+        let port = if port == 0 && flavor != Flavor::Devin {
+            flavor.default_port()
+        } else {
+            port
+        };
         let listener = bind(flavor, port).await.map_err(|e| {
             if e.kind() == io::ErrorKind::AddrInUse {
-                AuthFlowError::authentication(AuthErrorKind::PortInUse, format!("port {port} is already in use"))
+                AuthFlowError::authentication(
+                    AuthErrorKind::PortInUse,
+                    format!("port {port} is already in use"),
+                )
             } else {
                 AuthFlowError::authentication(AuthErrorKind::ServerStartFailed, e)
             }
@@ -81,14 +88,24 @@ impl CallbackServer {
         let (tx, rx) = mpsc::channel(1);
         let task = tokio::spawn(async move {
             loop {
-                let Ok((stream, _)) = listener.accept().await else { break };
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let tx = tx.clone();
                 tokio::spawn(async move {
-                    let _ = tokio::time::timeout(Duration::from_secs(10), serve_connection(stream, flavor, tx)).await;
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(10),
+                        serve_connection(stream, flavor, tx),
+                    )
+                    .await;
                 });
             }
         });
-        Ok(CallbackServer { port: bound, results: rx, task })
+        Ok(CallbackServer {
+            port: bound,
+            results: rx,
+            task,
+        })
     }
 
     /// Actual listening port (differs from the request when 0 was asked for).
@@ -141,12 +158,16 @@ impl CallbackForwarder {
     pub async fn start(port: u16, target_base: &str) -> Result<CallbackForwarder, AuthFlowError> {
         let listener = TcpListener::bind(SocketAddr::from(([0, 0, 0, 0], port)))
             .await
-            .map_err(|e| AuthFlowError::Config(format!("failed to listen on 0.0.0.0:{port}: {e}")))?;
+            .map_err(|e| {
+                AuthFlowError::Config(format!("failed to listen on 0.0.0.0:{port}: {e}"))
+            })?;
         let bound = listener.local_addr().map(|a| a.port()).unwrap_or(port);
         let target = target_base.to_string();
         let task = tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let target = target.clone();
                 tokio::spawn(async move {
                     let _ = tokio::time::timeout(Duration::from_secs(5), async {
@@ -212,11 +233,19 @@ impl Response {
     fn text(status: u16, body: impl Into<String>) -> Self {
         let mut body: String = body.into();
         body.push('\n');
-        Response { status, headers: vec![("Content-Type", "text/plain; charset=utf-8".into())], body }
+        Response {
+            status,
+            headers: vec![("Content-Type", "text/plain; charset=utf-8".into())],
+            body,
+        }
     }
 
     fn html(status: u16, body: String) -> Self {
-        Response { status, headers: vec![("Content-Type", "text/html; charset=utf-8".into())], body }
+        Response {
+            status,
+            headers: vec![("Content-Type", "text/html; charset=utf-8".into())],
+            body,
+        }
     }
 
     fn redirect(location: &str) -> Self {
@@ -243,13 +272,18 @@ impl Response {
 }
 
 async fn serve_connection(mut stream: TcpStream, flavor: Flavor, tx: mpsc::Sender<OAuthResult>) {
-    let Some((method, target)) = read_request_line(&mut stream).await else { return };
+    let Some((method, target)) = read_request_line(&mut stream).await else {
+        return;
+    };
     let response = route(flavor, &method, &target, &tx);
     let mut head = format!("HTTP/1.1 {} {}\r\n", response.status, response.reason());
     for (k, v) in &response.headers {
         head.push_str(&format!("{k}: {v}\r\n"));
     }
-    head.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", response.body.len()));
+    head.push_str(&format!(
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        response.body.len()
+    ));
     let _ = stream.write_all(head.as_bytes()).await;
     let _ = stream.write_all(response.body.as_bytes()).await;
     let _ = stream.shutdown().await;
@@ -279,12 +313,19 @@ fn route(flavor: Flavor, method: &str, target: &str, tx: &mpsc::Sender<OAuthResu
     let Ok(url) = url::Url::parse(&format!("http://localhost{target}")) else {
         return Response::text(400, "Bad Request");
     };
-    let q = |key: &str| url.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.into_owned()).unwrap_or_default();
+    let q = |key: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default()
+    };
     let path = url.path();
 
     if path == flavor.callback_path() {
         return match flavor {
-            Flavor::Claude | Flavor::Codex => browser_callback(method, &q("code"), &q("state"), &q("error"), tx),
+            Flavor::Claude | Flavor::Codex => {
+                browser_callback(method, &q("code"), &q("state"), &q("error"), tx)
+            }
             Flavor::Antigravity => antigravity_callback(&q, tx),
             Flavor::Devin => devin_callback(&q, tx),
         };
@@ -304,26 +345,57 @@ fn send(tx: &mpsc::Sender<OAuthResult>, result: OAuthResult) {
 }
 
 /// Claude and Codex share the same handler.
-fn browser_callback(method: &str, code: &str, state: &str, error: &str, tx: &mpsc::Sender<OAuthResult>) -> Response {
+fn browser_callback(
+    method: &str,
+    code: &str,
+    state: &str,
+    error: &str,
+    tx: &mpsc::Sender<OAuthResult>,
+) -> Response {
     if method != "GET" {
         return Response::text(405, "Method not allowed");
     }
     if !error.is_empty() {
         tracing::error!("OAuth error received: {error}");
-        send(tx, OAuthResult { error: error.to_string(), ..Default::default() });
+        send(
+            tx,
+            OAuthResult {
+                error: error.to_string(),
+                ..Default::default()
+            },
+        );
         return Response::text(400, format!("OAuth error: {error}"));
     }
     if code.is_empty() {
         tracing::error!("No authorization code received");
-        send(tx, OAuthResult { error: "no_code".into(), ..Default::default() });
+        send(
+            tx,
+            OAuthResult {
+                error: "no_code".into(),
+                ..Default::default()
+            },
+        );
         return Response::text(400, "No authorization code received");
     }
     if state.is_empty() {
         tracing::error!("No state parameter received");
-        send(tx, OAuthResult { error: "no_state".into(), ..Default::default() });
+        send(
+            tx,
+            OAuthResult {
+                error: "no_state".into(),
+                ..Default::default()
+            },
+        );
         return Response::text(400, "No state parameter received");
     }
-    send(tx, OAuthResult { code: code.to_string(), state: state.to_string(), error: String::new() });
+    send(
+        tx,
+        OAuthResult {
+            code: code.to_string(),
+            state: state.to_string(),
+            error: String::new(),
+        },
+    );
     Response::redirect("/success")
 }
 
@@ -336,9 +408,15 @@ fn antigravity_callback(q: &dyn Fn(&str) -> String, tx: &mpsc::Sender<OAuthResul
     let ok = !result.code.is_empty() && result.error.is_empty();
     send(tx, result);
     if ok {
-        Response::html(200, "<h1>Login successful</h1><p>You can close this window.</p>".into())
+        Response::html(
+            200,
+            "<h1>Login successful</h1><p>You can close this window.</p>".into(),
+        )
     } else {
-        Response::html(200, "<h1>Login failed</h1><p>Please check the CLI output.</p>".into())
+        Response::html(
+            200,
+            "<h1>Login failed</h1><p>Please check the CLI output.</p>".into(),
+        )
     }
 }
 
@@ -355,27 +433,60 @@ fn devin_callback(q: &dyn Fn(&str) -> String, tx: &mpsc::Sender<OAuthResult>) ->
         if msg.is_empty() {
             msg = "missing authorization code".into();
         }
-        send(tx, OAuthResult { error: msg.clone(), ..Default::default() });
+        send(
+            tx,
+            OAuthResult {
+                error: msg.clone(),
+                ..Default::default()
+            },
+        );
         return Response::html(400, DEVIN_FAILURE_HTML.replace("%s", &html_escape(&msg)));
     }
-    send(tx, OAuthResult { code, state, error: String::new() });
+    send(
+        tx,
+        OAuthResult {
+            code,
+            state,
+            error: String::new(),
+        },
+    );
     Response::html(200, DEVIN_SUCCESS_HTML.to_string())
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&#34;").replace('\'', "&#39;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&#34;")
+        .replace('\'', "&#39;")
 }
 
 /// Success page with `{{PLATFORM_URL}}` / `{{SETUP_NOTICE}}` substituted.
 fn success_page(flavor: Flavor, setup_required: bool, platform_url: &str) -> String {
     let (page, notice, default_url) = match flavor {
-        Flavor::Codex => (CODEX_SUCCESS_HTML, CODEX_SETUP_NOTICE, "https://platform.openai.com"),
-        _ => (CLAUDE_SUCCESS_HTML, CLAUDE_SETUP_NOTICE, "https://console.anthropic.com/"),
+        Flavor::Codex => (
+            CODEX_SUCCESS_HTML,
+            CODEX_SETUP_NOTICE,
+            "https://platform.openai.com",
+        ),
+        _ => (
+            CLAUDE_SUCCESS_HTML,
+            CLAUDE_SETUP_NOTICE,
+            "https://console.anthropic.com/",
+        ),
     };
-    let platform = if platform_url.is_empty() { default_url.to_string() } else { html_escape(platform_url) };
+    let platform = if platform_url.is_empty() {
+        default_url.to_string()
+    } else {
+        html_escape(platform_url)
+    };
     let html = page.replace("{{PLATFORM_URL}}", &platform);
     if setup_required {
-        html.replacen("{{SETUP_NOTICE}}", &notice.replace("{{PLATFORM_URL}}", &platform), 1)
+        html.replacen(
+            "{{SETUP_NOTICE}}",
+            &notice.replace("{{PLATFORM_URL}}", &platform),
+            1,
+        )
     } else {
         html.replacen("{{SETUP_NOTICE}}", "", 1)
     }
@@ -429,7 +540,9 @@ mod tests {
 
     async fn get(port: u16, target: &str) -> String {
         let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        s.write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes()).await.unwrap();
+        s.write_all(format!("GET {target} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+            .await
+            .unwrap();
         let mut out = String::new();
         s.read_to_string(&mut out).await.unwrap();
         out
@@ -437,15 +550,26 @@ mod tests {
 
     #[test]
     fn forward_location_preserves_query() {
-        assert_eq!(forward_location("http://127.0.0.1:8317/codex/callback", "/auth/callback?code=a&state=b"), "http://127.0.0.1:8317/codex/callback?code=a&state=b");
-        assert_eq!(forward_location("http://h/cb?x=1", "/p?code=a"), "http://h/cb?x=1&code=a");
+        assert_eq!(
+            forward_location(
+                "http://127.0.0.1:8317/codex/callback",
+                "/auth/callback?code=a&state=b"
+            ),
+            "http://127.0.0.1:8317/codex/callback?code=a&state=b"
+        );
+        assert_eq!(
+            forward_location("http://h/cb?x=1", "/p?code=a"),
+            "http://h/cb?x=1&code=a"
+        );
         assert_eq!(forward_location("http://h/cb", "/p"), "http://h/cb");
     }
 
     #[tokio::test]
     async fn forwarder_redirects_with_query() {
         let port = free_port();
-        let fwd = CallbackForwarder::start(port, "http://127.0.0.1:9/anthropic/callback").await.unwrap();
+        let fwd = CallbackForwarder::start(port, "http://127.0.0.1:9/anthropic/callback")
+            .await
+            .unwrap();
         assert_eq!(fwd.port(), port);
         let resp = get(port, "/callback?code=c&state=s").await;
         assert!(resp.starts_with("HTTP/1.1 302"), "{resp}");
@@ -455,13 +579,18 @@ mod tests {
 
     #[tokio::test]
     async fn devin_flavor_delivers_result_on_loopback() {
-        let mut server = CallbackServer::start(Flavor::Devin, 0).await.unwrap_or_else(|_| unreachable!());
+        let mut server = CallbackServer::start(Flavor::Devin, 0)
+            .await
+            .unwrap_or_else(|_| unreachable!());
         let port = server.port();
         // Devin flavor serves /callback on loopback with an ephemeral port.
         let resp = get(port, "/callback?code=abc&state=xyz").await;
         assert!(resp.starts_with("HTTP/1.1 200"), "{resp}");
         let r = server.wait(Duration::from_secs(2)).await.unwrap();
-        assert_eq!((r.code.as_str(), r.state.as_str(), r.error.as_str()), ("abc", "xyz", ""));
+        assert_eq!(
+            (r.code.as_str(), r.state.as_str(), r.error.as_str()),
+            ("abc", "xyz", "")
+        );
     }
 
     #[tokio::test]
@@ -481,7 +610,10 @@ mod tests {
 
         let resp = get(port, "/auth/callback?code=c2").await;
         assert!(resp.starts_with("HTTP/1.1 400") && resp.contains("No state parameter received"));
-        assert_eq!(server.wait(Duration::from_secs(2)).await.unwrap().error, "no_state");
+        assert_eq!(
+            server.wait(Duration::from_secs(2)).await.unwrap().error,
+            "no_state"
+        );
     }
 
     #[tokio::test]
@@ -489,7 +621,10 @@ mod tests {
         let port = free_port();
         let _first = CallbackServer::start(Flavor::Claude, port).await.unwrap();
         match CallbackServer::start(Flavor::Claude, port).await {
-            Err(AuthFlowError::Authentication { kind: AuthErrorKind::PortInUse, .. }) => {}
+            Err(AuthFlowError::Authentication {
+                kind: AuthErrorKind::PortInUse,
+                ..
+            }) => {}
             other => panic!("expected PortInUse, got {:?}", other.err()),
         }
     }
@@ -498,12 +633,19 @@ mod tests {
     async fn wait_times_out_with_callback_timeout() {
         let mut server = CallbackServer::start(Flavor::Devin, 0).await.unwrap();
         match server.wait(Duration::from_millis(50)).await {
-            Err(AuthFlowError::Authentication { kind: AuthErrorKind::CallbackTimeout, .. }) => {}
+            Err(AuthFlowError::Authentication {
+                kind: AuthErrorKind::CallbackTimeout,
+                ..
+            }) => {}
             other => panic!("unexpected {other:?}"),
         }
     }
 
     fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
     }
 }

@@ -38,10 +38,10 @@ pub fn normalize_credential_metadata(metadata: &mut Metadata) {
         .collect();
     for key in legacy {
         let canonical = canonical_credential_metadata_key(&key).to_string();
-        if let Some(value) = metadata.shift_remove(&key) {
-            if !metadata.contains_key(&canonical) {
-                metadata.insert(canonical, value);
-            }
+        if let Some(value) = metadata.shift_remove(&key)
+            && !metadata.contains_key(&canonical)
+        {
+            metadata.insert(canonical, value);
         }
     }
 }
@@ -94,7 +94,11 @@ pub fn parse_weight_value(value: &Value) -> Result<i64, WeightError> {
                 return normalize_weight(i);
             }
             if let Some(u) = n.as_u64() {
-                return if u > WEIGHT_MAX as u64 { Err(WeightError::TooLarge) } else { Ok(u as i64) };
+                return if u > WEIGHT_MAX as u64 {
+                    Err(WeightError::TooLarge)
+                } else {
+                    Ok(u as i64)
+                };
             }
             let f = n.as_f64().ok_or(WeightError::NotInteger)?;
             if !f.is_finite() || f.trunc() != f {
@@ -132,9 +136,12 @@ pub fn validate_metadata_weight(metadata: &Metadata) -> Result<(), String> {
 /// `ApplyAuthWeightMetadata`: validates and mirrors `metadata.weight` into `attributes.weight`.
 pub fn apply_auth_weight_metadata(auth: &mut Auth, metadata: &Metadata) -> Result<(), String> {
     validate_auth_weight(auth)?;
-    let Some(raw) = metadata.get(ATTRIBUTE_WEIGHT) else { return Ok(()) };
+    let Some(raw) = metadata.get(ATTRIBUTE_WEIGHT) else {
+        return Ok(());
+    };
     let w = parse_weight_value(raw).map_err(|e| format!("invalid metadata weight: {e}"))?;
-    auth.attributes.insert(ATTRIBUTE_WEIGHT.to_string(), w.to_string());
+    auth.attributes
+        .insert(ATTRIBUTE_WEIGHT.to_string(), w.to_string());
     Ok(())
 }
 
@@ -144,7 +151,9 @@ pub fn apply_auth_weight_metadata(auth: &mut Auth, metadata: &Metadata) -> Resul
 /// plus `file_priority="true"`.
 pub fn apply_auth_priority_metadata(auth: &mut Auth, metadata: &Metadata) {
     auth.attributes.remove(ATTRIBUTE_FILE_PRIORITY);
-    let Some(raw) = metadata.get("priority") else { return };
+    let Some(raw) = metadata.get("priority") else {
+        return;
+    };
     let priority = match raw {
         Value::Number(n) => {
             // Go decodes JSON numbers as float64 and truncates through int().
@@ -162,7 +171,8 @@ pub fn apply_auth_priority_metadata(auth: &mut Auth, metadata: &Metadata) {
     };
     auth.metadata.insert("priority".to_string(), raw.clone());
     auth.attributes.insert("priority".to_string(), priority);
-    auth.attributes.insert(ATTRIBUTE_FILE_PRIORITY.to_string(), "true".to_string());
+    auth.attributes
+        .insert(ATTRIBUTE_FILE_PRIORITY.to_string(), "true".to_string());
 }
 
 // ---- Custom headers ----
@@ -170,7 +180,9 @@ pub fn apply_auth_priority_metadata(auth: &mut Auth, metadata: &Metadata) {
 /// `headers{}` of a credential file with blank names/values dropped.
 pub fn extract_custom_headers(metadata: &Metadata) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
-    let Some(Value::Object(headers)) = metadata.get("headers") else { return out };
+    let Some(Value::Object(headers)) = metadata.get("headers") else {
+        return out;
+    };
     for (key, value) in headers {
         let name = key.trim();
         if name.is_empty() {
@@ -225,7 +237,11 @@ pub fn parse_int_any(v: &Value) -> Option<i64> {
         Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
         Value::String(s) => {
             let t = s.trim();
-            if t.is_empty() { None } else { t.parse::<i64>().ok() }
+            if t.is_empty() {
+                None
+            } else {
+                t.parse::<i64>().ok()
+            }
         }
         _ => None,
     }
@@ -259,10 +275,10 @@ pub fn merge_existing_auth_metadata(target: &mut Auth, existing: &Metadata) {
     if existing.is_empty() {
         return;
     }
-    if !target.metadata.contains_key("disabled") {
-        if let Some(Value::Bool(d)) = existing.get("disabled") {
-            target.disabled = *d;
-        }
+    if !target.metadata.contains_key("disabled")
+        && let Some(Value::Bool(d)) = existing.get("disabled")
+    {
+        target.disabled = *d;
     }
     let is_meta = target.provider.trim().eq_ignore_ascii_case("meta");
     for (k, v) in existing {
@@ -298,7 +314,9 @@ mod tests {
 
     #[test]
     fn legacy_keys_are_rewritten_and_canonical_wins() {
-        let mut m = meta(json!({"proxy-url": "http://a", "proxy_url": "http://b", "request-retry": 2, "x": 1}));
+        let mut m = meta(
+            json!({"proxy-url": "http://a", "proxy_url": "http://b", "request-retry": 2, "x": 1}),
+        );
         normalize_credential_metadata(&mut m);
         assert_eq!(m.get("proxy_url"), Some(&json!("http://b")));
         assert_eq!(m.get("request_retry"), Some(&json!(2)));
@@ -310,9 +328,18 @@ mod tests {
         assert_eq!(parse_weight_value(&json!("")).unwrap(), 1);
         assert_eq!(parse_weight_value(&json!(-5)).unwrap(), 0);
         assert_eq!(parse_weight_value(&json!(1_000_000)).unwrap(), 1_000_000);
-        assert_eq!(parse_weight_value(&json!(1_000_001)), Err(WeightError::TooLarge));
-        assert_eq!(parse_weight_value(&json!(1.5)), Err(WeightError::NotInteger));
-        assert_eq!(parse_weight_value(&json!(true)), Err(WeightError::NotInteger));
+        assert_eq!(
+            parse_weight_value(&json!(1_000_001)),
+            Err(WeightError::TooLarge)
+        );
+        assert_eq!(
+            parse_weight_value(&json!(1.5)),
+            Err(WeightError::NotInteger)
+        );
+        assert_eq!(
+            parse_weight_value(&json!(true)),
+            Err(WeightError::NotInteger)
+        );
     }
 
     #[test]
@@ -338,8 +365,14 @@ mod tests {
         a.metadata = m;
         apply_custom_headers_from_metadata(&mut a);
         assert_eq!(a.attributes.get("priority").map(String::as_str), Some("7"));
-        assert_eq!(a.attributes.get("file_priority").map(String::as_str), Some("true"));
-        assert_eq!(a.attributes.get("header:X-A").map(String::as_str), Some("v"));
+        assert_eq!(
+            a.attributes.get("file_priority").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            a.attributes.get("header:X-A").map(String::as_str),
+            Some("v")
+        );
         assert_eq!(a.attributes.len(), 3);
     }
 }

@@ -28,7 +28,16 @@ pub fn provider_refresh_lead(provider: &str) -> Option<Duration> {
 pub fn supports_refresh(auth: &Auth) -> bool {
     matches!(
         Provider::parse(&auth.provider),
-        Some(Provider::Claude | Provider::Codex | Provider::Antigravity | Provider::Xai | Provider::Kimi | Provider::KimiAi | Provider::KimiAiDot | Provider::Meta)
+        Some(
+            Provider::Claude
+                | Provider::Codex
+                | Provider::Antigravity
+                | Provider::Xai
+                | Provider::Kimi
+                | Provider::KimiAi
+                | Provider::KimiAiDot
+                | Provider::Meta
+        )
     )
 }
 
@@ -37,7 +46,11 @@ pub fn supports_refresh(auth: &Auth) -> bool {
 ///
 /// `global_proxy` is used when the auth has no proxy of its own.
 pub async fn refresh_auth(auth: &Auth, global_proxy: &str) -> Result<Auth> {
-    let proxy = if auth.proxy_url.trim().is_empty() { global_proxy.to_string() } else { auth.proxy_url.trim().to_string() };
+    let proxy = if auth.proxy_url.trim().is_empty() {
+        global_proxy.to_string()
+    } else {
+        auth.proxy_url.trim().to_string()
+    };
     let mut updated = auth.clone();
     let provider = Provider::parse(&auth.provider);
     match provider {
@@ -46,7 +59,9 @@ pub async fn refresh_auth(auth: &Auth, global_proxy: &str) -> Result<Auth> {
             if rt.is_empty() {
                 return Ok(updated);
             }
-            let td = ClaudeAuth::new(&proxy)?.refresh_tokens_with_retry(&rt, 3).await?;
+            let td = ClaudeAuth::new(&proxy)?
+                .refresh_tokens_with_retry(&rt, 3)
+                .await?;
             claude::apply_refresh_to_auth(&mut updated, &td);
         }
         Some(Provider::Codex) => {
@@ -54,7 +69,9 @@ pub async fn refresh_auth(auth: &Auth, global_proxy: &str) -> Result<Auth> {
             if rt.is_empty() {
                 return Ok(updated);
             }
-            let td = CodexAuth::new(&proxy)?.refresh_tokens_with_retry(&rt, 3).await?;
+            let td = CodexAuth::new(&proxy)?
+                .refresh_tokens_with_retry(&rt, 3)
+                .await?;
             codex::apply_refresh_to_auth(&mut updated, &td);
         }
         Some(Provider::Antigravity) => refresh_antigravity(&mut updated, &proxy).await?,
@@ -93,7 +110,8 @@ async fn refresh_antigravity(auth: &mut Auth, proxy: &str) -> Result<()> {
     if auth.meta_str("project_id").is_empty() {
         match svc.fetch_project_id(&token.access_token).await {
             Ok(p) if !p.trim().is_empty() => {
-                auth.metadata.insert("project_id".into(), Value::String(p.trim().to_string()));
+                auth.metadata
+                    .insert("project_id".into(), Value::String(p.trim().to_string()));
             }
             Ok(_) => {}
             Err(e) => tracing::warn!("antigravity executor: ensure project id failed: {e}"),
@@ -113,7 +131,10 @@ async fn refresh_meta(auth: &mut Auth, proxy: &str) -> Result<()> {
         if has_token {
             return Ok(());
         }
-        return Err(AuthFlowError::Status { status: 401, message: "meta executor: missing API key or DCA token".into() });
+        return Err(AuthFlowError::Status {
+            status: 401,
+            message: "meta executor: missing API key or DCA token".into(),
+        });
     }
     let minted = MetaAuth::new(proxy)?
         .mint_api_key(&dca)
@@ -129,9 +150,18 @@ mod tests {
 
     #[test]
     fn refresh_leads_by_provider_key() {
-        assert_eq!(provider_refresh_lead("codex"), Some(Duration::from_secs(86_400)));
-        assert_eq!(provider_refresh_lead("Claude"), Some(Duration::from_secs(14_400)));
-        assert_eq!(provider_refresh_lead("kimi-ai"), Some(Duration::from_secs(300)));
+        assert_eq!(
+            provider_refresh_lead("codex"),
+            Some(Duration::from_secs(86_400))
+        );
+        assert_eq!(
+            provider_refresh_lead("Claude"),
+            Some(Duration::from_secs(14_400))
+        );
+        assert_eq!(
+            provider_refresh_lead("kimi-ai"),
+            Some(Duration::from_secs(300))
+        );
         assert_eq!(provider_refresh_lead("xai"), Some(Duration::from_secs(300)));
         assert_eq!(provider_refresh_lead("meta"), None);
         assert_eq!(provider_refresh_lead("vertex"), None);
@@ -146,13 +176,21 @@ mod tests {
             assert_eq!(out.metadata, a.metadata, "{provider}");
         }
         let vertex = Auth::new("v.json", "vertex");
-        assert!(refresh_auth(&vertex, "").await.unwrap_err().to_string().contains("refresh not supported"));
+        assert!(
+            refresh_auth(&vertex, "")
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("refresh not supported")
+        );
         assert!(!supports_refresh(&vertex) && supports_refresh(&Auth::new("c.json", "claude")));
         // Meta with a usable key and no DCA token is a no-op; with nothing it is a 401.
         let mut m = Auth::new("m.json", "meta");
         m.metadata.insert("access_token".into(), "key".into());
         assert!(refresh_auth(&m, "").await.is_ok());
-        let err = refresh_auth(&Auth::new("m2.json", "meta"), "").await.unwrap_err();
+        let err = refresh_auth(&Auth::new("m2.json", "meta"), "")
+            .await
+            .unwrap_err();
         assert_eq!(err.status_code(), Some(401));
     }
 }

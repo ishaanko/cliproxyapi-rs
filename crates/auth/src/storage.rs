@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::credmeta::Metadata;
-use crate::kimi::{is_kimi_ai_domain, resolve_kimi_api_base_url, KIMI_AI_DOMAIN, KIMI_DEFAULT_DOMAIN};
+use crate::kimi::{
+    KIMI_AI_DOMAIN, KIMI_DEFAULT_DOMAIN, is_kimi_ai_domain, resolve_kimi_api_base_url,
+};
 use crate::util::{encode_compact, encode_pretty};
 
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +82,11 @@ enum Layout {
 fn merge_metadata<T: Serialize>(source: &T, metadata: &Metadata) -> Result<Value, StorageError> {
     let mut data = match serde_json::to_value(source)? {
         Value::Object(m) => m,
-        _ => return Err(StorageError::Invalid("token storage did not serialize to an object".into())),
+        _ => {
+            return Err(StorageError::Invalid(
+                "token storage did not serialize to an object".into(),
+            ));
+        }
     };
     for (k, v) in metadata {
         data.insert(k.clone(), v.clone());
@@ -98,11 +104,14 @@ fn write_encoded(path: &Path, data: &Value, layout: Layout) -> Result<(), Storag
 
 /// `os.MkdirAll(dir, 0700)` + `os.Create(path)`: truncating in-place write, new files get 0600.
 pub(crate) fn write_file_in_place(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
-    let io_err = |source| StorageError::Io { path: path.display().to_string(), source };
-    if let Some(dir) = path.parent() {
-        if !dir.as_os_str().is_empty() {
-            mkdir_all_private(dir).map_err(io_err)?;
-        }
+    let io_err = |source| StorageError::Io {
+        path: path.display().to_string(),
+        source,
+    };
+    if let Some(dir) = path.parent()
+        && !dir.as_os_str().is_empty()
+    {
+        mkdir_all_private(dir).map_err(io_err)?;
     }
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
@@ -137,7 +146,7 @@ fn is_zero_i64(v: &i64) -> bool {
 // ---- Claude ----
 
 /// `ClaudeTokenStorage` (internal/auth/claude/token.go).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaudeTokenStorage {
     #[serde(default)]
     pub id_token: String,
@@ -155,7 +164,11 @@ pub struct ClaudeTokenStorage {
     pub organization_uuid: String,
     #[serde(default, skip_serializing_if = "is_empty_str")]
     pub organization_name: String,
-    #[serde(default, rename = "claude_device_ids", skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        default,
+        rename = "claude_device_ids",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub device_ids: Vec<String>,
     #[serde(default, rename = "type")]
     pub type_: String,
@@ -174,7 +187,7 @@ impl ClaudeTokenStorage {
 // ---- Codex ----
 
 /// `CodexTokenStorage` (internal/auth/codex/token.go).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexTokenStorage {
     #[serde(default)]
     pub id_token: String,
@@ -207,7 +220,7 @@ impl CodexTokenStorage {
 // ---- xAI ----
 
 /// xAI `TokenStorage` (internal/auth/xai/token.go).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct XaiTokenStorage {
     #[serde(default, rename = "type")]
     pub type_: String,
@@ -251,7 +264,7 @@ impl XaiTokenStorage {
 // ---- Kimi ----
 
 /// `KimiTokenStorage` (internal/auth/kimi/token.go).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KimiTokenStorage {
     #[serde(default)]
     pub access_token: String,
@@ -289,7 +302,12 @@ impl KimiTokenStorage {
         let mut s = self.clone();
         s.type_ = s.effective_type().to_string();
         if s.domain.is_empty() {
-            s.domain = if is_kimi_ai_domain(&s.type_) { KIMI_AI_DOMAIN } else { KIMI_DEFAULT_DOMAIN }.to_string();
+            s.domain = if is_kimi_ai_domain(&s.type_) {
+                KIMI_AI_DOMAIN
+            } else {
+                KIMI_DEFAULT_DOMAIN
+            }
+            .to_string();
         }
         if s.base_url.is_empty() {
             s.base_url = resolve_kimi_api_base_url(&s.domain).to_string();
@@ -316,7 +334,7 @@ impl KimiTokenStorage {
 // ---- Vertex ----
 
 /// `VertexCredentialStorage` (internal/auth/vertex/vertex_credentials.go).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VertexCredentialStorage {
     #[serde(default)]
     pub service_account: Metadata,
@@ -335,7 +353,9 @@ pub struct VertexCredentialStorage {
 impl VertexCredentialStorage {
     fn render(&self, metadata: &Metadata) -> Result<Value, StorageError> {
         if self.service_account.is_empty() {
-            return Err(StorageError::Invalid("vertex credential: service account content is empty".into()));
+            return Err(StorageError::Invalid(
+                "vertex credential: service account content is empty".into(),
+            ));
         }
         let mut s = self.clone();
         s.type_ = "vertex".into();
@@ -347,7 +367,7 @@ impl VertexCredentialStorage {
 
 /// `MetaTokenStorage` (internal/auth/meta/meta.go). Unlike the others it builds the file by hand and
 /// writes through a temp file + rename.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct MetaTokenStorage {
     pub access_token: String,
     pub dca_token: String,
@@ -416,8 +436,14 @@ impl MetaTokenStorage {
     }
 
     fn save(&self, path: &Path, metadata: &Metadata) -> Result<(), StorageError> {
-        let io_err = |source| StorageError::Io { path: path.display().to_string(), source };
-        let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let io_err = |source| StorageError::Io {
+            path: path.display().to_string(),
+            source,
+        };
+        let dir = path
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
         mkdir_all_private(dir).map_err(io_err)?;
         let text = encode_pretty(&self.render(metadata))?;
         let tmp = dir.join(format!(".meta-token-{}", crate::util::random_hex(8)));
@@ -464,7 +490,8 @@ mod tests {
             expire: "2026-10-01T20:00:00Z".into(),
             ..Default::default()
         };
-        let extra = meta(json!({"email": "u@x.com", "proxy_url": "http://p", "organization_uuid": "org"}));
+        let extra =
+            meta(json!({"email": "u@x.com", "proxy_url": "http://p", "organization_uuid": "org"}));
         let body = encode_compact(&s.render(&extra).unwrap()).unwrap();
         // Sorted keys, empty id_token present, empty account_uuid omitted, metadata merged, newline.
         let expected = format!(
@@ -485,8 +512,14 @@ mod tests {
 
     #[test]
     fn codex_plan_type_omitted_when_empty_and_metadata_wins() {
-        let s = CodexTokenStorage { email: "e".into(), plan_type: "".into(), ..Default::default() };
-        let v = s.render(&meta(json!({"email": "override", "websockets": true}))).unwrap();
+        let s = CodexTokenStorage {
+            email: "e".into(),
+            plan_type: "".into(),
+            ..Default::default()
+        };
+        let v = s
+            .render(&meta(json!({"email": "override", "websockets": true})))
+            .unwrap();
         assert!(v.get("plan_type").is_none());
         assert_eq!(v["email"], "override");
         assert_eq!(v["type"], "codex");
@@ -495,19 +528,32 @@ mod tests {
 
     #[test]
     fn kimi_fills_type_domain_and_base_url() {
-        let s = KimiTokenStorage { access_token: "t".into(), type_: "kimi-ai".into(), ..Default::default() };
+        let s = KimiTokenStorage {
+            access_token: "t".into(),
+            type_: "kimi-ai".into(),
+            ..Default::default()
+        };
         let v = s.render(&Metadata::new()).unwrap();
         assert_eq!(v["domain"], "kimi.ai");
         assert_eq!(v["base_url"], "https://api.kimi.ai/coding");
         let s = KimiTokenStorage::default();
         let v = s.render(&Metadata::new()).unwrap();
-        assert_eq!((v["type"].as_str(), v["domain"].as_str()), (Some("kimi"), Some("kimi.com")));
+        assert_eq!(
+            (v["type"].as_str(), v["domain"].as_str()),
+            (Some("kimi"), Some("kimi.com"))
+        );
     }
 
     #[test]
     fn meta_storage_protects_credential_fields() {
-        let s = MetaTokenStorage { access_token: "key".into(), email: "e@x".into(), ..Default::default() };
-        let v = s.render(&meta(json!({"access_token": "evil", "subs_tier_name": "pro"})));
+        let s = MetaTokenStorage {
+            access_token: "key".into(),
+            email: "e@x".into(),
+            ..Default::default()
+        };
+        let v = s.render(&meta(
+            json!({"access_token": "evil", "subs_tier_name": "pro"}),
+        ));
         assert_eq!(v["access_token"], "key");
         assert_eq!(v["subs_tier_name"], "pro");
         assert_eq!(v["auth_kind"], "oauth");
@@ -518,14 +564,21 @@ mod tests {
     fn save_writes_file_and_creates_dir() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nested/claude-x.json");
-        let st = TokenStorage::Claude(ClaudeTokenStorage { email: "e".into(), ..Default::default() });
+        let st = TokenStorage::Claude(ClaudeTokenStorage {
+            email: "e".into(),
+            ..Default::default()
+        });
         st.save_to_file(&path, &Metadata::new()).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.ends_with("}\n") && text.contains("\"type\":\"claude\""));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode() & 0o777;
+            let mode = std::fs::metadata(path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
             assert_eq!(mode, 0o700);
         }
     }

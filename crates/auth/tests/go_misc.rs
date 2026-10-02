@@ -20,28 +20,52 @@ fn misc() -> Value {
 }
 
 fn s<'a>(v: &'a Value, group: &str, key: &str) -> &'a str {
-    v[group][key].as_str().unwrap_or_else(|| panic!("missing {group}.{key}"))
+    v[group][key]
+        .as_str()
+        .unwrap_or_else(|| panic!("missing {group}.{key}"))
 }
 
 #[test]
 fn authorization_urls_match_go() {
     let m = misc();
-    let pkce = PkceCodes { code_verifier: "verifier".into(), code_challenge: "challenge-abc_123".into() };
+    let pkce = PkceCodes {
+        code_verifier: "verifier".into(),
+        code_challenge: "challenge-abc_123".into(),
+    };
     let http = reqwest::Client::new();
 
-    assert_eq!(ClaudeAuth::with_client(http.clone()).generate_auth_url("state-1", &pkce), s(&m, "auth_urls", "claude"));
-    assert_eq!(CodexAuth::with_client(http.clone()).generate_auth_url("state-1", &pkce), s(&m, "auth_urls", "codex"));
+    assert_eq!(
+        ClaudeAuth::with_client(http.clone()).generate_auth_url("state-1", &pkce),
+        s(&m, "auth_urls", "claude")
+    );
+    assert_eq!(
+        CodexAuth::with_client(http.clone()).generate_auth_url("state-1", &pkce),
+        s(&m, "auth_urls", "codex")
+    );
 
     let ag = AntigravityAuth::with_client(http.clone());
-    assert_eq!(ag.build_auth_url("state-1", ""), s(&m, "auth_urls", "antigravity"));
-    assert_eq!(ag.build_auth_url("s t/1", "http://localhost:4000/oauth-callback"), s(&m, "auth_urls", "antigravity_custom"));
+    assert_eq!(
+        ag.build_auth_url("state-1", ""),
+        s(&m, "auth_urls", "antigravity")
+    );
+    assert_eq!(
+        ag.build_auth_url("s t/1", "http://localhost:4000/oauth-callback"),
+        s(&m, "auth_urls", "antigravity_custom")
+    );
 
     let devin = DevinAuthService::with_client(http);
     assert_eq!(
-        devin.build_authorization_url("http://127.0.0.1:5000/callback", "challenge-abc_123", "state-1"),
+        devin.build_authorization_url(
+            "http://127.0.0.1:5000/callback",
+            "challenge-abc_123",
+            "state-1"
+        ),
         s(&m, "auth_urls", "devin")
     );
-    assert_eq!(devin.build_authorization_url("", "challenge-abc_123", "state-1"), s(&m, "auth_urls", "devin_paste"));
+    assert_eq!(
+        devin.build_authorization_url("", "challenge-abc_123", "state-1"),
+        s(&m, "auth_urls", "devin_paste")
+    );
 }
 
 #[test]
@@ -49,24 +73,54 @@ fn credential_file_names_match_go() {
     let m = misc();
     let n = |k: &str| s(&m, "file_names", k).to_string();
 
-    assert_eq!(claude::credential_file_name("a@b.com", "", ""), n("claude_legacy"));
-    assert_eq!(claude::credential_file_name(" a@b.com ", "org-1", "acc-1"), n("claude_org"));
-    assert_eq!(claude::credential_file_name("a@b.com", " ", "acc-1"), n("claude_account"));
+    assert_eq!(
+        claude::credential_file_name("a@b.com", "", ""),
+        n("claude_legacy")
+    );
+    assert_eq!(
+        claude::credential_file_name(" a@b.com ", "org-1", "acc-1"),
+        n("claude_org")
+    );
+    assert_eq!(
+        claude::credential_file_name("a@b.com", " ", "acc-1"),
+        n("claude_account")
+    );
 
-    assert_eq!(codex::credential_file_name("a@b.com", "Team Plus", "deadbeef", true), n("codex_full"));
-    assert_eq!(codex::credential_file_name("a@b.com", "free", "", true), n("codex_nohash"));
-    assert_eq!(codex::credential_file_name("a@b.com", " ", "deadbeef", true), n("codex_noplan"));
-    assert_eq!(codex::credential_file_name("a@b.com", "", "", true), n("codex_bare"));
-    assert_eq!(codex::credential_file_name("a@b.com", "pro", "", false), n("codex_noprefix"));
+    assert_eq!(
+        codex::credential_file_name("a@b.com", "Team Plus", "deadbeef", true),
+        n("codex_full")
+    );
+    assert_eq!(
+        codex::credential_file_name("a@b.com", "free", "", true),
+        n("codex_nohash")
+    );
+    assert_eq!(
+        codex::credential_file_name("a@b.com", " ", "deadbeef", true),
+        n("codex_noplan")
+    );
+    assert_eq!(
+        codex::credential_file_name("a@b.com", "", "", true),
+        n("codex_bare")
+    );
+    assert_eq!(
+        codex::credential_file_name("a@b.com", "pro", "", false),
+        n("codex_noprefix")
+    );
 
     assert_eq!(xai::credential_file_name("a b@x.ai", "sub"), n("xai_email"));
     assert_eq!(xai::credential_file_name("", "sub/1 2"), n("xai_sub"));
 
-    assert_eq!(meta::credential_file_name(" a+b@x.io ", "sub"), n("meta_email"));
+    assert_eq!(
+        meta::credential_file_name(" a+b@x.io ", "sub"),
+        n("meta_email")
+    );
     assert_eq!(meta::credential_file_name("", "sub"), n("meta_sub"));
     assert_eq!(meta::credential_file_name("", ""), n("meta_none"));
 
-    assert_eq!(antigravity::credential_file_name(" u@x.com "), n("antigravity"));
+    assert_eq!(
+        antigravity::credential_file_name(" u@x.com "),
+        n("antigravity")
+    );
     assert_eq!(antigravity::credential_file_name(""), n("antigravity_none"));
 }
 
@@ -95,19 +149,30 @@ fn vertex_private_key_normalization_matches_go_for_real_rsa_keys() {
     let pkcs1 = v["pkcs1_der_b64"].as_str().unwrap();
     let pkcs8 = v["pkcs8_der_b64"].as_str().unwrap();
     let body = |k: &str| v[k].as_str().unwrap().to_string();
-    let wrap = |b: String| format!("-----BEGIN RSA PRIVATE KEY-----\n{b}\n-----END RSA PRIVATE KEY-----\n");
+    let wrap = |b: String| {
+        format!("-----BEGIN RSA PRIVATE KEY-----\n{b}\n-----END RSA PRIVATE KEY-----\n")
+    };
 
     // PKCS#1 stays PKCS#1.
-    assert_eq!(normalized_key(&pem("RSA PRIVATE KEY", pkcs1)), wrap(body("expected_pem_body")));
+    assert_eq!(
+        normalized_key(&pem("RSA PRIVATE KEY", pkcs1)),
+        wrap(body("expected_pem_body"))
+    );
     // PKCS#8 is unwrapped to PKCS#1, byte-identical to Go's re-encoding.
-    assert_eq!(normalized_key(&pem("PRIVATE KEY", pkcs8)), wrap(body("from_pkcs8_body")));
+    assert_eq!(
+        normalized_key(&pem("PRIVATE KEY", pkcs8)),
+        wrap(body("from_pkcs8_body"))
+    );
     // Mangled input (one line, ANSI noise, CRLF) is rebuilt.
-    let mangled = format!("\u{1b}[0m-----BEGIN PRIVATE KEY-----{pkcs8}-----END PRIVATE KEY-----\r\n");
+    let mangled =
+        format!("\u{1b}[0m-----BEGIN PRIVATE KEY-----{pkcs8}-----END PRIVATE KEY-----\r\n");
     assert_eq!(normalized_key(&mangled), wrap(body("from_mangled_body")));
     // All three agree on the key material.
     assert_eq!(body("expected_pem_body"), body("from_pkcs8_body"));
     assert_eq!(
-        STANDARD.decode(body("expected_pem_body").replace('\n', "")).unwrap(),
+        STANDARD
+            .decode(body("expected_pem_body").replace('\n', ""))
+            .unwrap(),
         STANDARD.decode(pkcs1).unwrap()
     );
 }

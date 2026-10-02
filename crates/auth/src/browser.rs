@@ -4,11 +4,20 @@
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-const LINUX_BROWSERS: [&str; 6] = ["xdg-open", "x-www-browser", "www-browser", "firefox", "chromium", "google-chrome"];
+const LINUX_BROWSERS: [&str; 6] = [
+    "xdg-open",
+    "x-www-browser",
+    "www-browser",
+    "firefox",
+    "chromium",
+    "google-chrome",
+];
 
 fn on_path(cmd: &str) -> Option<PathBuf> {
     let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths).map(|p| p.join(cmd)).find(|p| p.is_file())
+    std::env::split_paths(&paths)
+        .map(|p| p.join(cmd))
+        .find(|p| p.is_file())
 }
 
 /// The command used to open URLs on this platform, when one exists.
@@ -16,7 +25,10 @@ fn opener() -> Option<(PathBuf, Vec<&'static str>)> {
     match std::env::consts::OS {
         "macos" => on_path("open").map(|p| (p, vec![])),
         "windows" => on_path("rundll32").map(|p| (p, vec!["url.dll,FileProtocolHandler"])),
-        "linux" => LINUX_BROWSERS.iter().find_map(|b| on_path(b)).map(|p| (p, vec![])),
+        "linux" => LINUX_BROWSERS
+            .iter()
+            .find_map(|b| on_path(b))
+            .map(|p| (p, vec![])),
         _ => None,
     }
 }

@@ -21,7 +21,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::antigravity::{self, AntigravityAuth};
-use crate::callback_server::{CallbackServer, Flavor};
+use crate::callback_server::{CallbackForwarder, CallbackServer, Flavor};
 use crate::claude::{self, ClaudeAuth};
 use crate::codex::{self, CodexAuth};
 use crate::devin::{self, DevinAuthService, ManualPaste, ManualPasteError};
@@ -40,7 +40,8 @@ use crate::xai::{self, XaiAuth};
 pub type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 
 /// Asks the user for a line of input (manual callback paste). `Err` aborts the login.
-pub type Prompt = Arc<dyn Fn(String) -> BoxFuture<std::result::Result<String, String>> + Send + Sync>;
+pub type Prompt =
+    Arc<dyn Fn(String) -> BoxFuture<std::result::Result<String, String>> + Send + Sync>;
 
 /// Prompt that prints the message and reads one line from stdin.
 pub fn stdin_prompt() -> Prompt {
@@ -51,7 +52,11 @@ pub fn stdin_prompt() -> Prompt {
                 print!("{message}");
                 let _ = std::io::stdout().flush();
                 let mut line = String::new();
-                std::io::stdin().lock().read_line(&mut line).map(|_| line).map_err(|e| e.to_string())
+                std::io::stdin()
+                    .lock()
+                    .read_line(&mut line)
+                    .map(|_| line)
+                    .map_err(|e| e.to_string())
             })
             .await
             .map_err(|e| e.to_string())?
@@ -169,6 +174,10 @@ pub struct LoginOptions {
     pub devin_redirect_uri: Option<String>,
     /// Provider endpoint overrides (tests, gateways). Unset fields use the real endpoints.
     pub endpoints: LoginEndpoints,
+    /// Management "web UI" mode: base URL of the main server's `/<provider>/callback` route. When
+    /// set, a temporary forwarder on the provider's fixed redirect port (54545, 1455, 51121)
+    /// redirects the browser there; it stops when the login ends.
+    pub webui_callback_target: Option<String>,
 }
 
 /// Optional endpoint overrides for the browser-flow providers.
@@ -185,7 +194,11 @@ impl LoginOptions {
     }
 
     pub fn management(proxy_url: &str) -> Self {
-        Self { mode: LoginMode::Management, proxy_url: proxy_url.to_string(), ..Default::default() }
+        Self {
+            mode: LoginMode::Management,
+            proxy_url: proxy_url.to_string(),
+            ..Default::default()
+        }
     }
 }
 
@@ -277,7 +290,10 @@ impl LoginSession {
     }
 
     /// Feeds a redirect (pasted URL, management callback endpoint) to the running login.
-    pub fn submit_callback(&self, payload: CallbackPayload) -> std::result::Result<(), crate::sessions::CallbackError> {
+    pub fn submit_callback(
+        &self,
+        payload: CallbackPayload,
+    ) -> std::result::Result<(), crate::sessions::CallbackError> {
         self.sessions.submit_callback(
             self.auth_dir.as_deref(),
             self.start.provider.session_name(),
@@ -309,7 +325,10 @@ struct Fail {
 }
 
 fn fail(err: AuthFlowError, session_msg: impl Into<String>) -> Fail {
-    Fail { err, session_msg: session_msg.into() }
+    Fail {
+        err,
+        session_msg: session_msg.into(),
+    }
 }
 
 impl From<AuthFlowError> for Fail {
@@ -323,7 +342,11 @@ impl From<AuthFlowError> for Fail {
 fn with_cause(message: &str, cause: &dyn std::fmt::Display) -> String {
     let detail = cause.to_string();
     let detail = detail.trim();
-    if detail.is_empty() { message.to_string() } else { format!("{message}: {detail}") }
+    if detail.is_empty() {
+        message.to_string()
+    } else {
+        format!("{message}: {detail}")
+    }
 }
 
 /// Everything a background flow needs.
@@ -344,11 +367,16 @@ impl Env {
     }
 
     fn pending(&self) -> bool {
-        self.sessions.is_pending(&self.state, self.provider.session_name())
+        self.sessions
+            .is_pending(&self.state, self.provider.session_name())
     }
 
     /// `guardOAuthSessionPendingForSave` + persist + `Complete`. A cancel mid-exchange prevents saving.
-    async fn finalize(&self, mut auth: Auth, save_fail_msg: &str) -> std::result::Result<LoginOutcome, Fail> {
+    async fn finalize(
+        &self,
+        mut auth: Auth,
+        save_fail_msg: &str,
+    ) -> std::result::Result<LoginOutcome, Fail> {
         if !self.pending() {
             return Err(fail(AuthFlowError::Cancelled, ""));
         }
@@ -358,7 +386,12 @@ impl Env {
             (auth, path)
         })
         .await
-        .map_err(|e| fail(AuthFlowError::other(format!("save task failed: {e}")), save_fail_msg))?;
+        .map_err(|e| {
+            fail(
+                AuthFlowError::other(format!("save task failed: {e}")),
+                save_fail_msg,
+            )
+        })?;
         let (auth, path) = saved;
         let saved_path = path.map_err(|e| fail(e, save_fail_msg))?;
         self.sessions.complete(&self.state);
@@ -383,7 +416,8 @@ struct Redirect {
 }
 
 /// Parses pasted input; `Ok(None)` means "keep waiting".
-type PasteParser = Box<dyn Fn(&str) -> std::result::Result<Option<Waited>, AuthFlowError> + Send + Sync>;
+type PasteParser =
+    Box<dyn Fn(&str) -> std::result::Result<Option<Waited>, AuthFlowError> + Send + Sync>;
 
 struct WaitCfg {
     timeout: Duration,
@@ -410,7 +444,11 @@ fn default_paste_parser() -> PasteParser {
 /// Waits for the redirect from the local server, the session inbox, a callback file (management)
 /// or a manual paste, whichever comes first; fails on timeout or when the session stops being
 /// pending (cancel).
-async fn wait_for_redirect(env: &mut Env, server: &mut Option<CallbackServer>, cfg: WaitCfg) -> std::result::Result<Waited, Fail> {
+async fn wait_for_redirect(
+    env: &mut Env,
+    server: &mut Option<CallbackServer>,
+    cfg: WaitCfg,
+) -> std::result::Result<Waited, Fail> {
     let deadline = tokio::time::Instant::now() + cfg.timeout;
     let mut tick = tokio::time::interval(Duration::from_millis(500));
     let prompt_timer = tokio::time::sleep(cfg.prompt.map(|(_, d)| d).unwrap_or(Duration::MAX / 4));
@@ -451,11 +489,10 @@ async fn wait_for_redirect(env: &mut Env, server: &mut Option<CallbackServer>, c
                 if !env.pending() {
                     return Err(fail(AuthFlowError::Cancelled, ""));
                 }
-                if let Some(dir) = env.auth_dir.clone().filter(|_| env.mgmt()) {
-                    if let Some(p) = crate::sessions::take_callback_file(&dir, env.provider.session_name(), &env.state) {
+                if let Some(dir) = env.auth_dir.clone().filter(|_| env.mgmt())
+                    && let Some(p) = crate::sessions::take_callback_file(&dir, env.provider.session_name(), &env.state) {
                         return Ok(Waited::Redirect(Redirect { code: p.code, state: p.state, error: p.error, description: String::new() }));
                     }
-                }
             }
             _ = &mut prompt_timer, if prompt_armed && prompt_idle => {
                 // A browser result that is already ready wins over asking the user.
@@ -469,7 +506,7 @@ async fn wait_for_redirect(env: &mut Env, server: &mut Option<CallbackServer>, c
             }
             input = prompt_next => {
                 prompt_fut = None;
-                let input = input.map_err(|e| AuthFlowError::other(e))?;
+                let input = input.map_err(AuthFlowError::other)?;
                 if let Some(w) = (cfg.parse_paste)(&input)? {
                     return Ok(w);
                 }
@@ -493,7 +530,16 @@ pub(crate) async fn start_login(
     };
     let auth_dir = store.base_dir();
     let (tx, inbox) = mpsc::unbounded_channel();
-    let mut env = Env { store, sessions: sessions.clone(), hook, opts, provider, state: String::new(), inbox, auth_dir: auth_dir.clone() };
+    let mut env = Env {
+        store,
+        sessions: sessions.clone(),
+        hook,
+        opts,
+        provider,
+        state: String::new(),
+        inbox,
+        auth_dir: auth_dir.clone(),
+    };
 
     let (start, runner): (LoginStart, Runner) = match provider {
         Provider::Claude => claude_start(&mut env).await?,
@@ -521,7 +567,12 @@ pub(crate) async fn start_login(
             }
         }
     });
-    Ok(LoginSession { start, sessions, auth_dir, task })
+    Ok(LoginSession {
+        start,
+        sessions,
+        auth_dir,
+        task,
+    })
 }
 
 type Runner = Box<dyn FnOnce(Env) -> BoxFuture<std::result::Result<LoginOutcome, Fail>> + Send>;
@@ -534,12 +585,39 @@ where
     Box::new(move |env| Box::pin(f(env)))
 }
 
+/// Web UI mode: forwards the provider's fixed redirect port to the main server's callback route.
+async fn maybe_forwarder(env: &Env, port: u16) -> Result<Option<CallbackForwarder>> {
+    match env
+        .opts
+        .webui_callback_target
+        .as_deref()
+        .filter(|t| env.mgmt() && !t.trim().is_empty())
+    {
+        Some(target) => CallbackForwarder::start(port, target)
+            .await
+            .map(Some)
+            .map_err(|e| AuthFlowError::Config(format!("failed to start callback server: {e}"))),
+        None => Ok(None),
+    }
+}
+
 fn browser_start(provider: Provider, state: &str, url: String, port: Option<u16>) -> LoginStart {
-    LoginStart { provider, state: state.to_string(), url, flow: FlowKind::Browser, user_code: None, expires_in: None, callback_port: port }
+    LoginStart {
+        provider,
+        state: state.to_string(),
+        url,
+        flow: FlowKind::Browser,
+        user_code: None,
+        expires_in: None,
+        callback_port: port,
+    }
 }
 
 fn nanos_state(prefix: &str) -> String {
-    format!("{prefix}-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default())
+    format!(
+        "{prefix}-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    )
 }
 
 const CALLBACK_WAIT: Duration = Duration::from_secs(5 * 60);
@@ -558,14 +636,24 @@ async fn claude_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let server = if env.mgmt() {
         None
     } else {
-        let s = CallbackServer::start(Flavor::Claude, env.opts.callback_port.unwrap_or(claude::DEFAULT_CALLBACK_PORT)).await?;
+        let s = CallbackServer::start(
+            Flavor::Claude,
+            env.opts
+                .callback_port
+                .unwrap_or(claude::DEFAULT_CALLBACK_PORT),
+        )
+        .await?;
         port = Some(s.port());
         Some(s)
     };
+    let forwarder = maybe_forwarder(env, claude::DEFAULT_CALLBACK_PORT).await?;
     let url = svc.generate_auth_url(&state, &pkce);
     let start = browser_start(Provider::Claude, &state, url, port);
     let st = state.clone();
-    Ok((start, runner(move |env| claude_run(env, svc, pkce, st, server))))
+    Ok((
+        start,
+        runner(move |env| claude_run(env, svc, pkce, st, server, forwarder)),
+    ))
 }
 
 async fn claude_run(
@@ -574,12 +662,19 @@ async fn claude_run(
     pkce: PkceCodes,
     state: String,
     mut server: Option<CallbackServer>,
+    _forwarder: Option<CallbackForwarder>,
 ) -> std::result::Result<LoginOutcome, Fail> {
     let cfg = WaitCfg {
         timeout: CALLBACK_WAIT,
-        timeout_err: AuthFlowError::authentication(AuthErrorKind::CallbackTimeout, "timeout waiting for OAuth callback"),
+        timeout_err: AuthFlowError::authentication(
+            AuthErrorKind::CallbackTimeout,
+            "timeout waiting for OAuth callback",
+        ),
         timeout_msg: "Timeout waiting for OAuth callback",
-        prompt: Some(("Paste the Claude callback URL (or press Enter to keep waiting): ", MANUAL_PROMPT_DELAY)),
+        prompt: Some((
+            "Paste the Claude callback URL (or press Enter to keep waiting): ",
+            MANUAL_PROMPT_DELAY,
+        )),
         parse_paste: default_paste_parser(),
     };
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
@@ -588,29 +683,60 @@ async fn claude_run(
     drop(server);
 
     if !r.error.is_empty() {
-        return Err(fail(AuthFlowError::OAuth { code: r.error, description: r.description }, "Bad request"));
+        return Err(fail(
+            AuthFlowError::OAuth {
+                code: r.error,
+                description: r.description,
+            },
+            "Bad request",
+        ));
     }
     if r.state != state {
-        let err = AuthFlowError::authentication(AuthErrorKind::InvalidState, if env.mgmt() { format!("expected {state}, got {}", r.state) } else { "state mismatch".into() });
+        let err = AuthFlowError::authentication(
+            AuthErrorKind::InvalidState,
+            if env.mgmt() {
+                format!("expected {state}, got {}", r.state)
+            } else {
+                "state mismatch".into()
+            },
+        );
         return Err(fail(err, "State code error"));
     }
 
     // Management drops the `#state` suffix; the CLI passes the code through and lets the
     // exchange honor the fragment state.
-    let code = if env.mgmt() { r.code.split('#').next().unwrap_or("").to_string() } else { r.code };
-    let bundle = svc.exchange_code_for_tokens(&code, &state, &pkce).await.map_err(|e| {
-        tracing::error!("Failed to exchange authorization code for tokens: {e}");
-        fail(AuthFlowError::authentication(AuthErrorKind::CodeExchangeFailed, &e), "Failed to exchange authorization code for tokens")
-    })?;
+    let code = if env.mgmt() {
+        r.code.split('#').next().unwrap_or("").to_string()
+    } else {
+        r.code
+    };
+    let bundle = svc
+        .exchange_code_for_tokens(&code, &state, &pkce)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to exchange authorization code for tokens: {e}");
+            fail(
+                AuthFlowError::authentication(AuthErrorKind::CodeExchangeFailed, &e),
+                "Failed to exchange authorization code for tokens",
+            )
+        })?;
 
     let storage = svc.create_token_storage(&bundle);
     if storage.email.is_empty() {
         let e = AuthFlowError::other("claude token storage missing account information");
-        return Err(fail(e, "Failed to exchange authorization code for tokens: missing account email"));
+        return Err(fail(
+            e,
+            "Failed to exchange authorization code for tokens: missing account email",
+        ));
     }
-    let file_name = claude::credential_file_name(&storage.email, &storage.organization_uuid, &storage.account_uuid);
+    let file_name = claude::credential_file_name(
+        &storage.email,
+        &storage.organization_uuid,
+        &storage.account_uuid,
+    );
     let mut auth = Auth::new(file_name, "claude");
-    auth.metadata.insert("email".into(), storage.email.clone().into());
+    auth.metadata
+        .insert("email".into(), storage.email.clone().into());
     for (k, v) in [
         ("account_uuid", &storage.account_uuid),
         ("organization_uuid", &storage.organization_uuid),
@@ -621,10 +747,14 @@ async fn claude_run(
         }
     }
     if !storage.device_ids.is_empty() {
-        auth.metadata.insert(claude::DEVICE_IDS_METADATA_KEY.into(), storage.device_ids.clone().into());
+        auth.metadata.insert(
+            claude::DEVICE_IDS_METADATA_KEY.into(),
+            storage.device_ids.clone().into(),
+        );
     }
     auth.storage = Some(TokenStorage::Claude(storage));
-    env.finalize(auth, "Failed to save authentication tokens").await
+    env.finalize(auth, "Failed to save authentication tokens")
+        .await
 }
 
 // ---- Codex (browser) ----
@@ -640,14 +770,24 @@ async fn codex_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let server = if env.mgmt() {
         None
     } else {
-        let s = CallbackServer::start(Flavor::Codex, env.opts.callback_port.unwrap_or(codex::DEFAULT_CALLBACK_PORT)).await?;
+        let s = CallbackServer::start(
+            Flavor::Codex,
+            env.opts
+                .callback_port
+                .unwrap_or(codex::DEFAULT_CALLBACK_PORT),
+        )
+        .await?;
         port = Some(s.port());
         Some(s)
     };
+    let forwarder = maybe_forwarder(env, codex::DEFAULT_CALLBACK_PORT).await?;
     let url = svc.generate_auth_url(&state, &pkce);
     let start = browser_start(Provider::Codex, &state, url, port);
     let st = state.clone();
-    Ok((start, runner(move |env| codex_run(env, svc, pkce, st, server))))
+    Ok((
+        start,
+        runner(move |env| codex_run(env, svc, pkce, st, server, forwarder)),
+    ))
 }
 
 async fn codex_run(
@@ -656,12 +796,19 @@ async fn codex_run(
     pkce: PkceCodes,
     state: String,
     mut server: Option<CallbackServer>,
+    _forwarder: Option<CallbackForwarder>,
 ) -> std::result::Result<LoginOutcome, Fail> {
     let cfg = WaitCfg {
         timeout: CALLBACK_WAIT,
-        timeout_err: AuthFlowError::authentication(AuthErrorKind::CallbackTimeout, "timeout waiting for OAuth callback"),
+        timeout_err: AuthFlowError::authentication(
+            AuthErrorKind::CallbackTimeout,
+            "timeout waiting for OAuth callback",
+        ),
         timeout_msg: "Timeout waiting for OAuth callback",
-        prompt: Some(("Paste the Codex callback URL (or press Enter to keep waiting): ", MANUAL_PROMPT_DELAY)),
+        prompt: Some((
+            "Paste the Codex callback URL (or press Enter to keep waiting): ",
+            MANUAL_PROMPT_DELAY,
+        )),
         parse_paste: default_paste_parser(),
     };
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
@@ -670,20 +817,38 @@ async fn codex_run(
     drop(server);
 
     if !r.error.is_empty() {
-        return Err(fail(AuthFlowError::OAuth { code: r.error, description: r.description }, "Bad Request"));
+        return Err(fail(
+            AuthFlowError::OAuth {
+                code: r.error,
+                description: r.description,
+            },
+            "Bad Request",
+        ));
     }
     if r.state != state {
-        let cause = if env.mgmt() { format!("expected {state}, got {}", r.state) } else { "state mismatch".into() };
-        return Err(fail(AuthFlowError::authentication(AuthErrorKind::InvalidState, cause), "State code error"));
+        let cause = if env.mgmt() {
+            format!("expected {state}, got {}", r.state)
+        } else {
+            "state mismatch".into()
+        };
+        return Err(fail(
+            AuthFlowError::authentication(AuthErrorKind::InvalidState, cause),
+            "State code error",
+        ));
     }
-    let bundle = svc.exchange_code_for_tokens(&r.code, &pkce).await.map_err(|e| {
-        fail(
-            AuthFlowError::authentication(AuthErrorKind::CodeExchangeFailed, &e),
-            with_cause("Failed to exchange authorization code for tokens", &e),
-        )
-    })?;
-    let auth = codex::build_auth_record(&svc, &bundle, env.mgmt()).map_err(|e| fail(e, "Failed to exchange authorization code for tokens"))?;
-    env.finalize(auth, "Failed to save authentication tokens").await
+    let bundle = svc
+        .exchange_code_for_tokens(&r.code, &pkce)
+        .await
+        .map_err(|e| {
+            fail(
+                AuthFlowError::authentication(AuthErrorKind::CodeExchangeFailed, &e),
+                with_cause("Failed to exchange authorization code for tokens", &e),
+            )
+        })?;
+    let auth = codex::build_auth_record(&svc, &bundle, env.mgmt())
+        .map_err(|e| fail(e, "Failed to exchange authorization code for tokens"))?;
+    env.finalize(auth, "Failed to save authentication tokens")
+        .await
 }
 
 // ---- Codex (device code) ----
@@ -712,11 +877,24 @@ async fn codex_device_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     Ok((start, runner(move |env| codex_device_run(env, svc, code))))
 }
 
-async fn codex_device_run(env: Env, svc: CodexAuth, code: codex::DeviceUserCode) -> std::result::Result<LoginOutcome, Fail> {
-    let token = cancellable(&env, svc.poll_device_token(&code)).await?.map_err(|e| fail(e.clone(), with_cause("Authentication failed", &e)))?;
-    let bundle = svc.exchange_device_code(&token).await.map_err(|e| fail(e.clone(), with_cause("Failed to exchange authorization code for tokens", &e)))?;
-    let auth = codex::build_auth_record(&svc, &bundle, env.mgmt()).map_err(|e| fail(e, "Failed to exchange token"))?;
-    env.finalize(auth, "Failed to save authentication tokens").await
+async fn codex_device_run(
+    env: Env,
+    svc: CodexAuth,
+    code: codex::DeviceUserCode,
+) -> std::result::Result<LoginOutcome, Fail> {
+    let token = cancellable(&env, svc.poll_device_token(&code))
+        .await?
+        .map_err(|e| fail(e.clone(), with_cause("Authentication failed", &e)))?;
+    let bundle = svc.exchange_device_code(&token).await.map_err(|e| {
+        fail(
+            e.clone(),
+            with_cause("Failed to exchange authorization code for tokens", &e),
+        )
+    })?;
+    let auth = codex::build_auth_record(&svc, &bundle, env.mgmt())
+        .map_err(|e| fail(e, "Failed to exchange token"))?;
+    env.finalize(auth, "Failed to save authentication tokens")
+        .await
 }
 
 /// Runs `fut` but gives up (silently) once the session stops being pending (checked every 2 s,
@@ -754,14 +932,26 @@ async fn antigravity_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let (server, redirect_uri, port) = if env.mgmt() {
         (None, antigravity::default_redirect_uri(), None)
     } else {
-        let s = CallbackServer::start(Flavor::Antigravity, env.opts.callback_port.unwrap_or(antigravity::CALLBACK_PORT)).await?;
+        let s = CallbackServer::start(
+            Flavor::Antigravity,
+            env.opts.callback_port.unwrap_or(antigravity::CALLBACK_PORT),
+        )
+        .await?;
         let port = s.port();
-        (Some(s), format!("http://localhost:{port}/oauth-callback"), Some(port))
+        (
+            Some(s),
+            format!("http://localhost:{port}/oauth-callback"),
+            Some(port),
+        )
     };
+    let forwarder = maybe_forwarder(env, antigravity::CALLBACK_PORT).await?;
     let url = svc.build_auth_url(&state, &redirect_uri);
     let start = browser_start(Provider::Antigravity, &state, url, port);
     let st = state.clone();
-    Ok((start, runner(move |env| antigravity_run(env, svc, st, redirect_uri, server))))
+    Ok((
+        start,
+        runner(move |env| antigravity_run(env, svc, st, redirect_uri, server, forwarder)),
+    ))
 }
 
 async fn antigravity_run(
@@ -770,13 +960,17 @@ async fn antigravity_run(
     state: String,
     redirect_uri: String,
     mut server: Option<CallbackServer>,
+    _forwarder: Option<CallbackForwarder>,
 ) -> std::result::Result<LoginOutcome, Fail> {
     let mgmt = env.mgmt();
     let cfg = WaitCfg {
         timeout: CALLBACK_WAIT,
         timeout_err: AuthFlowError::other("antigravity: authentication timed out"),
         timeout_msg: "OAuth flow timed out",
-        prompt: Some(("Paste the antigravity callback URL (or press Enter to keep waiting): ", MANUAL_PROMPT_DELAY)),
+        prompt: Some((
+            "Paste the antigravity callback URL (or press Enter to keep waiting): ",
+            MANUAL_PROMPT_DELAY,
+        )),
         parse_paste: default_paste_parser(),
     };
     let Waited::Redirect(r) = wait_for_redirect(&mut env, &mut server, cfg).await? else {
@@ -784,31 +978,58 @@ async fn antigravity_run(
     };
     drop(server);
 
-    let (code, got_state, error) = (r.code.trim().to_string(), r.state.trim().to_string(), r.error.trim().to_string());
+    let (code, got_state, error) = (
+        r.code.trim().to_string(),
+        r.state.trim().to_string(),
+        r.error.trim().to_string(),
+    );
     if !error.is_empty() {
-        return Err(fail(AuthFlowError::other(format!("antigravity: authentication failed: {error}")), "Authentication failed"));
+        return Err(fail(
+            AuthFlowError::other(format!("antigravity: authentication failed: {error}")),
+            "Authentication failed",
+        ));
     }
     // CLI requires an exact state; management only rejects a present, different one.
-    let state_ok = if mgmt { got_state.is_empty() || got_state == state } else { got_state == state };
+    let state_ok = if mgmt {
+        got_state.is_empty() || got_state == state
+    } else {
+        got_state == state
+    };
     if !state_ok {
-        return Err(fail(AuthFlowError::other("antigravity: invalid state"), "Authentication failed: state mismatch"));
+        return Err(fail(
+            AuthFlowError::other("antigravity: invalid state"),
+            "Authentication failed: state mismatch",
+        ));
     }
     if code.is_empty() {
-        return Err(fail(AuthFlowError::other("antigravity: missing authorization code"), "Authentication failed: code not found"));
+        return Err(fail(
+            AuthFlowError::other("antigravity: missing authorization code"),
+            "Authentication failed: code not found",
+        ));
     }
 
     let token = svc
         .exchange_code_for_tokens(&code, &redirect_uri)
         .await
-        .map_err(|e| fail(AuthFlowError::other(format!("antigravity: token exchange failed: {e}")), "Failed to exchange token"))?;
+        .map_err(|e| {
+            fail(
+                AuthFlowError::other(format!("antigravity: token exchange failed: {e}")),
+                "Failed to exchange token",
+            )
+        })?;
     let access_token = token.access_token.trim().to_string();
     if access_token.is_empty() {
-        return Err(fail(AuthFlowError::other("antigravity: token exchange returned empty access token"), "Failed to exchange token"));
+        return Err(fail(
+            AuthFlowError::other("antigravity: token exchange returned empty access token"),
+            "Failed to exchange token",
+        ));
     }
-    let email = svc
-        .fetch_user_info(&access_token)
-        .await
-        .map_err(|e| fail(AuthFlowError::other(format!("antigravity: fetch user info failed: {e}")), "Failed to fetch user info"))?;
+    let email = svc.fetch_user_info(&access_token).await.map_err(|e| {
+        fail(
+            AuthFlowError::other(format!("antigravity: fetch user info failed: {e}")),
+            "Failed to fetch user info",
+        )
+    })?;
 
     let project_id = match svc.fetch_project_id(&access_token).await {
         Ok(p) => p.trim().to_string(),
@@ -817,11 +1038,17 @@ async fn antigravity_run(
             String::new()
         }
         Err(e) => {
-            return Err(fail(AuthFlowError::other(format!("antigravity: failed to fetch project ID: {e}")), "Failed to fetch project ID"));
+            return Err(fail(
+                AuthFlowError::other(format!("antigravity: failed to fetch project ID: {e}")),
+                "Failed to fetch project ID",
+            ));
         }
     };
     if project_id.is_empty() && !mgmt {
-        return Err(fail(AuthFlowError::other("antigravity: project ID discovery returned empty project"), "Failed to fetch project ID"));
+        return Err(fail(
+            AuthFlowError::other("antigravity: project ID discovery returned empty project"),
+            "Failed to fetch project ID",
+        ));
     }
     let auth = antigravity::build_auth(&token, &email, &project_id);
     env.finalize(auth, "Failed to save token to file").await
@@ -831,23 +1058,39 @@ async fn antigravity_run(
 
 async fn xai_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let svc = XaiAuth::new(&env.opts.proxy_url)?;
-    let device = svc.start_device_flow().await.map_err(|e| AuthFlowError::other(format!("xai: failed to start device flow: {e}")))?;
+    let device = svc
+        .start_device_flow()
+        .await
+        .map_err(|e| AuthFlowError::other(format!("xai: failed to start device flow: {e}")))?;
     let start = LoginStart {
         provider: Provider::Xai,
         state: nanos_state("xai"),
         url: device.verification_url(),
         flow: FlowKind::Device,
         user_code: Some(device.user_code.trim().to_string()).filter(|c| !c.is_empty()),
-        expires_in: Some(if device.expires_in > 0 { device.expires_in as u64 } else { xai::MAX_POLL_DURATION.as_secs() }),
+        expires_in: Some(if device.expires_in > 0 {
+            device.expires_in as u64
+        } else {
+            xai::MAX_POLL_DURATION.as_secs()
+        }),
         callback_port: None,
     };
     Ok((start, runner(move |env| xai_run(env, svc, device))))
 }
 
-async fn xai_run(env: Env, svc: XaiAuth, device: xai::DeviceCodeResponse) -> std::result::Result<LoginOutcome, Fail> {
+async fn xai_run(
+    env: Env,
+    svc: XaiAuth,
+    device: xai::DeviceCodeResponse,
+) -> std::result::Result<LoginOutcome, Fail> {
     let bundle = cancellable(&env, svc.wait_for_authorization(&device))
         .await?
-        .map_err(|e| fail(AuthFlowError::other(format!("xai: {e}")), with_cause("Authentication failed", &e)))?;
+        .map_err(|e| {
+            fail(
+                AuthFlowError::other(format!("xai: {e}")),
+                with_cause("Authentication failed", &e),
+            )
+        })?;
     let storage = svc.create_token_storage(&bundle);
     let auth = xai::build_auth_record(storage).map_err(|e| fail(e, "Failed to exchange token"))?;
     env.finalize(auth, "Failed to save token to file").await
@@ -863,8 +1106,15 @@ async fn kimi_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
         _ => kimi::KIMI_AI_DOMAIN.to_string(),
     };
     let svc = KimiAuth::new(&domain, &env.opts.proxy_url)?;
-    let device = svc.start_device_flow().await.map_err(|e| AuthFlowError::other(format!("kimi: failed to start device flow: {e}")))?;
-    let prefix = if kimi::is_kimi_ai_domain(&domain) { "kmi-ai" } else { "kmi" };
+    let device = svc
+        .start_device_flow()
+        .await
+        .map_err(|e| AuthFlowError::other(format!("kimi: failed to start device flow: {e}")))?;
+    let prefix = if kimi::is_kimi_ai_domain(&domain) {
+        "kmi-ai"
+    } else {
+        "kmi"
+    };
     let start = LoginStart {
         provider,
         state: nanos_state(prefix),
@@ -877,13 +1127,24 @@ async fn kimi_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     Ok((start, runner(move |env| kimi_run(env, svc, device, domain))))
 }
 
-async fn kimi_run(env: Env, svc: KimiAuth, device: kimi::DeviceCodeResponse, domain: String) -> std::result::Result<LoginOutcome, Fail> {
+async fn kimi_run(
+    env: Env,
+    svc: KimiAuth,
+    device: kimi::DeviceCodeResponse,
+    domain: String,
+) -> std::result::Result<LoginOutcome, Fail> {
     let bundle = cancellable(&env, svc.wait_for_authorization(&device))
         .await?
-        .map_err(|e| fail(AuthFlowError::other(format!("kimi: {e}")), with_cause("Authentication failed", &e)))?;
+        .map_err(|e| {
+            fail(
+                AuthFlowError::other(format!("kimi: {e}")),
+                with_cause("Authentication failed", &e),
+            )
+        })?;
     let storage = svc.create_token_storage(&bundle);
     let auth = kimi::build_auth_record(env.provider.key(), &domain, &bundle, storage);
-    env.finalize(auth, "Failed to save authentication tokens").await
+    env.finalize(auth, "Failed to save authentication tokens")
+        .await
 }
 
 // ---- Devin ----
@@ -903,28 +1164,41 @@ async fn devin_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
         let url = svc.build_authorization_url(&redirect, &pkce.code_challenge, &state);
         let start = browser_start(Provider::Devin, &state, url, None);
         let st = state.clone();
-        return Ok((start, runner(move |env| devin_run(env, svc, pkce, st, None, false))));
+        return Ok((
+            start,
+            runner(move |env| devin_run(env, svc, pkce, st, None, false)),
+        ));
     }
 
     if env.opts.no_browser {
         if env.opts.prompt.is_none() {
-            return Err(AuthFlowError::other("devin authentication in no-browser mode requires an interactive prompt"));
+            return Err(AuthFlowError::other(
+                "devin authentication in no-browser mode requires an interactive prompt",
+            ));
         }
         let url = svc.build_authorization_url("", &pkce.code_challenge, &state);
         let start = browser_start(Provider::Devin, &state, url, None);
         let st = state.clone();
-        return Ok((start, runner(move |env| devin_run(env, svc, pkce, st, None, true))));
+        return Ok((
+            start,
+            runner(move |env| devin_run(env, svc, pkce, st, None, true)),
+        ));
     }
 
     let server = CallbackServer::start(Flavor::Devin, env.opts.callback_port.unwrap_or(0))
         .await
-        .map_err(|e| AuthFlowError::other(format!("failed to start devin oauth callback server: {e}")))?;
+        .map_err(|e| {
+            AuthFlowError::other(format!("failed to start devin oauth callback server: {e}"))
+        })?;
     let port = server.port();
     let redirect = format!("http://127.0.0.1:{port}/callback");
     let url = svc.build_authorization_url(&redirect, &pkce.code_challenge, &state);
     let start = browser_start(Provider::Devin, &state, url, Some(port));
     let st = state.clone();
-    Ok((start, runner(move |env| devin_run(env, svc, pkce, st, Some(server), false))))
+    Ok((
+        start,
+        runner(move |env| devin_run(env, svc, pkce, st, Some(server), false)),
+    ))
 }
 
 async fn devin_run(
@@ -937,30 +1211,48 @@ async fn devin_run(
 ) -> std::result::Result<LoginOutcome, Fail> {
     let mgmt = env.mgmt();
     let expected = state.clone();
-    let parse_paste: PasteParser = Box::new(move |input: &str| match devin::parse_manual_paste(input, &expected) {
-        Ok(ManualPaste::Empty) => Ok(None),
-        Ok(ManualPaste::Token(t)) => Ok(Some(Waited::Token(t))),
-        Ok(ManualPaste::Code(c)) => Ok(Some(Waited::Redirect(Redirect { code: c, state: expected.clone(), ..Default::default() }))),
-        Err(ManualPasteError::Unrecognized) => Ok(None),
-        Err(e) => Err(AuthFlowError::other(e.to_string())),
-    });
+    let parse_paste: PasteParser =
+        Box::new(
+            move |input: &str| match devin::parse_manual_paste(input, &expected) {
+                Ok(ManualPaste::Empty) => Ok(None),
+                Ok(ManualPaste::Token(t)) => Ok(Some(Waited::Token(t))),
+                Ok(ManualPaste::Code(c)) => Ok(Some(Waited::Redirect(Redirect {
+                    code: c,
+                    state: expected.clone(),
+                    ..Default::default()
+                }))),
+                Err(ManualPasteError::Unrecognized) => Ok(None),
+                Err(e) => Err(AuthFlowError::other(e.to_string())),
+            },
+        );
 
     let waited = if paste_only {
         // No-browser mode: one prompt, no local server.
         let Some(prompt) = env.opts.prompt.clone() else {
-            return Err(AuthFlowError::other("devin authentication in no-browser mode requires an interactive prompt").into());
+            return Err(AuthFlowError::other(
+                "devin authentication in no-browser mode requires an interactive prompt",
+            )
+            .into());
         };
-        let input = prompt("Paste the Devin authorization code or session token directly: ".to_string())
-            .await
-            .map_err(|e| AuthFlowError::other(format!("failed to read devin input: {e}")))?;
+        let input =
+            prompt("Paste the Devin authorization code or session token directly: ".to_string())
+                .await
+                .map_err(|e| AuthFlowError::other(format!("failed to read devin input: {e}")))?;
         match parse_paste(&input)? {
             Some(w) => w,
-            None => return Err(AuthFlowError::other("devin authentication canceled: empty input received").into()),
+            None => {
+                return Err(AuthFlowError::other(
+                    "devin authentication canceled: empty input received",
+                )
+                .into());
+            }
         }
     } else {
         let cfg = WaitCfg {
             timeout: CALLBACK_WAIT,
-            timeout_err: AuthFlowError::other("devin oauth callback failed: devin authentication timed out"),
+            timeout_err: AuthFlowError::other(
+                "devin oauth callback failed: devin authentication timed out",
+            ),
             timeout_msg: "Timeout waiting for OAuth callback",
             prompt: Some((
                 "Paste the Devin callback URL, authorization code, or session token directly (or press Enter to keep waiting): ",
@@ -977,30 +1269,51 @@ async fn devin_run(
         Waited::Redirect(r) => {
             if mgmt {
                 if r.state != state {
-                    return Err(fail(AuthFlowError::other("devin oauth state mismatch (possible CSRF)"), "State code error"));
+                    return Err(fail(
+                        AuthFlowError::other("devin oauth state mismatch (possible CSRF)"),
+                        "State code error",
+                    ));
                 }
                 if !r.error.is_empty() {
-                    return Err(fail(AuthFlowError::other(format!("devin oauth error: {}", r.error)), "Devin authorization denied"));
+                    return Err(fail(
+                        AuthFlowError::other(format!("devin oauth error: {}", r.error)),
+                        "Devin authorization denied",
+                    ));
                 }
             } else {
                 if !r.error.is_empty() {
-                    return Err(AuthFlowError::other(format!("devin oauth error: {}", r.error)).into());
+                    return Err(
+                        AuthFlowError::other(format!("devin oauth error: {}", r.error)).into(),
+                    );
                 }
                 if !state.is_empty() && r.state != state {
-                    return Err(AuthFlowError::other("devin oauth state mismatch (possible CSRF)").into());
+                    return Err(
+                        AuthFlowError::other("devin oauth state mismatch (possible CSRF)").into(),
+                    );
                 }
             }
             if r.code.trim().is_empty() {
-                return Err(fail(AuthFlowError::other("no authorization code or token received"), "Missing authorization code"));
+                return Err(fail(
+                    AuthFlowError::other("no authorization code or token received"),
+                    "Missing authorization code",
+                ));
             }
-            let token = svc.exchange_code_for_token(&r.code, &pkce.code_verifier).await.map_err(|e| {
-                fail(
-                    AuthFlowError::other(format!("failed to exchange devin authorization code: {e}")),
-                    "Failed to exchange authorization code for tokens",
-                )
-            })?;
+            let token = svc
+                .exchange_code_for_token(&r.code, &pkce.code_verifier)
+                .await
+                .map_err(|e| {
+                    fail(
+                        AuthFlowError::other(format!(
+                            "failed to exchange devin authorization code: {e}"
+                        )),
+                        "Failed to exchange authorization code for tokens",
+                    )
+                })?;
             if token.trim().is_empty() {
-                return Err(fail(AuthFlowError::other("empty token"), "Failed to exchange authorization code for tokens"));
+                return Err(fail(
+                    AuthFlowError::other("empty token"),
+                    "Failed to exchange authorization code for tokens",
+                ));
             }
             devin::format_session_token(&token)
         }
@@ -1009,32 +1322,50 @@ async fn devin_run(
         .create_auth_record(&session_token)
         .await
         .map_err(|e| fail(e, "Failed to create Devin authentication record"))?;
-    env.finalize(auth, "Failed to save authentication tokens").await
+    env.finalize(auth, "Failed to save authentication tokens")
+        .await
 }
 
 // ---- Meta (device code) ----
 
 async fn meta_start(env: &mut Env) -> Result<(LoginStart, Runner)> {
     let svc = MetaAuth::new(&env.opts.proxy_url)?;
-    let device = svc.start_device_flow().await.map_err(|e| AuthFlowError::other(format!("meta: failed to start device flow: {e}")))?;
+    let device = svc
+        .start_device_flow()
+        .await
+        .map_err(|e| AuthFlowError::other(format!("meta: failed to start device flow: {e}")))?;
     let start = LoginStart {
         provider: Provider::Meta,
         state: nanos_state("meta"),
         url: device.verification_url(),
         flow: FlowKind::Device,
         user_code: Some(device.user_code.trim().to_string()).filter(|c| !c.is_empty()),
-        expires_in: Some(if device.expires_in > 0 { device.expires_in as u64 } else { meta::MAX_POLL_DURATION.as_secs() }),
+        expires_in: Some(if device.expires_in > 0 {
+            device.expires_in as u64
+        } else {
+            meta::MAX_POLL_DURATION.as_secs()
+        }),
         callback_port: None,
     };
     Ok((start, runner(move |env| meta_run(env, svc, device))))
 }
 
-async fn meta_run(env: Env, svc: MetaAuth, device: meta::DeviceCodeResponse) -> std::result::Result<LoginOutcome, Fail> {
+async fn meta_run(
+    env: Env,
+    svc: MetaAuth,
+    device: meta::DeviceCodeResponse,
+) -> std::result::Result<LoginOutcome, Fail> {
     let bundle = cancellable(&env, svc.wait_for_authorization(&device))
         .await?
-        .map_err(|e| fail(AuthFlowError::other(format!("meta: {e}")), with_cause("Authentication failed", &e)))?;
+        .map_err(|e| {
+            fail(
+                AuthFlowError::other(format!("meta: {e}")),
+                with_cause("Authentication failed", &e),
+            )
+        })?;
     let storage = svc.create_token_storage(&bundle);
-    let auth = meta::build_auth_record(storage, &bundle).map_err(|e| fail(e, "Failed to exchange token"))?;
+    let auth = meta::build_auth_record(storage, &bundle)
+        .map_err(|e| fail(e, "Failed to exchange token"))?;
     env.finalize(auth, "Failed to save token to file").await
 }
 
@@ -1052,16 +1383,27 @@ pub fn announce(session: &LoginSession, no_browser: bool) {
                     tracing::warn!("{r}");
                 }
                 if port != 0 {
-                    print!("{}", crate::browser::ssh_tunnel_instructions(port, &crate::browser::outbound_ip()));
+                    print!(
+                        "{}",
+                        crate::browser::ssh_tunnel_instructions(
+                            port,
+                            &crate::browser::outbound_ip()
+                        )
+                    );
                 }
-                println!("Visit the following URL to continue authentication:\n{}", info.url);
+                println!(
+                    "Visit the following URL to continue authentication:\n{}",
+                    info.url
+                );
             };
             if no_browser {
                 show_manual(None);
             } else {
                 println!("Opening browser for {name} authentication");
                 if !crate::browser::is_available() {
-                    show_manual(Some("No browser available; please open the URL manually".into()));
+                    show_manual(Some(
+                        "No browser available; please open the URL manually".into(),
+                    ));
                 } else if let Err(e) = crate::browser::open_url(&info.url) {
                     show_manual(Some(format!("Failed to open browser automatically: {e}")));
                 }
@@ -1103,16 +1445,28 @@ mod tests {
         assert_eq!(Provider::Claude.session_name(), "anthropic");
         assert_eq!(Provider::KimiAiDot.session_name(), "kimi-ai");
         assert_eq!(Provider::KimiAiDot.key(), "kimi.ai");
-        assert_eq!(Provider::Codex.refresh_lead(), Some(Duration::from_secs(24 * 3600)));
-        assert_eq!(Provider::Claude.refresh_lead(), Some(Duration::from_secs(4 * 3600)));
-        assert_eq!(Provider::Antigravity.refresh_lead(), Some(Duration::from_secs(1800)));
+        assert_eq!(
+            Provider::Codex.refresh_lead(),
+            Some(Duration::from_secs(24 * 3600))
+        );
+        assert_eq!(
+            Provider::Claude.refresh_lead(),
+            Some(Duration::from_secs(4 * 3600))
+        );
+        assert_eq!(
+            Provider::Antigravity.refresh_lead(),
+            Some(Duration::from_secs(1800))
+        );
         assert_eq!(Provider::Devin.refresh_lead(), None);
     }
 
     #[test]
     fn start_json_matches_management_responses() {
         let browser = browser_start(Provider::Claude, "st", "https://x".into(), None);
-        assert_eq!(browser.to_json(), json!({"status": "ok", "url": "https://x", "state": "st"}));
+        assert_eq!(
+            browser.to_json(),
+            json!({"status": "ok", "url": "https://x", "state": "st"})
+        );
         let device = LoginStart {
             provider: Provider::Xai,
             state: "xai-1".into(),
@@ -1130,7 +1484,13 @@ mod tests {
 
     #[test]
     fn session_error_text_includes_cause() {
-        assert_eq!(with_cause("Authentication failed", &"boom "), "Authentication failed: boom");
-        assert_eq!(with_cause("Authentication failed", &"  "), "Authentication failed");
+        assert_eq!(
+            with_cause("Authentication failed", &"boom "),
+            "Authentication failed: boom"
+        );
+        assert_eq!(
+            with_cause("Authentication failed", &"  "),
+            "Authentication failed"
+        );
     }
 }

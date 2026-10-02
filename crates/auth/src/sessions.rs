@@ -65,7 +65,11 @@ impl Default for OAuthSessions {
 impl OAuthSessions {
     pub fn new(ttl: Duration) -> Self {
         let ttl = if ttl.is_zero() { SESSION_TTL } else { ttl };
-        Self { ttl, completed_ttl: COMPLETED_SESSION_TTL.min(ttl), sessions: Mutex::new(HashMap::new()) }
+        Self {
+            ttl,
+            completed_ttl: COMPLETED_SESSION_TTL.min(ttl),
+            sessions: Mutex::new(HashMap::new()),
+        }
     }
 
     fn purge(map: &mut HashMap<String, Session>, now: Instant) {
@@ -78,11 +82,21 @@ impl OAuthSessions {
     }
 
     /// Registers a session whose callbacks are delivered to `inbox` in-process.
-    pub fn register_with_inbox(&self, state: &str, provider: &str, inbox: mpsc::UnboundedSender<CallbackPayload>) {
+    pub fn register_with_inbox(
+        &self,
+        state: &str,
+        provider: &str,
+        inbox: mpsc::UnboundedSender<CallbackPayload>,
+    ) {
         self.register_inner(state, provider, Some(inbox));
     }
 
-    fn register_inner(&self, state: &str, provider: &str, inbox: Option<mpsc::UnboundedSender<CallbackPayload>>) {
+    fn register_inner(
+        &self,
+        state: &str,
+        provider: &str,
+        inbox: Option<mpsc::UnboundedSender<CallbackPayload>>,
+    ) {
         let state = state.trim();
         let provider = provider.trim().to_lowercase();
         if state.is_empty() || provider.is_empty() {
@@ -93,7 +107,13 @@ impl OAuthSessions {
         Self::purge(&mut map, now);
         map.insert(
             state.to_string(),
-            Session { provider, status: String::new(), completed: false, expires_at: now + self.ttl, inbox },
+            Session {
+                provider,
+                status: String::new(),
+                completed: false,
+                expires_at: now + self.ttl,
+                inbox,
+            },
         );
     }
 
@@ -146,7 +166,10 @@ impl OAuthSessions {
         let mut map = self.sessions.lock();
         Self::purge(&mut map, now);
         let mut n = 0;
-        for s in map.values_mut().filter(|s| !s.completed && s.provider.eq_ignore_ascii_case(&provider)) {
+        for s in map
+            .values_mut()
+            .filter(|s| !s.completed && s.provider.eq_ignore_ascii_case(&provider))
+        {
             s.status.clear();
             s.completed = true;
             s.inbox = None;
@@ -160,7 +183,11 @@ impl OAuthSessions {
         let now = Instant::now();
         let mut map = self.sessions.lock();
         Self::purge(&mut map, now);
-        map.get(state.trim()).map(|s| SessionInfo { provider: s.provider.clone(), status: s.status.clone(), completed: s.completed })
+        map.get(state.trim()).map(|s| SessionInfo {
+            provider: s.provider.clone(),
+            status: s.status.clone(),
+            completed: s.completed,
+        })
     }
 
     /// Pending: exists, not completed, no error status, and (when given) matching provider.
@@ -169,7 +196,9 @@ impl OAuthSessions {
         let now = Instant::now();
         let mut map = self.sessions.lock();
         Self::purge(&mut map, now);
-        let Some(s) = map.get(state.trim()) else { return false };
+        let Some(s) = map.get(state.trim()) else {
+            return false;
+        };
         if s.completed || !s.status.is_empty() {
             return false;
         }
@@ -204,7 +233,10 @@ impl OAuthSessions {
             return (400, json!({"status": "error", "error": "invalid state"}));
         }
         match self.get(state) {
-            None => (200, json!({"status": "error", "error": "unknown or expired state"})),
+            None => (
+                200,
+                json!({"status": "error", "error": "unknown or expired state"}),
+            ),
             Some(s) if s.completed => (200, json!({"status": "ok"})),
             Some(s) if !s.status.is_empty() => (200, json!({"status": "error", "error": s.status})),
             Some(_) => (200, json!({"status": "wait"})),
@@ -220,7 +252,10 @@ impl OAuthSessions {
         if validate_oauth_state(state).is_err() {
             return (400, json!({"status": "error", "error": "invalid state"}));
         }
-        (200, json!({"status": "ok", "cancelled": self.cancel(state)}))
+        (
+            200,
+            json!({"status": "ok", "cancelled": self.cancel(state)}),
+        )
     }
 
     /// Hands a callback to the login behind `state`. Returns false when the session has no inbox.
@@ -243,22 +278,35 @@ impl OAuthSessions {
         code: &str,
         error: &str,
     ) -> Result<(), CallbackError> {
-        let canonical = normalize_callback_provider(provider).ok_or(CallbackError::UnsupportedProvider)?;
+        let canonical =
+            normalize_callback_provider(provider).ok_or(CallbackError::UnsupportedProvider)?;
         if !self.is_pending(state, &canonical) {
             return Err(CallbackError::NotPending);
         }
-        let payload = CallbackPayload { code: code.trim().into(), state: state.trim().into(), error: error.trim().into() };
+        let payload = CallbackPayload {
+            code: code.trim().into(),
+            state: state.trim().into(),
+            error: error.trim().into(),
+        };
         if self.deliver(state.trim(), payload.clone()) {
             return Ok(());
         }
-        let dir = auth_dir.filter(|d| !d.as_os_str().is_empty()).ok_or_else(|| CallbackError::Io("auth dir is empty".into()))?;
-        write_callback_file(dir, &canonical, state, &payload).map(|_| ()).map_err(CallbackError::Io)
+        let dir = auth_dir
+            .filter(|d| !d.as_os_str().is_empty())
+            .ok_or_else(|| CallbackError::Io("auth dir is empty".into()))?;
+        write_callback_file(dir, &canonical, state, &payload)
+            .map(|_| ())
+            .map_err(CallbackError::Io)
     }
 
     /// `handleOAuthCallback`: validation and error mapping of the manual / redirect callback
     /// endpoints. `(http status, body)`; success is `200 {"status":"ok"}` (callback accepted, not
     /// necessarily finished).
-    pub fn handle_oauth_callback(&self, auth_dir: Option<&Path>, req: &CallbackRequest) -> (u16, Value) {
+    pub fn handle_oauth_callback(
+        &self,
+        auth_dir: Option<&Path>,
+        req: &CallbackRequest,
+    ) -> (u16, Value) {
         let err = |status: u16, msg: &str| (status, json!({"status": "error", "error": msg}));
         let mut state = req.state.trim().to_string();
         let mut code = req.code.trim().to_string();
@@ -266,8 +314,15 @@ impl OAuthSessions {
 
         let redirect = req.redirect_url.trim();
         if !redirect.is_empty() {
-            let Ok(u) = url::Url::parse(redirect) else { return err(400, "invalid redirect_url") };
-            let q = |k: &str| u.query_pairs().find(|(key, _)| key == k).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+            let Ok(u) = url::Url::parse(redirect) else {
+                return err(400, "invalid redirect_url");
+            };
+            let q = |k: &str| {
+                u.query_pairs()
+                    .find(|(key, _)| key == k)
+                    .map(|(_, v)| v.trim().to_string())
+                    .unwrap_or_default()
+            };
             if state.is_empty() {
                 state = q("state");
             }
@@ -291,12 +346,20 @@ impl OAuthSessions {
         if code.is_empty() && err_msg.is_empty() {
             return err(400, "code or error is required");
         }
-        let Some(session) = self.get(&state) else { return err(404, "unknown or expired state") };
+        let Some(session) = self.get(&state) else {
+            return err(404, "unknown or expired state");
+        };
         if session.completed {
             return err(409, "oauth flow is already completed");
         }
-        let provider = if req.provider.trim().is_empty() { session.provider.clone() } else { req.provider.trim().to_string() };
-        let Some(canonical) = normalize_callback_provider(&provider) else { return err(400, "unsupported provider") };
+        let provider = if req.provider.trim().is_empty() {
+            session.provider.clone()
+        } else {
+            req.provider.trim().to_string()
+        };
+        let Some(canonical) = normalize_callback_provider(&provider) else {
+            return err(400, "unsupported provider");
+        };
         if !session.status.is_empty() {
             return err(409, &session.status);
         }
@@ -362,7 +425,11 @@ pub fn normalize_callback_provider(provider: &str) -> Option<String> {
         return Some(p.to_string());
     }
     let t = provider.trim().to_lowercase();
-    if t.is_empty() || !t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-') {
+    if t.is_empty()
+        || !t
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
         return None;
     }
     Some(t)
@@ -374,16 +441,26 @@ pub fn callback_file_path(auth_dir: &Path, canonical_provider: &str, state: &str
 }
 
 /// Atomically publishes the callback file (temp file + rename), dir mode 0700.
-pub fn write_callback_file(auth_dir: &Path, canonical_provider: &str, state: &str, payload: &CallbackPayload) -> Result<PathBuf, String> {
+pub fn write_callback_file(
+    auth_dir: &Path,
+    canonical_provider: &str,
+    state: &str,
+    payload: &CallbackPayload,
+) -> Result<PathBuf, String> {
     if validate_oauth_state(state).is_err() {
         return Err("invalid oauth state".into());
     }
-    crate::storage::mkdir_all_private(auth_dir).map_err(|e| format!("create oauth callback dir: {e}"))?;
-    let data = serde_json::to_vec(payload).map_err(|e| format!("marshal oauth callback payload: {e}"))?;
+    crate::storage::mkdir_all_private(auth_dir)
+        .map_err(|e| format!("create oauth callback dir: {e}"))?;
+    let data =
+        serde_json::to_vec(payload).map_err(|e| format!("marshal oauth callback payload: {e}"))?;
     let final_path = callback_file_path(auth_dir, canonical_provider, state);
     let tmp = auth_dir.join(format!(".oauth-callback-{}", crate::util::random_hex(8)));
     let result = (|| {
-        let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)?;
         f.write_all(&data)?;
         f.sync_all()?;
         std::fs::rename(&tmp, &final_path)
@@ -396,7 +473,11 @@ pub fn write_callback_file(auth_dir: &Path, canonical_provider: &str, state: &st
 }
 
 /// Reads and removes a callback file if present.
-pub fn take_callback_file(auth_dir: &Path, canonical_provider: &str, state: &str) -> Option<CallbackPayload> {
+pub fn take_callback_file(
+    auth_dir: &Path,
+    canonical_provider: &str,
+    state: &str,
+) -> Option<CallbackPayload> {
     let path = callback_file_path(auth_dir, canonical_provider, state);
     let data = std::fs::read(&path).ok()?;
     let _ = std::fs::remove_file(&path);
@@ -417,7 +498,10 @@ mod tests {
         assert_eq!(s.poll_status("st1"), (200, json!({"status": "wait"})));
 
         s.set_error("st1", "  ");
-        assert_eq!(s.poll_status("st1").1, json!({"status": "error", "error": "Authentication failed"}));
+        assert_eq!(
+            s.poll_status("st1").1,
+            json!({"status": "error", "error": "Authentication failed"})
+        );
         assert!(!s.is_pending("st1", ""));
         assert!(!s.cancel("st1"), "errored sessions cannot be cancelled");
 
@@ -428,7 +512,10 @@ mod tests {
 
         s.register("st3", "xai");
         assert!(s.cancel("st3"));
-        assert_eq!(s.poll_status("st3").1, json!({"status": "error", "error": "unknown or expired state"}));
+        assert_eq!(
+            s.poll_status("st3").1,
+            json!({"status": "error", "error": "unknown or expired state"})
+        );
         assert_eq!(s.poll_status("").1, json!({"status": "ok"}));
         assert_eq!(s.poll_status("bad/state").0, 400);
     }
@@ -466,28 +553,56 @@ mod tests {
 
         assert_eq!(call(&req("", "", "c")).0, 400);
         assert_eq!(call(&req("", "bad/state", "c")).1["error"], "invalid state");
-        assert_eq!(call(&req("", "st", "")).1["error"], "code or error is required");
+        assert_eq!(
+            call(&req("", "st", "")).1["error"],
+            "code or error is required"
+        );
         assert_eq!(call(&req("", "st", "c")).0, 404);
 
         s.register("st", "anthropic");
-        assert_eq!(call(&req("openai", "st", "c")).1["error"], "provider does not match state");
-        assert_eq!(call(&req("!!", "st", "c")).1["error"], "unsupported provider");
+        assert_eq!(
+            call(&req("openai", "st", "c")).1["error"],
+            "provider does not match state"
+        );
+        assert_eq!(
+            call(&req("!!", "st", "c")).1["error"],
+            "unsupported provider"
+        );
 
         // No inbox: falls back to the callback file, which the waiter reads and removes.
-        assert_eq!(call(&req("claude", "st", " the-code ")), (200, json!({"status": "ok"})));
+        assert_eq!(
+            call(&req("claude", "st", " the-code ")),
+            (200, json!({"status": "ok"}))
+        );
         let got = take_callback_file(dir.path(), "anthropic", "st").unwrap();
-        assert_eq!(got, CallbackPayload { code: "the-code".into(), state: "st".into(), error: String::new() });
+        assert_eq!(
+            got,
+            CallbackPayload {
+                code: "the-code".into(),
+                state: "st".into(),
+                error: String::new()
+            }
+        );
         assert!(take_callback_file(dir.path(), "anthropic", "st").is_none());
 
         // redirect_url fills the blanks.
-        let r = CallbackRequest { redirect_url: "http://localhost:54545/callback?code=zz&state=st".into(), ..Default::default() };
+        let r = CallbackRequest {
+            redirect_url: "http://localhost:54545/callback?code=zz&state=st".into(),
+            ..Default::default()
+        };
         assert_eq!(call(&r).0, 200);
 
         s.set_error("st", "Bad request");
-        assert_eq!(call(&req("", "st", "c")), (409, json!({"status": "error", "error": "Bad request"})));
+        assert_eq!(
+            call(&req("", "st", "c")),
+            (409, json!({"status": "error", "error": "Bad request"}))
+        );
         s.register("done", "codex");
         s.complete("done");
-        assert_eq!(call(&req("", "done", "c")).1["error"], "oauth flow is already completed");
+        assert_eq!(
+            call(&req("", "done", "c")).1["error"],
+            "oauth flow is already completed"
+        );
     }
 
     #[tokio::test]
@@ -497,6 +612,9 @@ mod tests {
         s.register_with_inbox("st", "codex", tx);
         s.submit_callback(None, "codex", "st", "c1", "").unwrap();
         assert_eq!(rx.recv().await.unwrap().code, "c1");
-        assert!(matches!(s.submit_callback(None, "xai", "st", "c", ""), Err(CallbackError::NotPending)));
+        assert!(matches!(
+            s.submit_callback(None, "xai", "st", "c", ""),
+            Err(CallbackError::NotPending)
+        ));
     }
 }

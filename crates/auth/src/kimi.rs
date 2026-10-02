@@ -43,7 +43,10 @@ pub fn is_kimi_com_domain(domain: &str) -> bool {
 }
 
 fn url_host(raw: &str) -> String {
-    url::Url::parse(raw.trim()).ok().and_then(|u| u.host_str().map(str::to_lowercase)).unwrap_or_default()
+    url::Url::parse(raw.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_lowercase))
+        .unwrap_or_default()
 }
 
 fn is_kimi_ai_host(raw: &str) -> bool {
@@ -58,15 +61,27 @@ fn is_kimi_com_host(raw: &str) -> bool {
 
 /// `kimi.ai` for any ai-ish domain, else `kimi.com`.
 pub fn normalize_kimi_domain(domain: &str) -> &'static str {
-    if is_kimi_ai_domain(domain) { KIMI_AI_DOMAIN } else { KIMI_DEFAULT_DOMAIN }
+    if is_kimi_ai_domain(domain) {
+        KIMI_AI_DOMAIN
+    } else {
+        KIMI_DEFAULT_DOMAIN
+    }
 }
 
 pub fn resolve_kimi_oauth_host(domain: &str) -> &'static str {
-    if is_kimi_ai_domain(domain) { KIMI_AI_OAUTH_HOST } else { KIMI_OAUTH_HOST }
+    if is_kimi_ai_domain(domain) {
+        KIMI_AI_OAUTH_HOST
+    } else {
+        KIMI_OAUTH_HOST
+    }
 }
 
 pub fn resolve_kimi_api_base_url(domain: &str) -> &'static str {
-    if is_kimi_ai_domain(domain) { KIMI_AI_API_BASE_URL } else { KIMI_API_BASE_URL }
+    if is_kimi_ai_domain(domain) {
+        KIMI_AI_API_BASE_URL
+    } else {
+        KIMI_API_BASE_URL
+    }
 }
 
 /// Decides kimi.com vs kimi.ai for an existing auth by probing attributes, metadata, the token
@@ -91,51 +106,58 @@ pub fn resolve_kimi_domain_from_auth(auth: &Auth) -> &'static str {
         }
     };
 
-    if let Some(d) = auth.attributes.get("domain").filter(|d| !d.is_empty()) {
-        if let Some(r) = classify_domain(d) {
-            return r;
-        }
+    if let Some(d) = auth.attributes.get("domain").filter(|d| !d.is_empty())
+        && let Some(r) = classify_domain(d)
+    {
+        return r;
     }
-    if let Some(b) = auth.attributes.get("base_url").filter(|b| !b.is_empty()) {
-        if let Some(r) = classify_url(b) {
-            return r;
-        }
+    if let Some(b) = auth.attributes.get("base_url").filter(|b| !b.is_empty())
+        && let Some(r) = classify_url(b)
+    {
+        return r;
     }
     for (key, by_url) in [("domain", false), ("base_url", true), ("type", false)] {
         let v = auth.meta_str(key);
         if v.is_empty() {
             continue;
         }
-        let r = if by_url { classify_url(&v) } else { classify_domain(&v) };
+        let r = if by_url {
+            classify_url(&v)
+        } else {
+            classify_domain(&v)
+        };
         if let Some(r) = r {
             return r;
         }
     }
     if let Some(TokenStorage::Kimi(s)) = &auth.storage {
-        if !s.domain.is_empty() {
-            if let Some(r) = classify_domain(&s.domain) {
-                return r;
-            }
+        if !s.domain.is_empty()
+            && let Some(r) = classify_domain(&s.domain)
+        {
+            return r;
         }
-        if !s.base_url.is_empty() {
-            if let Some(r) = classify_url(&s.base_url) {
-                return r;
-            }
+        if !s.base_url.is_empty()
+            && let Some(r) = classify_url(&s.base_url)
+        {
+            return r;
         }
-        if !s.type_.is_empty() {
-            if let Some(r) = classify_domain(&s.type_) {
-                return r;
-            }
-        }
-    }
-    if !auth.provider.is_empty() {
-        if let Some(r) = classify_domain(&auth.provider) {
+        if !s.type_.is_empty()
+            && let Some(r) = classify_domain(&s.type_)
+        {
             return r;
         }
     }
+    if !auth.provider.is_empty()
+        && let Some(r) = classify_domain(&auth.provider)
+    {
+        return r;
+    }
     let id = auth.id.to_lowercase();
     let file = auth.file_name.to_lowercase();
-    if ["kimi-ai", "kimi.ai"].iter().any(|n| id.contains(n) || file.contains(n)) {
+    if ["kimi-ai", "kimi.ai"]
+        .iter()
+        .any(|n| id.contains(n) || file.contains(n))
+    {
         return KIMI_AI_DOMAIN;
     }
     KIMI_DEFAULT_DOMAIN
@@ -145,7 +167,7 @@ pub fn is_kimi_ai_auth(auth: &Auth) -> bool {
     is_kimi_ai_domain(resolve_kimi_domain_from_auth(auth))
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct KimiTokenData {
     pub access_token: String,
     pub refresh_token: String,
@@ -155,7 +177,7 @@ pub struct KimiTokenData {
     pub scope: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct KimiAuthBundle {
     pub token_data: KimiTokenData,
     pub device_id: String,
@@ -180,7 +202,11 @@ pub struct DeviceCodeResponse {
 impl DeviceCodeResponse {
     /// URL the user should open: the complete one when present.
     pub fn verification_url(&self) -> &str {
-        if self.verification_uri_complete.is_empty() { &self.verification_uri } else { &self.verification_uri_complete }
+        if self.verification_uri_complete.is_empty() {
+            &self.verification_uri
+        } else {
+            &self.verification_uri_complete
+        }
     }
 }
 
@@ -205,7 +231,11 @@ impl DeviceFlowClient {
         let device_id = device_id.trim();
         Self {
             client,
-            device_id: if device_id.is_empty() { uuid::Uuid::new_v4().to_string() } else { device_id.to_string() },
+            device_id: if device_id.is_empty() {
+                uuid::Uuid::new_v4().to_string()
+            } else {
+                device_id.to_string()
+            },
             domain,
             oauth_host: resolve_kimi_oauth_host(domain).to_string(),
         }
@@ -257,26 +287,45 @@ impl DeviceFlowClient {
             .form_request(&self.device_code_url(), &[("client_id", CLIENT_ID)])
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("kimi: device code request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("kimi: failed to read device code response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "kimi: device code request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "kimi: failed to read device code response: {}",
+                e.without_url()
+            ))
+        })?;
         if status != 200 {
-            return Err(AuthFlowError::other(format!("kimi: device code request failed with status {status}: {body}")));
+            return Err(AuthFlowError::other(format!(
+                "kimi: device code request failed with status {status}: {body}"
+            )));
         }
-        serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("kimi: failed to parse device code response: {e}")))
+        serde_json::from_str(&body).map_err(|e| {
+            AuthFlowError::other(format!("kimi: failed to parse device code response: {e}"))
+        })
     }
 
     /// Polls until authorized, denied or expired (`min(15 min, expires_in)`). `interval` is at
     /// least 5 s; `slow_down` keeps the interval, like the Go code.
     pub async fn poll_for_token(&self, device: &DeviceCodeResponse) -> Result<KimiTokenData> {
-        self.poll_for_token_with_min_interval(device, DEFAULT_POLL_INTERVAL).await
+        self.poll_for_token_with_min_interval(device, DEFAULT_POLL_INTERVAL)
+            .await
     }
 
-    pub(crate) async fn poll_for_token_with_min_interval(&self, device: &DeviceCodeResponse, min_interval: Duration) -> Result<KimiTokenData> {
+    pub(crate) async fn poll_for_token_with_min_interval(
+        &self,
+        device: &DeviceCodeResponse,
+        min_interval: Duration,
+    ) -> Result<KimiTokenData> {
         let interval = Duration::from_secs(device.interval.max(0) as u64).max(min_interval);
         let mut deadline = tokio::time::Instant::now() + MAX_POLL_DURATION;
         if device.expires_in > 0 {
-            deadline = deadline.min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
+            deadline = deadline
+                .min(tokio::time::Instant::now() + Duration::from_secs(device.expires_in as u64));
         }
         loop {
             tokio::time::sleep(interval).await;
@@ -303,9 +352,15 @@ impl DeviceFlowClient {
             )
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("kimi: token request failed: {}", e.without_url())))?;
-        let (_, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("kimi: failed to read token response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!("kimi: token request failed: {}", e.without_url()))
+            })?;
+        let (_, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "kimi: failed to read token response: {}",
+                e.without_url()
+            ))
+        })?;
 
         #[derive(Deserialize, Default)]
         struct Oauth {
@@ -324,15 +379,19 @@ impl DeviceFlowClient {
             #[serde(default)]
             scope: String,
         }
-        let oauth: Oauth =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("kimi: failed to parse token response: {e}")))?;
+        let oauth: Oauth = serde_json::from_str(&body).map_err(|e| {
+            AuthFlowError::other(format!("kimi: failed to parse token response: {e}"))
+        })?;
         match oauth.error.as_str() {
             "" => {}
             "authorization_pending" | "slow_down" => return Ok(None),
             "expired_token" => return Err(AuthFlowError::other("kimi: device code expired")),
             "access_denied" => return Err(AuthFlowError::other("kimi: access denied by user")),
             other => {
-                return Err(AuthFlowError::other(format!("kimi: OAuth error: {other} - {}", oauth.error_description)));
+                return Err(AuthFlowError::other(format!(
+                    "kimi: OAuth error: {other} - {}",
+                    oauth.error_description
+                )));
             }
         }
         if oauth.access_token.is_empty() {
@@ -356,25 +415,48 @@ impl DeviceFlowClient {
         let key = format!("{}:{}", self.token_url(), refresh_token);
         let this = self.clone();
         let rt = refresh_token.to_string();
-        REFRESH_FLIGHT.run(&key, move || async move { this.refresh_single_flight(&rt).await }).await
+        REFRESH_FLIGHT
+            .run(&key, move || async move {
+                this.refresh_single_flight(&rt).await
+            })
+            .await
     }
 
     async fn refresh_single_flight(&self, refresh_token: &str) -> Result<KimiTokenData> {
         let resp = self
             .form_request(
                 &self.token_url(),
-                &[("client_id", CLIENT_ID), ("grant_type", "refresh_token"), ("refresh_token", refresh_token)],
+                &[
+                    ("client_id", CLIENT_ID),
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                ],
             )
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("kimi: refresh request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("kimi: failed to read refresh response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "kimi: refresh request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "kimi: failed to read refresh response: {}",
+                e.without_url()
+            ))
+        })?;
         if status == 401 || status == 403 {
-            return Err(AuthFlowError::Status { status, message: format!("kimi: refresh token rejected (status {status})") });
+            return Err(AuthFlowError::Status {
+                status,
+                message: format!("kimi: refresh token rejected (status {status})"),
+            });
         }
         if status != 200 {
-            return Err(AuthFlowError::Status { status, message: format!("kimi: refresh failed with status {status}: {body}") });
+            return Err(AuthFlowError::Status {
+                status,
+                message: format!("kimi: refresh failed with status {status}: {body}"),
+            });
         }
         #[derive(Deserialize, Default)]
         struct R {
@@ -389,9 +471,13 @@ impl DeviceFlowClient {
             #[serde(default)]
             scope: String,
         }
-        let r: R = serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("kimi: failed to parse refresh response: {e}")))?;
+        let r: R = serde_json::from_str(&body).map_err(|e| {
+            AuthFlowError::other(format!("kimi: failed to parse refresh response: {e}"))
+        })?;
         if r.access_token.is_empty() {
-            return Err(AuthFlowError::other("kimi: empty access token in refresh response"));
+            return Err(AuthFlowError::other(
+                "kimi: empty access token in refresh response",
+            ));
         }
         Ok(KimiTokenData {
             access_token: r.access_token,
@@ -404,19 +490,25 @@ impl DeviceFlowClient {
 }
 
 fn expires_at(expires_in: f64) -> i64 {
-    if expires_in > 0.0 { Utc::now().timestamp() + expires_in as i64 } else { 0 }
+    if expires_in > 0.0 {
+        Utc::now().timestamp() + expires_in as i64
+    } else {
+        0
+    }
 }
 
 fn expired_string(expires_at: i64) -> String {
-    DateTime::from_timestamp(expires_at, 0).map(format_rfc3339_utc).unwrap_or_default()
+    DateTime::from_timestamp(expires_at, 0)
+        .map(format_rfc3339_utc)
+        .unwrap_or_default()
 }
 
 fn hostname() -> String {
     for var in ["HOSTNAME", "COMPUTERNAME"] {
-        if let Ok(v) = std::env::var(var) {
-            if !v.trim().is_empty() {
-                return v.trim().to_string();
-            }
+        if let Ok(v) = std::env::var(var)
+            && !v.trim().is_empty()
+        {
+            return v.trim().to_string();
         }
     }
     std::fs::read_to_string("/etc/hostname")
@@ -451,7 +543,10 @@ pub struct KimiAuth {
 impl KimiAuth {
     pub fn new(domain: &str, proxy_url: &str) -> Result<Self> {
         let domain = normalize_kimi_domain(domain);
-        Ok(Self { device: DeviceFlowClient::new(domain, "", proxy_url)?, domain })
+        Ok(Self {
+            device: DeviceFlowClient::new(domain, "", proxy_url)?,
+            domain,
+        })
     }
 
     pub fn from_device_client(device: DeviceFlowClient) -> Self {
@@ -463,9 +558,15 @@ impl KimiAuth {
         self.device.request_device_code().await
     }
 
-    pub async fn wait_for_authorization(&self, device: &DeviceCodeResponse) -> Result<KimiAuthBundle> {
+    pub async fn wait_for_authorization(
+        &self,
+        device: &DeviceCodeResponse,
+    ) -> Result<KimiAuthBundle> {
         let token_data = self.device.poll_for_token(device).await?;
-        Ok(KimiAuthBundle { token_data, device_id: self.device.device_id.clone() })
+        Ok(KimiAuthBundle {
+            token_data,
+            device_id: self.device.device_id.clone(),
+        })
     }
 
     pub fn create_token_storage(&self, bundle: &KimiAuthBundle) -> KimiTokenStorage {
@@ -476,7 +577,11 @@ impl KimiAuth {
             token_type: bundle.token_data.token_type.clone(),
             scope: bundle.token_data.scope.clone(),
             device_id: bundle.device_id.trim().to_string(),
-            expired: if bundle.token_data.expires_at > 0 { expired_string(bundle.token_data.expires_at) } else { String::new() },
+            expired: if bundle.token_data.expires_at > 0 {
+                expired_string(bundle.token_data.expires_at)
+            } else {
+                String::new()
+            },
             type_: if ai { "kimi-ai" } else { "kimi" }.to_string(),
             domain: self.domain.to_string(),
             base_url: resolve_kimi_api_base_url(self.domain).to_string(),
@@ -486,7 +591,12 @@ impl KimiAuth {
 
 /// Builds the `Auth` record a successful kimi login yields (`KimiAuthenticator.Login` tail).
 /// `provider_key` is `kimi`, `kimi-ai` or `kimi.ai`.
-pub fn build_auth_record(provider_key: &str, domain: &str, bundle: &KimiAuthBundle, mut storage: KimiTokenStorage) -> Auth {
+pub fn build_auth_record(
+    provider_key: &str,
+    domain: &str,
+    bundle: &KimiAuthBundle,
+    mut storage: KimiTokenStorage,
+) -> Auth {
     let is_ai = is_kimi_ai_domain(domain);
     let (display, prefix, base_url) = if is_ai {
         ("Kimi.ai", "kimi-ai", KIMI_AI_API_BASE_URL)
@@ -499,23 +609,38 @@ pub fn build_auth_record(provider_key: &str, domain: &str, bundle: &KimiAuthBund
 
     let mut metadata = Metadata::new();
     metadata.insert("type".into(), provider_key.into());
-    metadata.insert("access_token".into(), bundle.token_data.access_token.clone().into());
-    metadata.insert("refresh_token".into(), bundle.token_data.refresh_token.clone().into());
-    metadata.insert("token_type".into(), bundle.token_data.token_type.clone().into());
+    metadata.insert(
+        "access_token".into(),
+        bundle.token_data.access_token.clone().into(),
+    );
+    metadata.insert(
+        "refresh_token".into(),
+        bundle.token_data.refresh_token.clone().into(),
+    );
+    metadata.insert(
+        "token_type".into(),
+        bundle.token_data.token_type.clone().into(),
+    );
     metadata.insert("scope".into(), bundle.token_data.scope.clone().into());
     metadata.insert("timestamp".into(), Utc::now().timestamp_millis().into());
     metadata.insert("domain".into(), domain.into());
     metadata.insert("base_url".into(), base_url.into());
     if bundle.token_data.expires_at > 0 {
-        metadata.insert("expired".into(), expired_string(bundle.token_data.expires_at).into());
+        metadata.insert(
+            "expired".into(),
+            expired_string(bundle.token_data.expires_at).into(),
+        );
     }
     if !bundle.device_id.trim().is_empty() {
         metadata.insert("device_id".into(), bundle.device_id.trim().into());
     }
 
     let file_name = format!("{prefix}-{}.json", Utc::now().timestamp_millis());
-    let attributes: BTreeMap<String, String> =
-        [("base_url".to_string(), base_url.to_string()), ("domain".to_string(), domain.to_string())].into();
+    let attributes: BTreeMap<String, String> = [
+        ("base_url".to_string(), base_url.to_string()),
+        ("domain".to_string(), domain.to_string()),
+    ]
+    .into();
     Auth {
         id: file_name.clone(),
         provider: provider_key.to_string(),
@@ -531,22 +656,38 @@ pub fn build_auth_record(provider_key: &str, domain: &str, bundle: &KimiAuthBund
 /// Executor `Refresh` write-back for kimi auths.
 pub fn apply_refresh_to_auth(auth: &mut Auth, td: &KimiTokenData) {
     let domain = resolve_kimi_domain_from_auth(auth);
-    auth.metadata.insert("access_token".into(), td.access_token.clone().into());
+    auth.metadata
+        .insert("access_token".into(), td.access_token.clone().into());
     if !td.refresh_token.is_empty() {
-        auth.metadata.insert("refresh_token".into(), td.refresh_token.clone().into());
+        auth.metadata
+            .insert("refresh_token".into(), td.refresh_token.clone().into());
     }
     if td.expires_at > 0 {
-        auth.metadata.insert("expired".into(), expired_string(td.expires_at).into());
+        auth.metadata
+            .insert("expired".into(), expired_string(td.expires_at).into());
     }
-    if auth.metadata.get("type").and_then(Value::as_str).unwrap_or("").is_empty() {
-        let t = if is_kimi_ai_domain(domain) { "kimi-ai" } else { "kimi" };
+    if auth
+        .metadata
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .is_empty()
+    {
+        let t = if is_kimi_ai_domain(domain) {
+            "kimi-ai"
+        } else {
+            "kimi"
+        };
         auth.metadata.insert("type".into(), t.into());
     }
     if !auth.metadata.contains_key("domain") {
         auth.metadata.insert("domain".into(), domain.into());
     }
     if !auth.metadata.contains_key("base_url") {
-        auth.metadata.insert("base_url".into(), resolve_kimi_base_url_for_auth(auth).into());
+        auth.metadata.insert(
+            "base_url".into(),
+            resolve_kimi_base_url_for_auth(auth).into(),
+        );
     }
     let base_url = resolve_kimi_base_url_for_auth(auth);
     if let Some(TokenStorage::Kimi(s)) = auth.storage.as_mut() {
@@ -564,7 +705,8 @@ pub fn apply_refresh_to_auth(auth: &mut Auth, td: &KimiTokenData) {
             s.base_url = base_url;
         }
     }
-    auth.metadata.insert("last_refresh".into(), now_rfc3339_local().into());
+    auth.metadata
+        .insert("last_refresh".into(), now_rfc3339_local().into());
 }
 
 /// `helps.ResolveKimiBaseURL`: explicit attribute or metadata `base_url`, else the domain default.
@@ -592,19 +734,29 @@ mod tests {
         assert!(is_kimi_com_domain("com"));
         assert_eq!(normalize_kimi_domain("whatever"), "kimi.com");
         assert_eq!(resolve_kimi_oauth_host("ai"), "https://auth.kimi.ai");
-        assert_eq!(resolve_kimi_api_base_url("kimi.com"), "https://api.kimi.com/coding");
+        assert_eq!(
+            resolve_kimi_api_base_url("kimi.com"),
+            "https://api.kimi.com/coding"
+        );
     }
 
     #[test]
     fn domain_from_auth_probe_order() {
-        let mut a = Auth { provider: "kimi".into(), ..Default::default() };
+        let mut a = Auth {
+            provider: "kimi".into(),
+            ..Default::default()
+        };
         assert_eq!(resolve_kimi_domain_from_auth(&a), "kimi.com");
-        a.metadata.insert("base_url".into(), "https://api.kimi.ai/coding".into());
+        a.metadata
+            .insert("base_url".into(), "https://api.kimi.ai/coding".into());
         assert_eq!(resolve_kimi_domain_from_auth(&a), "kimi.ai");
         // Attribute beats metadata.
         a.attributes.insert("domain".into(), "kimi.com".into());
         assert_eq!(resolve_kimi_domain_from_auth(&a), "kimi.com");
-        let b = Auth { id: "kimi-ai-123.json".into(), ..Default::default() };
+        let b = Auth {
+            id: "kimi-ai-123.json".into(),
+            ..Default::default()
+        };
         assert_eq!(resolve_kimi_domain_from_auth(&b), "kimi.ai");
     }
 
@@ -620,7 +772,11 @@ mod tests {
             },
             device_id: " dev ".into(),
         };
-        let auth_svc = KimiAuth::from_device_client(DeviceFlowClient::with_client(reqwest::Client::new(), "kimi.ai", "d"));
+        let auth_svc = KimiAuth::from_device_client(DeviceFlowClient::with_client(
+            reqwest::Client::new(),
+            "kimi.ai",
+            "d",
+        ));
         let storage = auth_svc.create_token_storage(&bundle);
         assert_eq!(storage.expired, "2030-03-17T17:46:40Z");
         let auth = build_auth_record("kimi-ai", "kimi.ai", &bundle, storage);

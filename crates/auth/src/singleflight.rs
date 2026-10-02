@@ -11,13 +11,17 @@ use tokio::sync::OnceCell;
 
 use crate::error::AuthFlowError;
 
+type Flight<T> = Arc<OnceCell<Result<T, AuthFlowError>>>;
+
 pub struct SingleFlight<T: Clone + Send + Sync + 'static> {
-    inflight: Mutex<HashMap<String, Arc<OnceCell<Result<T, AuthFlowError>>>>>,
+    inflight: Mutex<HashMap<String, Flight<T>>>,
 }
 
 impl<T: Clone + Send + Sync + 'static> Default for SingleFlight<T> {
     fn default() -> Self {
-        Self { inflight: Mutex::new(HashMap::new()) }
+        Self {
+            inflight: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -31,13 +35,17 @@ impl<T: Clone + Send + Sync + 'static> SingleFlight<T> {
     {
         let cell = {
             let mut map = self.inflight.lock();
-            map.entry(key.to_string()).or_insert_with(|| Arc::new(OnceCell::new())).clone()
+            map.entry(key.to_string())
+                .or_insert_with(|| Arc::new(OnceCell::new()))
+                .clone()
         };
         let result = cell
             .get_or_init(|| async move {
                 match tokio::spawn(f()).await {
                     Ok(r) => r,
-                    Err(e) => Err(AuthFlowError::other(format!("single-flight task failed: {e}"))),
+                    Err(e) => Err(AuthFlowError::other(format!(
+                        "single-flight task failed: {e}"
+                    ))),
                 }
             })
             .await

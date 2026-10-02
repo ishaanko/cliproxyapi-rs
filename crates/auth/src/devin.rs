@@ -21,7 +21,8 @@ use crate::util::{format_rfc3339_utc, random_hex};
 pub const DEFAULT_APP_BASE_URL: &str = "https://app.devin.ai";
 pub const DEFAULT_API_BASE_URL: &str = "https://api.devin.ai";
 pub const DEFAULT_SERVER_URL: &str = "https://server.codeium.com";
-pub const GET_USER_STATUS_PATH: &str = "/exa.seat_management_pb.SeatManagementService/GetUserStatus";
+pub const GET_USER_STATUS_PATH: &str =
+    "/exa.seat_management_pb.SeatManagementService/GetUserStatus";
 const TOKEN_PREFIX: &str = "devin-session-token$";
 const FINGERPRINT_HEX_LEN: usize = 732;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -65,7 +66,11 @@ pub struct DevinAuthService {
 
 impl DevinAuthService {
     pub fn new(proxy_url: &str) -> Result<Self> {
-        Ok(Self::with_client(build_client_ext(proxy_url, Some(HTTP_TIMEOUT), None)?))
+        Ok(Self::with_client(build_client_ext(
+            proxy_url,
+            Some(HTTP_TIMEOUT),
+            None,
+        )?))
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
@@ -97,7 +102,12 @@ impl DevinAuthService {
 
     /// `<app>/auth/cli/continue?...`. An empty `redirect_uri` is the paste-the-code variant, which
     /// adds `cli_pkce_marker=1`. Parameter order is part of the Go output.
-    pub fn build_authorization_url(&self, redirect_uri: &str, code_challenge: &str, state: &str) -> String {
+    pub fn build_authorization_url(
+        &self,
+        redirect_uri: &str,
+        code_challenge: &str,
+        state: &str,
+    ) -> String {
         use crate::util::query_escape as esc;
         let redirect = redirect_uri.trim();
         let mut parts = Vec::new();
@@ -113,26 +123,42 @@ impl DevinAuthService {
         if redirect.is_empty() {
             parts.push("cli_pkce_marker=1".to_string());
         }
-        format!("{}/auth/cli/continue?{}", self.app_base_url.trim_end_matches('/'), parts.join("&"))
+        format!(
+            "{}/auth/cli/continue?{}",
+            self.app_base_url.trim_end_matches('/'),
+            parts.join("&")
+        )
     }
 
     /// Exchanges an authorization code for a session token.
     pub async fn exchange_code_for_token(&self, code: &str, code_verifier: &str) -> Result<String> {
-        let body = serde_json::json!({ "code": code.trim(), "code_verifier": code_verifier.trim() }).to_string();
+        let body =
+            serde_json::json!({ "code": code.trim(), "code_verifier": code_verifier.trim() })
+                .to_string();
         let resp = self
             .client
-            .post(format!("{}/auth/cli/token", self.api_base_url.trim_end_matches('/')))
+            .post(format!(
+                "{}/auth/cli/token",
+                self.api_base_url.trim_end_matches('/')
+            ))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body)
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("devin token exchange failed: {}", e.without_url())))?;
-        let (status, text) = read_text(resp)
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("read token exchange response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "devin token exchange failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, text) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!("read token exchange response: {}", e.without_url()))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(AuthFlowError::other(format!("token exchange failed with status {status}: {text}")));
+            return Err(AuthFlowError::other(format!(
+                "token exchange failed with status {status}: {text}"
+            )));
         }
         let token = serde_json::from_str::<Value>(&text)
             .ok()
@@ -141,16 +167,24 @@ impl DevinAuthService {
             .trim()
             .to_string();
         if token.is_empty() {
-            return Err(AuthFlowError::other(format!("response did not contain a valid token: {text}")));
+            return Err(AuthFlowError::other(format!(
+                "response did not contain a valid token: {text}"
+            )));
         }
         Ok(token)
     }
 
     /// `(user_name, user_id, org_id)` from `/v3/self`; empty strings on any non-200.
-    pub async fn fetch_self_profile(&self, session_token: &str) -> Result<(String, String, String)> {
+    pub async fn fetch_self_profile(
+        &self,
+        session_token: &str,
+    ) -> Result<(String, String, String)> {
         let resp = self
             .client
-            .get(format!("{}/v3/self", self.api_base_url.trim_end_matches('/')))
+            .get(format!(
+                "{}/v3/self",
+                self.api_base_url.trim_end_matches('/')
+            ))
             .header("Authorization", format!("Bearer {session_token}"))
             .header("Accept", "application/json")
             .send()
@@ -165,16 +199,30 @@ impl DevinAuthService {
     }
 
     /// Connect-protocol `GetUserStatus`: plan, quota percentages and reset times.
-    pub async fn fetch_user_status(&self, session_token: &str, device_seed: &str) -> Result<DevinUserStatus> {
+    pub async fn fetch_user_status(
+        &self,
+        session_token: &str,
+        device_seed: &str,
+    ) -> Result<DevinUserStatus> {
         let session_token = session_token.trim();
         if session_token.is_empty() {
-            return Err(AuthFlowError::other("devin auth service: session token is required"));
+            return Err(AuthFlowError::other(
+                "devin auth service: session token is required",
+            ));
         }
-        let request = build_get_user_status_request(session_token, &generate_device_fingerprint(device_seed));
+        let request =
+            build_get_user_status_request(session_token, &generate_device_fingerprint(device_seed));
         let resp = self
             .client
-            .post(format!("{}{}", self.server_base_url.trim_end_matches('/'), GET_USER_STATUS_PATH))
-            .header("Authorization", format!("Basic {session_token}-{session_token}"))
+            .post(format!(
+                "{}{}",
+                self.server_base_url.trim_end_matches('/'),
+                GET_USER_STATUS_PATH
+            ))
+            .header(
+                "Authorization",
+                format!("Basic {session_token}-{session_token}"),
+            )
             .header("Connect-Protocol-Version", "1")
             .header("Content-Type", "application/proto")
             .header("Accept", "*/*")
@@ -199,13 +247,14 @@ impl DevinAuthService {
         if session_token.is_empty() {
             return Err(AuthFlowError::other("devin session token is required"));
         }
-        let (mut user_name, mut user_id, mut org_id) = match self.fetch_self_profile(&session_token).await {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::warn!("failed to fetch devin user profile");
-                Default::default()
-            }
-        };
+        let (mut user_name, mut user_id, mut org_id) =
+            match self.fetch_self_profile(&session_token).await {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!("failed to fetch devin user profile");
+                    Default::default()
+                }
+            };
         let user_status = match self.fetch_user_status(&session_token, "").await {
             Ok(s) => Some(s),
             Err(_) => {
@@ -213,7 +262,13 @@ impl DevinAuthService {
                 None
             }
         };
-        Ok(build_auth_record(&session_token, &mut user_name, &mut user_id, &mut org_id, user_status.as_ref()))
+        Ok(build_auth_record(
+            &session_token,
+            &mut user_name,
+            &mut user_id,
+            &mut org_id,
+            user_status.as_ref(),
+        ))
     }
 }
 
@@ -258,14 +313,24 @@ fn build_auth_record(
     }
     let mut file_identifier: String = identifier
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if file_identifier != identifier || file_identifier.len() > 160 {
         let digest = Sha256::digest(identifier.as_bytes());
         file_identifier = format!("user-{}", hex::encode(&digest[..8]));
     }
     let file_name = format!("devin-{file_identifier}.json");
-    let label = if email.is_empty() { format!("Devin ({identifier})") } else { format!("Devin ({identifier} - {email})") };
+    let label = if email.is_empty() {
+        format!("Devin ({identifier})")
+    } else {
+        format!("Devin ({identifier} - {email})")
+    };
 
     let mut attributes = std::collections::BTreeMap::new();
     for (k, v) in [
@@ -305,8 +370,14 @@ fn build_auth_record(
         signals.insert("plan".to_string(), plan);
     }
     if let Some(s) = status {
-        signals.insert("daily_quota_remaining_percent".into(), format!("{}%", s.daily_quota_remaining_percent));
-        signals.insert("weekly_quota_remaining_percent".into(), format!("{}%", s.weekly_quota_remaining_percent));
+        signals.insert(
+            "daily_quota_remaining_percent".into(),
+            format!("{}%", s.daily_quota_remaining_percent),
+        );
+        signals.insert(
+            "weekly_quota_remaining_percent".into(),
+            format!("{}%", s.weekly_quota_remaining_percent),
+        );
         for (key, t) in [
             ("daily_quota_reset_at", s.daily_quota_reset_at),
             ("weekly_quota_reset_at", s.weekly_quota_reset_at),
@@ -324,7 +395,11 @@ fn build_auth_record(
     auth.status = Status::Active;
     auth.attributes = attributes;
     auth.metadata = metadata;
-    auth.quota = QuotaState { observed_at: Some(Utc::now()), signals, ..Default::default() };
+    auth.quota = QuotaState {
+        observed_at: Some(Utc::now()),
+        signals,
+        ..Default::default()
+    };
     auth
 }
 
@@ -352,7 +427,10 @@ pub enum ManualPasteError {
 }
 
 /// `parseDevinManualPaste`: token, callback URL or bare authorization code.
-pub fn parse_manual_paste(input: &str, expected_state: &str) -> std::result::Result<ManualPaste, ManualPasteError> {
+pub fn parse_manual_paste(
+    input: &str,
+    expected_state: &str,
+) -> std::result::Result<ManualPaste, ManualPasteError> {
     let trimmed = input.trim().trim_matches(['"', '\'']).trim();
     if trimmed.is_empty() {
         return Ok(ManualPaste::Empty);
@@ -370,7 +448,10 @@ pub fn parse_manual_paste(input: &str, expected_state: &str) -> std::result::Res
             return Err(ManualPasteError::OAuth(err));
         }
         if !parsed.code.is_empty() {
-            if !expected_state.is_empty() && !parsed.state.is_empty() && parsed.state != expected_state {
+            if !expected_state.is_empty()
+                && !parsed.state.is_empty()
+                && parsed.state != expected_state
+            {
                 return Err(ManualPasteError::StateMismatch);
             }
             return Ok(ManualPaste::Code(parsed.code));
@@ -392,7 +473,9 @@ pub fn generate_device_fingerprint(seed: &str) -> String {
     let mut out = String::new();
     let mut counter = 0;
     while out.len() < FINGERPRINT_HEX_LEN {
-        out.push_str(&hex::encode(Sha256::digest(format!("{seed}-{counter}").as_bytes())));
+        out.push_str(&hex::encode(Sha256::digest(
+            format!("{seed}-{counter}").as_bytes(),
+        )));
         counter += 1;
     }
     out.truncate(FINGERPRINT_HEX_LEN);
@@ -479,7 +562,11 @@ fn go_os() -> &'static str {
 
 /// Protobuf `GetUserStatusRequest` as sent by the Windsurf client.
 pub fn build_get_user_status_request(session_token: &str, device_fingerprint: &str) -> Vec<u8> {
-    let fingerprint = if device_fingerprint.is_empty() { generate_device_fingerprint(session_token) } else { device_fingerprint.to_string() };
+    let fingerprint = if device_fingerprint.is_empty() {
+        generate_device_fingerprint(session_token)
+    } else {
+        device_fingerprint.to_string()
+    };
     let mut f1 = Vec::new();
     pb::append_string_field(&mut f1, 1, "chisel");
     pb::append_string_field(&mut f1, 2, "3000.10.21");
@@ -502,14 +589,19 @@ pub fn parse_get_user_status_response(data: &[u8]) -> Result<DevinUserStatus> {
     let mut status = DevinUserStatus::default();
     let mut rem = data;
     while !rem.is_empty() {
-        let (num, wire, n) = pb::consume_tag(rem).ok_or_else(|| AuthFlowError::other("proto: cannot parse invalid wire-format data"))?;
+        let (num, wire, n) = pb::consume_tag(rem)
+            .ok_or_else(|| AuthFlowError::other("proto: cannot parse invalid wire-format data"))?;
         rem = &rem[n..];
         if num == 1 && wire == pb::BYTES {
-            let (bytes, m) = pb::consume_bytes(rem).ok_or_else(|| AuthFlowError::other("proto: cannot parse invalid wire-format data"))?;
+            let (bytes, m) = pb::consume_bytes(rem).ok_or_else(|| {
+                AuthFlowError::other("proto: cannot parse invalid wire-format data")
+            })?;
             rem = &rem[m..];
             parse_user_status(bytes, &mut status);
         } else {
-            let m = pb::consume_field_value(wire, rem).ok_or_else(|| AuthFlowError::other("proto: cannot parse invalid wire-format data"))?;
+            let m = pb::consume_field_value(wire, rem).ok_or_else(|| {
+                AuthFlowError::other("proto: cannot parse invalid wire-format data")
+            })?;
             rem = &rem[m..];
         }
     }
@@ -529,21 +621,29 @@ fn unix_utc(secs: i64) -> Option<DateTime<Utc>> {
 fn for_each_field<'a>(data: &'a [u8], mut on_field: impl FnMut(u32, Field<'a>)) {
     let mut rem = data;
     while !rem.is_empty() {
-        let Some((num, wire, n)) = pb::consume_tag(rem) else { return };
+        let Some((num, wire, n)) = pb::consume_tag(rem) else {
+            return;
+        };
         rem = &rem[n..];
         match wire {
             pb::BYTES => {
-                let Some((bytes, m)) = pb::consume_bytes(rem) else { return };
+                let Some((bytes, m)) = pb::consume_bytes(rem) else {
+                    return;
+                };
                 rem = &rem[m..];
                 on_field(num, Field::Bytes(bytes));
             }
             pb::VARINT => {
-                let Some((v, m)) = pb::consume_varint(rem) else { return };
+                let Some((v, m)) = pb::consume_varint(rem) else {
+                    return;
+                };
                 rem = &rem[m..];
                 on_field(num, Field::Varint(v));
             }
             other => {
-                let Some(m) = pb::consume_field_value(other, rem) else { return };
+                let Some(m) = pb::consume_field_value(other, rem) else {
+                    return;
+                };
                 rem = &rem[m..];
             }
         }
@@ -660,8 +760,14 @@ mod tests {
 
     #[test]
     fn session_token_formatting() {
-        assert_eq!(format_session_token(" eyJabc "), "devin-session-token$eyJabc");
-        assert_eq!(format_session_token("devin-session-token$x"), "devin-session-token$x");
+        assert_eq!(
+            format_session_token(" eyJabc "),
+            "devin-session-token$eyJabc"
+        );
+        assert_eq!(
+            format_session_token("devin-session-token$x"),
+            "devin-session-token$x"
+        );
         assert_eq!(format_session_token("plain"), "plain");
     }
 
@@ -694,8 +800,14 @@ mod tests {
         assert_eq!(fields[2], (3, "tok".to_string()));
         assert_eq!(fields.last().unwrap(), &(31, "fp".to_string()));
         assert_eq!(fields.len(), 8);
-        assert_eq!(generate_device_fingerprint("seed").len(), FINGERPRINT_HEX_LEN);
-        assert_eq!(generate_device_fingerprint("seed"), generate_device_fingerprint("seed"));
+        assert_eq!(
+            generate_device_fingerprint("seed").len(),
+            FINGERPRINT_HEX_LEN
+        );
+        assert_eq!(
+            generate_device_fingerprint("seed"),
+            generate_device_fingerprint("seed")
+        );
         assert_eq!(generate_device_fingerprint("").len(), FINGERPRINT_HEX_LEN);
     }
 
@@ -714,13 +826,31 @@ mod tests {
             varint_field(18, 1_700_600_000),
         ]
         .concat();
-        let user = [string_field(3, "alice"), string_field(7, "a@x.io"), bytes_field(13, &plan_status), string_field(36, "uid-9")].concat();
+        let user = [
+            string_field(3, "alice"),
+            string_field(7, "a@x.io"),
+            bytes_field(13, &plan_status),
+            string_field(36, "uid-9"),
+        ]
+        .concat();
         let resp = bytes_field(1, &user);
 
         let s = parse_get_user_status_response(&resp).unwrap();
-        assert_eq!((s.user_name.as_str(), s.email.as_str(), s.user_id.as_str()), ("alice", "a@x.io", "uid-9"));
-        assert_eq!((s.plan.as_str(), s.org_id.as_str(), s.org_name.as_str()), ("Pro", "org-1", "Org One"));
-        assert_eq!((s.daily_quota_remaining_percent, s.weekly_quota_remaining_percent), (80, 55));
+        assert_eq!(
+            (s.user_name.as_str(), s.email.as_str(), s.user_id.as_str()),
+            ("alice", "a@x.io", "uid-9")
+        );
+        assert_eq!(
+            (s.plan.as_str(), s.org_id.as_str(), s.org_name.as_str()),
+            ("Pro", "org-1", "Org One")
+        );
+        assert_eq!(
+            (
+                s.daily_quota_remaining_percent,
+                s.weekly_quota_remaining_percent
+            ),
+            (80, 55)
+        );
         assert_eq!(s.plan_start.unwrap().timestamp(), 1_700_000_000);
         assert_eq!(s.plan_end.unwrap().timestamp(), 1_800_000_000);
         assert_eq!(s.daily_quota_reset_at.unwrap().timestamp(), 1_700_086_400);
@@ -738,7 +868,13 @@ mod tests {
             weekly_quota_remaining_percent: 55,
             ..Default::default()
         };
-        let auth = build_auth_record("devin-session-token$eyJ", &mut "alice".to_string(), &mut "u1".to_string(), &mut "o1".to_string(), Some(&status));
+        let auth = build_auth_record(
+            "devin-session-token$eyJ",
+            &mut "alice".to_string(),
+            &mut "u1".to_string(),
+            &mut "o1".to_string(),
+            Some(&status),
+        );
         assert_eq!(auth.id, "devin-alice.json");
         assert_eq!(auth.label, "Devin (alice - a@x.io)");
         assert_eq!(auth.attr("api_key"), "devin-session-token$eyJ");
@@ -747,20 +883,53 @@ mod tests {
         assert_eq!(auth.status, Status::Active);
 
         // Unsafe identifiers fall back to a hash; no identity at all hashes the token.
-        let weird = build_auth_record("tok", &mut "a b/c".to_string(), &mut String::new(), &mut String::new(), None);
-        assert!(weird.id.starts_with("devin-user-") && weird.id.len() == "devin-user-".len() + 16 + ".json".len());
-        let anon = build_auth_record("tok", &mut String::new(), &mut String::new(), &mut String::new(), None);
+        let weird = build_auth_record(
+            "tok",
+            &mut "a b/c".to_string(),
+            &mut String::new(),
+            &mut String::new(),
+            None,
+        );
+        assert!(
+            weird.id.starts_with("devin-user-")
+                && weird.id.len() == "devin-user-".len() + 16 + ".json".len()
+        );
+        let anon = build_auth_record(
+            "tok",
+            &mut String::new(),
+            &mut String::new(),
+            &mut String::new(),
+            None,
+        );
         assert!(anon.id.starts_with("devin-user-"));
     }
 
     #[test]
     fn manual_paste_variants() {
         assert_eq!(parse_manual_paste("  ", "s").unwrap(), ManualPaste::Empty);
-        assert_eq!(parse_manual_paste("\"eyJabc\"", "s").unwrap(), ManualPaste::Token("eyJabc".into()));
-        assert_eq!(parse_manual_paste("http://127.0.0.1:1/callback?code=c1&state=s", "s").unwrap(), ManualPaste::Code("c1".into()));
-        assert_eq!(parse_manual_paste("http://x/cb?code=c1&state=other", "s"), Err(ManualPasteError::StateMismatch));
-        assert_eq!(parse_manual_paste("?error=access_denied&error_description=no", "s"), Err(ManualPasteError::OAuth("access_denied: no".into())));
-        assert_eq!(parse_manual_paste("barecode123", "s").unwrap(), ManualPaste::Code("barecode123".into()));
-        assert_eq!(parse_manual_paste("two words", "s"), Err(ManualPasteError::Unrecognized));
+        assert_eq!(
+            parse_manual_paste("\"eyJabc\"", "s").unwrap(),
+            ManualPaste::Token("eyJabc".into())
+        );
+        assert_eq!(
+            parse_manual_paste("http://127.0.0.1:1/callback?code=c1&state=s", "s").unwrap(),
+            ManualPaste::Code("c1".into())
+        );
+        assert_eq!(
+            parse_manual_paste("http://x/cb?code=c1&state=other", "s"),
+            Err(ManualPasteError::StateMismatch)
+        );
+        assert_eq!(
+            parse_manual_paste("?error=access_denied&error_description=no", "s"),
+            Err(ManualPasteError::OAuth("access_denied: no".into()))
+        );
+        assert_eq!(
+            parse_manual_paste("barecode123", "s").unwrap(),
+            ManualPaste::Code("barecode123".into())
+        );
+        assert_eq!(
+            parse_manual_paste("two words", "s"),
+            Err(ManualPasteError::Unrecognized)
+        );
     }
 }

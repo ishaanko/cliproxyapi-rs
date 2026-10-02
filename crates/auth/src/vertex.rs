@@ -28,8 +28,8 @@ pub fn normalize_service_account_json(raw: &[u8]) -> Result<Vec<u8>> {
     if raw.is_empty() {
         return Ok(Vec::new());
     }
-    let payload: Value =
-        serde_json::from_slice(raw).map_err(|e| AuthFlowError::other(format!("invalid service account json: {e}")))?;
+    let payload: Value = serde_json::from_slice(raw)
+        .map_err(|e| AuthFlowError::other(format!("invalid service account json: {e}")))?;
     let Value::Object(map) = payload else {
         return Err(AuthFlowError::other("service account payload is empty"));
     };
@@ -59,10 +59,13 @@ fn sanitize_private_key(raw: &str) -> Result<String> {
     let normalized = if pem_decode(&pk).is_some() {
         pk
     } else {
-        rebuild_pem(&pk).map_err(|e| AuthFlowError::other(format!("private_key is not valid pem: {e}")))?
+        rebuild_pem(&pk)
+            .map_err(|e| AuthFlowError::other(format!("private_key is not valid pem: {e}")))?
     };
-    let (_, der) = pem_decode(&normalized).ok_or_else(|| AuthFlowError::other("private_key pem decode failed"))?;
-    let (kind, pkcs1_der) = ensure_rsa_private_key(&pem_type(&normalized).unwrap_or_default(), &der)?;
+    let (_, der) = pem_decode(&normalized)
+        .ok_or_else(|| AuthFlowError::other("private_key pem decode failed"))?;
+    let (kind, pkcs1_der) =
+        ensure_rsa_private_key(&pem_type(&normalized).unwrap_or_default(), &der)?;
     Ok(pem_encode(kind, &pkcs1_der))
 }
 
@@ -76,7 +79,8 @@ fn ensure_rsa_private_key(block_type: &str, der: &[u8]) -> Result<(&'static str,
     const KIND: &str = "RSA PRIVATE KEY";
     match block_type {
         "RSA PRIVATE KEY" => {
-            RsaPrivateKey::try_from(der).map_err(|e| AuthFlowError::other(format!("private_key invalid rsa: {e}")))?;
+            RsaPrivateKey::try_from(der)
+                .map_err(|e| AuthFlowError::other(format!("private_key invalid rsa: {e}")))?;
             Ok((KIND, der.to_vec()))
         }
         "PRIVATE KEY" => {
@@ -93,10 +97,11 @@ fn ensure_rsa_private_key(block_type: &str, der: &[u8]) -> Result<(&'static str,
             if RsaPrivateKey::try_from(der).is_ok() {
                 return Ok((KIND, der.to_vec()));
             }
-            if let Ok(info) = PrivateKeyInfo::try_from(der) {
-                if info.algorithm.oid.to_string() == RSA_ENCRYPTION_OID && RsaPrivateKey::try_from(info.private_key).is_ok() {
-                    return Ok((KIND, info.private_key.to_vec()));
-                }
+            if let Ok(info) = PrivateKeyInfo::try_from(der)
+                && info.algorithm.oid.to_string() == RSA_ENCRYPTION_OID
+                && RsaPrivateKey::try_from(info.private_key).is_ok()
+            {
+                return Ok((KIND, info.private_key.to_vec()));
             }
             Err(AuthFlowError::other("private_key uses unsupported format"))
         }
@@ -106,21 +111,32 @@ fn ensure_rsa_private_key(block_type: &str, der: &[u8]) -> Result<(&'static str,
 /// Rebuilds a PEM from mangled text: finds the BEGIN/END markers, keeps only base64 characters in
 /// between and re-encodes.
 fn rebuild_pem(raw: &str) -> std::result::Result<String, String> {
-    let kind = if raw.contains("RSA PRIVATE KEY") { "RSA PRIVATE KEY" } else { "PRIVATE KEY" };
+    let kind = if raw.contains("RSA PRIVATE KEY") {
+        "RSA PRIVATE KEY"
+    } else {
+        "PRIVATE KEY"
+    };
     let header = format!("-----BEGIN {kind}-----");
     let footer = format!("-----END {kind}-----");
     let start = raw.find(&header);
     let end = raw.find(&footer);
-    let (Some(start), Some(end)) = (start, end) else { return Err("missing pem markers".into()) };
+    let (Some(start), Some(end)) = (start, end) else {
+        return Err("missing pem markers".into());
+    };
     if end <= start {
         return Err("missing pem markers".into());
     }
     let body = &raw[start + header.len()..end];
-    let payload: String = body.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=')).collect();
+    let payload: String = body
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '='))
+        .collect();
     if payload.is_empty() {
         return Err("private_key base64 payload empty".into());
     }
-    let der = STANDARD.decode(payload).map_err(|e| format!("private_key base64 decode failed: {e}"))?;
+    let der = STANDARD
+        .decode(payload)
+        .map_err(|e| format!("private_key base64 decode failed: {e}"))?;
     Ok(pem_encode(kind, &der))
 }
 
@@ -210,13 +226,20 @@ pub struct VertexImport {
 
 /// Imports a service-account JSON as an `Auth` ready to save: management (`prefix = None`) and CLI
 /// (`prefix = Some(..)`) variants. `location` defaults to `us-central1`.
-pub fn import_service_account(raw: &[u8], location: &str, prefix: Option<&str>) -> Result<VertexImport> {
-    let parsed: Value =
-        serde_json::from_slice(raw).map_err(|e| AuthFlowError::other(format!("invalid json: {e}")))?;
+pub fn import_service_account(
+    raw: &[u8],
+    location: &str,
+    prefix: Option<&str>,
+) -> Result<VertexImport> {
+    let parsed: Value = serde_json::from_slice(raw)
+        .map_err(|e| AuthFlowError::other(format!("invalid json: {e}")))?;
     let Value::Object(sa) = parsed else {
-        return Err(AuthFlowError::other("invalid service account: service account payload is empty"));
+        return Err(AuthFlowError::other(
+            "invalid service account: service account payload is empty",
+        ));
     };
-    let sa = normalize_service_account_map(&sa).map_err(|e| AuthFlowError::other(format!("invalid service account: {e}")))?;
+    let sa = normalize_service_account_map(&sa)
+        .map_err(|e| AuthFlowError::other(format!("invalid service account: {e}")))?;
 
     let value_as_string = |k: &str| match sa.get(k) {
         None | Some(Value::Null) => String::new(),
@@ -228,13 +251,19 @@ pub fn import_service_account(raw: &[u8], location: &str, prefix: Option<&str>) 
         return Err(AuthFlowError::other("project_id missing"));
     }
     let email = value_as_string("client_email").trim().to_string();
-    let location = if location.trim().is_empty() { DEFAULT_LOCATION.to_string() } else { location.trim().to_string() };
+    let location = if location.trim().is_empty() {
+        DEFAULT_LOCATION.to_string()
+    } else {
+        location.trim().to_string()
+    };
 
     let prefix_clean = prefix.map(|p| p.trim().trim_matches('/').to_string());
-    if let Some(p) = &prefix_clean {
-        if p.contains('/') {
-            return Err(AuthFlowError::other(format!("prefix must be a single segment (no '/' allowed): {p:?}")));
-        }
+    if let Some(p) = &prefix_clean
+        && p.contains('/')
+    {
+        return Err(AuthFlowError::other(format!(
+            "prefix must be a single segment (no '/' allowed): {p:?}"
+        )));
     }
 
     let mut base_name = sanitize_file_part(&project_id);
@@ -242,7 +271,11 @@ pub fn import_service_account(raw: &[u8], location: &str, prefix: Option<&str>) 
         base_name = "vertex".to_string();
     }
     if let Some(p) = prefix_clean.as_deref().filter(|p| !p.is_empty()) {
-        base_name = format!("{}-{}", sanitize_file_part(p), sanitize_file_part(&project_id));
+        base_name = format!(
+            "{}-{}",
+            sanitize_file_part(p),
+            sanitize_file_part(&project_id)
+        );
     }
     let file_name = format!("vertex-{base_name}.json");
     let label = label_for_vertex(&project_id, &email);
@@ -270,7 +303,12 @@ pub fn import_service_account(raw: &[u8], location: &str, prefix: Option<&str>) 
     auth.label = label;
     auth.storage = Some(TokenStorage::Vertex(storage));
     auth.metadata = metadata;
-    Ok(VertexImport { auth, project_id, email, location })
+    Ok(VertexImport {
+        auth,
+        project_id,
+        email,
+        location,
+    })
 }
 
 /// `/ \ :` become `_`, spaces become `-`.
@@ -308,7 +346,10 @@ mod tests {
 
     fn pkcs8_wrap(pkcs1: &[u8]) -> Vec<u8> {
         // SEQUENCE { INTEGER 0, SEQUENCE { OID rsaEncryption, NULL }, OCTET STRING pkcs1 }
-        let alg = [0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00];
+        let alg = [
+            0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05,
+            0x00,
+        ];
         let mut body = vec![0x02, 0x01, 0x00];
         body.extend_from_slice(&alg);
         body.push(0x04);
@@ -324,7 +365,10 @@ mod tests {
         let pkcs1 = fake_pkcs1_der();
         let pem = pem_encode("PRIVATE KEY", &pkcs8_wrap(&pkcs1));
         let out = sanitize_private_key(&pem).unwrap();
-        assert!(out.starts_with("-----BEGIN RSA PRIVATE KEY-----\n") && out.ends_with("-----END RSA PRIVATE KEY-----\n"));
+        assert!(
+            out.starts_with("-----BEGIN RSA PRIVATE KEY-----\n")
+                && out.ends_with("-----END RSA PRIVATE KEY-----\n")
+        );
         let (kind, der) = pem_decode(&out).unwrap();
         assert_eq!(kind, "RSA PRIVATE KEY");
         assert_eq!(der, pkcs1);
@@ -336,7 +380,9 @@ mod tests {
         let b64 = STANDARD.encode(&pkcs1);
         // One long line with ANSI noise, stray spaces and CRLF endings.
         let spaced = b64.replace('A', "A ");
-        let mangled = format!("\u{1b}[0m-----BEGIN RSA PRIVATE KEY-----  {spaced}\r\n  -----END RSA PRIVATE KEY-----\r\n");
+        let mangled = format!(
+            "\u{1b}[0m-----BEGIN RSA PRIVATE KEY-----  {spaced}\r\n  -----END RSA PRIVATE KEY-----\r\n"
+        );
         let out = sanitize_private_key(&mangled).unwrap();
         assert_eq!(pem_decode(&out).unwrap().1, pkcs1);
     }
@@ -359,12 +405,19 @@ mod tests {
         assert_eq!(imp.location, "us-central1");
         assert!(!imp.auth.metadata.contains_key("prefix"));
 
-        let imp = import_service_account(sa.to_string().as_bytes(), "europe-west4", Some(" /team/ ")).unwrap();
+        let imp =
+            import_service_account(sa.to_string().as_bytes(), "europe-west4", Some(" /team/ "))
+                .unwrap();
         assert_eq!(imp.auth.id, "vertex-team-my-proj_1.json");
         assert_eq!(imp.auth.metadata["prefix"], "team");
 
         let missing = json!({"private_key": pem});
-        assert!(import_service_account(missing.to_string().as_bytes(), "", None).unwrap_err().to_string().contains("project_id missing"));
+        assert!(
+            import_service_account(missing.to_string().as_bytes(), "", None)
+                .unwrap_err()
+                .to_string()
+                .contains("project_id missing")
+        );
         assert!(import_service_account(b"{", "", None).is_err());
     }
 }

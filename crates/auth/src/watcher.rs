@@ -69,34 +69,55 @@ pub struct AuthWatcher {
 
 impl AuthWatcher {
     /// Starts watching the store's base dir.
-    pub fn start(store: Arc<FileTokenStore>, dir: &Path, opts: WatchOptions) -> notify::Result<AuthWatcher> {
+    pub fn start(
+        store: Arc<FileTokenStore>,
+        dir: &Path,
+        opts: WatchOptions,
+    ) -> notify::Result<AuthWatcher> {
         let (msg_tx, msg_rx) = mpsc::unbounded_channel::<Msg>();
         let (event_tx, events) = mpsc::unbounded_channel::<AuthFileEvent>();
 
         let tx = msg_tx.clone();
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            let Ok(event) = res else { return };
-            for (i, path) in event.paths.into_iter().enumerate() {
-                if !is_auth_json_path(&path) {
-                    continue;
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                let Ok(event) = res else { return };
+                for (i, path) in event.paths.into_iter().enumerate() {
+                    if !is_auth_json_path(&path) {
+                        continue;
+                    }
+                    let msg = match event.kind {
+                        EventKind::Create(_)
+                        | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Any) => {
+                            Msg::Touched(path)
+                        }
+                        EventKind::Remove(_)
+                        | EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+                            Msg::GoneMaybe(path)
+                        }
+                        // `Both` carries [old, new]; every other rename flavor reports the new name.
+                        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if i == 0 => {
+                            Msg::GoneMaybe(path)
+                        }
+                        EventKind::Modify(ModifyKind::Name(_)) => Msg::Touched(path),
+                        _ => continue,
+                    };
+                    let _ = tx.send(msg);
                 }
-                let msg = match event.kind {
-                    EventKind::Create(_) | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Any) => Msg::Touched(path),
-                    EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From)) => Msg::GoneMaybe(path),
-                    // `Both` carries [old, new]; every other rename flavor reports the new name.
-                    EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if i == 0 => Msg::GoneMaybe(path),
-                    EventKind::Modify(ModifyKind::Name(_)) => Msg::Touched(path),
-                    _ => continue,
-                };
-                let _ = tx.send(msg);
-            }
-        })?;
-        let mode = if opts.recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+            })?;
+        let mode = if opts.recursive {
+            RecursiveMode::Recursive
+        } else {
+            RecursiveMode::NonRecursive
+        };
         watcher.watch(dir, mode)?;
 
         let base = dir.to_path_buf();
         let task = tokio::spawn(run(store, base, opts, msg_tx, msg_rx, event_tx));
-        Ok(AuthWatcher { events, _watcher: watcher, task })
+        Ok(AuthWatcher {
+            events,
+            _watcher: watcher,
+            task,
+        })
     }
 
     /// Next change, or `None` once the watcher has stopped.
@@ -126,13 +147,16 @@ async fn run(
     // path -> (content hash, auth id) of files we have announced.
     let mut known: HashMap<PathBuf, ([u8; 32], String)> = HashMap::new();
 
-    if opts.emit_initial {
-        if let Ok(entries) = std::fs::read_dir(&base) {
-            let mut paths: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).filter(|p| is_auth_json_path(p)).collect();
-            paths.sort();
-            for path in paths {
-                handle_touched(&store, &base, &path, &mut known, &event_tx);
-            }
+    if opts.emit_initial
+        && let Ok(entries) = std::fs::read_dir(&base)
+    {
+        let mut paths: Vec<PathBuf> = entries
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| is_auth_json_path(p))
+            .collect();
+        paths.sort();
+        for path in paths {
+            handle_touched(&store, &base, &path, &mut known, &event_tx);
         }
     }
 
@@ -173,7 +197,9 @@ fn handle_touched(
     known: &mut HashMap<PathBuf, ([u8; 32], String)>,
     tx: &mpsc::UnboundedSender<AuthFileEvent>,
 ) {
-    let Ok(bytes) = std::fs::read(path) else { return };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
     if bytes.is_empty() {
         return;
     }
@@ -181,9 +207,15 @@ fn handle_touched(
     if known.get(path).is_some_and(|(h, _)| *h == digest) {
         return;
     }
-    let Ok(Some(auth)) = store.read_auth_file(path, base) else { return };
+    let Ok(Some(auth)) = store.read_auth_file(path, base) else {
+        return;
+    };
     let id = id_for(path, base);
-    let event = if known.contains_key(path) { AuthFileEvent::Updated(auth) } else { AuthFileEvent::Added(auth) };
+    let event = if known.contains_key(path) {
+        AuthFileEvent::Updated(auth)
+    } else {
+        AuthFileEvent::Added(auth)
+    };
     known.insert(path.to_path_buf(), (digest, id));
     let _ = tx.send(event);
 }
@@ -194,36 +226,58 @@ mod tests {
     use std::fs;
 
     fn fast() -> WatchOptions {
-        WatchOptions { remove_debounce: Duration::from_millis(150), stat_delay: Duration::from_millis(20), ..Default::default() }
+        WatchOptions {
+            remove_debounce: Duration::from_millis(150),
+            stat_delay: Duration::from_millis(20),
+            ..Default::default()
+        }
     }
 
     async fn next(w: &mut AuthWatcher) -> AuthFileEvent {
-        tokio::time::timeout(Duration::from_secs(10), w.next()).await.expect("watcher event timed out").expect("watcher closed")
+        tokio::time::timeout(Duration::from_secs(10), w.next())
+            .await
+            .expect("watcher event timed out")
+            .expect("watcher closed")
     }
 
     #[tokio::test]
     async fn add_update_remove_and_atomic_replace() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("existing.json"), r#"{"type":"codex","email":"e@x"}"#).unwrap();
+        fs::write(
+            dir.path().join("existing.json"),
+            r#"{"type":"codex","email":"e@x"}"#,
+        )
+        .unwrap();
         let store = Arc::new(FileTokenStore::with_dir(dir.path()));
         let mut w = AuthWatcher::start(store, dir.path(), fast()).unwrap();
 
         // Initial scan.
         match next(&mut w).await {
-            AuthFileEvent::Added(a) => assert_eq!((a.id.as_str(), a.provider.as_str()), ("existing.json", "codex")),
+            AuthFileEvent::Added(a) => assert_eq!(
+                (a.id.as_str(), a.provider.as_str()),
+                ("existing.json", "codex")
+            ),
             other => panic!("expected initial Added, got {other:?}"),
         }
 
         // New file.
         let path = dir.path().join("claude-a.json");
-        fs::write(&path, r#"{"type":"claude","email":"a@x","access_token":"t1"}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"type":"claude","email":"a@x","access_token":"t1"}"#,
+        )
+        .unwrap();
         match next(&mut w).await {
             AuthFileEvent::Added(a) => assert_eq!(a.id, "claude-a.json"),
             other => panic!("expected Added, got {other:?}"),
         }
 
         // Changed content.
-        fs::write(&path, r#"{"type":"claude","email":"a@x","access_token":"t2"}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"type":"claude","email":"a@x","access_token":"t2"}"#,
+        )
+        .unwrap();
         match next(&mut w).await {
             AuthFileEvent::Updated(a) => assert_eq!(a.metadata["access_token"], "t2"),
             other => panic!("expected Updated, got {other:?}"),
@@ -231,7 +285,11 @@ mod tests {
 
         // Atomic replace (write temp + rename over) is an update, never a removal.
         let tmp = dir.path().join("claude-a.json.tmp");
-        fs::write(&tmp, r#"{"type":"claude","email":"a@x","access_token":"t3"}"#).unwrap();
+        fs::write(
+            &tmp,
+            r#"{"type":"claude","email":"a@x","access_token":"t3"}"#,
+        )
+        .unwrap();
         fs::rename(&tmp, &path).unwrap();
         match next(&mut w).await {
             AuthFileEvent::Updated(a) => assert_eq!(a.metadata["access_token"], "t3"),

@@ -9,6 +9,26 @@
 //! - [`claude`], [`codex`], [`antigravity`], [`xai`], [`kimi`], [`vertex`], [`devin`], [`meta`]:
 //!   provider endpoints, token exchange/refresh and `Auth` record construction.
 //! - [`login`], [`manager`]: `LoginSession` (CLI and management API) and the login manager.
+//! - [`sessions`]: OAuth session registry and callback handoff behind the management endpoints.
+//!
+//! Driving a login:
+//!
+//! ```ignore
+//! let manager = Manager::new(Arc::new(FileTokenStore::with_dir(auth_dir)));
+//!
+//! // CLI: prints / opens the URL, waits for the callback, saves the credential file.
+//! let outcome = manager.login(Provider::Codex, LoginOptions::cli()).await?;
+//!
+//! // Management API: start, hand the URL to the UI, poll, optionally feed a pasted callback.
+//! let session = manager.start_login(Provider::Claude, LoginOptions::management("")).await?;
+//! respond_json(session.start_info().to_json());                    // {"status":"ok","url","state"}
+//! let (http_status, body) = manager.sessions().poll_status(&state); // wait | ok | error
+//! let (http_status, body) = manager.sessions().handle_oauth_callback(Some(auth_dir), &req);
+//! ```
+//!
+//! Known gaps vs the Go app: no TLS ClientHello fingerprinting (Claude uses a uTLS Firefox profile
+//! in Go; here plain rustls, see [`http`]), no `compress` (LZW) content-encoding on Claude OAuth
+//! responses, no plugin auth parsers, and no git / postgres / object-store token stores.
 
 use std::sync::RwLock;
 
@@ -19,7 +39,11 @@ pub mod claude;
 pub mod codex;
 pub mod credmeta;
 pub mod devin;
+#[cfg(test)]
+mod e2e_tests;
 pub mod error;
+#[cfg(test)]
+mod flow_tests;
 pub mod http;
 pub mod jwt;
 pub mod kimi;
@@ -28,15 +52,12 @@ pub mod manager;
 pub mod meta;
 pub mod oauth;
 pub mod pkce;
+mod redact;
 pub mod refresh;
 pub mod sessions;
 pub mod singleflight;
 pub mod storage;
 pub mod store;
-#[cfg(test)]
-mod e2e_tests;
-#[cfg(test)]
-mod flow_tests;
 #[cfg(test)]
 mod testutil;
 pub mod types;
@@ -46,9 +67,14 @@ pub mod watcher;
 pub mod xai;
 
 pub use error::{AuthFlowError, Result};
+pub use login::{LoginOptions, LoginOutcome, LoginSession, LoginStart, LoginStatus, Provider};
+pub use manager::Manager;
+pub use refresh::refresh_auth;
+pub use sessions::OAuthSessions;
 pub use storage::TokenStorage;
 pub use store::{FileTokenStore, SaveOptions, Store};
 pub use types::{Auth, Status};
+pub use watcher::{AuthFileEvent, AuthWatcher, WatchOptions};
 
 static CLIENT_VERSION: RwLock<String> = RwLock::new(String::new());
 

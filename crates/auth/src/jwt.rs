@@ -1,9 +1,9 @@
 //! Unverified JWT parsing: generic `exp` extraction (used for credential expiry) and the Codex /
 //! OpenAI `id_token` claims (internal/auth/codex/jwt_parser.go).
 
+use base64::Engine;
 use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use base64::Engine;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -121,7 +121,11 @@ pub struct CodexClaims {
     pub email_verified: bool,
     #[serde(default, deserialize_with = "null_default")]
     pub exp: i64,
-    #[serde(default, rename = "https://api.openai.com/auth", deserialize_with = "null_default")]
+    #[serde(
+        default,
+        rename = "https://api.openai.com/auth",
+        deserialize_with = "null_default"
+    )]
     pub codex_auth_info: CodexAuthInfo,
     #[serde(default, deserialize_with = "null_default")]
     pub iat: i64,
@@ -151,7 +155,11 @@ impl CodexClaims {
     /// Plan type, defaulting to `free` when the claim is empty.
     pub fn plan_type(&self) -> String {
         let pt = self.codex_auth_info.chatgpt_plan_type.trim();
-        if pt.is_empty() { DEFAULT_PLAN_TYPE.to_string() } else { pt.to_string() }
+        if pt.is_empty() {
+            DEFAULT_PLAN_TYPE.to_string()
+        } else {
+            pt.to_string()
+        }
     }
 }
 

@@ -14,8 +14,8 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 
 use crate::credmeta::{
-    Metadata, apply_custom_headers_from_metadata, normalize_credential_metadata, validate_auth_weight,
-    validate_metadata_weight,
+    Metadata, apply_custom_headers_from_metadata, normalize_credential_metadata,
+    validate_auth_weight, validate_metadata_weight,
 };
 use crate::storage::{StorageError, mkdir_all_private, write_file_in_place};
 use crate::types::{
@@ -93,31 +93,55 @@ impl FileTokenStore {
     /// Reads one auth JSON file into an `Auth` (single-auth path of `readAuthFiles`).
     /// `Ok(None)` for empty files and legacy `type: gemini` files.
     pub fn read_auth_file(&self, path: &Path, base_dir: &Path) -> Result<Option<Auth>, StoreError> {
-        let data = fs::read(path).map_err(|source| StoreError::Io { context: "read file", source })?;
+        let data = fs::read(path).map_err(|source| StoreError::Io {
+            context: "read file",
+            source,
+        })?;
         if data.is_empty() {
             return Ok(None);
         }
-        let parsed: Value =
-            serde_json::from_slice(&data).map_err(|e| StoreError::Invalid(format!("unmarshal auth json: {e}")))?;
+        let parsed: Value = serde_json::from_slice(&data)
+            .map_err(|e| StoreError::Invalid(format!("unmarshal auth json: {e}")))?;
         let Value::Object(mut metadata) = parsed else {
-            return Err(StoreError::Invalid("unmarshal auth json: not an object".into()));
+            return Err(StoreError::Invalid(
+                "unmarshal auth json: not an object".into(),
+            ));
         };
         normalize_credential_metadata(&mut metadata);
         validate_metadata_weight(&metadata).map_err(StoreError::Invalid)?;
 
-        let provider = metadata.get("type").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let provider = metadata
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if provider.eq_ignore_ascii_case("gemini") {
             return Ok(None);
         }
         let mtime = fs::metadata(path)
             .and_then(|m| m.modified())
-            .map_err(|source| StoreError::Io { context: "stat file", source })?;
+            .map_err(|source| StoreError::Io {
+                context: "stat file",
+                source,
+            })?;
         let mtime: DateTime<Utc> = SystemTime::into(mtime);
 
-        let provider = if provider.is_empty() { "unknown".to_string() } else { provider };
+        let provider = if provider.is_empty() {
+            "unknown".to_string()
+        } else {
+            provider
+        };
         let id = id_for(path, base_dir);
-        let disabled = metadata.get("disabled").and_then(Value::as_bool).unwrap_or(false);
-        let proxy_url = metadata.get("proxy_url").and_then(Value::as_str).map(|s| s.trim().to_string()).unwrap_or_default();
+        let disabled = metadata
+            .get("disabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let proxy_url = metadata
+            .get("proxy_url")
+            .and_then(Value::as_str)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
         let prefix = metadata
             .get("prefix")
             .and_then(Value::as_str)
@@ -133,16 +157,26 @@ impl FileTokenStore {
             label: label_for(&metadata),
             prefix,
             proxy_url,
-            status: if disabled { Status::Disabled } else { Status::Active },
+            status: if disabled {
+                Status::Disabled
+            } else {
+                Status::Active
+            },
             disabled,
             created_at: Some(mtime),
             updated_at: Some(mtime),
             ..Default::default()
         };
-        auth.attributes.insert(ATTRIBUTE_PATH.into(), path_str.clone());
+        auth.attributes
+            .insert(ATTRIBUTE_PATH.into(), path_str.clone());
         auth.attributes.insert(ATTRIBUTE_SOURCE.into(), path_str);
-        auth.attributes.insert(ATTRIBUTE_SOURCE_BACKEND.into(), AUTH_SOURCE_FILE.into());
-        if let Some(email) = metadata.get("email").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+        auth.attributes
+            .insert(ATTRIBUTE_SOURCE_BACKEND.into(), AUTH_SOURCE_FILE.into());
+        if let Some(email) = metadata
+            .get("email")
+            .and_then(Value::as_str)
+            .filter(|e| !e.is_empty())
+        {
             auth.attributes.insert("email".into(), email.to_string());
         }
         auth.metadata = metadata;
@@ -209,7 +243,10 @@ impl Store for FileTokenStore {
         validate_auth_weight(auth).map_err(StoreError::Invalid)?;
         let path = self.resolve_auth_path(auth)?;
         if path.as_os_str().is_empty() {
-            return Err(StoreError::Invalid(format!("missing file path attribute for {}", auth.id)));
+            return Err(StoreError::Invalid(format!(
+                "missing file path attribute for {}",
+                auth.id
+            )));
         }
 
         // A runtime update must not resurrect a disabled credential whose file was removed.
@@ -219,25 +256,35 @@ impl Store for FileTokenStore {
 
         let _guard = self.write_lock.lock();
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-            mkdir_all_private(dir).map_err(|source| StoreError::Io { context: "create dir failed", source })?;
+            mkdir_all_private(dir).map_err(|source| StoreError::Io {
+                context: "create dir failed",
+                source,
+            })?;
         }
 
         if let Some(storage) = auth.storage.clone() {
-            auth.metadata.insert("disabled".into(), Value::Bool(auth.disabled));
+            auth.metadata
+                .insert("disabled".into(), Value::Bool(auth.disabled));
             storage.save_to_file(&path, &auth.metadata)?;
         } else if !auth.metadata.is_empty() {
-            auth.metadata.insert("disabled".into(), Value::Bool(auth.disabled));
+            auth.metadata
+                .insert("disabled".into(), Value::Bool(auth.disabled));
             let raw = marshal_compact(&Value::Object(auth.metadata.clone()))
                 .map_err(|e| StoreError::Invalid(format!("marshal metadata failed: {e}")))?;
             write_metadata_only(&path, &raw)?;
         } else {
-            return Err(StoreError::Invalid(format!("nothing to persist for {}", auth.id)));
+            return Err(StoreError::Invalid(format!(
+                "nothing to persist for {}",
+                auth.id
+            )));
         }
 
         let path_str = path.to_string_lossy().into_owned();
-        auth.attributes.insert(ATTRIBUTE_PATH.into(), path_str.clone());
+        auth.attributes
+            .insert(ATTRIBUTE_PATH.into(), path_str.clone());
         auth.attributes.insert(ATTRIBUTE_SOURCE.into(), path_str);
-        auth.attributes.insert(ATTRIBUTE_SOURCE_BACKEND.into(), AUTH_SOURCE_FILE.into());
+        auth.attributes
+            .insert(ATTRIBUTE_SOURCE_BACKEND.into(), AUTH_SOURCE_FILE.into());
         if auth.file_name.trim().is_empty() {
             auth.file_name = auth.id.clone();
         }
@@ -253,13 +300,20 @@ impl Store for FileTokenStore {
         match fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(source) => Err(StoreError::Io { context: "delete failed", source }),
+            Err(source) => Err(StoreError::Io {
+                context: "delete failed",
+                source,
+            }),
         }
     }
 
     fn base_dir(&self) -> Option<PathBuf> {
         let d = self.base_dir_snapshot();
-        if d.is_empty() { None } else { Some(PathBuf::from(d)) }
+        if d.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(d))
+        }
     }
 }
 
@@ -272,7 +326,12 @@ fn write_metadata_only(path: &Path, raw: &str) -> Result<(), StoreError> {
             }
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(source) => return Err(StoreError::Io { context: "read existing failed", source }),
+        Err(source) => {
+            return Err(StoreError::Io {
+                context: "read existing failed",
+                source,
+            });
+        }
     }
     write_file_in_place(path, raw.as_bytes())?;
     Ok(())
@@ -280,7 +339,10 @@ fn write_metadata_only(path: &Path, raw: &str) -> Result<(), StoreError> {
 
 /// Semantic JSON equality (key order and number formatting insensitive).
 fn json_equal(a: &[u8], b: &[u8]) -> bool {
-    match (serde_json::from_slice::<Value>(a), serde_json::from_slice::<Value>(b)) {
+    match (
+        serde_json::from_slice::<Value>(a),
+        serde_json::from_slice::<Value>(b),
+    ) {
         (Ok(a), Ok(b)) => deep_equal_json(&a, &b),
         _ => false,
     }
@@ -289,9 +351,13 @@ fn json_equal(a: &[u8], b: &[u8]) -> bool {
 fn deep_equal_json(a: &Value, b: &Value) -> bool {
     match (a, b) {
         (Value::Object(x), Value::Object(y)) => {
-            x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_some_and(|w| deep_equal_json(v, w)))
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, v)| y.get(k).is_some_and(|w| deep_equal_json(v, w)))
         }
-        (Value::Array(x), Value::Array(y)) => x.len() == y.len() && x.iter().zip(y).all(|(p, q)| deep_equal_json(p, q)),
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| deep_equal_json(p, q))
+        }
         (Value::Number(x), Value::Number(y)) => x.as_f64() == y.as_f64(),
         (x, y) => x == y,
     }
@@ -300,7 +366,11 @@ fn deep_equal_json(a: &Value, b: &Value) -> bool {
 /// `label`, else `email`, else `project_id`.
 fn label_for(metadata: &Metadata) -> String {
     for key in ["label", "email", "project_id"] {
-        if let Some(v) = metadata.get(key).and_then(Value::as_str).filter(|v| !v.is_empty()) {
+        if let Some(v) = metadata
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|v| !v.is_empty())
+        {
             return v.to_string();
         }
     }
@@ -323,26 +393,68 @@ pub fn id_for(path: &Path, base_dir: &Path) -> String {
 
 /// Recursive walk in lexical order; symlinks are not followed into directories (Go `WalkDir`).
 fn walk_json_files(dir: &Path, visit: &mut dyn FnMut(&Path)) -> Result<(), StoreError> {
-    let read = fs::read_dir(dir).map_err(|source| StoreError::Io { context: "walk dir", source })?;
-    let mut entries: Vec<_> = read
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|source| StoreError::Io { context: "walk dir", source })?;
+    let read = fs::read_dir(dir).map_err(|source| StoreError::Io {
+        context: "walk dir",
+        source,
+    })?;
+    let mut entries: Vec<_> =
+        read.collect::<Result<Vec<_>, _>>()
+            .map_err(|source| StoreError::Io {
+                context: "walk dir",
+                source,
+            })?;
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let path = entry.path();
-        let file_type = entry.file_type().map_err(|source| StoreError::Io { context: "walk dir", source })?;
+        let file_type = entry.file_type().map_err(|source| StoreError::Io {
+            context: "walk dir",
+            source,
+        })?;
         if file_type.is_dir() {
             walk_json_files(&path, visit)?;
-        } else if entry.file_name().to_string_lossy().to_lowercase().ends_with(".json") {
+        } else if entry
+            .file_name()
+            .to_string_lossy()
+            .to_lowercase()
+            .ends_with(".json")
+        {
             visit(&path);
         }
     }
     Ok(())
 }
 
+/// `ResolveAuthDir`: empty means `~/.cli-proxy-api`; a leading `~` expands to the home directory
+/// (backslashes after it are treated as separators); the result is lexically cleaned.
+pub fn resolve_auth_dir(auth_dir: &str) -> std::io::Result<PathBuf> {
+    let raw = if auth_dir.is_empty() {
+        "~/.cli-proxy-api"
+    } else {
+        auth_dir
+    };
+    let Some(rest) = raw.strip_prefix('~') else {
+        return Ok(crate::util::clean_path(Path::new(raw)));
+    };
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "resolve auth dir: home directory not found",
+            )
+        })?;
+    let rest = rest.trim_start_matches(['/', '\\']).replace('\\', "/");
+    if rest.is_empty() {
+        return Ok(crate::util::clean_path(&home));
+    }
+    Ok(crate::util::clean_path(&home.join(rest)))
+}
+
 /// Whether `path` looks like a credential file (case-insensitive `.json`).
 pub fn is_auth_json_path(path: &Path) -> bool {
-    path.file_name().is_some_and(|n| n.to_string_lossy().to_lowercase().ends_with(".json"))
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().to_lowercase().ends_with(".json"))
 }
 
 #[cfg(test)]
@@ -360,9 +472,21 @@ mod tests {
     #[test]
     fn lists_go_written_auth_dir() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "claude-a@b.com.json", r#"{"type":"claude","email":"a@b.com","access_token":"t","prefix":"/team/","proxy-url":"socks5://h:1","headers":{"X-A":"1"}}"#);
-        write(dir.path(), "sub/codex-x.json", r#"{"type":"codex","email":"x@y","disabled":true,"weight":3}"#);
-        write(dir.path(), "legacy-gemini.json", r#"{"type":"gemini","email":"g@g"}"#);
+        write(
+            dir.path(),
+            "claude-a@b.com.json",
+            r#"{"type":"claude","email":"a@b.com","access_token":"t","prefix":"/team/","proxy-url":"socks5://h:1","headers":{"X-A":"1"}}"#,
+        );
+        write(
+            dir.path(),
+            "sub/codex-x.json",
+            r#"{"type":"codex","email":"x@y","disabled":true,"weight":3}"#,
+        );
+        write(
+            dir.path(),
+            "legacy-gemini.json",
+            r#"{"type":"gemini","email":"g@g"}"#,
+        );
         write(dir.path(), "empty.json", "");
         write(dir.path(), "broken.json", "{not json");
         write(dir.path(), "notes.txt", "{}");
@@ -372,7 +496,10 @@ mod tests {
         let mut auths = store.list().unwrap();
         auths.sort_by(|a, b| a.id.cmp(&b.id));
         let ids: Vec<&str> = auths.iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["claude-a@b.com.json", "sub/codex-x.json", "untyped.json"]);
+        assert_eq!(
+            ids,
+            ["claude-a@b.com.json", "sub/codex-x.json", "untyped.json"]
+        );
 
         let claude = &auths[0];
         assert_eq!(claude.provider, "claude");
@@ -383,7 +510,9 @@ mod tests {
         assert_eq!(claude.attr("header:X-A"), "1");
         assert_eq!(claude.attr("email"), "a@b.com");
         assert_eq!(claude.attr("source_backend"), "file");
-        assert!(claude.metadata.contains_key("proxy_url") && !claude.metadata.contains_key("proxy-url"));
+        assert!(
+            claude.metadata.contains_key("proxy_url") && !claude.metadata.contains_key("proxy-url")
+        );
 
         let codex = &auths[1];
         assert!(codex.disabled);
@@ -395,12 +524,33 @@ mod tests {
     }
 
     #[test]
+    fn auth_dir_resolution_expands_home_and_cleans() {
+        assert_eq!(
+            resolve_auth_dir("/a/b/../c/").unwrap(),
+            PathBuf::from("/a/c")
+        );
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        if let Some(home) = home {
+            assert_eq!(resolve_auth_dir("~").unwrap(), home);
+            assert_eq!(resolve_auth_dir("~/x\\y/./z").unwrap(), home.join("x/y/z"));
+            assert_eq!(resolve_auth_dir("").unwrap(), home.join(".cli-proxy-api"));
+        }
+    }
+
+    #[test]
     fn invalid_weight_skips_file_on_list_and_rejects_on_save() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "bad.json", r#"{"type":"claude","weight":2000000}"#);
+        write(
+            dir.path(),
+            "bad.json",
+            r#"{"type":"claude","weight":2000000}"#,
+        );
         let store = FileTokenStore::with_dir(dir.path());
         assert!(store.list().unwrap().is_empty());
-        let mut a = Auth { id: "x.json".into(), ..Default::default() };
+        let mut a = Auth {
+            id: "x.json".into(),
+            ..Default::default()
+        };
         a.metadata.insert("weight".into(), json!("nope"));
         assert!(store.save(&mut a, SaveOptions::default()).is_err());
     }
@@ -428,7 +578,10 @@ mod tests {
         let loaded = store.list().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].metadata.get("access_token"), Some(&json!("at")));
-        assert_eq!(loaded[0].metadata.get("proxy_url"), Some(&json!("http://p")));
+        assert_eq!(
+            loaded[0].metadata.get("proxy_url"),
+            Some(&json!("http://p"))
+        );
         assert_eq!(loaded[0].metadata.get("disabled"), Some(&json!(false)));
     }
 
@@ -436,24 +589,53 @@ mod tests {
     fn metadata_only_save_skips_identical_rewrite_and_disabled_missing_is_not_created() {
         let dir = tempfile::tempdir().unwrap();
         let store = FileTokenStore::with_dir(dir.path());
-        let mut a = Auth { id: "antigravity-a.json".into(), provider: "antigravity".into(), ..Default::default() };
+        let mut a = Auth {
+            id: "antigravity-a.json".into(),
+            provider: "antigravity".into(),
+            ..Default::default()
+        };
         a.metadata.insert("type".into(), json!("antigravity"));
         a.metadata.insert("access_token".into(), json!("t"));
         let path = store.save(&mut a, SaveOptions::default()).unwrap().unwrap();
         let first = fs::read_to_string(&path).unwrap();
-        assert_eq!(first, r#"{"access_token":"t","disabled":false,"type":"antigravity"}"#);
+        assert_eq!(
+            first,
+            r#"{"access_token":"t","disabled":false,"type":"antigravity"}"#
+        );
 
         // Same content in a different key order: file must be left untouched.
-        fs::write(&path, r#"{"type":"antigravity","disabled":false,"access_token":"t"}"#).unwrap();
+        fs::write(
+            &path,
+            r#"{"type":"antigravity","disabled":false,"access_token":"t"}"#,
+        )
+        .unwrap();
         store.save(&mut a, SaveOptions::default()).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"type":"antigravity","disabled":false,"access_token":"t"}"#);
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            r#"{"type":"antigravity","disabled":false,"access_token":"t"}"#
+        );
 
         // Disabled auth whose file was deleted is not recreated without creation intent.
         store.delete("antigravity-a.json").unwrap();
         a.disabled = true;
-        assert!(store.save(&mut a, SaveOptions::default()).unwrap().is_none());
+        assert!(
+            store
+                .save(&mut a, SaveOptions::default())
+                .unwrap()
+                .is_none()
+        );
         assert!(!path.exists());
-        assert!(store.save(&mut a, SaveOptions { creation_intent: true }).unwrap().is_some());
+        assert!(
+            store
+                .save(
+                    &mut a,
+                    SaveOptions {
+                        creation_intent: true
+                    }
+                )
+                .unwrap()
+                .is_some()
+        );
         assert!(path.exists());
         // Deleting a missing file is not an error.
         store.delete("nope.json").unwrap();

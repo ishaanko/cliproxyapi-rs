@@ -50,7 +50,10 @@ impl AuthErrorKind {
 pub enum AuthFlowError {
     /// `AuthenticationError`: `"<type>: <message> (caused by: <cause>)"`.
     #[error("{}", format_authentication(*.kind, .cause))]
-    Authentication { kind: AuthErrorKind, cause: Option<String> },
+    Authentication {
+        kind: AuthErrorKind,
+        cause: Option<String>,
+    },
     /// `OAuthError` returned by the provider (`error` / `error_description`).
     #[error("{}", format_oauth(.code, .description))]
     OAuth { code: String, description: String },
@@ -59,7 +62,11 @@ pub enum AuthFlowError {
     Status { status: u16, message: String },
     /// Claude refresh failure carrying retry semantics (`refreshHTTPError`).
     #[error("token refresh failed with status {status}: {message}")]
-    Refresh { status: u16, message: String, retryable: bool },
+    Refresh {
+        status: u16,
+        message: String,
+        retryable: bool,
+    },
     #[error("{0}")]
     Config(String),
     #[error("{0}")]
@@ -88,7 +95,12 @@ impl From<crate::storage::StorageError> for AuthFlowError {
 
 fn format_authentication(kind: AuthErrorKind, cause: &Option<String>) -> String {
     match cause {
-        Some(c) => format!("{}: {} (caused by: {})", kind.type_name(), kind.message(), c),
+        Some(c) => format!(
+            "{}: {} (caused by: {})",
+            kind.type_name(),
+            kind.message(),
+            c
+        ),
         None => format!("{}: {}", kind.type_name(), kind.message()),
     }
 }
@@ -103,7 +115,10 @@ fn format_oauth(code: &str, description: &str) -> String {
 
 impl AuthFlowError {
     pub fn authentication(kind: AuthErrorKind, cause: impl fmt::Display) -> Self {
-        AuthFlowError::Authentication { kind, cause: Some(cause.to_string()) }
+        AuthFlowError::Authentication {
+            kind,
+            cause: Some(cause.to_string()),
+        }
     }
 
     pub fn other(msg: impl Into<String>) -> Self {
@@ -113,7 +128,9 @@ impl AuthFlowError {
     /// HTTP status carried by the error, when it has one (`StatusCode()` in Go).
     pub fn status_code(&self) -> Option<u16> {
         match self {
-            AuthFlowError::Status { status, .. } | AuthFlowError::Refresh { status, .. } => Some(*status),
+            AuthFlowError::Status { status, .. } | AuthFlowError::Refresh { status, .. } => {
+                Some(*status)
+            }
             _ => None,
         }
     }
@@ -161,8 +178,14 @@ mod tests {
             e.to_string(),
             "code_exchange_failed: Failed to exchange authorization code for tokens (caused by: boom)"
         );
-        let e = AuthFlowError::OAuth { code: "access_denied".into(), description: "".into() };
+        let e = AuthFlowError::OAuth {
+            code: "access_denied".into(),
+            description: "".into(),
+        };
         assert_eq!(e.to_string(), "OAuth error: access_denied");
-        assert_eq!(e.user_friendly_message(), "Authentication was cancelled or denied.");
+        assert_eq!(
+            e.user_friendly_message(),
+            "Authentication was cancelled or denied."
+        );
     }
 }

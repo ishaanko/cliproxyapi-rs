@@ -6,13 +6,16 @@ use std::fs;
 use std::path::Path;
 
 use cpa_auth::storage::{
-    ClaudeTokenStorage, CodexTokenStorage, KimiTokenStorage, MetaTokenStorage, VertexCredentialStorage, XaiTokenStorage,
+    ClaudeTokenStorage, CodexTokenStorage, KimiTokenStorage, MetaTokenStorage,
+    VertexCredentialStorage, XaiTokenStorage,
 };
 use cpa_auth::{Auth, FileTokenStore, SaveOptions, Status, Store, TokenStorage};
 use serde_json::{Value, json};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go").join(name);
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/go")
+        .join(name);
     fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
 }
 
@@ -27,14 +30,26 @@ fn meta(v: Value) -> serde_json::Map<String, Value> {
 fn saved_bytes(mut auth: Auth) -> Vec<u8> {
     let dir = tempfile::tempdir().unwrap();
     let store = FileTokenStore::with_dir(dir.path());
-    let path = store.save(&mut auth, SaveOptions { creation_intent: true }).unwrap().expect("saved");
+    let path = store
+        .save(
+            &mut auth,
+            SaveOptions {
+                creation_intent: true,
+            },
+        )
+        .unwrap()
+        .expect("saved");
     fs::read(path).unwrap()
 }
 
 fn assert_same(name: &str, auth: Auth) {
     let got = saved_bytes(auth);
     let want = fixture(name);
-    assert_eq!(String::from_utf8_lossy(&got), String::from_utf8_lossy(&want), "{name} differs from the Go output");
+    assert_eq!(
+        String::from_utf8_lossy(&got),
+        String::from_utf8_lossy(&want),
+        "{name} differs from the Go output"
+    );
     assert_eq!(got, want);
 }
 
@@ -97,7 +112,11 @@ fn codex_files_match_go_with_and_without_plan_type() {
     let mut disabled = auth(
         "codex-noplan.json",
         "codex",
-        Some(TokenStorage::Codex(CodexTokenStorage { access_token: "at".into(), email: "e@x".into(), ..Default::default() })),
+        Some(TokenStorage::Codex(CodexTokenStorage {
+            access_token: "at".into(),
+            email: "e@x".into(),
+            ..Default::default()
+        })),
         json!({}),
     );
     disabled.disabled = true;
@@ -210,13 +229,22 @@ fn metadata_only_file_matches_go_compact_encoding() {
 
 #[test]
 fn rust_loads_every_go_fixture_and_derives_go_values() {
-    let store = FileTokenStore::with_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go"));
+    let store =
+        FileTokenStore::with_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/go"));
     let auths = store.list().unwrap();
-    let by_id = |id: &str| auths.iter().find(|a| a.id == id).unwrap_or_else(|| panic!("missing {id}"));
+    let by_id = |id: &str| {
+        auths
+            .iter()
+            .find(|a| a.id == id)
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
     assert_eq!(auths.len(), 8);
 
     let claude = by_id("claude.json");
-    assert_eq!((claude.provider.as_str(), claude.label.as_str()), ("claude", "user@example.com"));
+    assert_eq!(
+        (claude.provider.as_str(), claude.label.as_str()),
+        ("claude", "user@example.com")
+    );
     assert_eq!(claude.status, Status::Active);
     assert_eq!(claude.proxy_url, "socks5://127.0.0.1:1080");
     // The plain store path does not apply priority/weight (the synthesizer does); metadata keeps it.
@@ -224,7 +252,10 @@ fn rust_loads_every_go_fixture_and_derives_go_values() {
     assert_eq!(claude.metadata["priority"], 5);
     assert_eq!(claude.attributes["header:X-Custom"], "v");
     assert_eq!(claude.auth_kind(), "oauth");
-    assert_eq!(claude.expiration_time().unwrap().to_rfc3339(), "2026-10-01T20:00:00+00:00");
+    assert_eq!(
+        claude.expiration_time().unwrap().to_rfc3339(),
+        "2026-10-01T20:00:00+00:00"
+    );
 
     let codex = by_id("codex.json");
     assert_eq!(codex.metadata["websockets"], true);
@@ -235,13 +266,19 @@ fn rust_loads_every_go_fixture_and_derives_go_values() {
     // Metadata-only credential: expiry comes from `expired`, label from email.
     let ag = by_id("antigravity-u@x.com.json");
     assert_eq!(ag.label, "u@x.com");
-    assert_eq!(ag.expiration_time().unwrap().to_rfc3339(), "2026-10-01T13:00:00+00:00");
+    assert_eq!(
+        ag.expiration_time().unwrap().to_rfc3339(),
+        "2026-10-01T13:00:00+00:00"
+    );
     assert_eq!(ag.metadata["request_retry"], 2);
 
     // The vertex file has no email/label conflicts and keeps its nested service account intact.
     let vertex = by_id("vertex.json");
     assert_eq!(vertex.label, "proj (sa@proj.iam)");
-    assert_eq!(vertex.metadata["service_account"]["client_email"], "sa@proj.iam");
+    assert_eq!(
+        vertex.metadata["service_account"]["client_email"],
+        "sa@proj.iam"
+    );
 }
 
 #[test]
@@ -256,7 +293,10 @@ fn go_written_file_survives_a_rust_rewrite_unchanged() {
         let path = store.save(&mut a, SaveOptions::default()).unwrap().unwrap();
         let rewritten = fs::read(&path).unwrap();
         let original = fixture(path.file_name().unwrap().to_str().unwrap());
-        let (a, b): (Value, Value) = (serde_json::from_slice(&rewritten).unwrap(), serde_json::from_slice(&original).unwrap());
+        let (a, b): (Value, Value) = (
+            serde_json::from_slice(&rewritten).unwrap(),
+            serde_json::from_slice(&original).unwrap(),
+        );
         assert_eq!(a, b, "{} changed semantically on rewrite", path.display());
     }
 }

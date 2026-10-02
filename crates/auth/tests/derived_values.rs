@@ -27,7 +27,8 @@ struct Case {
 #[test]
 fn index_expiry_and_kinds_match_go() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/derived_cases.json");
-    let cases: Vec<Case> = serde_json::from_slice(&std::fs::read(path).expect("read cases")).expect("parse cases");
+    let cases: Vec<Case> =
+        serde_json::from_slice(&std::fs::read(path).expect("read cases")).expect("parse cases");
     assert!(cases.len() >= 15);
 
     for c in cases {
@@ -37,8 +38,18 @@ fn index_expiry_and_kinds_match_go() {
         auth.metadata = c.metadata.unwrap_or_default();
 
         assert_eq!(auth.ensure_index(), c.index, "{}: index", c.name);
-        assert_eq!(auth.expiration_time().map(|t| t.timestamp()), c.expires_unix, "{}: expiry", c.name);
+        assert_eq!(
+            auth.expiration_time().map(|t| t.timestamp()),
+            c.expires_unix,
+            "{}: expiry",
+            c.name
+        );
         assert_eq!(auth.auth_kind(), c.auth_kind, "{}: auth kind", c.name);
-        assert_eq!(auth.auth_source_kind(), c.source_kind, "{}: source kind", c.name);
+        assert_eq!(
+            auth.auth_source_kind(),
+            c.source_kind,
+            "{}: source kind",
+            c.name
+        );
     }
 }

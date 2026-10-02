@@ -9,8 +9,8 @@ use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::jwt::{normalise_unix, parse_jwt_exp};
 use crate::credmeta::{Metadata, parse_bool_any, parse_int_any};
+use crate::jwt::{normalise_unix, parse_jwt_exp};
 use crate::storage::TokenStorage;
 use crate::util::{abs_clean, trimmed_str, zero_time};
 
@@ -82,7 +82,11 @@ pub mod go_time {
         let parsed = DateTime::parse_from_rfc3339(raw.trim())
             .map(|t| t.with_timezone(&Utc))
             .map_err(serde::de::Error::custom)?;
-        Ok(if parsed == zero_time() { None } else { Some(parsed) })
+        Ok(if parsed == zero_time() {
+            None
+        } else {
+            Some(parsed)
+        })
     }
 }
 
@@ -232,11 +236,19 @@ impl Auth {
     /// A blank auth with `id` (also used as the file name) and `provider` set.
     pub fn new(id: impl Into<String>, provider: impl Into<String>) -> Self {
         let id = id.into();
-        Auth { file_name: id.clone(), id, provider: provider.into(), ..Default::default() }
+        Auth {
+            file_name: id.clone(),
+            id,
+            provider: provider.into(),
+            ..Default::default()
+        }
     }
 
     pub fn attr(&self, key: &str) -> String {
-        self.attributes.get(key).map(|v| v.trim().to_string()).unwrap_or_default()
+        self.attributes
+            .get(key)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default()
     }
 
     /// Trimmed string metadata value, `""` for missing or non-string.
@@ -247,13 +259,21 @@ impl Auth {
     /// `access_token`, falling back to the legacy `accessToken` spelling.
     pub fn access_token(&self) -> String {
         let t = self.meta_str("access_token");
-        if !t.is_empty() { t } else { self.meta_str("accessToken") }
+        if !t.is_empty() {
+            t
+        } else {
+            self.meta_str("accessToken")
+        }
     }
 
     /// `refresh_token`, falling back to `refreshToken`.
     pub fn refresh_token(&self) -> String {
         let t = self.meta_str("refresh_token");
-        if !t.is_empty() { t } else { self.meta_str("refreshToken") }
+        if !t.is_empty() {
+            t
+        } else {
+            self.meta_str("refreshToken")
+        }
     }
 
     // ---- Classification ----
@@ -279,8 +299,15 @@ impl Auth {
         if self.metadata.is_empty() {
             return false;
         }
-        const KEYS: [&str; 7] =
-            ["access_token", "refresh_token", "id_token", "email", "token_type", "expires_at", "expired"];
+        const KEYS: [&str; 7] = [
+            "access_token",
+            "refresh_token",
+            "id_token",
+            "email",
+            "token_type",
+            "expires_at",
+            "expired",
+        ];
         if KEYS.iter().any(|k| !self.meta_str(k).is_empty()) {
             return true;
         }
@@ -289,7 +316,10 @@ impl Auth {
 
     /// `AuthSourceKind()`: where the credential came from.
     pub fn auth_source_kind(&self) -> &'static str {
-        if self.attr(ATTRIBUTE_RUNTIME_ONLY).eq_ignore_ascii_case("true") {
+        if self
+            .attr(ATTRIBUTE_RUNTIME_ONLY)
+            .eq_ignore_ascii_case("true")
+        {
             return AUTH_SOURCE_MEMORY;
         }
         if let Some(s) = normalize_auth_source_kind(&self.attr(ATTRIBUTE_SOURCE_BACKEND)) {
@@ -406,10 +436,10 @@ impl Auth {
     /// `expires_in` + `timestamp`, then nested `token` objects.
     pub fn expiration_time(&self) -> Option<DateTime<Utc>> {
         let token = self.access_token();
-        if !token.is_empty() {
-            if let Some(exp) = parse_jwt_exp(&token) {
-                return Some(exp);
-            }
+        if !token.is_empty()
+            && let Some(exp) = parse_jwt_exp(&token)
+        {
+            return Some(exp);
         }
         expiration_from_map(&self.metadata)
     }
@@ -483,15 +513,18 @@ impl Auth {
     // ---- Plugin virtual auths ----
 
     pub fn is_plugin_virtual(&self) -> bool {
-        self.attr(ATTRIBUTE_PLUGIN_VIRTUAL).eq_ignore_ascii_case("true")
+        self.attr(ATTRIBUTE_PLUGIN_VIRTUAL)
+            .eq_ignore_ascii_case("true")
     }
 
     /// Marks an auth expanded from a plugin-owned file and derives its index seed.
     pub fn mark_plugin_virtual(&mut self, source_path: &str, ordinal: usize) {
-        self.attributes.insert(ATTRIBUTE_PLUGIN_VIRTUAL.into(), "true".into());
+        self.attributes
+            .insert(ATTRIBUTE_PLUGIN_VIRTUAL.into(), "true".into());
         let source_path = source_path.trim();
         if !source_path.is_empty() {
-            self.attributes.insert(ATTRIBUTE_VIRTUAL_SOURCE.into(), source_path.into());
+            self.attributes
+                .insert(ATTRIBUTE_VIRTUAL_SOURCE.into(), source_path.into());
         }
         let mut seed_id = self.id.trim().to_string();
         if seed_id.is_empty() {
@@ -500,8 +533,15 @@ impl Auth {
         if seed_id.is_empty() {
             seed_id = ordinal.to_string();
         }
-        let seed = [self.provider.trim().to_lowercase(), source_path.to_string(), seed_id, ordinal.to_string()].join("|");
-        self.attributes.insert(ATTRIBUTE_AUTH_INDEX_SEED.into(), seed);
+        let seed = [
+            self.provider.trim().to_lowercase(),
+            source_path.to_string(),
+            seed_id,
+            ordinal.to_string(),
+        ]
+        .join("|");
+        self.attributes
+            .insert(ATTRIBUTE_AUTH_INDEX_SEED.into(), seed);
     }
 
     // ---- Recent request ring ----
@@ -511,9 +551,17 @@ impl Auth {
         let id = bucket_id(now);
         let b = &mut self.recent_requests[bucket_index(id)];
         if b.bucket_id != id {
-            *b = RecentBucket { bucket_id: id, success: 0, failed: 0 };
+            *b = RecentBucket {
+                bucket_id: id,
+                success: 0,
+                failed: 0,
+            };
         }
-        if success { b.success += 1 } else { b.failed += 1 }
+        if success {
+            b.success += 1
+        } else {
+            b.failed += 1
+        }
     }
 
     /// Oldest-to-newest snapshot with local `HH:MM-HH:MM` labels.
@@ -524,15 +572,27 @@ impl Auth {
             .map(|i| {
                 let id = current - i;
                 let b = self.recent_requests[bucket_index(id)];
-                let (success, failed) = if b.bucket_id == id { (b.success, b.failed) } else { (0, 0) };
-                RecentRequestBucket { time: bucket_label(id), success, failed }
+                let (success, failed) = if b.bucket_id == id {
+                    (b.success, b.failed)
+                } else {
+                    (0, 0)
+                };
+                RecentRequestBucket {
+                    time: bucket_label(id),
+                    success,
+                    failed,
+                }
             })
             .collect()
     }
 }
 
 fn bucket_id(now: DateTime<Utc>) -> i64 {
-    if now == zero_time() { 0 } else { now.timestamp().div_euclid(RECENT_BUCKET_SECONDS) }
+    if now == zero_time() {
+        0
+    } else {
+        now.timestamp().div_euclid(RECENT_BUCKET_SECONDS)
+    }
 }
 
 fn bucket_index(id: i64) -> usize {
@@ -540,7 +600,9 @@ fn bucket_index(id: i64) -> usize {
 }
 
 fn bucket_label(id: i64) -> String {
-    let start = DateTime::from_timestamp(id * RECENT_BUCKET_SECONDS, 0).unwrap_or_else(zero_time).with_timezone(&Local);
+    let start = DateTime::from_timestamp(id * RECENT_BUCKET_SECONDS, 0)
+        .unwrap_or_else(zero_time)
+        .with_timezone(&Local);
     let end = start + chrono::Duration::seconds(RECENT_BUCKET_SECONDS);
     format!("{}-{}", start.format("%H:%M"), end.format("%H:%M"))
 }
@@ -567,26 +629,33 @@ fn normalize_auth_source_kind(source: &str) -> Option<&'static str> {
 
 // ---- Expiry parsing ----
 
-const EXPIRE_KEYS: [&str; 6] = ["expired", "expire", "expires_at", "expiresAt", "expiry", "expires"];
+const EXPIRE_KEYS: [&str; 6] = [
+    "expired",
+    "expire",
+    "expires_at",
+    "expiresAt",
+    "expiry",
+    "expires",
+];
 
 fn expiration_from_map(meta: &Metadata) -> Option<DateTime<Utc>> {
     for key in EXPIRE_KEYS {
-        if let Some(v) = meta.get(key) {
-            if let Some(ts) = parse_time_value(v) {
-                return Some(ts);
-            }
+        if let Some(v) = meta.get(key)
+            && let Some(ts) = parse_time_value(v)
+        {
+            return Some(ts);
         }
     }
-    if let Some(expires_in) = relative_expiry_seconds(meta) {
-        if let Some(ts) = relative_expiry_timestamp(meta) {
-            return Some(ts + chrono::Duration::seconds(expires_in));
-        }
+    if let Some(expires_in) = relative_expiry_seconds(meta)
+        && let Some(ts) = relative_expiry_timestamp(meta)
+    {
+        return Some(ts + chrono::Duration::seconds(expires_in));
     }
     for nested in ["token", "Token"] {
-        if let Some(Value::Object(m)) = meta.get(nested) {
-            if let Some(ts) = expiration_from_map(m) {
-                return Some(ts);
-            }
+        if let Some(Value::Object(m)) = meta.get(nested)
+            && let Some(ts) = expiration_from_map(m)
+        {
+            return Some(ts);
         }
     }
     None
@@ -655,8 +724,12 @@ mod tests {
         let a = auth_with(json!({"access_token": jwt, "expired": "2001-01-01T00:00:00Z"}));
         assert_eq!(a.expiration_time().unwrap().timestamp(), 1_900_000_000);
 
-        let a = auth_with(json!({"access_token": "opaque", "expired": "2030-01-02T03:04:05+02:00"}));
-        assert_eq!(a.expiration_time().unwrap().to_rfc3339(), "2030-01-02T01:04:05+00:00");
+        let a =
+            auth_with(json!({"access_token": "opaque", "expired": "2030-01-02T03:04:05+02:00"}));
+        assert_eq!(
+            a.expiration_time().unwrap().to_rfc3339(),
+            "2030-01-02T01:04:05+00:00"
+        );
 
         let a = auth_with(json!({"expires_in": 3600, "timestamp": 1_700_000_000_000i64}));
         assert_eq!(a.expiration_time().unwrap().timestamp(), 1_700_003_600);
@@ -670,7 +743,10 @@ mod tests {
     #[test]
     fn auth_kind_derivation() {
         assert_eq!(auth_with(json!({"access_token": "x"})).auth_kind(), "oauth");
-        assert_eq!(auth_with(json!({"auth_kind": "OAuth2"})).auth_kind(), "oauth");
+        assert_eq!(
+            auth_with(json!({"auth_kind": "OAuth2"})).auth_kind(),
+            "oauth"
+        );
         let mut a = Auth::default();
         a.attributes.insert("api_key".into(), "k".into());
         assert_eq!(a.auth_kind(), "apikey");
@@ -682,12 +758,16 @@ mod tests {
         let mut a = Auth::default();
         a.id = "claude-a@b.json".into();
         a.provider = "Claude".into();
-        a.attributes.insert("path".into(), "/auth/claude-a@b.json".into());
+        a.attributes
+            .insert("path".into(), "/auth/claude-a@b.json".into());
         a.metadata.insert("type".into(), json!("claude"));
         assert_eq!(a.index_seed(), "claude:/auth/claude-a@b.json");
         let idx = a.ensure_index();
         assert_eq!(idx.len(), 16);
-        assert_eq!(idx, crate::util::sha256_hex_prefix("claude:/auth/claude-a@b.json", 16));
+        assert_eq!(
+            idx,
+            crate::util::sha256_hex_prefix("claude:/auth/claude-a@b.json", 16)
+        );
 
         let mut k = Auth::default();
         k.id = "claude:abc".into();

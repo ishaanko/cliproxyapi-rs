@@ -40,7 +40,10 @@ pub fn parse_proxy(raw: &str) -> Result<ProxySetting, String> {
 
 /// Builds a rustls client honoring `proxy_url` (per-auth override first, global fallback is the
 /// caller's job). An invalid proxy string is logged and ignored, like Go's `SetProxy`.
-pub fn build_client(proxy_url: &str, timeout: Option<Duration>) -> Result<reqwest::Client, AuthFlowError> {
+pub fn build_client(
+    proxy_url: &str,
+    timeout: Option<Duration>,
+) -> Result<reqwest::Client, AuthFlowError> {
     build_client_ext(proxy_url, timeout, None)
 }
 
@@ -61,12 +64,15 @@ pub fn build_client_ext(
         Ok(ProxySetting::Inherit) => {}
         Ok(ProxySetting::Direct) => builder = builder.no_proxy(),
         Ok(ProxySetting::Proxy(p)) => {
-            let proxy = reqwest::Proxy::all(&p).map_err(|e| AuthFlowError::Config(format!("invalid proxy: {e}")))?;
+            let proxy = reqwest::Proxy::all(&p)
+                .map_err(|e| AuthFlowError::Config(format!("invalid proxy: {e}")))?;
             builder = builder.proxy(proxy);
         }
         Err(e) => tracing::error!("{e}"),
     }
-    builder.build().map_err(|e| AuthFlowError::Config(format!("build http client: {e}")))
+    builder
+        .build()
+        .map_err(|e| AuthFlowError::Config(format!("build http client: {e}")))
 }
 
 /// Reads a response body as text (lossy), returning `(status, body)`.
@@ -85,7 +91,10 @@ mod tests {
         assert_eq!(parse_proxy("").unwrap(), ProxySetting::Inherit);
         assert_eq!(parse_proxy(" Direct ").unwrap(), ProxySetting::Direct);
         assert_eq!(parse_proxy("none").unwrap(), ProxySetting::Direct);
-        assert!(matches!(parse_proxy("socks5://u:p@h:1080").unwrap(), ProxySetting::Proxy(_)));
+        assert!(matches!(
+            parse_proxy("socks5://u:p@h:1080").unwrap(),
+            ProxySetting::Proxy(_)
+        ));
         assert!(parse_proxy("ftp://h:1").is_err());
         assert!(parse_proxy("justahost").is_err());
     }

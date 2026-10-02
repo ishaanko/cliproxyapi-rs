@@ -21,7 +21,10 @@ fn generate_with(random_bytes: usize) -> PkceCodes {
     rand::rng().fill_bytes(&mut buf);
     let code_verifier = URL_SAFE_NO_PAD.encode(&buf);
     let code_challenge = code_challenge(&code_verifier);
-    PkceCodes { code_verifier, code_challenge }
+    PkceCodes {
+        code_verifier,
+        code_challenge,
+    }
 }
 
 /// Claude / Codex: 96 random bytes, 128-char verifier.
@@ -51,9 +54,16 @@ mod tests {
         let c = generate_pkce_codes();
         assert_eq!(c.code_verifier.len(), 128);
         assert_eq!(c.code_challenge.len(), 43);
-        assert!(c.code_verifier.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'));
+        assert!(
+            c.code_verifier
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        );
         assert_eq!(c.code_challenge, code_challenge(&c.code_verifier));
         assert_eq!(generate_pkce_codes_short().code_verifier.len(), 86);
-        assert_ne!(generate_pkce_codes().code_verifier, generate_pkce_codes().code_verifier);
+        assert_ne!(
+            generate_pkce_codes().code_verifier,
+            generate_pkce_codes().code_verifier
+        );
     }
 }

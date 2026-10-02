@@ -34,7 +34,8 @@ pub const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 pub const ROLES_URL: &str = "https://api.anthropic.com/api/oauth/claude_cli/roles";
 pub const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 pub const REDIRECT_URI: &str = "http://localhost:54545/callback";
-pub const OAUTH_SCOPE: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+pub const OAUTH_SCOPE: &str =
+    "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 pub const DEFAULT_CALLBACK_PORT: u16 = 54545;
 /// `ClaudeAuthenticator.RefreshLead()`: refresh 4 hours before expiry.
 pub const REFRESH_LEAD: Duration = Duration::from_secs(4 * 3600);
@@ -49,10 +50,12 @@ const DEVICE_POOL_SIZE: usize = 1;
 const DEVICE_ID_BYTES: usize = 32;
 
 /// Per-refresh-token "blocked until" after a 429.
-static REFRESH_BLOCK: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-static REFRESH_FLIGHT: LazyLock<SingleFlight<ClaudeTokenData>> = LazyLock::new(SingleFlight::default);
+static REFRESH_BLOCK: LazyLock<Mutex<HashMap<String, Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+static REFRESH_FLIGHT: LazyLock<SingleFlight<ClaudeTokenData>> =
+    LazyLock::new(SingleFlight::default);
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ClaudeTokenData {
     pub access_token: String,
     pub refresh_token: String,
@@ -64,7 +67,7 @@ pub struct ClaudeTokenData {
     pub expire: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ClaudeAuthBundle {
     pub token_data: ClaudeTokenData,
     pub device_ids: Vec<String>,
@@ -228,9 +231,18 @@ impl ClaudeAuth {
 
     /// Exchanges the authorization code for tokens, then replays the advisory profile + roles
     /// lookups (failures only logged) and lets the profile identity win.
-    pub async fn exchange_code_for_tokens(&self, code: &str, state: &str, pkce: &PkceCodes) -> Result<ClaudeAuthBundle> {
+    pub async fn exchange_code_for_tokens(
+        &self,
+        code: &str,
+        state: &str,
+        pkce: &PkceCodes,
+    ) -> Result<ClaudeAuthBundle> {
         let (new_code, new_state) = Self::parse_code_and_state(code);
-        let state = if new_state.is_empty() { state } else { new_state.as_str() };
+        let state = if new_state.is_empty() {
+            state
+        } else {
+            new_state.as_str()
+        };
         let body = serde_json::to_string(&CodeExchangeRequest {
             grant_type: "authorization_code",
             code: &new_code,
@@ -241,15 +253,29 @@ impl ClaudeAuth {
         })
         .map_err(|e| AuthFlowError::other(format!("failed to marshal request body: {e}")))?;
 
-        let resp = axios_headers(self.client.post(&self.token_url)).body(body).send().await.map_err(|e| {
-            AuthFlowError::Transport(format!("token exchange request failed: {}", e.without_url()))
+        let resp = axios_headers(self.client.post(&self.token_url))
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "token exchange request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, text) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "failed to read token response: {}",
+                e.without_url()
+            ))
         })?;
-        let (status, text) = read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("failed to read token response: {}", e.without_url())))?;
         if status != 200 {
-            return Err(AuthFlowError::other(format!("token exchange failed with status {status}: {text}")));
+            return Err(AuthFlowError::other(format!(
+                "token exchange failed with status {status}: {text}"
+            )));
         }
-        let token: TokenResponse =
-            serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("failed to parse token response: {e}")))?;
+        let token: TokenResponse = serde_json::from_str(&text)
+            .map_err(|e| AuthFlowError::other(format!("failed to parse token response: {e}")))?;
 
         let mut data = ClaudeTokenData {
             access_token: token.access_token.clone(),
@@ -274,7 +300,11 @@ impl ClaudeAuth {
             set(&mut data.organization_name, &profile.organization.name);
         }
 
-        Ok(ClaudeAuthBundle { token_data: data, device_ids: generate_device_id_pool(), last_refresh: now_rfc3339_local() })
+        Ok(ClaudeAuthBundle {
+            token_data: data,
+            device_ids: generate_device_id_pool(),
+            last_refresh: now_rfc3339_local(),
+        })
     }
 
     /// Profile then roles lookup the native client issues right after login. Both advisory.
@@ -292,43 +322,65 @@ impl ClaudeAuth {
         profile
     }
 
-    async fn fetch_control_plane(&self, endpoint: &str, access_token: &str, label: &str) -> Result<String> {
+    async fn fetch_control_plane(
+        &self,
+        endpoint: &str,
+        access_token: &str,
+        label: &str,
+    ) -> Result<String> {
         let access_token = access_token.trim();
         if access_token.is_empty() {
-            return Err(AuthFlowError::other(format!("fetch Claude OAuth {label}: access token is empty")));
+            return Err(AuthFlowError::other(format!(
+                "fetch Claude OAuth {label}: access token is empty"
+            )));
         }
         let req = axios_headers(self.client.get(endpoint))
             .header("Authorization", format!("Bearer {access_token}"))
             .header("Cache-Control", "no-cache");
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("fetch Claude OAuth {label}: {}", e.without_url())))?;
-        let (status, body) = read_text(resp)
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("read Claude OAuth {label} response: {}", e.without_url())))?;
+        let resp = req.send().await.map_err(|e| {
+            AuthFlowError::Transport(format!("fetch Claude OAuth {label}: {}", e.without_url()))
+        })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "read Claude OAuth {label} response: {}",
+                e.without_url()
+            ))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(AuthFlowError::Status { status, message: format!("fetch Claude OAuth {label} failed with status {status}") });
+            return Err(AuthFlowError::Status {
+                status,
+                message: format!("fetch Claude OAuth {label} failed with status {status}"),
+            });
         }
         Ok(body)
     }
 
     /// Account identity of an access token; requires a non-empty account uuid.
     pub async fn fetch_oauth_profile(&self, access_token: &str) -> Result<OAuthProfile> {
-        let body = self.fetch_control_plane(&self.profile_url, access_token, "profile").await?;
-        let profile: OAuthProfile =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("parse Claude OAuth profile response: {e}")))?;
+        let body = self
+            .fetch_control_plane(&self.profile_url, access_token, "profile")
+            .await?;
+        let profile: OAuthProfile = serde_json::from_str(&body).map_err(|e| {
+            AuthFlowError::other(format!("parse Claude OAuth profile response: {e}"))
+        })?;
         if profile.account.uuid.trim().is_empty() {
-            return Err(AuthFlowError::other("fetch Claude OAuth profile: response account UUID is empty"));
+            return Err(AuthFlowError::other(
+                "fetch Claude OAuth profile: response account UUID is empty",
+            ));
         }
         Ok(profile)
     }
 
     /// `claude_cli` roles lookup; the payload stays opaque.
     pub async fn fetch_oauth_roles(&self, access_token: &str) -> Result<Value> {
-        let body = self.fetch_control_plane(&self.roles_url, access_token, "claude_cli roles").await?;
-        serde_json::from_str(&body)
-            .map_err(|_| AuthFlowError::other("parse Claude OAuth claude_cli roles response: body is not valid JSON"))
+        let body = self
+            .fetch_control_plane(&self.roles_url, access_token, "claude_cli roles")
+            .await?;
+        serde_json::from_str(&body).map_err(|_| {
+            AuthFlowError::other(
+                "parse Claude OAuth claude_cli roles response: body is not valid JSON",
+            )
+        })
     }
 
     /// Refreshes tokens. Single-flight per refresh token, detached from caller cancellation, fails
@@ -346,7 +398,9 @@ impl ClaudeAuth {
             .run(refresh_token, move || async move {
                 match tokio::time::timeout(REFRESH_TIMEOUT, this.refresh_single_flight(&rt)).await {
                     Ok(r) => r,
-                    Err(_) => Err(AuthFlowError::Transport("token refresh request failed: timed out".into())),
+                    Err(_) => Err(AuthFlowError::Transport(
+                        "token refresh request failed: timed out".into(),
+                    )),
                 }
             })
             .await
@@ -368,24 +422,46 @@ impl ClaudeAuth {
             .body(body)
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("token refresh request failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "token refresh request failed: {}",
+                    e.without_url()
+                ))
+            })?;
         let retry_after = parse_retry_after(resp.headers());
-        let (status, text) = read_text(resp)
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("failed to read refresh response: {}", e.without_url())))?;
+        let (status, text) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "failed to read refresh response: {}",
+                e.without_url()
+            ))
+        })?;
 
         if status != 200 {
             if status == 429 {
-                REFRESH_BLOCK.lock().insert(refresh_token.to_string(), Instant::now() + retry_after);
-                return Err(AuthFlowError::Refresh { status, message: text, retryable: false });
+                REFRESH_BLOCK
+                    .lock()
+                    .insert(refresh_token.to_string(), Instant::now() + retry_after);
+                return Err(AuthFlowError::Refresh {
+                    status,
+                    message: text,
+                    retryable: false,
+                });
             }
-            return Err(AuthFlowError::Refresh { status, message: text, retryable: status >= 500 });
+            return Err(AuthFlowError::Refresh {
+                status,
+                message: text,
+                retryable: status >= 500,
+            });
         }
 
-        let token: TokenResponse =
-            serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("failed to parse token response: {e}")))?;
+        let token: TokenResponse = serde_json::from_str(&text)
+            .map_err(|e| AuthFlowError::other(format!("failed to parse token response: {e}")))?;
         REFRESH_BLOCK.lock().remove(refresh_token);
-        let new_refresh = if token.refresh_token.trim().is_empty() { refresh_token.to_string() } else { token.refresh_token.clone() };
+        let new_refresh = if token.refresh_token.trim().is_empty() {
+            refresh_token.to_string()
+        } else {
+            token.refresh_token.clone()
+        };
         let mut data = ClaudeTokenData {
             access_token: token.access_token.clone(),
             refresh_token: new_refresh,
@@ -405,7 +481,11 @@ impl ClaudeAuth {
     }
 
     /// `RefreshTokensWithRetry`: attempt n waits n seconds; stops on a non-retryable error.
-    pub async fn refresh_tokens_with_retry(&self, refresh_token: &str, max_retries: u32) -> Result<ClaudeTokenData> {
+    pub async fn refresh_tokens_with_retry(
+        &self,
+        refresh_token: &str,
+        max_retries: u32,
+    ) -> Result<ClaudeTokenData> {
         let mut last_err = None;
         for attempt in 0..max_retries {
             if attempt > 0 {
@@ -424,7 +504,9 @@ impl ClaudeAuth {
             }
         }
         let cause = last_err.map(|e| e.to_string()).unwrap_or_default();
-        Err(AuthFlowError::Other(format!("token refresh failed after {max_retries} attempts: {cause}")))
+        Err(AuthFlowError::Other(format!(
+            "token refresh failed after {max_retries} attempts: {cause}"
+        )))
     }
 
     /// Builds the credential file struct from a login bundle.
@@ -472,7 +554,10 @@ pub fn apply_refresh_to_auth(auth: &mut Auth, td: &ClaudeTokenData) {
         }
     };
     let meta = &mut auth.metadata;
-    meta.insert("access_token".into(), Value::String(td.access_token.clone()));
+    meta.insert(
+        "access_token".into(),
+        Value::String(td.access_token.clone()),
+    );
     store_str(meta, "refresh_token", &td.refresh_token);
     store_str(meta, "email", &td.email);
     store_str(meta, "account_uuid", &td.account_uuid);
@@ -501,20 +586,28 @@ fn clamp_backoff(d: Duration) -> Duration {
 
 /// `Retry-After` (seconds or HTTP date), then `Retry-After-Ms`, clamped to [5 s, 5 min].
 fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Duration {
-    let get = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let get = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
     if let Some(raw) = get("retry-after") {
         if let Ok(secs) = raw.parse::<f64>() {
             return clamp_backoff(Duration::from_secs_f64(secs.max(0.0)));
         }
         if let Ok(when) = chrono::DateTime::parse_from_rfc2822(&raw) {
-            let delta = (when.with_timezone(&chrono::Utc) - chrono::Utc::now()).to_std().unwrap_or_default();
+            let delta = (when.with_timezone(&chrono::Utc) - chrono::Utc::now())
+                .to_std()
+                .unwrap_or_default();
             return clamp_backoff(delta);
         }
     }
-    if let Some(raw) = get("retry-after-ms") {
-        if let Ok(ms) = raw.parse::<f64>() {
-            return clamp_backoff(Duration::from_secs_f64((ms / 1000.0).max(0.0)));
-        }
+    if let Some(raw) = get("retry-after-ms")
+        && let Ok(ms) = raw.parse::<f64>()
+    {
+        return clamp_backoff(Duration::from_secs_f64((ms / 1000.0).max(0.0)));
     }
     REFRESH_MIN_BACKOFF
 }
@@ -566,7 +659,10 @@ fn is_hashed_credential_target(target: &Auth) -> bool {
 }
 
 fn base_name(p: &str) -> &str {
-    std::path::Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p)
+    std::path::Path::new(p)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(p)
 }
 
 /// Finds the older email-only or account-hashed credential file for the same identity, so a new
@@ -578,7 +674,11 @@ pub fn find_matching_legacy_credential(store: &dyn Store, target: &Auth) -> Resu
     let records = match store.list() {
         Ok(r) => r,
         Err(e) if e.is_not_found() => return Ok(None),
-        Err(e) => return Err(AuthFlowError::other(format!("list Claude credentials for legacy migration: {e}"))),
+        Err(e) => {
+            return Err(AuthFlowError::other(format!(
+                "list Claude credentials for legacy migration: {e}"
+            )));
+        }
     };
 
     let target_email = metadata_string(&target.metadata, "email");
@@ -601,7 +701,8 @@ pub fn find_matching_legacy_credential(store: &dyn Store, target: &Auth) -> Resu
         }
         let base = base_name(&name);
         let is_email_legacy = base.eq_ignore_ascii_case(&legacy_name);
-        let is_account_predecessor = !account_name.is_empty() && base.eq_ignore_ascii_case(&account_name);
+        let is_account_predecessor =
+            !account_name.is_empty() && base.eq_ignore_ascii_case(&account_name);
         if !is_email_legacy && !is_account_predecessor {
             continue;
         }
@@ -638,17 +739,23 @@ fn generate_device_id() -> String {
 
 /// A fresh pool (one 64-hex-char id).
 pub fn generate_device_id_pool() -> Vec<String> {
-    (0..DEVICE_POOL_SIZE).map(|_| generate_device_id()).collect()
+    (0..DEVICE_POOL_SIZE)
+        .map(|_| generate_device_id())
+        .collect()
 }
 
 /// 64 lowercase hex chars.
 pub fn valid_device_id(value: &str) -> bool {
-    value.len() == DEVICE_ID_BYTES * 2 && value == value.to_lowercase() && value.bytes().all(|b| b.is_ascii_hexdigit())
+    value.len() == DEVICE_ID_BYTES * 2
+        && value == value.to_lowercase()
+        && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Trims, lowercases, validates and dedups ids; non-array input yields an empty pool.
 pub fn normalize_device_id_pool(raw: Option<&Value>) -> Vec<String> {
-    let Some(Value::Array(items)) = raw else { return Vec::new() };
+    let Some(Value::Array(items)) = raw else {
+        return Vec::new();
+    };
     let mut out: Vec<String> = Vec::new();
     for v in items {
         let Some(s) = v.as_str() else { continue };
@@ -664,10 +771,16 @@ pub fn normalize_device_id_pool(raw: Option<&Value>) -> Vec<String> {
 }
 
 fn has_canonical_device_id_pool(raw: Option<&Value>) -> bool {
-    let Some(Value::Array(items)) = raw else { return false };
-    let Some(strs) = items.iter().map(Value::as_str).collect::<Option<Vec<_>>>() else { return false };
+    let Some(Value::Array(items)) = raw else {
+        return false;
+    };
+    let Some(strs) = items.iter().map(Value::as_str).collect::<Option<Vec<_>>>() else {
+        return false;
+    };
     let normalized = normalize_device_id_pool(raw);
-    strs.len() == DEVICE_POOL_SIZE && normalized.len() == DEVICE_POOL_SIZE && strs[0] == normalized[0]
+    strs.len() == DEVICE_POOL_SIZE
+        && normalized.len() == DEVICE_POOL_SIZE
+        && strs[0] == normalized[0]
 }
 
 /// `EnsureDeviceIDPool`: returns the pool, topping it up and rewriting the metadata key when it was
@@ -683,7 +796,10 @@ pub fn ensure_device_id_pool(metadata: &mut Metadata) -> (Vec<String>, bool) {
         }
     }
     if changed {
-        metadata.insert(DEVICE_IDS_METADATA_KEY.into(), Value::Array(ids.iter().cloned().map(Value::String).collect()));
+        metadata.insert(
+            DEVICE_IDS_METADATA_KEY.into(),
+            Value::Array(ids.iter().cloned().map(Value::String).collect()),
+        );
     }
     (ids, changed)
 }
@@ -697,7 +813,13 @@ mod tests {
     #[test]
     fn auth_url_has_sorted_keys_and_encoded_scope() {
         let auth = ClaudeAuth::with_client(reqwest::Client::new());
-        let url = auth.generate_auth_url("st", &PkceCodes { code_verifier: "v".into(), code_challenge: "chal".into() });
+        let url = auth.generate_auth_url(
+            "st",
+            &PkceCodes {
+                code_verifier: "v".into(),
+                code_challenge: "chal".into(),
+            },
+        );
         assert_eq!(
             url,
             "https://claude.ai/oauth/authorize?client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&code=true&code_challenge=chal&code_challenge_method=S256&redirect_uri=http%3A%2F%2Flocalhost%3A54545%2Fcallback&response_type=code&scope=user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload&state=st"
@@ -706,18 +828,30 @@ mod tests {
 
     #[test]
     fn code_hash_state_split() {
-        assert_eq!(ClaudeAuth::parse_code_and_state("abc#def"), ("abc".into(), "def".into()));
-        assert_eq!(ClaudeAuth::parse_code_and_state("abc"), ("abc".into(), "".into()));
+        assert_eq!(
+            ClaudeAuth::parse_code_and_state("abc#def"),
+            ("abc".into(), "def".into())
+        );
+        assert_eq!(
+            ClaudeAuth::parse_code_and_state("abc"),
+            ("abc".into(), "".into())
+        );
     }
 
     #[test]
     fn credential_file_names() {
         assert_eq!(credential_file_name(" a@b.c ", "", ""), "claude-a@b.c.json");
         let hash = sha256_hex_prefix("org-1", 8);
-        assert_eq!(credential_file_name("a@b.c", "org-1", "acc"), format!("claude-{hash}-a@b.c.json"));
+        assert_eq!(
+            credential_file_name("a@b.c", "org-1", "acc"),
+            format!("claude-{hash}-a@b.c.json")
+        );
         // Falls back to the account uuid when the org is empty.
         let hash = sha256_hex_prefix("acc", 8);
-        assert_eq!(credential_file_name("a@b.c", " ", "acc"), format!("claude-{hash}-a@b.c.json"));
+        assert_eq!(
+            credential_file_name("a@b.c", " ", "acc"),
+            format!("claude-{hash}-a@b.c.json")
+        );
     }
 
     #[test]

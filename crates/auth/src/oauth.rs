@@ -19,14 +19,20 @@ pub fn validate_oauth_state(state: &str) -> Result<(), &'static str> {
     if s.contains("..") || s.contains('/') || s.contains('\\') {
         return Err("invalid state");
     }
-    if !s.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-')) {
+    if !s
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+    {
         return Err("invalid state");
     }
     Ok(())
 }
 
 fn query_get(u: &url::Url, key: &str) -> String {
-    u.query_pairs().find(|(k, _)| k == key).map(|(_, v)| v.trim().to_string()).unwrap_or_default()
+    u.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_default()
 }
 
 /// Parsed OAuth redirect parameters.
@@ -86,12 +92,13 @@ pub fn parse_oauth_callback(input: &str) -> Result<Option<OAuthCallback>, String
         }
     }
 
-    if !code.is_empty() && state.is_empty() {
-        if let Some((c, s)) = code.split_once('#') {
-            let (c, s) = (c.to_string(), s.to_string());
-            code = c;
-            state = s;
-        }
+    if !code.is_empty()
+        && state.is_empty()
+        && let Some((c, s)) = code.split_once('#')
+    {
+        let (c, s) = (c.to_string(), s.to_string());
+        code = c;
+        state = s;
     }
 
     if err_code.is_empty() && !err_desc.is_empty() {
@@ -102,7 +109,12 @@ pub fn parse_oauth_callback(input: &str) -> Result<Option<OAuthCallback>, String
         return Err("callback URL missing code".into());
     }
 
-    Ok(Some(OAuthCallback { code, state, error: err_code, error_description: err_desc }))
+    Ok(Some(OAuthCallback {
+        code,
+        state,
+        error: err_code,
+        error_description: err_desc,
+    }))
 }
 
 #[cfg(test)]
@@ -111,29 +123,47 @@ mod tests {
 
     #[test]
     fn parses_url_query_fragment_and_paste_forms() {
-        let p = parse_oauth_callback("http://localhost:54545/callback?code=abc&state=xyz").unwrap().unwrap();
+        let p = parse_oauth_callback("http://localhost:54545/callback?code=abc&state=xyz")
+            .unwrap()
+            .unwrap();
         assert_eq!((p.code.as_str(), p.state.as_str()), ("abc", "xyz"));
 
-        let p = parse_oauth_callback("?code=abc%2B1&state=s").unwrap().unwrap();
+        let p = parse_oauth_callback("?code=abc%2B1&state=s")
+            .unwrap()
+            .unwrap();
         assert_eq!(p.code, "abc+1");
 
-        let p = parse_oauth_callback("localhost:1455/auth/callback#code=c1&state=s1").unwrap().unwrap();
+        let p = parse_oauth_callback("localhost:1455/auth/callback#code=c1&state=s1")
+            .unwrap()
+            .unwrap();
         assert_eq!((p.code.as_str(), p.state.as_str()), ("c1", "s1"));
 
         let p = parse_oauth_callback("code=c2&state=s2").unwrap().unwrap();
         assert_eq!(p.code, "c2");
 
         // Claude "code#state" paste form.
-        let p = parse_oauth_callback("http://x/cb?code=thecode%23thestate").unwrap().unwrap();
+        let p = parse_oauth_callback("http://x/cb?code=thecode%23thestate")
+            .unwrap()
+            .unwrap();
         assert_eq!((p.code.as_str(), p.state.as_str()), ("thecode", "thestate"));
     }
 
     #[test]
     fn error_description_promoted_when_error_missing() {
-        let p = parse_oauth_callback("?error_description=denied").unwrap().unwrap();
-        assert_eq!((p.error.as_str(), p.error_description.as_str()), ("denied", ""));
-        let p = parse_oauth_callback("?error=access_denied&error_description=nope").unwrap().unwrap();
-        assert_eq!((p.error.as_str(), p.error_description.as_str()), ("access_denied", "nope"));
+        let p = parse_oauth_callback("?error_description=denied")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (p.error.as_str(), p.error_description.as_str()),
+            ("denied", "")
+        );
+        let p = parse_oauth_callback("?error=access_denied&error_description=nope")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (p.error.as_str(), p.error_description.as_str()),
+            ("access_denied", "nope")
+        );
     }
 
     #[test]

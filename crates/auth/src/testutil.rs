@@ -32,7 +32,10 @@ impl RecordedRequest {
     }
 
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn body_text(&self) -> String {
@@ -45,11 +48,16 @@ impl RecordedRequest {
 
     /// Decoded `application/x-www-form-urlencoded` body as ordered pairs.
     pub fn form(&self) -> Vec<(String, String)> {
-        url::form_urlencoded::parse(&self.body).map(|(k, v)| (k.into_owned(), v.into_owned())).collect()
+        url::form_urlencoded::parse(&self.body)
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect()
     }
 
     pub fn form_value(&self, key: &str) -> Option<String> {
-        self.form().into_iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        self.form()
+            .into_iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
     }
 }
 
@@ -69,7 +77,11 @@ impl MockResponse {
     }
 
     pub fn raw(status: u16, body: Vec<u8>) -> Self {
-        Self { status, headers: vec![], body }
+        Self {
+            status,
+            headers: vec![],
+            body,
+        }
     }
 
     pub fn with_header(mut self, k: &str, v: &str) -> Self {
@@ -86,18 +98,26 @@ pub(crate) struct MockServer {
 
 impl MockServer {
     /// Starts a server on an ephemeral loopback port; `handler` maps each request to a response.
-    pub async fn start(handler: impl Fn(&RecordedRequest) -> MockResponse + Send + Sync + 'static) -> MockServer {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock server");
+    pub async fn start(
+        handler: impl Fn(&RecordedRequest) -> MockResponse + Send + Sync + 'static,
+    ) -> MockServer {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock server");
         let url = format!("http://{}", listener.local_addr().expect("mock addr"));
         let requests: Arc<Mutex<Vec<RecordedRequest>>> = Arc::new(Mutex::new(Vec::new()));
         let handler = Arc::new(handler);
         let log = requests.clone();
         let task = tokio::spawn(async move {
             loop {
-                let Ok((mut stream, _)) = listener.accept().await else { break };
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
                 let (handler, log) = (handler.clone(), log.clone());
                 tokio::spawn(async move {
-                    let Some(req) = read_request(&mut stream).await else { return };
+                    let Some(req) = read_request(&mut stream).await else {
+                        return;
+                    };
                     log.lock().push(req.clone());
                     let resp = handler(&req);
                     let reason = if resp.status < 300 { "OK" } else { "Error" };
@@ -105,14 +125,21 @@ impl MockServer {
                     for (k, v) in &resp.headers {
                         head.push_str(&format!("{k}: {v}\r\n"));
                     }
-                    head.push_str(&format!("Content-Length: {}\r\nConnection: close\r\n\r\n", resp.body.len()));
+                    head.push_str(&format!(
+                        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+                        resp.body.len()
+                    ));
                     let _ = stream.write_all(head.as_bytes()).await;
                     let _ = stream.write_all(&resp.body).await;
                     let _ = stream.shutdown().await;
                 });
             }
         });
-        MockServer { url, requests, task }
+        MockServer {
+            url,
+            requests,
+            task,
+        }
     }
 
     pub fn requests(&self) -> Vec<RecordedRequest> {
@@ -124,7 +151,11 @@ impl MockServer {
     }
 
     pub fn last(&self) -> RecordedRequest {
-        self.requests.lock().last().cloned().expect("no request recorded")
+        self.requests
+            .lock()
+            .last()
+            .cloned()
+            .expect("no request recorded")
     }
 }
 
@@ -169,5 +200,10 @@ async fn read_request(stream: &mut tokio::net::TcpStream) -> Option<RecordedRequ
         }
         body.extend_from_slice(&chunk[..n]);
     }
-    Some(RecordedRequest { method, target, headers, body })
+    Some(RecordedRequest {
+        method,
+        target,
+        headers,
+        body,
+    })
 }

@@ -47,11 +47,15 @@ pub struct DeviceCodeResponse {
 impl DeviceCodeResponse {
     pub fn verification_url(&self) -> String {
         let c = self.verification_uri_complete.trim();
-        if c.is_empty() { self.verification_uri.trim().to_string() } else { c.to_string() }
+        if c.is_empty() {
+            self.verification_uri.trim().to_string()
+        } else {
+            c.to_string()
+        }
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct TokenData {
     #[serde(default)]
     pub access_token: String,
@@ -67,7 +71,7 @@ pub struct TokenData {
     pub error_description: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct MintedKeyResponse {
     #[serde(default)]
     pub api_key: String,
@@ -91,7 +95,7 @@ pub struct MintedKeyResponse {
     pub can_subscribe: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct MetaAuthBundle {
     pub token_data: TokenData,
     pub minted_key: Option<MintedKeyResponse>,
@@ -110,7 +114,11 @@ pub struct MetaAuth {
 
 impl MetaAuth {
     pub fn new(proxy_url: &str) -> Result<Self> {
-        Ok(Self::with_client(build_client_ext(proxy_url, Some(HTTP_TIMEOUT), None)?))
+        Ok(Self::with_client(build_client_ext(
+            proxy_url,
+            Some(HTTP_TIMEOUT),
+            None,
+        )?))
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
@@ -155,16 +163,30 @@ impl MetaAuth {
             .body(encode_query(&[("client_id", CLIENT_ID)]))
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("meta device flow: request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("meta device flow: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "meta device flow: request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "meta device flow: read response: {}",
+                e.without_url()
+            ))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(AuthFlowError::other(format!("meta device flow failed (HTTP {status}): {}", body.trim())));
+            return Err(AuthFlowError::other(format!(
+                "meta device flow failed (HTTP {status}): {}",
+                body.trim()
+            )));
         }
-        let mut dcr: DeviceCodeResponse =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("meta device flow: parse response: {e}")))?;
+        let mut dcr: DeviceCodeResponse = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("meta device flow: parse response: {e}")))?;
         if dcr.device_code.trim().is_empty() || dcr.user_code.trim().is_empty() {
-            return Err(AuthFlowError::other("meta device flow: response missing required device_code or user_code"));
+            return Err(AuthFlowError::other(
+                "meta device flow: response missing required device_code or user_code",
+            ));
         }
         dcr.token_endpoint = self.token_endpoint.clone();
         Ok(dcr)
@@ -174,7 +196,9 @@ impl MetaAuth {
     /// bundle keeps the DCA token). Bounded by `min(15 min, expires_in)`.
     pub async fn wait_for_authorization(&self, dcr: &DeviceCodeResponse) -> Result<MetaAuthBundle> {
         if dcr.device_code.is_empty() {
-            return Err(AuthFlowError::other("meta auth: missing device code response"));
+            return Err(AuthFlowError::other(
+                "meta auth: missing device code response",
+            ));
         }
         let mut max = MAX_POLL_DURATION;
         if dcr.expires_in > 0 {
@@ -182,13 +206,23 @@ impl MetaAuth {
         }
         match tokio::time::timeout(max, self.poll_loop(dcr)).await {
             Ok(r) => r,
-            Err(_) => Err(AuthFlowError::other("meta auth: authorization timed out or canceled: context deadline exceeded")),
+            Err(_) => Err(AuthFlowError::other(
+                "meta auth: authorization timed out or canceled: context deadline exceeded",
+            )),
         }
     }
 
     async fn poll_loop(&self, dcr: &DeviceCodeResponse) -> Result<MetaAuthBundle> {
-        let token_endpoint = if dcr.token_endpoint.is_empty() { TOKEN_ENDPOINT } else { dcr.token_endpoint.as_str() };
-        let mut interval = if dcr.interval > 0 { Duration::from_secs(dcr.interval as u64) } else { DEFAULT_POLL_INTERVAL };
+        let token_endpoint = if dcr.token_endpoint.is_empty() {
+            TOKEN_ENDPOINT
+        } else {
+            dcr.token_endpoint.as_str()
+        };
+        let mut interval = if dcr.interval > 0 {
+            Duration::from_secs(dcr.interval as u64)
+        } else {
+            DEFAULT_POLL_INTERVAL
+        };
         if let Some(floor) = self.poll_floor {
             interval = floor;
         }
@@ -211,26 +245,38 @@ impl MetaAuth {
                 Ok(r) => match read_text(r).await {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::warn!("meta auth: read token response error: {} (retrying)", e.without_url());
+                        tracing::warn!(
+                            "meta auth: read token response error: {} (retrying)",
+                            e.without_url()
+                        );
                         continue;
                     }
                 },
                 Err(e) => {
-                    tracing::warn!("meta auth: poll request error: {} (retrying)", e.without_url());
+                    tracing::warn!(
+                        "meta auth: poll request error: {} (retrying)",
+                        e.without_url()
+                    );
                     continue;
                 }
             };
 
             if status == 200 {
-                let mut token: TokenData =
-                    serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("meta auth: parse token response: {e}")))?;
+                let mut token: TokenData = serde_json::from_str(&body).map_err(|e| {
+                    AuthFlowError::other(format!("meta auth: parse token response: {e}"))
+                })?;
                 if token.access_token.is_empty() {
-                    return Err(AuthFlowError::other("meta auth: response missing access_token"));
+                    return Err(AuthFlowError::other(
+                        "meta auth: response missing access_token",
+                    ));
                 }
                 if token.expires_in > 0 {
                     token.expires_at = Utc::now().timestamp() + token.expires_in;
                 }
-                let mut bundle = MetaAuthBundle { token_data: token.clone(), ..Default::default() };
+                let mut bundle = MetaAuthBundle {
+                    token_data: token.clone(),
+                    ..Default::default()
+                };
                 match self.mint_api_key(&token.access_token).await {
                     Ok(minted) => {
                         if !minted.user_email.is_empty() {
@@ -241,7 +287,9 @@ impl MetaAuth {
                         }
                         bundle.minted_key = Some(minted);
                     }
-                    Err(e) => tracing::warn!("meta auth: could not mint api_key from dca_token: {e}"),
+                    Err(e) => {
+                        tracing::warn!("meta auth: could not mint api_key from dca_token: {e}")
+                    }
                 }
                 return Ok(bundle);
             }
@@ -250,8 +298,12 @@ impl MetaAuth {
             match err.error.as_str() {
                 "authorization_pending" => {}
                 "slow_down" => interval += Duration::from_secs(5),
-                "access_denied" => return Err(AuthFlowError::other("meta auth: access was denied by user")),
-                "expired_token" => return Err(AuthFlowError::other("meta auth: device code has expired")),
+                "access_denied" => {
+                    return Err(AuthFlowError::other("meta auth: access was denied by user"));
+                }
+                "expired_token" => {
+                    return Err(AuthFlowError::other("meta auth: device code has expired"));
+                }
                 "" => tracing::warn!("meta auth: unexpected response {status}: {body}"),
                 other => {
                     return Err(AuthFlowError::other(format!(
@@ -288,16 +340,30 @@ impl MetaAuth {
             .body(serde_json::json!({ "dca_token": dca_token }).to_string())
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("meta auth: mint request failed: {}", e.without_url())))?;
-        let (status, body) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("meta auth: read mint response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "meta auth: mint request failed: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, body) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "meta auth: read mint response: {}",
+                e.without_url()
+            ))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(AuthFlowError::other(format!("meta auth: mint key failed (HTTP {status}): {}", body.trim())));
+            return Err(AuthFlowError::other(format!(
+                "meta auth: mint key failed (HTTP {status}): {}",
+                body.trim()
+            )));
         }
-        let minted: MintedKeyResponse =
-            serde_json::from_str(&body).map_err(|e| AuthFlowError::other(format!("meta auth: parse mint response: {e}")))?;
+        let minted: MintedKeyResponse = serde_json::from_str(&body)
+            .map_err(|e| AuthFlowError::other(format!("meta auth: parse mint response: {e}")))?;
         if minted.api_key.trim().is_empty() {
-            return Err(AuthFlowError::other("meta auth: mint response missing api_key"));
+            return Err(AuthFlowError::other(
+                "meta auth: mint response missing api_key",
+            ));
         }
         Ok(minted)
     }
@@ -306,7 +372,9 @@ impl MetaAuth {
     /// expiry; without one the DCA token is used and expires with `dca_expired`.
     pub fn create_token_storage(&self, bundle: &MetaAuthBundle) -> MetaTokenStorage {
         let dca_expired = if bundle.token_data.expires_at > 0 {
-            chrono::DateTime::from_timestamp(bundle.token_data.expires_at, 0).map(format_rfc3339_utc).unwrap_or_default()
+            chrono::DateTime::from_timestamp(bundle.token_data.expires_at, 0)
+                .map(format_rfc3339_utc)
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -350,8 +418,16 @@ impl MetaAuth {
 pub fn credential_file_name(email: &str, sub: &str) -> String {
     let clean = email.trim();
     if !clean.is_empty() {
-        let mut sanitized: String =
-            clean.chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' }).collect();
+        let mut sanitized: String = clean
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
         // The mapped string is ASCII-only per char but multi-byte inputs become one `_` each, so
         // truncating at 120 bytes is safe on a char boundary.
         sanitized.truncate(120);
@@ -367,10 +443,16 @@ pub fn credential_file_name(email: &str, sub: &str) -> String {
 /// Login tail of `MetaAuthenticator.Login`.
 pub fn build_auth_record(storage: MetaTokenStorage, bundle: &MetaAuthBundle) -> Result<Auth> {
     if storage.access_token.trim().is_empty() {
-        return Err(AuthFlowError::other("meta token storage missing access token"));
+        return Err(AuthFlowError::other(
+            "meta token storage missing access token",
+        ));
     }
     let file_name = credential_file_name(&storage.email, &storage.dca_token);
-    let label = if storage.email.trim().is_empty() { "Meta".to_string() } else { storage.email.trim().to_string() };
+    let label = if storage.email.trim().is_empty() {
+        "Meta".to_string()
+    } else {
+        storage.email.trim().to_string()
+    };
 
     let mut m = Metadata::new();
     m.insert("type".into(), "meta".into());
@@ -409,15 +491,19 @@ pub fn build_auth_record(storage: MetaTokenStorage, bundle: &MetaAuthBundle) -> 
     let mut auth = Auth::new(file_name, "meta");
     auth.label = label;
     auth.attributes.insert("auth_kind".into(), "oauth".into());
-    auth.attributes.insert("base_url".into(), storage.base_url.clone());
+    auth.attributes
+        .insert("base_url".into(), storage.base_url.clone());
     if !storage.api_key.is_empty() {
-        auth.attributes.insert("api_key".into(), storage.api_key.clone());
+        auth.attributes
+            .insert("api_key".into(), storage.api_key.clone());
     }
     if !storage.dca_token.is_empty() {
-        auth.attributes.insert("dca_token".into(), storage.dca_token.clone());
+        auth.attributes
+            .insert("dca_token".into(), storage.dca_token.clone());
     }
     if !storage.email.is_empty() {
-        auth.attributes.insert("email".into(), storage.email.clone());
+        auth.attributes
+            .insert("email".into(), storage.email.clone());
     }
     auth.storage = Some(TokenStorage::Meta(storage));
     auth.metadata = m;
@@ -462,7 +548,11 @@ pub fn apply_mint_to_auth(auth: &mut Auth, dca_token: &str, minted: &MintedKeyRe
         let a = auth.attr("base_url");
         if a.is_empty() {
             let m = auth.meta_str("base_url");
-            if m.is_empty() { DEFAULT_API_BASE_URL.to_string() } else { m }
+            if m.is_empty() {
+                DEFAULT_API_BASE_URL.to_string()
+            } else {
+                m
+            }
         } else {
             a
         }
@@ -484,7 +574,10 @@ pub fn apply_mint_to_auth(auth: &mut Auth, dca_token: &str, minted: &MintedKeyRe
         if !minted.user_full_name.is_empty() {
             m.insert("name".into(), minted.user_full_name.clone().into());
         }
-        for (key, v) in [("subs_tier_name", &minted.subs_tier_name), ("subs_tier_id", &minted.subs_tier_id)] {
+        for (key, v) in [
+            ("subs_tier_name", &minted.subs_tier_name),
+            ("subs_tier_id", &minted.subs_tier_id),
+        ] {
             if v.is_empty() {
                 m.shift_remove(key);
             } else {
@@ -492,13 +585,18 @@ pub fn apply_mint_to_auth(auth: &mut Auth, dca_token: &str, minted: &MintedKeyRe
             }
         }
         m.insert("is_subs_active".into(), minted.is_subs_active.into());
-        m.insert("has_payment_method".into(), minted.has_payment_method.into());
+        m.insert(
+            "has_payment_method".into(),
+            minted.has_payment_method.into(),
+        );
         m.insert("type".into(), "meta".into());
         m.insert("last_refresh".into(), now.clone().into());
     }
     auth.attributes.insert("base_url".into(), base_url.clone());
-    auth.attributes.insert("api_key".into(), minted.api_key.clone());
-    auth.attributes.insert("access_token".into(), minted.api_key.clone());
+    auth.attributes
+        .insert("api_key".into(), minted.api_key.clone());
+    auth.attributes
+        .insert("access_token".into(), minted.api_key.clone());
     if let Some(TokenStorage::Meta(s)) = auth.storage.as_mut() {
         s.api_key = minted.api_key.clone();
         s.access_token = minted.api_key.clone();
@@ -523,8 +621,14 @@ mod tests {
     #[test]
     fn file_names() {
         let h = sha256_hex_prefix("a+b@x.io", 16);
-        assert_eq!(credential_file_name(" a+b@x.io ", ""), format!("meta-a_b_x.io-{h}.json"));
-        assert_eq!(credential_file_name("", "sub"), format!("meta-{}.json", sha256_hex_prefix("sub", 16)));
+        assert_eq!(
+            credential_file_name(" a+b@x.io ", ""),
+            format!("meta-a_b_x.io-{h}.json")
+        );
+        assert_eq!(
+            credential_file_name("", "sub"),
+            format!("meta-{}.json", sha256_hex_prefix("sub", 16))
+        );
         assert_eq!(credential_file_name("", ""), "meta-oauth.json");
         let long = "a".repeat(200);
         assert!(credential_file_name(&long, "").len() < 150);
@@ -534,13 +638,22 @@ mod tests {
     fn storage_prefers_minted_key() {
         let svc = MetaAuth::with_client(reqwest::Client::new());
         let mut bundle = MetaAuthBundle {
-            token_data: TokenData { access_token: "dca:tok".into(), token_type: "Bearer".into(), expires_in: 3600, expires_at: 1_900_000_000, ..Default::default() },
+            token_data: TokenData {
+                access_token: "dca:tok".into(),
+                token_type: "Bearer".into(),
+                expires_in: 3600,
+                expires_at: 1_900_000_000,
+                ..Default::default()
+            },
             minted_key: None,
             email: "e@x".into(),
             name: String::new(),
         };
         let s = svc.create_token_storage(&bundle);
-        assert_eq!((s.access_token.as_str(), s.api_key.as_str()), ("dca:tok", ""));
+        assert_eq!(
+            (s.access_token.as_str(), s.api_key.as_str()),
+            ("dca:tok", "")
+        );
         assert_eq!(s.expired, "2030-03-17T17:46:40Z");
         assert_eq!(s.base_url, DEFAULT_API_BASE_URL);
 
@@ -553,8 +666,18 @@ mod tests {
             ..Default::default()
         });
         let s = svc.create_token_storage(&bundle);
-        assert_eq!((s.access_token.as_str(), s.dca_token.as_str(), s.expired.as_str()), ("key-1", "dca:tok", ""));
-        assert_eq!((s.email.as_str(), s.name.as_str(), s.base_url.as_str()), ("m@x", "M", "https://x/v1"));
+        assert_eq!(
+            (
+                s.access_token.as_str(),
+                s.dca_token.as_str(),
+                s.expired.as_str()
+            ),
+            ("key-1", "dca:tok", "")
+        );
+        assert_eq!(
+            (s.email.as_str(), s.name.as_str(), s.base_url.as_str()),
+            ("m@x", "M", "https://x/v1")
+        );
         let auth = build_auth_record(s, &bundle).unwrap();
         assert_eq!(auth.attr("api_key"), "key-1");
         assert_eq!(auth.attr("dca_token"), "dca:tok");
@@ -569,15 +692,21 @@ mod tests {
         assert_eq!(extract_dca_token(&a), "dca:abc");
         a.metadata.insert("dca_token".into(), "dca:real".into());
         assert_eq!(extract_dca_token(&a), "dca:real");
-        a.attributes.insert("source".into(), "config:meta[abc]".into());
+        a.attributes
+            .insert("source".into(), "config:meta[abc]".into());
         a.attributes.insert("api_key".into(), "k".into());
         assert_eq!(extract_dca_token(&a), "");
         a.attributes.remove("source");
         a.attributes.remove("api_key");
 
-        a.metadata.insert("expired".into(), "2020-01-01T00:00:00Z".into());
+        a.metadata
+            .insert("expired".into(), "2020-01-01T00:00:00Z".into());
         a.metadata.insert("subs_tier_name".into(), "old".into());
-        let minted = MintedKeyResponse { api_key: "k".into(), is_subs_active: true, ..Default::default() };
+        let minted = MintedKeyResponse {
+            api_key: "k".into(),
+            is_subs_active: true,
+            ..Default::default()
+        };
         apply_mint_to_auth(&mut a, "dca:real", &minted);
         assert_eq!(a.metadata["access_token"], "k");
         assert!(!a.metadata.contains_key("expired") && !a.metadata.contains_key("subs_tier_name"));

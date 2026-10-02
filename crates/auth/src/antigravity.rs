@@ -21,7 +21,8 @@ use crate::singleflight::SingleFlight;
 use crate::types::Auth;
 use crate::util::{encode_query, expiry_local};
 
-pub const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+pub const CLIENT_ID: &str =
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
 /// Env var holding the Google OAuth client secret. Upstream constant:
 /// router-for-me/CLIProxyAPI `internal/auth/antigravity/constants.go` (`ClientSecret`).
 pub const CLIENT_SECRET_ENV: &str = "CPA_ANTIGRAVITY_CLIENT_SECRET";
@@ -96,10 +97,14 @@ pub fn version_from_user_agent(user_agent: &str) -> String {
         return antigravity_version();
     };
     let v = rest.split([' ', '\t']).next().unwrap_or("").trim();
-    if v.is_empty() { antigravity_version() } else { v.to_string() }
+    if v.is_empty() {
+        antigravity_version()
+    } else {
+        v.to_string()
+    }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct TokenResponse {
     #[serde(default)]
     pub access_token: String,
@@ -144,7 +149,11 @@ impl AntigravityAuth {
     }
 
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client, client_secret: None, endpoints: AntigravityEndpoints::default() }
+        Self {
+            client,
+            client_secret: None,
+            endpoints: AntigravityEndpoints::default(),
+        }
     }
 
     /// Supplies the OAuth client secret explicitly instead of reading the environment.
@@ -179,7 +188,11 @@ impl AntigravityAuth {
     /// local callback.
     pub fn build_auth_url(&self, state: &str, redirect_uri: &str) -> String {
         let default_redirect = default_redirect_uri();
-        let redirect = if redirect_uri.trim().is_empty() { default_redirect.as_str() } else { redirect_uri };
+        let redirect = if redirect_uri.trim().is_empty() {
+            default_redirect.as_str()
+        } else {
+            redirect_uri
+        };
         let scope = SCOPES.join(" ");
         let query = encode_query(&[
             ("access_type", "offline"),
@@ -193,7 +206,11 @@ impl AntigravityAuth {
         format!("{AUTH_ENDPOINT}?{query}")
     }
 
-    pub async fn exchange_code_for_tokens(&self, code: &str, redirect_uri: &str) -> Result<TokenResponse> {
+    pub async fn exchange_code_for_tokens(
+        &self,
+        code: &str,
+        redirect_uri: &str,
+    ) -> Result<TokenResponse> {
         let secret = self.client_secret()?;
         let body = encode_query(&[
             ("code", code),
@@ -209,21 +226,37 @@ impl AntigravityAuth {
             .body(body)
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("antigravity token exchange: execute request: {}", e.without_url())))?;
-        let (status, text) = read_text(resp)
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("antigravity token exchange: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "antigravity token exchange: execute request: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, text) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "antigravity token exchange: read response: {}",
+                e.without_url()
+            ))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(status_error("antigravity token exchange: request failed", status, &text));
+            return Err(status_error(
+                "antigravity token exchange: request failed",
+                status,
+                &text,
+            ));
         }
-        serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("antigravity token exchange: decode response: {e}")))
+        serde_json::from_str(&text).map_err(|e| {
+            AuthFlowError::other(format!("antigravity token exchange: decode response: {e}"))
+        })
     }
 
     /// Email of the signed-in Google account.
     pub async fn fetch_user_info(&self, access_token: &str) -> Result<String> {
         let access_token = access_token.trim();
         if access_token.is_empty() {
-            return Err(AuthFlowError::other("antigravity userinfo: missing access token"));
+            return Err(AuthFlowError::other(
+                "antigravity userinfo: missing access token",
+            ));
         }
         let resp = self
             .client
@@ -232,18 +265,38 @@ impl AntigravityAuth {
             .header("User-Agent", request_user_agent())
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("antigravity userinfo: execute request: {}", e.without_url())))?;
-        let (status, text) = read_text(resp)
-            .await
-            .map_err(|e| AuthFlowError::Transport(format!("antigravity userinfo: read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!(
+                    "antigravity userinfo: execute request: {}",
+                    e.without_url()
+                ))
+            })?;
+        let (status, text) = read_text(resp).await.map_err(|e| {
+            AuthFlowError::Transport(format!(
+                "antigravity userinfo: read response: {}",
+                e.without_url()
+            ))
+        })?;
         if !(200..300).contains(&status) {
-            return Err(status_error("antigravity userinfo: request failed", status, &text));
+            return Err(status_error(
+                "antigravity userinfo: request failed",
+                status,
+                &text,
+            ));
         }
-        let info: Value =
-            serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("antigravity userinfo: decode response: {e}")))?;
-        let email = info.get("email").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        let info: Value = serde_json::from_str(&text).map_err(|e| {
+            AuthFlowError::other(format!("antigravity userinfo: decode response: {e}"))
+        })?;
+        let email = info
+            .get("email")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if email.is_empty() {
-            return Err(AuthFlowError::other("antigravity userinfo: response missing email"));
+            return Err(AuthFlowError::other(
+                "antigravity userinfo: response missing email",
+            ));
         }
         Ok(email)
     }
@@ -262,34 +315,48 @@ impl AntigravityAuth {
             .body(body)
             .send()
             .await
-            .map_err(|e| AuthFlowError::Transport(format!("execute request: {}", e.without_url())))?;
-        let (status, text) =
-            read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("read response: {}", e.without_url())))?;
+            .map_err(|e| {
+                AuthFlowError::Transport(format!("execute request: {}", e.without_url()))
+            })?;
+        let (status, text) = read_text(resp)
+            .await
+            .map_err(|e| AuthFlowError::Transport(format!("read response: {}", e.without_url())))?;
         if !(200..300).contains(&status) {
             return Err(AuthFlowError::Status {
                 status,
                 message: format!("request failed with status {status}: {}", text.trim()),
             });
         }
-        let load: Value = serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("decode response: {e}")))?;
+        let load: Value = serde_json::from_str(&text)
+            .map_err(|e| AuthFlowError::other(format!("decode response: {e}")))?;
 
         let project_id = extract_cloudaicompanion_project(&load);
         if !project_id.is_empty() {
             return Ok(project_id);
         }
-        let onboarded = self.onboard_user(access_token, &default_tier_id(&load)).await?;
+        let onboarded = self
+            .onboard_user(access_token, &default_tier_id(&load))
+            .await?;
         if onboarded.is_empty() {
-            return Err(AuthFlowError::other("project id not found in loadCodeAssist or onboardUser response"));
+            return Err(AuthFlowError::other(
+                "project id not found in loadCodeAssist or onboardUser response",
+            ));
         }
         Ok(onboarded)
     }
 
     /// `onboardUser` against the daily endpoint, polling up to 5 times at 2 s intervals.
     pub async fn onboard_user(&self, access_token: &str, tier_id: &str) -> Result<String> {
-        self.onboard_user_with_poll(access_token, tier_id, Duration::from_secs(2)).await
+        self.onboard_user_with_poll(access_token, tier_id, Duration::from_secs(2))
+            .await
     }
 
-    pub(crate) async fn onboard_user_with_poll(&self, access_token: &str, tier_id: &str, poll: Duration) -> Result<String> {
+    pub(crate) async fn onboard_user_with_poll(
+        &self,
+        access_token: &str,
+        tier_id: &str,
+        poll: Duration,
+    ) -> Result<String> {
         tracing::info!("Antigravity: onboarding user with tier: {tier_id}");
         let user_agent = onboard_user_agent();
         let body = json!({
@@ -317,13 +384,20 @@ impl AntigravityAuth {
                 .body(body.clone())
                 .send()
                 .await
-                .map_err(|e| AuthFlowError::Transport(format!("execute request: {}", e.without_url())))?;
-            let (status, text) =
-                read_text(resp).await.map_err(|e| AuthFlowError::Transport(format!("read response: {}", e.without_url())))?;
+                .map_err(|e| {
+                    AuthFlowError::Transport(format!("execute request: {}", e.without_url()))
+                })?;
+            let (status, text) = read_text(resp).await.map_err(|e| {
+                AuthFlowError::Transport(format!("read response: {}", e.without_url()))
+            })?;
             if status == 200 {
-                let data: Value = serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("decode response: {e}")))?;
+                let data: Value = serde_json::from_str(&text)
+                    .map_err(|e| AuthFlowError::other(format!("decode response: {e}")))?;
                 if data.get("done").and_then(Value::as_bool) == Some(true) {
-                    let project = data.get("response").map(extract_cloudaicompanion_project).unwrap_or_default();
+                    let project = data
+                        .get("response")
+                        .map(extract_cloudaicompanion_project)
+                        .unwrap_or_default();
                     if project.is_empty() {
                         return Err(AuthFlowError::other("no project_id in response"));
                     }
@@ -333,9 +407,14 @@ impl AntigravityAuth {
                 continue;
             }
             let preview: String = text.trim().chars().take(200).collect();
-            return Err(AuthFlowError::Status { status, message: format!("http {status}: {preview}") });
+            return Err(AuthFlowError::Status {
+                status,
+                message: format!("http {status}: {preview}"),
+            });
         }
-        Err(AuthFlowError::other(format!("onboard user did not complete after {max_attempts} attempts")))
+        Err(AuthFlowError::other(format!(
+            "onboard user did not complete after {max_attempts} attempts"
+        )))
     }
 
     /// Refreshes the access token. Single-flight per refresh token, 30 s bound. The real client
@@ -343,22 +422,36 @@ impl AntigravityAuth {
     pub async fn refresh_tokens(&self, refresh_token: &str) -> Result<TokenResponse> {
         let refresh_token = refresh_token.trim();
         if refresh_token.is_empty() {
-            return Err(AuthFlowError::Status { status: 401, message: "missing refresh token".into() });
+            return Err(AuthFlowError::Status {
+                status: 401,
+                message: "missing refresh token".into(),
+            });
         }
         let secret = self.client_secret()?;
         let this = self.clone();
         let rt = refresh_token.to_string();
         REFRESH_FLIGHT
             .run(refresh_token, move || async move {
-                match tokio::time::timeout(CREDENTIAL_ACQUISITION_TIMEOUT, this.refresh_single_flight(&rt, &secret)).await {
+                match tokio::time::timeout(
+                    CREDENTIAL_ACQUISITION_TIMEOUT,
+                    this.refresh_single_flight(&rt, &secret),
+                )
+                .await
+                {
                     Ok(r) => r,
-                    Err(_) => Err(AuthFlowError::Transport("antigravity token refresh timed out".into())),
+                    Err(_) => Err(AuthFlowError::Transport(
+                        "antigravity token refresh timed out".into(),
+                    )),
                 }
             })
             .await
     }
 
-    async fn refresh_single_flight(&self, refresh_token: &str, secret: &str) -> Result<TokenResponse> {
+    async fn refresh_single_flight(
+        &self,
+        refresh_token: &str,
+        secret: &str,
+    ) -> Result<TokenResponse> {
         let body = encode_query(&[
             ("client_id", CLIENT_ID),
             ("client_secret", secret),
@@ -375,9 +468,14 @@ impl AntigravityAuth {
             .await?;
         let (status, text) = read_text(resp).await?;
         if !(200..300).contains(&status) {
-            return Err(AuthFlowError::Status { status, message: text });
+            return Err(AuthFlowError::Status {
+                status,
+                message: text,
+            });
         }
-        serde_json::from_str(&text).map_err(|e| AuthFlowError::other(format!("antigravity token refresh: decode response: {e}")))
+        serde_json::from_str(&text).map_err(|e| {
+            AuthFlowError::other(format!("antigravity token refresh: decode response: {e}"))
+        })
     }
 }
 
@@ -428,17 +526,20 @@ pub fn default_tier_id(load_resp: &Value) -> String {
             if tier.get("isDefault").and_then(Value::as_bool) != Some(true) {
                 continue;
             }
-            if let Some(id) = tier.get("id").and_then(Value::as_str) {
-                if !id.trim().is_empty() {
-                    return id.trim().to_string();
-                }
+            if let Some(id) = tier.get("id").and_then(Value::as_str)
+                && !id.trim().is_empty()
+            {
+                return id.trim().to_string();
             }
         }
     }
-    if let Some(id) = load_resp.get("currentTier").and_then(|t| t.get("id")).and_then(Value::as_str) {
-        if !id.trim().is_empty() {
-            return id.trim().to_string();
-        }
+    if let Some(id) = load_resp
+        .get("currentTier")
+        .and_then(|t| t.get("id"))
+        .and_then(Value::as_str)
+        && !id.trim().is_empty()
+    {
+        return id.trim().to_string();
     }
     "free-tier".to_string()
 }
@@ -446,7 +547,11 @@ pub fn default_tier_id(load_resp: &Value) -> String {
 /// `antigravity-<email>.json`, or `antigravity.json` without an email.
 pub fn credential_file_name(email: &str) -> String {
     let email = email.trim();
-    if email.is_empty() { "antigravity.json".to_string() } else { format!("antigravity-{email}.json") }
+    if email.is_empty() {
+        "antigravity.json".to_string()
+    } else {
+        format!("antigravity-{email}.json")
+    }
 }
 
 /// `BuildAntigravityAuth`: metadata-only auth record for a fresh login.
@@ -469,7 +574,11 @@ pub fn build_auth(token: &TokenResponse, email: &str, project_id: &str) -> Auth 
     }
     let file_name = credential_file_name(email);
     let mut auth = Auth::new(file_name, "antigravity");
-    auth.label = if email.is_empty() { "antigravity".to_string() } else { email.to_string() };
+    auth.label = if email.is_empty() {
+        "antigravity".to_string()
+    } else {
+        email.to_string()
+    };
     auth.metadata = metadata;
     auth
 }
@@ -477,13 +586,18 @@ pub fn build_auth(token: &TokenResponse, email: &str, project_id: &str) -> Auth 
 /// Executor `refreshToken` write-back (project id discovery is a separate call).
 pub fn apply_refresh_to_auth(auth: &mut Auth, token: &TokenResponse) {
     let now = chrono::Utc::now();
-    auth.metadata.insert("access_token".into(), token.access_token.clone().into());
+    auth.metadata
+        .insert("access_token".into(), token.access_token.clone().into());
     if !token.refresh_token.is_empty() {
-        auth.metadata.insert("refresh_token".into(), token.refresh_token.clone().into());
+        auth.metadata
+            .insert("refresh_token".into(), token.refresh_token.clone().into());
     }
-    auth.metadata.insert("expires_in".into(), token.expires_in.into());
-    auth.metadata.insert("timestamp".into(), now.timestamp_millis().into());
-    auth.metadata.insert("expired".into(), expiry_local(token.expires_in).into());
+    auth.metadata
+        .insert("expires_in".into(), token.expires_in.into());
+    auth.metadata
+        .insert("timestamp".into(), now.timestamp_millis().into());
+    auth.metadata
+        .insert("expired".into(), expiry_local(token.expires_in).into());
     auth.metadata.insert("type".into(), "antigravity".into());
 }
 
@@ -497,18 +611,32 @@ mod tests {
         let url = a.build_auth_url("st", "");
         assert!(url.starts_with("https://accounts.google.com/o/oauth2/v2/auth?access_type=offline&client_id=1071006060591-"));
         assert!(url.contains("&prompt=consent&redirect_uri=http%3A%2F%2Flocalhost%3A51121%2Foauth-callback&response_type=code&scope="));
-        assert!(url.contains("scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2F"));
+        assert!(url.contains(
+            "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform+https%3A%2F%2F"
+        ));
         assert!(url.ends_with("&state=st"));
     }
 
     #[test]
     fn project_extraction_and_tier_selection() {
-        assert_eq!(extract_cloudaicompanion_project(&json!({"cloudaicompanionProject": " p1 "})), "p1");
-        assert_eq!(extract_cloudaicompanion_project(&json!({"project": {"id": "p2", "name": "n"}})), "p2");
-        assert_eq!(extract_cloudaicompanion_project(&json!({"projectId": ""})), "");
+        assert_eq!(
+            extract_cloudaicompanion_project(&json!({"cloudaicompanionProject": " p1 "})),
+            "p1"
+        );
+        assert_eq!(
+            extract_cloudaicompanion_project(&json!({"project": {"id": "p2", "name": "n"}})),
+            "p2"
+        );
+        assert_eq!(
+            extract_cloudaicompanion_project(&json!({"projectId": ""})),
+            ""
+        );
         let load = json!({"allowedTiers": [{"id": "a"}, {"id": "legacy-tier", "isDefault": true}], "currentTier": {"id": "cur"}});
         assert_eq!(default_tier_id(&load), "legacy-tier");
-        assert_eq!(default_tier_id(&json!({"currentTier": {"id": "cur"}})), "cur");
+        assert_eq!(
+            default_tier_id(&json!({"currentTier": {"id": "cur"}})),
+            "cur"
+        );
         assert_eq!(default_tier_id(&json!({})), "free-tier");
     }
 
@@ -517,18 +645,37 @@ mod tests {
         assert!(request_user_agent().starts_with("antigravity/hub/"));
         assert!(!request_user_agent().contains("google-api-nodejs-client"));
         assert!(onboard_user_agent().ends_with("google-api-nodejs-client/10.3.0"));
-        assert_eq!(version_from_user_agent("antigravity/hub/3.1.4 darwin/arm64 google-api-nodejs-client/10.3.0"), "3.1.4");
+        assert_eq!(
+            version_from_user_agent(
+                "antigravity/hub/3.1.4 darwin/arm64 google-api-nodejs-client/10.3.0"
+            ),
+            "3.1.4"
+        );
         assert_eq!(version_from_user_agent("antigravity/2.0.0"), "2.0.0");
     }
 
     #[test]
     fn built_auth_matches_go_metadata_shape() {
-        let token = TokenResponse { access_token: "at".into(), refresh_token: "rt".into(), expires_in: 3599, token_type: "Bearer".into() };
+        let token = TokenResponse {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_in: 3599,
+            token_type: "Bearer".into(),
+        };
         let auth = build_auth(&token, " u@x.com ", "proj-1");
         assert_eq!(auth.id, "antigravity-u@x.com.json");
         assert_eq!(auth.label, "u@x.com");
         assert!(auth.storage.is_none());
-        for key in ["type", "access_token", "refresh_token", "expires_in", "timestamp", "expired", "email", "project_id"] {
+        for key in [
+            "type",
+            "access_token",
+            "refresh_token",
+            "expires_in",
+            "timestamp",
+            "expired",
+            "email",
+            "project_id",
+        ] {
             assert!(auth.metadata.contains_key(key), "missing {key}");
         }
         assert_eq!(auth.metadata["expires_in"], 3599);

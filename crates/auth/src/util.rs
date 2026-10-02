@@ -29,7 +29,8 @@ pub fn now_rfc3339_local() -> String {
 
 /// `t.Format(time.RFC3339)` with the local offset.
 pub fn format_rfc3339_local(t: DateTime<Utc>) -> String {
-    t.with_timezone(&Local).to_rfc3339_opts(SecondsFormat::Secs, true)
+    t.with_timezone(&Local)
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 /// `t.UTC().Format(time.RFC3339)`.
@@ -140,7 +141,9 @@ pub fn query_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
             b' ' => out.push('+'),
             _ => out.push_str(&format!("%{b:02X}")),
         }
@@ -161,7 +164,10 @@ pub fn encode_query(pairs: &[(&str, &str)]) -> String {
 
 /// Trimmed string value of a JSON value, `""` for non-strings (Go `v.(string)` + `TrimSpace`).
 pub fn trimmed_str(v: Option<&Value>) -> String {
-    v.and_then(Value::as_str).map(str::trim).unwrap_or("").to_string()
+    v.and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_string()
 }
 
 /// Lowercase hex of `n` random bytes.
@@ -187,7 +193,10 @@ mod tests {
 
     #[test]
     fn clean_path_matches_go() {
-        assert_eq!(clean_path(Path::new("/a/b/../c/./d")), PathBuf::from("/a/c/d"));
+        assert_eq!(
+            clean_path(Path::new("/a/b/../c/./d")),
+            PathBuf::from("/a/c/d")
+        );
         assert_eq!(clean_path(Path::new("/../x")), PathBuf::from("/x"));
         assert_eq!(clean_path(Path::new("a/../..")), PathBuf::from(".."));
     }
@@ -195,7 +204,11 @@ mod tests {
     #[test]
     fn query_encoding_matches_go_values_encode() {
         assert_eq!(
-            encode_query(&[("scope", "a:b c"), ("code", "true"), ("redirect_uri", "http://localhost:1/cb?x=~*")]),
+            encode_query(&[
+                ("scope", "a:b c"),
+                ("code", "true"),
+                ("redirect_uri", "http://localhost:1/cb?x=~*")
+            ]),
             "code=true&redirect_uri=http%3A%2F%2Flocalhost%3A1%2Fcb%3Fx%3D~%2A&scope=a%3Ab+c"
         );
     }

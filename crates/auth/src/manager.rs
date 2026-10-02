@@ -19,7 +19,11 @@ pub type PostAuthHook = Arc<dyn Fn(&mut Auth) -> std::result::Result<(), String>
 
 /// Persists a login result: merges operator fields from the existing file, migrates a legacy Claude
 /// credential, runs the post-auth hook and saves with creation intent. Returns the saved path.
-pub fn save_login_record(store: &dyn Store, hook: Option<&PostAuthHook>, record: &mut Auth) -> Result<Option<PathBuf>> {
+pub fn save_login_record(
+    store: &dyn Store,
+    hook: Option<&PostAuthHook>,
+    record: &mut Auth,
+) -> Result<Option<PathBuf>> {
     merge_existing_file_metadata(store, record);
     let legacy = find_matching_legacy_credential(store, record)?;
     if let Some(legacy) = &legacy {
@@ -28,17 +32,28 @@ pub fn save_login_record(store: &dyn Store, hook: Option<&PostAuthHook>, record:
     if let Some(hook) = hook {
         hook(record).map_err(|e| AuthFlowError::other(format!("post-auth hook failed: {e}")))?;
     }
-    let saved = store.save(record, SaveOptions { creation_intent: true }).map_err(|e| AuthFlowError::Storage(e.to_string()))?;
+    let saved = store
+        .save(
+            record,
+            SaveOptions {
+                creation_intent: true,
+            },
+        )
+        .map_err(|e| AuthFlowError::Storage(e.to_string()))?;
     if let Some(legacy) = legacy {
         if saved.is_none() {
-            return Err(AuthFlowError::other("canonical Claude credential was not persisted; legacy credential retained"));
+            return Err(AuthFlowError::other(
+                "canonical Claude credential was not persisted; legacy credential retained",
+            ));
         }
         let mut legacy_id = legacy.id.trim().to_string();
         if legacy_id.is_empty() {
             legacy_id = legacy.file_name.trim().to_string();
         }
         store.delete(&legacy_id).map_err(|e| {
-            AuthFlowError::other(format!("canonical Claude credential saved but legacy credential cleanup failed: {e}"))
+            AuthFlowError::other(format!(
+                "canonical Claude credential saved but legacy credential cleanup failed: {e}"
+            ))
         })?;
     }
     Ok(saved)
@@ -55,8 +70,14 @@ fn merge_existing_file_metadata(store: &dyn Store, record: &mut Auth) {
     if target.is_empty() {
         return;
     }
-    let path: PathBuf = if Path::new(&target).is_absolute() { PathBuf::from(&target) } else { dir.join(&target) };
-    let Ok(raw) = std::fs::read(&path) else { return };
+    let path: PathBuf = if Path::new(&target).is_absolute() {
+        PathBuf::from(&target)
+    } else {
+        dir.join(&target)
+    };
+    let Ok(raw) = std::fs::read(&path) else {
+        return;
+    };
     if raw.is_empty() {
         return;
     }
@@ -75,7 +96,11 @@ pub struct Manager {
 
 impl Manager {
     pub fn new(store: Arc<dyn Store>) -> Self {
-        Self { store, sessions: Arc::new(OAuthSessions::default()), hook: None }
+        Self {
+            store,
+            sessions: Arc::new(OAuthSessions::default()),
+            hook: None,
+        }
     }
 
     /// Shares an existing session registry (the management API owns one for polling).
@@ -104,8 +129,19 @@ impl Manager {
 
     /// Starts a login without waiting for it: returns the URL and state immediately; poll with
     /// [`LoginSession::poll`] or [`OAuthSessions::poll_status`]. This is the management API path.
-    pub async fn start_login(&self, provider: Provider, opts: LoginOptions) -> Result<LoginSession> {
-        start_login(self.store.clone(), self.sessions.clone(), self.hook.clone(), provider, opts).await
+    pub async fn start_login(
+        &self,
+        provider: Provider,
+        opts: LoginOptions,
+    ) -> Result<LoginSession> {
+        start_login(
+            self.store.clone(),
+            self.sessions.clone(),
+            self.hook.clone(),
+            provider,
+            opts,
+        )
+        .await
     }
 
     /// CLI login: starts the flow, prints (or opens) the URL, waits for completion and saves.
@@ -153,7 +189,9 @@ mod tests {
         save_login_record(&store, None, &mut first).unwrap();
 
         let mut second = claude_record("a@b.c", "");
-        let path = save_login_record(&store, None, &mut second).unwrap().unwrap();
+        let path = save_login_record(&store, None, &mut second)
+            .unwrap()
+            .unwrap();
         let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(saved["proxy_url"], "http://p");
         assert_eq!(saved["priority"], 5);
@@ -172,9 +210,14 @@ mod tests {
         .unwrap();
 
         let mut record = claude_record("a@b.c", "ORG-1");
-        let saved = save_login_record(&store, None, &mut record).unwrap().unwrap();
+        let saved = save_login_record(&store, None, &mut record)
+            .unwrap()
+            .unwrap();
         assert_ne!(saved, dir.path().join("claude-a@b.c.json"));
-        assert!(!dir.path().join("claude-a@b.c.json").exists(), "legacy file must be deleted");
+        assert!(
+            !dir.path().join("claude-a@b.c.json").exists(),
+            "legacy file must be deleted"
+        );
         let body: Value = serde_json::from_slice(&std::fs::read(&saved).unwrap()).unwrap();
         assert_eq!(body["prefix"], "team");
         assert_eq!(body["note"], "mine");
@@ -190,8 +233,14 @@ mod tests {
             Ok(())
         });
         let mut r = claude_record("x@y.z", "");
-        let p = save_login_record(&store, Some(&tag), &mut r).unwrap().unwrap();
-        assert!(std::fs::read_to_string(p).unwrap().contains("\"tagged\":true"));
+        let p = save_login_record(&store, Some(&tag), &mut r)
+            .unwrap()
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(p)
+                .unwrap()
+                .contains("\"tagged\":true")
+        );
 
         let veto: PostAuthHook = Arc::new(|_: &mut Auth| Err("nope".into()));
         let mut r2 = claude_record("q@y.z", "");
