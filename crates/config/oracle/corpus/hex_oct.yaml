@@ -1,0 +1,3 @@
+request-retry: 0o10
+port: 0x1F
+max-retry-interval: 0o17

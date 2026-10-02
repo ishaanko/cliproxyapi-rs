@@ -37,7 +37,11 @@ pub fn validate_claude_fingerprint_profile(raw: &str) -> Result<(), String> {
 /// Trims whitespace and surrounding "/" and rejects prefixes that still contain "/".
 pub fn normalize_model_prefix(prefix: &str) -> String {
     let trimmed = prefix.trim().trim_matches('/');
-    if trimmed.contains('/') { String::new() } else { trimmed.to_string() }
+    if trimmed.contains('/') {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 /// Trims header names and values and drops empty pairs.
@@ -62,7 +66,9 @@ pub fn normalize_excluded_models(models: &[String]) -> Vec<String> {
 }
 
 /// Lowercases provider keys and normalises each exclusion list; empty results are dropped.
-pub fn normalize_oauth_excluded_models(entries: &BTreeMap<String, Vec<String>>) -> BTreeMap<String, Vec<String>> {
+pub fn normalize_oauth_excluded_models(
+    entries: &BTreeMap<String, Vec<String>>,
+) -> BTreeMap<String, Vec<String>> {
     let mut out = BTreeMap::new();
     for (provider, models) in entries {
         let key = provider.trim().to_lowercase();
@@ -218,7 +224,11 @@ impl Config {
             return;
         }
         let trimmed = |items: &[String]| -> Vec<String> {
-            items.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+            items
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
         };
         let mut out = BTreeMap::new();
         for (raw_channel, rules) in &self.oauth_request_scoped_errors {
@@ -230,10 +240,18 @@ impl Config {
             for rule in rules {
                 let action = rule.action.trim().to_lowercase();
                 let (r#match, match_regexr) = (trimmed(&rule.r#match), trimmed(&rule.match_regexr));
-                if rule.status <= 0 || (r#match.is_empty() && match_regexr.is_empty()) || action.is_empty() {
+                if rule.status <= 0
+                    || (r#match.is_empty() && match_regexr.is_empty())
+                    || action.is_empty()
+                {
                     continue;
                 }
-                clean.push(RequestScopedErrorRule { status: rule.status, r#match, match_regexr, action });
+                clean.push(RequestScopedErrorRule {
+                    status: rule.status,
+                    r#match,
+                    match_regexr,
+                    action,
+                });
             }
             if !clean.is_empty() {
                 out.insert(channel, clean);
@@ -303,10 +321,11 @@ impl Config {
             if let Some(cloak) = &mut entry.cloak {
                 normalize_cloak_config(cloak);
             }
-            entry.fingerprint_profile = match normalize_claude_fingerprint_profile(&entry.fingerprint_profile) {
-                (normalized, true) => normalized.to_string(),
-                _ => entry.fingerprint_profile.trim().to_string(),
-            };
+            entry.fingerprint_profile =
+                match normalize_claude_fingerprint_profile(&entry.fingerprint_profile) {
+                    (normalized, true) => normalized.to_string(),
+                    _ => entry.fingerprint_profile.trim().to_string(),
+                };
         }
     }
 
@@ -316,7 +335,8 @@ impl Config {
     }
 
     pub fn sanitize_interactions_keys(&mut self) {
-        self.interactions_key = sanitize_gemini_key_entries(std::mem::take(&mut self.interactions_key));
+        self.interactions_key =
+            sanitize_gemini_key_entries(std::mem::take(&mut self.interactions_key));
     }
 
     /// Dedupes Vertex-compatible keys by key + base URL and drops models without name or alias.
@@ -349,9 +369,14 @@ impl Config {
 
     /// Validates raw JSON payload rule params and drops rules with invalid values.
     pub fn sanitize_payload_rules(&mut self) {
-        self.payload.default_raw = sanitize_payload_raw_rules(std::mem::take(&mut self.payload.default_raw), "default-raw");
-        self.payload.override_raw =
-            sanitize_payload_raw_rules(std::mem::take(&mut self.payload.override_raw), "override-raw");
+        self.payload.default_raw = sanitize_payload_raw_rules(
+            std::mem::take(&mut self.payload.default_raw),
+            "default-raw",
+        );
+        self.payload.override_raw = sanitize_payload_raw_rules(
+            std::mem::take(&mut self.payload.override_raw),
+            "override-raw",
+        );
     }
 }
 

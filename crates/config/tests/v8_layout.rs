@@ -21,7 +21,8 @@ fn yaml(text: &str) -> Value {
 }
 
 fn at<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    path.split('.').try_fold(value, |v, k| v.as_mapping()?.get(k))
+    path.split('.')
+        .try_fold(value, |v, k| v.as_mapping()?.get(k))
 }
 
 #[test]
@@ -33,7 +34,11 @@ fn example_loads_validates_and_round_trips() {
     assert_eq!(active.request_retry, 3);
     assert!(active.quota_exceeded.antigravity_credits);
     validate_v8_config(example.as_bytes()).unwrap();
-    assert!(!normalize_config_layout(example.as_bytes(), false).unwrap().1);
+    assert!(
+        !normalize_config_layout(example.as_bytes(), false)
+            .unwrap()
+            .1
+    );
     for count in [
         active.gemini_key.len(),
         active.codex_key.len(),
@@ -44,7 +49,10 @@ fn example_loads_validates_and_round_trips() {
         active.interactions_key.len(),
         active.openai_compatibility.len(),
     ] {
-        assert_eq!(count, 0, "placeholder upstream credentials must remain commented");
+        assert_eq!(
+            count, 0,
+            "placeholder upstream credentials must remain commented"
+        );
     }
 
     // Validate the provider examples exactly as operators uncomment them.
@@ -52,8 +60,14 @@ fn example_loads_validates_and_round_trips() {
     let block = text.split_once("# BEGIN API KEY EXAMPLES\n").unwrap().1;
     let block = block.split_once("# END API KEY EXAMPLES").unwrap().0;
     let mut uncommented = String::new();
-    for line in block.trim_end_matches('\n').split('\n').filter(|l| !l.is_empty()) {
-        let rest = line.strip_prefix('#').expect("examples must stay commented");
+    for line in block
+        .trim_end_matches('\n')
+        .split('\n')
+        .filter(|l| !l.is_empty())
+    {
+        let rest = line
+            .strip_prefix('#')
+            .expect("examples must stay commented");
         uncommented.push_str(rest.strip_prefix(' ').unwrap_or(rest));
         uncommented.push('\n');
     }
@@ -79,18 +93,34 @@ fn example_loads_validates_and_round_trips() {
     let path = write(&dir, &data);
     save_config_preserve_comments(&path, &mut cfg, false).unwrap();
     let reloaded = load_config(&path).unwrap();
-    assert_eq!(cfg.to_yaml_value().unwrap(), reloaded.to_yaml_value().unwrap(), "runtime values changed by save");
+    assert_eq!(
+        cfg.to_yaml_value().unwrap(),
+        reloaded.to_yaml_value().unwrap(),
+        "runtime values changed by save"
+    );
     let saved = yaml(&std::fs::read_to_string(&path).unwrap());
-    let groups = at(&saved, "api-keys.gemini").and_then(Value::as_sequence).expect("gemini groups");
+    let groups = at(&saved, "api-keys.gemini")
+        .and_then(Value::as_sequence)
+        .expect("gemini groups");
     assert_eq!(groups.len(), 2);
-    assert_eq!(at(&groups[0], "name").and_then(Value::as_str), Some("gemini-1"));
+    assert_eq!(
+        at(&groups[0], "name").and_then(Value::as_str),
+        Some("gemini-1")
+    );
 }
 
 #[test]
 fn presence_precedence_and_conflict_cleanup() {
     // (name, raw yaml, request-retry, disable-cooling, client keys, file must stay untouched)
     let cases = [
-        ("legacy", "request-retry: 4\ndisable-cooling: true\napi-keys: [old]\n", 4, true, 1, true),
+        (
+            "legacy",
+            "request-retry: 4\ndisable-cooling: true\napi-keys: [old]\n",
+            4,
+            true,
+            1,
+            true,
+        ),
         (
             "mixed explicit zero",
             "request-retry: 4\ndisable-cooling: true\napi-keys: [old]\nrouting:\n  retry: {request-retry: 0}\n  cooldown: {disable-cooling: false}\naccess: {api-keys: []}\n",
@@ -120,14 +150,21 @@ fn presence_precedence_and_conflict_cleanup() {
         let dir = tempfile::tempdir().unwrap();
         let path = write(&dir, raw);
         let cfg = load_config(&path).unwrap();
-        assert_eq!((cfg.request_retry, cfg.disable_cooling, cfg.api_keys.len()), (retry, cooling, keys), "{name}");
+        assert_eq!(
+            (cfg.request_retry, cfg.disable_cooling, cfg.api_keys.len()),
+            (retry, cooling, keys),
+            "{name}"
+        );
         let saved = std::fs::read_to_string(&path).unwrap();
         if unchanged {
             assert_eq!(saved, raw, "{name}: legacy config was rewritten");
         } else {
             let doc = yaml(&saved);
             for legacy in ["request-retry", "api-keys", "disable-cooling"] {
-                assert!(doc.as_mapping().unwrap().get(legacy).is_none(), "{name}: conflicting {legacy} remains");
+                assert!(
+                    doc.as_mapping().unwrap().get(legacy).is_none(),
+                    "{name}: conflicting {legacy} remains"
+                );
             }
         }
     }
@@ -135,7 +172,15 @@ fn presence_precedence_and_conflict_cleanup() {
 
 #[test]
 fn key_groups_inherit_and_override() {
-    for provider in ["gemini", "interactions", "vertex", "codex", "claude", "xai", "meta"] {
+    for provider in [
+        "gemini",
+        "interactions",
+        "vertex",
+        "codex",
+        "claude",
+        "xai",
+        "meta",
+    ] {
         let raw = format!(
             "request-retry: 9\napi-keys:\n  {provider}:\n    - name: shared
       base-url: https://example.invalid
@@ -170,24 +215,43 @@ fn key_groups_inherit_and_override() {
         let cfg = parse_config_bytes(raw.as_bytes()).unwrap();
         let value = cfg.to_yaml_value().unwrap();
         let family = match provider {
-            "gemini" | "interactions" | "vertex" | "codex" | "claude" | "xai" | "meta" => format!("{provider}-api-key"),
+            "gemini" | "interactions" | "vertex" | "codex" | "claude" | "xai" | "meta" => {
+                format!("{provider}-api-key")
+            }
             _ => unreachable!(),
         };
-        let keys = at(&value, &family).and_then(Value::as_sequence).expect("keys");
-        assert_eq!(keys.len(), 3, "{provider}: group did not expand to three keys");
+        let keys = at(&value, &family)
+            .and_then(Value::as_sequence)
+            .expect("keys");
+        assert_eq!(
+            keys.len(),
+            3,
+            "{provider}: group did not expand to three keys"
+        );
         let num = |v: &Value, k: &str| at(v, k).and_then(Value::as_i64);
         // Null inherits the group value.
         assert_eq!(num(&keys[0], "priority"), Some(7), "{provider}");
         assert_eq!(num(&keys[0], "request-retry"), Some(3), "{provider}");
-        assert_eq!(at(&keys[0], "disable-cooling").and_then(Value::as_bool), Some(true), "{provider}");
+        assert_eq!(
+            at(&keys[0], "disable-cooling").and_then(Value::as_bool),
+            Some(true),
+            "{provider}"
+        );
         assert!(at(&keys[0], "headers").is_some(), "{provider}");
         // Explicit zero values override.
         assert_eq!(num(&keys[1], "request-retry"), Some(0), "{provider}");
-        assert_eq!(at(&keys[1], "disable-cooling").and_then(Value::as_bool), Some(false), "{provider}");
+        assert_eq!(
+            at(&keys[1], "disable-cooling").and_then(Value::as_bool),
+            Some(false),
+            "{provider}"
+        );
         assert_eq!(num(&keys[1], "weight"), Some(0), "{provider}");
         assert_eq!(num(&keys[2], "request-retry"), Some(-1), "{provider}");
         for name in ["headers", "models", "excluded-models"] {
-            let empty = at(&keys[1], name).is_none_or(|v| v.as_mapping().is_some_and(|m| m.is_empty()) || v.as_sequence().is_some_and(|s| s.is_empty()));
+            let empty = at(&keys[1], name).is_none_or(|v| {
+                v.as_mapping().is_some_and(|m| m.is_empty())
+                    || v.as_sequence().is_some_and(|s| s.is_empty())
+            });
             assert!(empty, "{provider}: empty {name} inherited the group value");
         }
     }
@@ -224,7 +288,12 @@ openai-compatibility:
     after.oauth_only_fields.clear();
     assert_eq!(before, after, "migration changed effective config");
     let doc = yaml(std::str::from_utf8(&migrated).unwrap());
-    assert_eq!(at(&doc, "api-keys.codex").and_then(Value::as_sequence).map(Vec::len), Some(2));
+    assert_eq!(
+        at(&doc, "api-keys.codex")
+            .and_then(Value::as_sequence)
+            .map(Vec::len),
+        Some(2)
+    );
     assert!(after.quota_exceeded.switch_project && after.quota_exceeded.switch_preview_model);
 }
 
@@ -237,10 +306,23 @@ fn migration_comments_unknown_sections_and_stays_idempotent() {
     assert!(changed);
     let text = String::from_utf8(migrated.clone()).unwrap();
     let doc = yaml(&text);
-    for key in ["home", "enable-gemini-cli-endpoint", "forgotten-setting", "proxy-url"] {
-        assert!(doc.as_mapping().unwrap().get(key).is_none(), "{key} stayed active");
+    for key in [
+        "home",
+        "enable-gemini-cli-endpoint",
+        "forgotten-setting",
+        "proxy-url",
+    ] {
+        assert!(
+            doc.as_mapping().unwrap().get(key).is_none(),
+            "{key} stayed active"
+        );
     }
-    for expected in ["# home:", "#   enabled: true", "# enable-gemini-cli-endpoint: true", "# forgotten-setting:"] {
+    for expected in [
+        "# home:",
+        "#   enabled: true",
+        "# enable-gemini-cli-endpoint: true",
+        "# forgotten-setting:",
+    ] {
         assert!(text.contains(expected), "missing {expected:?} in\n{text}");
     }
     validate_v8_config(&migrated).unwrap();
@@ -262,12 +344,21 @@ fn migration_comments_unknown_nested_fields() {
     validate_v8_config(&migrated).unwrap();
     let text = String::from_utf8(migrated.clone()).unwrap();
     assert!(at(&yaml(&text), "oauth.providers.codex.retired-setting").is_none());
-    assert!(text.contains("# oauth.providers.codex.retired-setting:"), "{text}");
+    assert!(
+        text.contains("# oauth.providers.codex.retired-setting:"),
+        "{text}"
+    );
     let cfg = parse_config_bytes(&migrated).unwrap();
     assert_eq!(cfg.routing.strategy, "fill-first");
     assert!(cfg.routing.session_affinity && cfg.codex.disable_codex_cloaking);
     let (again, _) = normalize_config_layout(&migrated, true).unwrap();
-    assert_eq!(String::from_utf8(again).unwrap().matches("# oauth.providers.codex.retired-setting:").count(), 1);
+    assert_eq!(
+        String::from_utf8(again)
+            .unwrap()
+            .matches("# oauth.providers.codex.retired-setting:")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -276,13 +367,17 @@ fn migration_warns_once_per_unknown_section() {
     let seen = Arc::new(Mutex::new(Vec::<String>::new()));
     let sink = Arc::clone(&seen);
     set_v8_migration_warn_func(Some(Arc::new(move |section: &str, msg: &str| {
-        assert!(msg.contains("unrecognized") && msg.contains("commented out"), "{msg}");
+        assert!(
+            msg.contains("unrecognized") && msg.contains("commented out"),
+            "{msg}"
+        );
         sink.lock().unwrap().push(section.to_string());
     })));
     let raw = "host: \"127.0.0.1\"\nport: 8317\nsome-obsolete-legacy-block:\n  alpha: 1\nanother-legacy-key:\n  gamma: 3\n";
     let (migrated, _) = normalize_config_layout(raw.as_bytes(), true).unwrap();
     let (_, _) = normalize_config_layout(&migrated, true).unwrap();
-    let (_, _) = normalize_config_layout(b"host: \"127.0.0.1\"\nport: 8317\ndebug: true\n", true).unwrap();
+    let (_, _) =
+        normalize_config_layout(b"host: \"127.0.0.1\"\nport: 8317\ndebug: true\n", true).unwrap();
     set_v8_migration_warn_func(None);
     // The hook is process-global and other tests migrate concurrently; look at our sections only.
     let mut sections: Vec<String> = seen
@@ -293,7 +388,10 @@ fn migration_warns_once_per_unknown_section() {
         .cloned()
         .collect();
     sections.sort();
-    assert_eq!(sections, ["another-legacy-key", "some-obsolete-legacy-block"]);
+    assert_eq!(
+        sections,
+        ["another-legacy-key", "some-obsolete-legacy-block"]
+    );
 }
 
 #[test]
@@ -305,8 +403,18 @@ fn save_comments_obsolete_sections_on_migration() {
     save_config_preserve_comments(&path, &mut cfg, true).unwrap();
     let saved = std::fs::read_to_string(&path).unwrap();
     validate_v8_config(saved.as_bytes()).unwrap();
-    for key in ["auth", "ampcode", "amp-upstream-url", "amp-upstream-api-key", "generative-language-api-key", "home"] {
-        assert!(saved.contains(&format!("# {key}:")), "obsolete setting {key} was discarded:\n{saved}");
+    for key in [
+        "auth",
+        "ampcode",
+        "amp-upstream-url",
+        "amp-upstream-api-key",
+        "generative-language-api-key",
+        "home",
+    ] {
+        assert!(
+            saved.contains(&format!("# {key}:")),
+            "obsolete setting {key} was discarded:\n{saved}"
+        );
     }
     assert!(saved.contains("# amp-upstream-api-key: old-secret"));
 }
@@ -323,20 +431,31 @@ fn empty_legacy_containers_move_to_v8_paths() {
         ("streaming", "requests.streaming"),
         ("payload", "requests.payload"),
         ("codex", "oauth.providers.codex"),
-        ("codex-header-defaults", "oauth.providers.codex.header-defaults"),
+        (
+            "codex-header-defaults",
+            "oauth.providers.codex.header-defaults",
+        ),
         ("claude", "oauth.providers.claude"),
         ("claude-code", "oauth.providers.claude.claude-code"),
-        ("claude-header-defaults", "oauth.providers.claude.header-defaults"),
+        (
+            "claude-header-defaults",
+            "oauth.providers.claude.header-defaults",
+        ),
         ("antigravity", "oauth.providers.antigravity"),
         ("xai", "oauth.providers.xai"),
         ("devin", "oauth.providers.devin"),
     ];
     for (old, current) in sections {
         for empty in ["{}", "null"] {
-            let raw = format!("port: 8317\nplugins: {{configs: {{sample: {{enabled: false, options: {{}}}}}}}}\n{old}: {empty}\n");
+            let raw = format!(
+                "port: 8317\nplugins: {{configs: {{sample: {{enabled: false, options: {{}}}}}}}}\n{old}: {empty}\n"
+            );
             let before = parse_config_bytes(raw.as_bytes()).unwrap();
             let (unchanged, changed) = normalize_config_layout(raw.as_bytes(), false).unwrap();
-            assert!(!changed && unchanged == raw.as_bytes(), "{old}/{empty}: legacy-only load changed the file");
+            assert!(
+                !changed && unchanged == raw.as_bytes(),
+                "{old}/{empty}: legacy-only load changed the file"
+            );
             let (migrated, _) = normalize_config_layout(raw.as_bytes(), true).unwrap();
             validate_v8_config(&migrated).unwrap_or_else(|e| panic!("{old}/{empty}: {e}"));
             let after = parse_config_bytes(&migrated).unwrap();
@@ -346,9 +465,13 @@ fn empty_legacy_containers_move_to_v8_paths() {
                 "{old}/{empty}: migration changed effective defaults or plugin options"
             );
             let doc = yaml(std::str::from_utf8(&migrated).unwrap());
-            let moved = at(&doc, current).unwrap_or_else(|| panic!("{old}/{empty}: {current} missing"));
+            let moved =
+                at(&doc, current).unwrap_or_else(|| panic!("{old}/{empty}: {current} missing"));
             assert!(doc.as_mapping().unwrap().get(old).is_none());
-            assert!(moved.as_mapping().is_some_and(|m| m.is_empty()), "{old}/{empty}: not moved as an empty map");
+            assert!(
+                moved.as_mapping().is_some_and(|m| m.is_empty()),
+                "{old}/{empty}: not moved as an empty map"
+            );
         }
     }
 }
@@ -370,7 +493,10 @@ oauth: {providers: {codex: {live-media-relay: {max-sessions: 12}}}}
         let doc = yaml(std::str::from_utf8(&data).unwrap());
         assert!(at(&doc, "tls").is_none() && at(&doc, "codex.live-media-relay").is_none());
         if !migrate {
-            assert!(at(&doc, "codex.disable-codex-cloaking").is_some(), "cleanup migrated a non-conflicting sibling");
+            assert!(
+                at(&doc, "codex.disable-codex-cloaking").is_some(),
+                "cleanup migrated a non-conflicting sibling"
+            );
         }
     }
 }
@@ -378,8 +504,16 @@ oauth: {providers: {codex: {live-media-relay: {max-sessions: 12}}}}
 #[test]
 fn private_ip_alias_precedence_and_migration() {
     let cases = [
-        ("allow", "codex: {live-media-relay: {allow-private-remote-ips: true}}\n", false),
-        ("deny", "codex: {live-media-relay: {allow-private-remote-ips: false}}\n", true),
+        (
+            "allow",
+            "codex: {live-media-relay: {allow-private-remote-ips: true}}\n",
+            false,
+        ),
+        (
+            "deny",
+            "codex: {live-media-relay: {allow-private-remote-ips: false}}\n",
+            true,
+        ),
         (
             "new wins",
             "codex: {live-media-relay: {allow-private-remote-ips: false}}\noauth: {providers: {codex: {live-media-relay: {disable-private-remote-ips: false}}}}\n",
@@ -388,20 +522,34 @@ fn private_ip_alias_precedence_and_migration() {
     ];
     for (name, raw, want) in cases {
         let mut cfg = parse_config_bytes(raw.as_bytes()).unwrap();
-        assert_eq!(cfg.codex.live_media_relay.disable_private_remote_ips, want, "{name}");
+        assert_eq!(
+            cfg.codex.live_media_relay.disable_private_remote_ips, want,
+            "{name}"
+        );
         let dir = tempfile::tempdir().unwrap();
         let path = write(&dir, raw);
         save_config_preserve_comments(&path, &mut cfg, true).unwrap();
         let after = load_config(&path).unwrap();
-        assert_eq!(after.codex.live_media_relay.disable_private_remote_ips, want, "{name}: migration inverted the policy");
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("allow-private-remote-ips"), "{name}");
+        assert_eq!(
+            after.codex.live_media_relay.disable_private_remote_ips, want,
+            "{name}: migration inverted the policy"
+        );
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("allow-private-remote-ips"),
+            "{name}"
+        );
     }
 }
 
 #[test]
 fn legacy_api_writes_are_not_shadowed_by_stale_v8_values() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(&dir, "config-version: 8\nrouting: {retry: {request-retry: 1}}\noauth: {providers: {aistudio: {ws-auth: true}}}\n");
+    let path = write(
+        &dir,
+        "config-version: 8\nrouting: {retry: {request-retry: 1}}\noauth: {providers: {aistudio: {ws-auth: true}}}\n",
+    );
     let mut cfg = load_config(&path).unwrap();
     cfg.request_retry = 0;
     cfg.websocket_auth = false;
@@ -409,9 +557,16 @@ fn legacy_api_writes_are_not_shadowed_by_stale_v8_values() {
     let reloaded = load_config(&path).unwrap();
     assert!(reloaded.request_retry == 0 && !reloaded.websocket_auth);
 
-    std::fs::write(&path, "config-version: 8\nrequest-retry: 5\nws-auth: true\n").unwrap();
+    std::fs::write(
+        &path,
+        "config-version: 8\nrequest-retry: 5\nws-auth: true\n",
+    )
+    .unwrap();
     let reloaded = load_config(&path).unwrap();
-    assert!(reloaded.request_retry == 5 && reloaded.websocket_auth, "manual legacy fallback failed");
+    assert!(
+        reloaded.request_retry == 5 && reloaded.websocket_auth,
+        "manual legacy fallback failed"
+    );
 }
 
 #[test]
@@ -424,12 +579,21 @@ fn invalid_v8_documents_are_rejected() {
         "config-version: 9",
         "server: {port: bad}",
     ] {
-        assert!(parse_config_bytes(raw.as_bytes()).is_err(), "accepted invalid v8 config: {raw}");
+        assert!(
+            parse_config_bytes(raw.as_bytes()).is_err(),
+            "accepted invalid v8 config: {raw}"
+        );
     }
     // Group-level weight is not a shared field; weights above the cap are load errors.
-    assert!(parse_config_bytes(b"api-keys: {codex: [{name: a, weight: 2, keys: [{api-key: a}]}]}").is_err());
+    assert!(
+        parse_config_bytes(b"api-keys: {codex: [{name: a, weight: 2, keys: [{api-key: a}]}]}")
+            .is_err()
+    );
     let err = parse_config_bytes(b"claude-api-key: [{api-key: a, weight: 1000001}]").unwrap_err();
-    assert!(err.to_string().contains("claude-api-key[0].weight"), "{err}");
+    assert!(
+        err.to_string().contains("claude-api-key[0].weight"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -446,8 +610,12 @@ fn v8_validation_rejects_legacy_write_layout_but_load_accepts_it() {
         "unknown-root: true",
         "<<: {debug: true}",
     ] {
-        parse_config_bytes(raw.as_bytes()).unwrap_or_else(|e| panic!("legacy compatibility failed for {raw:?}: {e}"));
-        assert!(validate_v8_config(raw.as_bytes()).is_err(), "v8 API accepted the legacy write layout: {raw}");
+        parse_config_bytes(raw.as_bytes())
+            .unwrap_or_else(|e| panic!("legacy compatibility failed for {raw:?}: {e}"));
+        assert!(
+            validate_v8_config(raw.as_bytes()).is_err(),
+            "v8 API accepted the legacy write layout: {raw}"
+        );
     }
     // Unknown nested fields are rejected only by the strict v8 validator.
     assert!(validate_v8_config(b"server: {port: 8317, bogus: 1}").is_err());
@@ -461,19 +629,64 @@ fn secret_is_hashed_at_the_v8_path() {
     let cfg = load_config(&path).unwrap();
     let saved = std::fs::read_to_string(&path).unwrap();
     assert!(looks_like_bcrypt(&cfg.remote_management.secret_key));
-    assert!(!saved.contains("test-secret") && !saved.contains("remote-management"), "{saved}");
+    assert!(
+        !saved.contains("test-secret") && !saved.contains("remote-management"),
+        "{saved}"
+    );
 }
 
 #[test]
 fn secret_hash_resolves_references_and_keeps_comments() {
     const SECRET: &str = "test-management-reference-secret";
     let cases = [
-        ("v8 alias", format!("defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nmanagement: *management\nother: *management\n"), "management", true),
-        ("v8 merge", format!("defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nmanagement: {{<<: *management, allow-remote: false}}\nother: *management\n"), "management", false),
-        ("v8 scalar alias", format!("password: &password {SECRET}\nmanagement: {{secret-key: *password, allow-remote: true}}\n"), "management", true),
-        ("v8 root merge", format!("defaults: &root\n  management: {{secret-key: {SECRET}, allow-remote: true}}\n<<: *root\n"), "management", true),
-        ("v8 wins legacy", format!("remote-management: {{secret-key: stale-secret, allow-remote: false}}\ndefaults: &management {{secret-key: {SECRET}, allow-remote: true}}\nmanagement: *management\n"), "management", true),
-        ("legacy alias", format!("defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nremote-management: *management\nother: *management\n"), "remote-management", true),
+        (
+            "v8 alias",
+            format!(
+                "defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nmanagement: *management\nother: *management\n"
+            ),
+            "management",
+            true,
+        ),
+        (
+            "v8 merge",
+            format!(
+                "defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nmanagement: {{<<: *management, allow-remote: false}}\nother: *management\n"
+            ),
+            "management",
+            false,
+        ),
+        (
+            "v8 scalar alias",
+            format!(
+                "password: &password {SECRET}\nmanagement: {{secret-key: *password, allow-remote: true}}\n"
+            ),
+            "management",
+            true,
+        ),
+        (
+            "v8 root merge",
+            format!(
+                "defaults: &root\n  management: {{secret-key: {SECRET}, allow-remote: true}}\n<<: *root\n"
+            ),
+            "management",
+            true,
+        ),
+        (
+            "v8 wins legacy",
+            format!(
+                "remote-management: {{secret-key: stale-secret, allow-remote: false}}\ndefaults: &management {{secret-key: {SECRET}, allow-remote: true}}\nmanagement: *management\n"
+            ),
+            "management",
+            true,
+        ),
+        (
+            "legacy alias",
+            format!(
+                "defaults: &management\n  secret-key: {SECRET}\n  allow-remote: true\nremote-management: *management\nother: *management\n"
+            ),
+            "remote-management",
+            true,
+        ),
     ];
     for (name, raw, field, allow_remote) in cases {
         let dir = tempfile::tempdir().unwrap();
@@ -481,27 +694,51 @@ fn secret_hash_resolves_references_and_keeps_comments() {
         let cfg = load_config(&path).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         let doc = yaml(&saved);
-        let stored = at(&doc, &format!("{field}.secret-key")).and_then(Value::as_str).unwrap_or_else(|| panic!("{name}: no secret at {field}"));
-        assert!(stored == cfg.remote_management.secret_key && looks_like_bcrypt(stored), "{name}");
+        let stored = at(&doc, &format!("{field}.secret-key"))
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| panic!("{name}: no secret at {field}"));
+        assert!(
+            stored == cfg.remote_management.secret_key && looks_like_bcrypt(stored),
+            "{name}"
+        );
         assert_eq!(cfg.remote_management.allow_remote, allow_remote, "{name}");
         assert_eq!(cfg.port, 8317, "{name}");
-        assert!(saved.contains("# Keep this comment"), "{name}: comment lost:\n{saved}");
+        assert!(
+            saved.contains("# Keep this comment"),
+            "{name}: comment lost:\n{saved}"
+        );
         if let Some(other) = at(&doc, "other.secret-key").and_then(Value::as_str) {
-            assert_eq!(other, SECRET, "{name}: hashing mutated another use of the shared anchor");
+            assert_eq!(
+                other, SECRET,
+                "{name}: hashing mutated another use of the shared anchor"
+            );
         }
         if field == "management" {
-            assert!(at(&doc, "remote-management.secret-key").is_none(), "{name}: conflicting legacy secret left");
+            assert!(
+                at(&doc, "remote-management.secret-key").is_none(),
+                "{name}: conflicting legacy secret left"
+            );
         }
         let reloaded = load_config(&path).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved, "{name}: second load rewrote the file");
-        assert_eq!(reloaded.remote_management.secret_key, cfg.remote_management.secret_key, "{name}");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            saved,
+            "{name}: second load rewrote the file"
+        );
+        assert_eq!(
+            reloaded.remote_management.secret_key, cfg.remote_management.secret_key,
+            "{name}"
+        );
     }
 }
 
 #[test]
 fn legacy_client_keys_do_not_overwrite_upstream_groups() {
     let dir = tempfile::tempdir().unwrap();
-    let path = write(&dir, "api-keys: {codex: [{name: upstream, base-url: 'https://example.invalid', keys: [{api-key: upstream-key}]}]}\n");
+    let path = write(
+        &dir,
+        "api-keys: {codex: [{name: upstream, base-url: 'https://example.invalid', keys: [{api-key: upstream-key}]}]}\n",
+    );
     let mut cfg = load_config(&path).unwrap();
     cfg.api_keys = vec!["client-key".to_string()];
     save_config_preserve_comments(&path, &mut cfg, false).unwrap();
@@ -538,7 +775,13 @@ api-keys:
     let after = parse_config_bytes(&migrated).unwrap();
     assert_eq!(before, after);
     assert_eq!((after.codex_key.len(), after.gemini_key.len()), (2, 2));
-    assert_eq!((after.gemini_key[0].request_retry, after.gemini_key[1].request_retry), (Some(2), Some(0)));
+    assert_eq!(
+        (
+            after.gemini_key[0].request_retry,
+            after.gemini_key[1].request_retry
+        ),
+        (Some(2), Some(0))
+    );
 }
 
 #[test]
@@ -553,7 +796,11 @@ fn explicit_zero_retry_override_survives_save() {
         cfg.codex_key[0].request_retry = Some(0);
         save_config_preserve_comments(&path, &mut cfg, false).unwrap();
         let cfg = load_config(&path).unwrap();
-        assert_eq!(cfg.codex_key[0].request_retry, Some(0), "new zero retry override was discarded");
+        assert_eq!(
+            cfg.codex_key[0].request_retry,
+            Some(0),
+            "new zero retry override was discarded"
+        );
     }
 }
 
@@ -572,12 +819,97 @@ fn null_routing_means_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = write(&dir, raw);
         let mut loaded = load_config(&path).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), raw, "loading legacy null routing rewrote the file");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            raw,
+            "loading legacy null routing rewrote the file"
+        );
         save_config_preserve_comments(&path, &mut loaded, true).unwrap();
         let reloaded = load_config(&path).unwrap();
-        assert_eq!((&loaded.routing, loaded.request_retry), (&reloaded.routing, reloaded.request_retry), "{raw:?}");
+        assert_eq!(
+            (&loaded.routing, loaded.request_retry),
+            (&reloaded.routing, reloaded.request_retry),
+            "{raw:?}"
+        );
     }
-    for raw in ["routing: false", "routing: []", "routing: {retry: false}", "server: null"] {
-        assert!(parse_config_bytes(raw.as_bytes()).is_err(), "accepted invalid container: {raw}");
+    for raw in [
+        "routing: false",
+        "routing: []",
+        "routing: {retry: false}",
+        "server: null",
+    ] {
+        assert!(
+            parse_config_bytes(raw.as_bytes()).is_err(),
+            "accepted invalid container: {raw}"
+        );
     }
+}
+
+#[test]
+fn comments_follow_entries_when_v8_lists_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write(
+        &dir,
+        "access:
+  api-keys:
+    - k1 # first
+    - k2 # second
+    - k3 # third
+api-keys:
+  gemini:
+    # group one
+    - name: one
+      base-url: https://a.invalid
+      keys:
+        - api-key: A1 # a1
+    # bee
+    - name: two
+      base-url: https://b.invalid # b url
+      keys:
+        # key head
+        - api-key: B1 # b1
+",
+    );
+    let mut cfg = load_config(&path).unwrap();
+    cfg.api_keys = vec!["k1".into(), "k3".into()];
+    cfg.gemini_key.remove(0);
+    save_config_preserve_comments(&path, &mut cfg, false).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    // List items keep their own comments; nothing of the removed entries survives.
+    assert!(
+        saved.contains("- k1 # first") && saved.contains("- k3 # third"),
+        "{saved}"
+    );
+    assert!(
+        !saved.contains("# second") && !saved.contains("# group one") && !saved.contains("# a1"),
+        "{saved}"
+    );
+    // The rebuilt group takes over the comments of the group that moved up.
+    assert!(
+        saved.contains("# bee\n# key head\n    - name: gemini-1"),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("base-url: https://b.invalid # b url"),
+        "{saved}"
+    );
+    assert!(saved.contains("api-key: B1 # b1"), "{saved}");
+    let reloaded = load_config(&path).unwrap();
+    assert_eq!((reloaded.api_keys.len(), reloaded.gemini_key.len()), (2, 1));
+
+    // Unchanged groups keep every comment, including group-only ones.
+    let path = write(
+        &dir,
+        "api-keys:\n  gemini:\n    # group one\n    - name: one # nm\n      base-url: https://a.invalid\n      keys:\n        - api-key: A1 # a1\n",
+    );
+    let mut cfg = load_config(&path).unwrap();
+    cfg.debug = true;
+    save_config_preserve_comments(&path, &mut cfg, false).unwrap();
+    let saved = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        saved.contains("# group one")
+            && saved.contains("name: one # nm")
+            && saved.contains("A1 # a1"),
+        "{saved}"
+    );
 }

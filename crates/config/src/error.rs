@@ -22,7 +22,10 @@ impl ConfigError {
     }
 
     pub(crate) fn io(context: impl Into<String>, source: io::Error) -> Self {
-        Self::Io { context: context.into(), source }
+        Self::Io {
+            context: context.into(),
+            source,
+        }
     }
 
     /// The underlying I/O error kind, when this is an I/O failure.

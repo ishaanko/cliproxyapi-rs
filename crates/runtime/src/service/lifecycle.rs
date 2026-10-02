@@ -328,7 +328,7 @@ impl Service {
     fn start_watchers(&self, cfg: &Arc<Config>) -> Result<(), ServiceError> {
         let inner = &self.inner;
         let watcher = Arc::new(
-            ConfigWatcher::start(&inner.config_path, cfg.clone(), None).map_err(|e| ServiceError::Watcher(e.to_string()))?,
+            ConfigWatcher::start(&inner.config_path, cfg.clone(), None).await.map_err(|e| ServiceError::Watcher(e.to_string()))?,
         );
         let config_rx = watcher.subscribe();
         *inner.config_watcher.lock() = Some(watcher);

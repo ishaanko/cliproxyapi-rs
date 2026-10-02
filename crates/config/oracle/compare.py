@@ -25,6 +25,8 @@ def diff(go, rust, path=""):
         else:
             for i, (a, b) in enumerate(zip(go, rust)):
                 out += diff(a, b, f"{path}[{i}]")
+    elif go is None and rust in ([], {}):
+        pass  # Go marshals a nil slice/map as null; the Rust view writes [] / {}.
     elif go != rust:
         out.append(f"{path}: go={json.dumps(go)[:100]} rust={json.dumps(rust)[:100]}")
     return out

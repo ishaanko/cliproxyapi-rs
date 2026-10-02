@@ -34,51 +34,75 @@ pub struct ConfigWatcher {
 }
 
 impl ConfigWatcher {
-    /// Starts watching `path` (which should already have been loaded into `initial`). Must be
-    /// called inside a tokio runtime.
+    /// Starts watching `path` (which should already have been loaded into `initial`).
     ///
     /// `auth_dir_override` replaces the resolved `auth-dir` on every reload (Go's mirrored auth
     /// dir for store-backed deployments); otherwise `auth-dir` is tilde-expanded.
-    pub fn start(
+    pub async fn start(
         path: impl Into<PathBuf>,
         initial: Arc<Config>,
         auth_dir_override: Option<PathBuf>,
     ) -> Result<Self> {
-        let path = std::path::absolute(path.into()).map_err(|e| ConfigError::io("resolve config path", e))?;
-        let dir = path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-        let file_name = path
-            .file_name()
-            .map(|n| n.to_os_string())
-            .ok_or_else(|| ConfigError::invalid(format!("config path {} has no file name", path.display())))?;
+        let path = std::path::absolute(path.into())
+            .map_err(|e| ConfigError::io("resolve config path", e))?;
+        let dir = path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let file_name = path.file_name().map(|n| n.to_os_string()).ok_or_else(|| {
+            ConfigError::invalid(format!("config path {} has no file name", path.display()))
+        })?;
 
         let (events_tx, events_rx) = mpsc::unbounded_channel::<()>();
         // The parent directory is watched so atomic replace (write temp + rename) is seen too.
-        let mut fs_watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
-            Ok(event) => {
-                let relevant = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
-                    && event.paths.iter().any(|p| p.file_name() == Some(file_name.as_os_str()));
-                if relevant {
-                    let _ = events_tx.send(());
+        let mut fs_watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| match event {
+                Ok(event) => {
+                    let relevant =
+                        matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_))
+                            && event
+                                .paths
+                                .iter()
+                                .any(|p| p.file_name() == Some(file_name.as_os_str()));
+                    if relevant {
+                        let _ = events_tx.send(());
+                    }
                 }
-            }
-            Err(err) => tracing::error!("file watcher error: {err}"),
-        })
-        .map_err(|e| ConfigError::invalid(format!("failed to create config watcher: {e}")))?;
+                Err(err) => tracing::error!("file watcher error: {err}"),
+            })
+            .map_err(|e| ConfigError::invalid(format!("failed to create config watcher: {e}")))?;
         fs_watcher
             .watch(&dir, RecursiveMode::NonRecursive)
-            .map_err(|e| ConfigError::invalid(format!("failed to watch config file {}: {e}", path.display())))?;
+            .map_err(|e| {
+                ConfigError::invalid(format!(
+                    "failed to watch config file {}: {e}",
+                    path.display()
+                ))
+            })?;
         tracing::debug!("watching config file: {}", path.display());
 
         let (snapshots_tx, snapshots) = watch::channel(initial);
         let (reload_requests, reload_rx) = mpsc::unbounded_channel();
+        // Hashed after the watch is registered so a change in between is not missed.
+        let last_hash = tokio::task::spawn_blocking({
+            let path = path.clone();
+            move || hash_file(&path)
+        })
+        .await
+        .unwrap_or_default();
         let worker = Worker {
-            last_hash: hash_file(&path),
+            last_hash,
             path,
             auth_dir_override,
             snapshots: snapshots_tx,
         };
         let task = tokio::spawn(worker.run(events_rx, reload_rx));
-        Ok(Self { snapshots, reload_requests, task, _fs_watcher: fs_watcher })
+        Ok(Self {
+            snapshots,
+            reload_requests,
+            task,
+            _fs_watcher: fs_watcher,
+        })
     }
 
     /// A receiver that yields a new `Arc<Config>` after every successful reload.
@@ -238,5 +262,7 @@ fn hash_bytes(data: &[u8]) -> String {
 
 /// SHA-256 of the file content, or empty when it cannot be read (so the first change reloads).
 fn hash_file(path: &Path) -> String {
-    std::fs::read(path).map(|d| hash_bytes(&d)).unwrap_or_default()
+    std::fs::read(path)
+        .map(|d| hash_bytes(&d))
+        .unwrap_or_default()
 }

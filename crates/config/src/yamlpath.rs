@@ -1,10 +1,9 @@
 //! Dotted-path helpers over `serde_yaml_ng::Value` (ports of `yamlPath`, `setYAMLPath`,
 //! `deleteYAMLPath` in `config_v8.go`). Keys are plain strings; a path never indexes sequences.
 
-use serde::Deserialize;
 use serde_yaml_ng::{Mapping, Value};
 
-use crate::error::Result;
+use crate::error::{ConfigError, Result};
 
 /// Parses a YAML document with anchors/aliases and `<<` merge keys expanded. `None` means the
 /// document is empty (blank or comments only).
@@ -17,8 +16,11 @@ pub(crate) fn parse_yaml(text: &str) -> Result<Option<Value>> {
         return Ok(None);
     }
     // Like yaml.Unmarshal, only the first document counts.
-    let Some(document) = serde_yaml_ng::Deserializer::from_str(text).next() else { return Ok(None) };
-    let mut value = Value::deserialize(document)?;
+    let Some(mut value) =
+        crate::rawparse::parse_first_document(text).map_err(ConfigError::Invalid)?
+    else {
+        return Ok(None);
+    };
     value.apply_merge()?;
     Ok(Some(value))
 }
@@ -44,7 +46,9 @@ fn get_or_create<'a>(node: &'a mut Value, key: &str) -> &'a mut Value {
         *node = Value::Mapping(Mapping::new());
     }
     match node {
-        Value::Mapping(map) => map.entry(Value::String(key.to_string())).or_insert(Value::Null),
+        Value::Mapping(map) => map
+            .entry(Value::String(key.to_string()))
+            .or_insert(Value::Null),
         other => other,
     }
 }
@@ -64,9 +68,13 @@ pub(crate) fn delete_yaml_path(root: &mut Value, path: &str) -> bool {
         Some((head, rest)) => (head, Some(rest)),
         None => (path, None),
     };
-    let Value::Mapping(map) = root else { return false };
+    let Value::Mapping(map) = root else {
+        return false;
+    };
     if let Some(rest) = rest {
-        let Some(child) = map.get_mut(head) else { return false };
+        let Some(child) = map.get_mut(head) else {
+            return false;
+        };
         if !delete_yaml_path(child, rest) {
             return false;
         }
@@ -126,11 +134,13 @@ fn is_free_form(path: &[String]) -> bool {
     match path {
         // Field presence (even as null) is meaningful for the Home-owned lifecycle settings.
         [first, ..] if first == "credential-concurrency" => true,
+        // Presence of the private-IP spellings matters even when null (decoded leniently).
+        [first, second, ..] if first == "codex" && second == "live-media-relay" => true,
         // Plugin instances are opaque; `plugins.configs` itself is a normal (nullable) map.
         [first, second, _id, ..] if first == "plugins" && second == "configs" => true,
-        [first, rest @ ..] if first == "payload" => {
-            rest.iter().any(|seg| matches!(seg.as_str(), "params" | "match" | "not-match"))
-        }
+        [first, rest @ ..] if first == "payload" => rest
+            .iter()
+            .any(|seg| matches!(seg.as_str(), "params" | "match" | "not-match")),
         _ => false,
     }
 }
