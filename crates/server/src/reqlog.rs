@@ -294,10 +294,13 @@ fn canonical_header_name(name: &str) -> String {
         .join("-")
 }
 
-fn sorted_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+fn sorted_headers(headers: &HeaderMap, skip: &[&str]) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = headers
         .iter()
         .map(|(k, v)| (canonical_header_name(k.as_str()), String::from_utf8_lossy(v.as_bytes()).into_owned()))
+        // Go keeps `Host` out of the header map, and `Content-Length`/`Transfer-Encoding` on
+        // responses are added by net/http after the handler, so they never reach the log.
+        .filter(|(k, _)| !skip.contains(&k.as_str()))
         .collect();
     out.sort();
     out
@@ -330,7 +333,7 @@ fn write_request_info(out: &mut Vec<u8>, info: &RequestInfo, downstream: &str, u
     section_spacing(out, 1);
 
     out.extend_from_slice(b"=== HEADERS ===\n");
-    for (key, value) in sorted_headers(&info.headers) {
+    for (key, value) in sorted_headers(&info.headers, &["Host"]) {
         out.extend_from_slice(format!("{key}: {}\n", mask_sensitive_header_value(&key, &value)).as_bytes());
     }
     section_spacing(out, 1);
@@ -365,7 +368,7 @@ fn write_response_section(out: &mut Vec<u8>, status: Option<u16>, headers: &Head
     if let Some(status) = status {
         out.extend_from_slice(format!("Status: {status}\n").as_bytes());
     }
-    for (key, value) in sorted_headers(headers) {
+    for (key, value) in sorted_headers(headers, &["Content-Length", "Transfer-Encoding"]) {
         out.extend_from_slice(format!("{key}: {value}\n").as_bytes());
     }
     if !(body.starts_with(b"\r\n") || body.starts_with(b"\n")) {
@@ -466,6 +469,26 @@ fn decode_body_for_log(raw: &[u8], encoding: &str) -> Vec<u8> {
 #[derive(Default)]
 struct Captured {
     body: Vec<u8>,
+}
+
+/// Inner layer for handler routes: Go's `WriteErrorResponse` appends every error body it writes
+/// to `API_RESPONSE`, so the log gets an `API RESPONSE` section. Auth, 404 and 405 replies are
+/// produced outside the handlers and stay out of it (this layer is a `route_layer` under auth).
+pub async fn capture_handler_errors(req: Request, next: Next) -> Response {
+    let api_log = req.extensions().get::<ApiLogHandle>().map(|h| h.0.clone());
+    let resp = next.run(req).await;
+    let Some(api_log) = api_log else { return resp };
+    if resp.status().as_u16() < 400 || resp.headers().get("content-type").is_some_and(|v| v.as_bytes().starts_with(b"text/event-stream")) {
+        return resp;
+    }
+    let (parts, body) = resp.into_parts();
+    match axum::body::to_bytes(body, MAX_RESPONSE_CAPTURE).await {
+        Ok(bytes) => {
+            api_log.append_api_response(&bytes);
+            Response::from_parts(parts, Body::from(bytes))
+        }
+        Err(_) => Response::from_parts(parts, Body::empty()),
+    }
 }
 
 /// `RequestLoggingMiddleware`.

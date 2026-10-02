@@ -49,6 +49,7 @@ pub fn apply_global_layers(router: Router, state: &AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), crate::reqlog::request_log))
         .layer(from_fn(cors))
         .layer(from_fn_with_state(state.clone(), safe_mode))
+        .layer(from_fn(head_not_found))
         .layer(DefaultBodyLimit::disable())
         .service(router);
     Router::new().fallback_service(stack)
@@ -114,6 +115,15 @@ fn route_exists(method: &str, path: &str) -> bool {
     ROUTE_TABLE.iter().any(|(m, pattern)| *m == method && pattern_matches(pattern, path))
 }
 
+/// gin registers `HEAD` only for `/healthz`; every other `HEAD` is an unrouted 404 (axum would
+/// answer it with the `GET` handler).
+async fn head_not_found(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if req.method() == Method::HEAD && req.uri().path() != "/healthz" {
+        return Reply::new(404).into_response();
+    }
+    next.run(req).await
+}
+
 /// gin's `RedirectTrailingSlash`: a request that only differs from a registered route by a
 /// trailing slash is redirected (301 for GET, 307 otherwise) before any middleware runs.
 async fn trailing_slash_redirect(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
@@ -164,6 +174,7 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/messages/count_tokens", post(claude::count_tokens))
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
 
@@ -171,12 +182,14 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/videos", post(images::videos))
         .route("/videos/{video_id}/content", get(images::videos))
         .route("/videos/{video_id}", get(images::videos))
+        .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
 
     let codex_direct = Router::new()
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
 
@@ -185,6 +198,7 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/interactions", post(gemini::interactions))
         .route("/models/", post(gemini::post_action_root).get(gemini::get_model_root))
         .route("/models/{*action}", post(gemini::post_action).get(gemini::get_model))
+        .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
 

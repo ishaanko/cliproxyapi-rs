@@ -28,7 +28,8 @@ pub fn unified_models(cfg: &Config, manager: &Manager, headers: &HeaderMap, quer
         header_str(headers, "user-agent"),
     );
     match route {
-        ModelsRoute::Grok => Reply::json_value(200, &grok_models_response(registry)),
+        // Go serializes the Grok payload from structs, so keys keep declaration order.
+        ModelsRoute::Grok => Reply::json(200, ordered_json(&grok_models_response(registry))),
         ModelsRoute::CodexClient { client_version } => {
             match crate::codex_models::build_client_models_body(&client_version, cfg, manager) {
                 Ok(body) => Reply::json(200, body),
@@ -41,6 +42,18 @@ pub fn unified_models(cfg: &Config, manager: &Manager, headers: &HeaderMap, quer
         ModelsRoute::Claude => claude_models(cfg),
         ModelsRoute::OpenAi => openai_models(),
     }
+}
+
+/// Compact JSON in insertion order with Go's HTML escaping (`<`, `>`, `&`, U+2028/9).
+fn ordered_json(value: &serde_json::Value) -> Vec<u8> {
+    serde_json::to_string(value)
+        .unwrap_or_else(|_| "null".into())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+        .into_bytes()
 }
 
 pub fn openai_models() -> Reply {
