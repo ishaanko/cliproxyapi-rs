@@ -565,17 +565,20 @@ fn fingerprint_profile_from_metadata(metadata: &Metadata) -> String {
     String::new()
 }
 
-/// Id of a credential file: its path relative to `auth_dir`, or the full path when it is outside.
+/// Id of a credential file: its path relative to `auth_dir` (or the full path when it is outside),
+/// lowercased on Windows.
 pub fn file_auth_id(auth_dir: &str, full_path: &str) -> String {
     if auth_dir.trim().is_empty() {
-        return full_path.to_string();
+        return if cfg!(windows) { full_path.to_lowercase() } else { full_path.to_string() };
     }
     let base = clean_path(auth_dir);
     let full = clean_path(full_path);
-    match Path::new(&full).strip_prefix(&base) {
+    let id = match Path::new(&full).strip_prefix(&base) {
         Ok(rel) if !rel.as_os_str().is_empty() => rel.to_string_lossy().into_owned(),
         _ => full_path.to_string(),
-    }
+    };
+    // Same rule as cpa_auth's `id_for` so store-loaded and synthesized ids agree.
+    if cfg!(windows) { id.to_lowercase() } else { id }
 }
 
 /// Go `SynthesizeAuthFile`: the auth for one credential file payload, `Ok(None)` for files that

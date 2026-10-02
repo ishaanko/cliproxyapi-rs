@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::credentials::{ERR_NOT_FOUND, ERR_PLUGIN_VIRTUAL, lookup_auth_file};
-use crate::http::{ApiError, ApiResult, ok_json};
+use crate::http::{ApiError, ApiResult, blocking, detached, ok_json};
 use crate::state::ManagementState;
 
 /// Excluded-model pattern that disables a config-defined API-key credential.
@@ -30,6 +30,10 @@ struct StatusRequest {
 
 /// `PATCH /credentials/status`.
 pub(crate) async fn patch_status(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+    detached(patch_status_inner(st, body)).await
+}
+
+async fn patch_status_inner(st: ManagementState, body: Bytes) -> ApiResult {
     let req: StatusRequest =
         serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid request body"))?;
     let name = req.name.trim();
@@ -47,14 +51,17 @@ pub(crate) async fn patch_status(State(st): State<ManagementState>, body: Bytes)
     }
 
     if target.is_config_api_key() {
-        let _guard = st.shared.config_lock.lock().await;
+        let _guard = st.shared.config_lock.clone().lock_owned().await;
         let mut cfg = (*st.cfg()).clone();
-        match toggle_config_api_key_excluded_all(&mut cfg, &target, disabled) {
-            true => {}
-            false => return Err(ApiError::new(404, "config api key entry not found")),
+        if !toggle_config_api_key_excluded_all(&mut cfg, &target, disabled) {
+            return Err(ApiError::new(404, "config api key entry not found"));
         }
-        cpa_config::save_config_preserve_comments(&st.config_path, &mut cfg, true)
-            .map_err(|e| ApiError::new(500, format!("failed to save config: {e}")))?;
+        let path = st.config_path.clone();
+        blocking(move || {
+            cpa_config::save_config_preserve_comments(&path, &mut cfg, true)
+                .map_err(|e| ApiError::new(500, format!("failed to save config: {e}")))
+        })
+        .await?;
         st.reload_config().await;
         return Ok(ok_json(&json!({
             "status": "ok",
@@ -433,6 +440,10 @@ fn sync_metadata_fields(auth: &mut Auth, touched: &BTreeSet<String>) {
 
 /// `PATCH /credentials/fields`: `{"name": ..., <field>: <value>, ...}`; `null` removes a field.
 pub(crate) async fn patch_fields(State(st): State<ManagementState>, body: Bytes) -> ApiResult {
+    detached(patch_fields_inner(st, body)).await
+}
+
+async fn patch_fields_inner(st: ManagementState, body: Bytes) -> ApiResult {
     let Ok(Value::Object(mut req)) = serde_json::from_slice::<Value>(&body) else {
         return Err(ApiError::bad_request("invalid request body"));
     };
