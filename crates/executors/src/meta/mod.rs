@@ -5,7 +5,6 @@
 //! `response.completed` event. Credentials are two-stage: a device-flow DCA token is exchanged for
 //! a long-lived API key on demand (`prepare_request_auth` / `refresh`).
 
-mod claude_input_tokens;
 mod codex;
 mod creds;
 mod errors;
@@ -50,7 +49,7 @@ use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::token_count::tokenizer_for_model;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
 
-use claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use codex::{
     OutputItems, count_codex_input_tokens, normalize_codex_instructions,
 };
@@ -454,16 +453,15 @@ impl StreamCtx {
         }
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         for l in &lines {
-            chunks.extend(translate_stream_with_claude_input_tokens(
-                TO,
+            chunks.extend(self.claude_tokens.translate_stream(
+            TO,
                 self.prepared.response_format,
                 &self.model,
                 &self.prepared.original_payload,
                 &self.prepared.body,
                 l,
                 &mut self.param,
-                &mut self.claude_tokens,
-            ));
+        ));
         }
         record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for chunk in chunks {
@@ -557,7 +555,7 @@ async fn run_stream(
         sc.reporter.publish_failure(&gateway_error());
     }
     for event in &finish_events {
-        let chunks = translate_stream_with_claude_input_tokens(
+        let chunks = sc.claude_tokens.translate_stream(
             TO,
             sc.prepared.response_format,
             &sc.model,
@@ -565,7 +563,6 @@ async fn run_stream(
             &sc.prepared.body,
             event,
             &mut sc.param,
-            &mut sc.claude_tokens,
         );
         for chunk in chunks {
             if sc.tx.send(Ok(Bytes::from(chunk))).await.is_err() {

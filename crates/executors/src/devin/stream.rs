@@ -14,7 +14,7 @@ use cpa_translator::{Format, Param};
 use futures_util::Stream;
 use tokio::sync::oneshot;
 
-use super::claude_tokens::ClaudeInputTokenState;
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use super::wire::{
     CONNECT_FLAG_END_STREAM, ConnectFrameReader, FrameError, FrameResult, ToolCallDelta, Usage,
     Utf8SplitBuffer, go_lossy, parse_frame, parse_response_dimension_groups, parse_trailer_error,

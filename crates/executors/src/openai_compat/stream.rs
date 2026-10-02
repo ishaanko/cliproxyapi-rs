@@ -14,7 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::status::{transport_error, transport_message};
 use super::translate::observe_body;
-use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::apply_patch::{
     ChunkSender, apply_patch_translation_error, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream,
     record_apply_patch_stream_failure,
@@ -106,7 +106,7 @@ impl ChatStream {
     }
 
     fn translate(&mut self, raw: &[u8]) -> Vec<Vec<u8>> {
-        translate_stream_with_claude_input_tokens(
+        self.claude.translate_stream(
             self.p.to,
             self.p.response_format,
             &self.p.model,
@@ -114,7 +114,6 @@ impl ChatStream {
             &self.p.translated,
             raw,
             &mut self.param,
-            &mut self.claude,
         )
     }
 

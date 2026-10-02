@@ -10,7 +10,6 @@
 //! session's live upstream connection, otherwise it fails with the replay-required error (426) so
 //! the client replays the full transcript over HTTP.
 
-mod claude_input_tokens;
 mod count;
 mod creds;
 mod headers;

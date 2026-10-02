@@ -33,7 +33,7 @@ use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER, ScanError};
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
-use crate::openai_compat::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::status::transport_message;
 use crate::openai_compat::translate::observe_body;
 
@@ -127,7 +127,7 @@ struct XaiStream {
 
 impl XaiStream {
     fn translate(&mut self, line: &[u8]) -> Vec<Vec<u8>> {
-        translate_stream_with_claude_input_tokens(
+        self.claude.translate_stream(
             self.prepared.to,
             self.prepared.response_format,
             &self.model,
@@ -135,7 +135,6 @@ impl XaiStream {
             &self.prepared.body,
             line,
             &mut self.param,
-            &mut self.claude,
         )
     }
 

@@ -5,7 +5,6 @@
 //! bare one at startup via [`new`]; per-entry keys are created on demand by [`factory`], which
 //! the service installs as its `ExecutorFactory`.
 
-pub(crate) mod claude_input_tokens;
 mod compat_config;
 mod images;
 pub(crate) mod translate;

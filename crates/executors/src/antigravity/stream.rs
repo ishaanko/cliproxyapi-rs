@@ -8,7 +8,7 @@ use http::HeaderValue;
 use tokio::sync::{mpsc, oneshot};
 
 use super::AntigravityExecutor;
-use super::claude_input_tokens::ClaudeInputTokenState;
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use super::compaction::{build_compaction_stream_chunks, has_responses_compaction_trigger};
 use super::credits::clear_credits_failure_state;
 use super::execute::expand_capsules_in_request;

@@ -17,7 +17,6 @@ use cpa_runtime::executor::DynExecutor;
 use crate::ConfigRx;
 
 mod aistudio;
-mod claude_input_tokens;
 mod common;
 pub mod content_turns;
 mod executor;
@@ -35,9 +34,6 @@ mod vertex_token;
 pub mod wsrelay;
 
 pub use aistudio::AiStudioExecutor;
-pub use claude_input_tokens::{
-    ClaudeInputTokenState, count_claude_input_tokens, translate_stream_with_claude_input_tokens,
-};
 pub use executor::GeminiExecutor;
 pub use vertex::GeminiVertexExecutor;
 

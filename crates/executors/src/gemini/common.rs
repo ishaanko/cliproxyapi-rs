@@ -18,7 +18,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value as Json;
 use tokio::sync::{mpsc, oneshot};
 
-use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
 use crate::helps::apply_patch::{
     ChunkSender, end_apply_patch_stream, gateway_error, record_apply_patch_stream_failure,
 };
@@ -305,7 +305,7 @@ impl StreamPump {
             body: setup.body,
             param: Param::default(),
             ctx: setup.ctx,
-            claude: ClaudeInputTokenState::new(setup.from, setup.upstream, setup.response, claude_request),
+            claude: ClaudeInputTokenState::new(setup.from, setup.upstream, setup.response, &claude_request),
             usage: StreamUsageBuffer::default(),
             usage_tx: Some(usage_tx),
             failed: false,
@@ -337,7 +337,7 @@ impl StreamPump {
             &self.body,
             payload,
             &mut self.param,
-            &mut self.claude,
+            Some(&mut self.claude),
         );
         record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for line in lines {
