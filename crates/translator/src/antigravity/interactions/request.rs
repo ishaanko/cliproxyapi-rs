@@ -1,5 +1,6 @@
 //! Interactions request -> Antigravity request (Go: interactions_antigravity_request.go).
 
+use crate::common::first_trimmed;
 use std::collections::HashMap;
 
 use cpa_core::util;
@@ -21,7 +22,7 @@ pub fn convert_interactions_request_to_antigravity(model: &str, input_raw_json: 
     copy_system(&mut out, &root);
     copy_generation_config(&mut out, &root);
     let mut content_items: Vec<Value> = Vec::new();
-    append_input(&mut content_items, &root.g("input"), input_raw_json);
+    append_input(&mut content_items, &root.g("input"), cpa_json::raw_at(input_raw_json, "input"));
     if !content_items.is_empty() {
         cpa_json::set(&mut out, "request.contents", Value::Array(content_items));
     }
@@ -123,11 +124,10 @@ fn copy_reasoning(out: &mut Value, root: &Value) {
         }
     }
     let summary = reasoning.g("summary");
-    if summary.exists() {
-        if let Some(include) = thinking_summaries_include_thoughts(&summary) {
+    if summary.exists()
+        && let Some(include) = thinking_summaries_include_thoughts(&summary) {
             cpa_json::set(out, "request.generationConfig.thinkingConfig.includeThoughts", include);
         }
-    }
 }
 
 fn copy_response_modalities(out: &mut Value, root: &Value) {
@@ -262,9 +262,9 @@ impl InputContext {
     }
 }
 
-/// `raw` is the request text: `path` arguments below locate steps in it so a stringified (`$ref`)
-/// function result keeps its original whitespace.
-fn append_input(items: &mut Vec<Value>, input: &Res<'_>, raw: &[u8]) {
+/// `raw` is the source text of `input`: the `raw` arguments below are the source text of each step
+/// so a stringified (`$ref`) function result keeps its original whitespace.
+fn append_input(items: &mut Vec<Value>, input: &Res<'_>, raw: Option<&str>) {
     if !input.exists() {
         return;
     }
@@ -277,31 +277,35 @@ fn append_input(items: &mut Vec<Value>, input: &Res<'_>, raw: &[u8]) {
     }
     let steps = input.g("steps");
     if input.is_array() {
+        let raws = child_raws(raw, "");
         for (k, item) in input.array().iter().enumerate() {
-            append_step(&mut ctx, item, "user", raw, &format!("input.{k}"));
+            append_step(&mut ctx, item, "user", raws.get(k).copied());
         }
     } else if steps.exists() && steps.is_array() {
         let role = input.g("role").str();
         let default_role = if role == "model" || role == "assistant" { "model" } else { "user" };
+        let raws = child_raws(raw, "steps");
         for (k, step) in steps.array().iter().enumerate() {
-            append_step(&mut ctx, step, default_role, raw, &format!("input.steps.{k}"));
+            append_step(&mut ctx, step, default_role, raws.get(k).copied());
         }
     } else {
-        append_step(&mut ctx, input, "user", raw, "input");
+        append_step(&mut ctx, input, "user", raw);
     }
     ctx.flush_pending_signature();
     *items = ctx.items;
 }
 
-fn first_non_empty_string(values: &[String]) -> String {
-    values.iter().map(|v| v.trim()).find(|v| !v.is_empty()).unwrap_or_default().to_string()
-}
-
 fn step_signature(step: &Res<'_>) -> String {
-    first_non_empty_string(&[step.g("signature").str(), step.g("thought_signature").str(), step.g("thoughtSignature").str()])
+    first_trimmed(&[step.g("signature").str(), step.g("thought_signature").str(), step.g("thoughtSignature").str()])
 }
 
-fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: &[u8], path: &str) {
+/// Source text of each child of the array at `path` inside `raw` (empty when unavailable).
+fn child_raws<'a>(raw: Option<&'a str>, path: &str) -> Vec<&'a str> {
+    raw.map(|r| cpa_json::raw_children(r.as_bytes(), path)).unwrap_or_default()
+}
+
+/// `raw` is the source text of `step`.
+fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: Option<&str>) {
     if step.is_string() {
         if ctx.in_model_turn {
             ctx.flush_pending_signature();
@@ -321,8 +325,9 @@ fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: 
         } else {
             default_role
         };
+        let raws = child_raws(raw, "steps");
         for (k, child) in steps.array().iter().enumerate() {
-            append_step(ctx, child, role, raw, &format!("{path}.steps.{k}"));
+            append_step(ctx, child, role, raws.get(k).copied());
         }
         return;
     }
@@ -378,7 +383,7 @@ fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: 
         }
         "function_result" => {
             ctx.leave_model_turn();
-            let part = build_function_result_part(step, cpa_json::raw_at(raw, &format!("{path}.result")));
+            let part = build_function_result_part(step, raw.and_then(|r| cpa_json::raw_at(r.as_bytes(), "result")));
             if ctx.last_step_type == "function_result" && ctx.last_role_is("user") {
                 if let Some(last) = ctx.items.last_mut() {
                     append_user_content_part(last, part);

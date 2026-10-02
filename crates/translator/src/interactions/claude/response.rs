@@ -1,7 +1,7 @@
 //! Interactions response -> Claude Messages response (Go: interactions_claude_response.go).
 
+use crate::common::{first_non_blank, trim_space, unix_nano_now};
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_json::{json, Res, Value};
 
@@ -46,7 +46,7 @@ pub fn convert_interactions_response_to_claude(
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
     let st = param.state(|| StreamState { model: model_name.to_string(), ..Default::default() });
-    st.model = first_non_empty(&[&st.model, model_name]);
+    st.model = first_non_blank(&[&st.model, model_name]);
     convert_event(model_name, raw_json, st)
 }
 
@@ -70,9 +70,9 @@ pub fn convert_interactions_response_to_claude_non_stream(
     cpa_json::set(
         &mut out,
         "id",
-        first_non_empty(&[&interaction.g("id").str(), &root.g("id").str(), &format!("msg_{}", now_nanos())]),
+        first_non_blank(&[&interaction.g("id").str(), &root.g("id").str(), &format!("msg_{}", unix_nano_now())]),
     );
-    cpa_json::set(&mut out, "model", first_non_empty(&[&interaction.g("model").str(), model_name]));
+    cpa_json::set(&mut out, "model", first_non_blank(&[&interaction.g("model").str(), model_name]));
     let mut steps = interaction.g("steps");
     if !steps.exists() {
         steps = root.g("steps");
@@ -129,8 +129,8 @@ pub fn convert_interactions_response_to_claude_non_stream(
 
 /// `incomplete` status or a length-like finish reason maps to Claude `max_tokens`.
 fn is_max_tokens(interaction: &Res<'_>, root: &Res<'_>) -> bool {
-    let status = first_non_empty(&[&interaction.g("status").str(), &root.g("status").str()]);
-    let finish_reason = first_non_empty(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
+    let status = first_non_blank(&[&interaction.g("status").str(), &root.g("status").str()]);
+    let finish_reason = first_non_blank(&[&interaction.g("finish_reason").str(), &root.g("finish_reason").str()]);
     status == "incomplete" || finish_reason == "length" || finish_reason == "max_tokens"
 }
 
@@ -152,8 +152,8 @@ fn convert_event(model_name: &str, raw_json: &[u8], st: &mut StreamState) -> Chu
     match root.g("event_type").str().as_str() {
         "interaction.created" => {
             let interaction = root.g("interaction");
-            st.id = first_non_empty(&[&interaction.g("id").str(), &st.id]);
-            st.model = first_non_empty(&[&interaction.g("model").str(), &st.model, model_name]);
+            st.id = first_non_blank(&[&interaction.g("id").str(), &st.id]);
+            st.model = first_non_blank(&[&interaction.g("model").str(), &st.model, model_name]);
             append_message_start(&mut out, st);
         }
         "step.start" => step_start(&root, st, &mut out),
@@ -192,7 +192,7 @@ fn step_delta(root: &Res<'_>, st: &mut StreamState, out: &mut Chunks) {
         "thought_summary" => {
             append_message_start(out, st);
             ensure_content_block(out, "thinking", st);
-            let text = first_non_empty(&[&delta.g("content.text").str(), &delta.g("text").str()]);
+            let text = first_non_blank(&[&delta.g("content.text").str(), &delta.g("text").str()]);
             append_content_delta(out, "thinking_delta", "thinking", &text, st);
         }
         "thought_signature" => {
@@ -229,7 +229,7 @@ fn append_message_start(out: &mut Chunks, st: &mut StreamState) {
     let mut msg = cpa_json::parse_str(
         r#"{"type":"message_start","message":{"id":"","type":"message","role":"assistant","content":[],"model":"","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":0,"output_tokens":0}}}"#,
     );
-    cpa_json::set(&mut msg, "message.id", first_non_empty(&[&st.id, &format!("msg_{}", now_nanos())]));
+    cpa_json::set(&mut msg, "message.id", first_non_blank(&[&st.id, &format!("msg_{}", unix_nano_now())]));
     cpa_json::set(&mut msg, "message.model", st.model.as_str());
     st.started = true;
     out.push(frame("message_start", &msg));
@@ -257,7 +257,7 @@ fn append_tool_block_start(out: &mut Chunks, step_index: i64, st: &mut StreamSta
         "index": st.block_index,
         "content_block": {"type": "tool_use", "id": "", "name": "", "input": {}},
     });
-    let id = first_non_empty(&[
+    let id = first_non_blank(&[
         st.tool_ids.get(&step_index).map(String::as_str).unwrap_or(""),
         &format!("toolu_{step_index}"),
     ]);
@@ -427,7 +427,7 @@ fn content_texts(content: &Res<'_>) -> Vec<String> {
     }
     let mut out = Vec::new();
     content.for_each(|_, part| {
-        let text = first_non_empty(&[&part.g("text").str(), &part.g("content.text").str()]);
+        let text = first_non_blank(&[&part.g("text").str(), &part.g("content.text").str()]);
         if !text.is_empty() {
             out.push(text);
         }
@@ -437,7 +437,7 @@ fn content_texts(content: &Res<'_>) -> Vec<String> {
 }
 
 fn tool_id_of(root: &Res<'_>) -> String {
-    first_non_empty(&[
+    first_non_blank(&[
         &root.g("call_id").str(),
         &root.g("id").str(),
         &root.g("tool_use_id").str(),
@@ -446,7 +446,7 @@ fn tool_id_of(root: &Res<'_>) -> String {
 }
 
 fn signature_of(root: &Res<'_>) -> String {
-    first_non_empty(&[
+    first_non_blank(&[
         &root.g("signature").str(),
         &root.g("thought_signature").str(),
         &root.g("thoughtSignature").str(),
@@ -468,19 +468,3 @@ fn first_usage_int(root: &Res<'_>, paths: &[&str]) -> Option<i64> {
     paths.iter().map(|path| root.g(path)).find(Res::exists).map(|v| v.int())
 }
 
-/// First value that is not blank (Go `strings.TrimSpace(v) != ""`); returned untrimmed.
-fn first_non_empty(values: &[&str]) -> String {
-    values.iter().find(|v| !v.trim().is_empty()).map(|v| v.to_string()).unwrap_or_default()
-}
-
-fn now_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
-/// Go `bytes.TrimSpace`.
-fn trim_space(b: &[u8]) -> &[u8] {
-    match std::str::from_utf8(b) {
-        Ok(s) => s.trim().as_bytes(),
-        Err(_) => b.trim_ascii(),
-    }
-}

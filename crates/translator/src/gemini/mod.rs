@@ -1,5 +1,7 @@
 pub mod claude;
 pub mod common;
+// Mirrors Go's internal/translator/gemini/gemini package.
+#[allow(clippy::module_inception)]
 pub mod gemini;
 pub mod interactions;
 pub mod openai;

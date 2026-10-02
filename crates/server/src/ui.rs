@@ -12,11 +12,6 @@ use crate::reply::Reply;
 #[allow_missing = true]
 struct UiAssets;
 
-/// Whether a built UI is embedded.
-pub fn available() -> bool {
-    UiAssets::get("index.html").is_some()
-}
-
 fn serve(path: &str) -> Option<Reply> {
     let file = UiAssets::get(path)?;
     let mime = mime_guess::from_path(path).first_or_octet_stream();

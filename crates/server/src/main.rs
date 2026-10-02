@@ -145,7 +145,7 @@ async fn run() -> i32 {
 }
 
 async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cli, build: BuildInfo, log: Arc<LogControl>) -> i32 {
-    let safe_mode = !cfg.commercial_mode && safemode::has_example_api_keys(&cfg.api_keys);
+    let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
             api_keys = %safemode::example_api_keys(&cfg.api_keys).join(","),

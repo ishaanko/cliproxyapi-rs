@@ -5,6 +5,7 @@
 //! each upstream chunk may open/close reasoning, message, web search and function call items.
 //! Go's nested closures over `st` and `out` are methods of `Stream`.
 
+use crate::common::{parse_create_time, unix_nano_now, unix_now};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -43,19 +44,6 @@ pub(super) fn next_func_call_id_counter() -> u64 {
     FUNC_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1
 }
 
-pub(super) fn unix_nanos_now() -> u128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
-pub(super) fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
-/// Unix seconds of an RFC 3339 `createTime`, if it parses.
-pub(super) fn parse_create_time(value: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(value).ok().map(|t| t.timestamp())
-}
-
 #[derive(Debug, Clone)]
 struct DetachedReasoningItem {
     id: String,
@@ -84,8 +72,7 @@ struct StreamBufferedPart {
 
 /// Per-stream state (Go: geminiToResponsesState).
 #[derive(Default)]
-#[allow(dead_code)]
-pub struct GeminiToResponsesState {
+struct GeminiToResponsesState {
     err: ApplyPatchErrorState,
     seq: i64,
     response_id: String,
@@ -137,17 +124,13 @@ pub struct GeminiToResponsesState {
     web_search_done: bool,
     web_search_index: usize,
     web_search_item_id: String,
-    web_search_done_item: Option<Value>,
     web_search_query: String,
     web_search_queries: Vec<String>,
     web_search_sources: Vec<Value>,
-    web_search_annotations: Vec<Value>,
-    web_search_annotations_attached: bool,
     web_search_buffered_deltas: Vec<String>,
     web_search_buffered_parts: Vec<StreamBufferedPart>,
     raw_grounding_metadata: Option<Value>,
     part_mappings: Vec<GeminiPartMapping>,
-    stream_part_index: i64,
     current_logical_part_index: i64,
     current_part_kind: String,
     has_seen_first_part: bool,
@@ -395,7 +378,6 @@ pub fn convert_gemini_response_to_openai_responses(
     let (root, wrapped) = unwrap_gemini_response_root(parsed);
     let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw, "response").map(str::as_bytes).unwrap_or(raw) } else { raw };
 
-    let req_value = req_json.map(cpa_json::parse);
     let out = {
         let mut stream = Stream {
             st: &mut *st,
@@ -403,7 +385,7 @@ pub fn convert_gemini_response_to_openai_responses(
             model_name,
             original: original_request_raw_json,
             request: request_raw_json,
-            req_value: req_value.as_ref(),
+            req_json,
         };
         stream.run(&root, root_raw, valid_json);
         stream.out
@@ -418,7 +400,7 @@ pub fn convert_gemini_response_to_openai_responses(
 /// Rejects a patch-enabled stream that ended without its source terminator (Go:
 /// FinalizeToolInput, found by the executor through an interface). Returns the failure event, if
 /// any.
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(crate) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<GeminiToResponsesState>() else { return Vec::new() };
     if st.err.tool_input_error().is_some() || st.completed {
         return Vec::new();
@@ -443,8 +425,8 @@ struct Stream<'a> {
     model_name: &'a str,
     original: &'a [u8],
     request: &'a [u8],
-    /// Parsed request (Go: reqJSON).
-    req_value: Option<&'a Value>,
+    /// Request used for tool and web search lookups (Go: reqJSON), parsed on demand.
+    req_json: Option<&'a [u8]>,
 }
 
 impl Stream<'_> {
@@ -469,11 +451,10 @@ impl Stream<'_> {
         if self.st.web_search_query.is_empty() && !self.st.web_search_queries.is_empty() {
             self.st.web_search_query = self.st.web_search_queries[0].clone();
         }
-        if self.st.web_search_query.is_empty() {
-            if let Some(req) = self.req_value {
-                self.st.web_search_query = extract_responses_web_search_query(unwrap_request_root(req));
+        if self.st.web_search_query.is_empty()
+            && let Some(req) = self.req_json.map(cpa_json::parse) {
+                self.st.web_search_query = extract_responses_web_search_query(unwrap_request_root(&req));
             }
-        }
     }
 
     fn finalize_web_search(&mut self) {
@@ -487,7 +468,6 @@ impl Stream<'_> {
         self.push("response.web_search_call.completed", &completed);
 
         let done_item = build_responses_web_search_call_item(&self.st.web_search_item_id, &self.st.web_search_query, &self.st.web_search_queries, &self.st.web_search_sources);
-        self.st.web_search_done_item = Some(done_item.clone());
         let seq = self.next_seq();
         let done_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": self.st.web_search_index, "item": done_item});
         self.push("response.output_item.done", &done_event);
@@ -662,12 +642,10 @@ impl Stream<'_> {
         if let Some(gm) = &self.st.raw_grounding_metadata {
             let c_map = build_responses_url_citations_for_messages(gm, &self.st.part_mappings, std::slice::from_ref(&full_text));
             msg_citations = c_map.get(&(self.st.msg_index as i64)).cloned().unwrap_or_default();
-            if msg_citations.is_empty() && self.st.completed_messages.is_empty() {
-                if let Some(first) = c_map.get(&0).filter(|c| !c.is_empty()) {
+            if msg_citations.is_empty() && self.st.completed_messages.is_empty()
+                && let Some(first) = c_map.get(&0).filter(|c| !c.is_empty()) {
                     msg_citations = first.clone();
                 }
-            }
-            self.st.web_search_annotations = msg_citations.clone();
         }
         let (msg_id, msg_index) = (self.st.current_msg_id.clone(), self.st.msg_index);
         self.emit_new_citation_annotations(msg_index, &msg_id, &msg_citations);
@@ -684,7 +662,6 @@ impl Stream<'_> {
         let mut final_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": msg_index, "item": {"id": msg_id, "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": full_text}], "role": "assistant"}});
         if !msg_citations.is_empty() {
             cpa_json::set(&mut final_event, "item.content.0.annotations", Value::Array(msg_citations.clone()));
-            self.st.web_search_annotations_attached = true;
         }
         self.push("response.output_item.done", &final_event);
 
@@ -712,18 +689,16 @@ impl Stream<'_> {
         for idx in 0..self.st.next_index {
             let Some(completed_message) = self.st.completed_messages.get(&idx).cloned() else { continue };
             let mut late_cites = late_map.get(&(idx as i64)).cloned().unwrap_or_default();
-            if late_cites.is_empty() && self.st.completed_messages.len() == 1 {
-                if let Some(first) = late_map.get(&0).filter(|c| !c.is_empty()) {
+            if late_cites.is_empty() && self.st.completed_messages.len() == 1
+                && let Some(first) = late_map.get(&0).filter(|c| !c.is_empty()) {
                     late_cites = first.clone();
                 }
-            }
             let annotations = merge_citation_annotations(&completed_message.annotations, &late_cites);
             self.emit_new_citation_annotations(idx, &completed_message.id, &annotations);
-            if !annotations.is_empty() {
-                if let Some(m) = self.st.completed_messages.get_mut(&idx) {
+            if !annotations.is_empty()
+                && let Some(m) = self.st.completed_messages.get_mut(&idx) {
                     m.annotations = annotations;
                 }
-            }
         }
     }
 
@@ -799,17 +774,16 @@ impl Stream<'_> {
         if !self.st.started {
             self.st.response_id = root.g("responseId").str();
             if self.st.response_id.is_empty() {
-                self.st.response_id = format!("resp_{:x}_{}", unix_nanos_now(), next_response_id_counter());
+                self.st.response_id = format!("resp_{:x}_{}", unix_nano_now(), next_response_id_counter());
             }
             if !self.st.response_id.starts_with("resp_") {
                 self.st.response_id = format!("resp_{}", self.st.response_id);
             }
             let create_time = root.g("createTime");
-            if create_time.exists() {
-                if let Some(t) = parse_create_time(&create_time.str()) {
+            if create_time.exists()
+                && let Some(t) = parse_create_time(&create_time.str()) {
                     self.st.created_at = t;
                 }
-            }
             if self.st.created_at == 0 {
                 self.st.created_at = unix_now();
             }
@@ -853,13 +827,6 @@ impl Stream<'_> {
             if !sources.is_empty() {
                 self.st.web_search_sources = sources;
             }
-            // Function calls, thoughts, or signature boundaries may finalize the search item
-            // before later grounding frames arrive. Keep the cached completed item aligned with
-            // the latest queries and sources so response.completed is complete.
-            if self.st.web_search_done {
-                self.st.web_search_done_item = Some(build_responses_web_search_call_item(&self.st.web_search_item_id, &self.st.web_search_query, &self.st.web_search_queries, &self.st.web_search_sources));
-            }
-
             if !self.st.web_search_opened && has_valid_web_grounding(&merged_gm) {
                 self.open_web_search();
             }
@@ -870,8 +837,9 @@ impl Stream<'_> {
         // Parts (text / thought / functionCall).
         let parts = root.g("candidates.0.content.parts");
         if parts.exists() && parts.is_array() {
+            let part_raws = cpa_json::raw_children(root_raw, "candidates.0.content.parts");
             for (part_idx_in_chunk, part) in parts.array().iter().enumerate() {
-                let args_raw = cpa_json::raw_at(root_raw, &format!("candidates.0.content.parts.{part_idx_in_chunk}.functionCall.args"));
+                let args_raw = crate::common::raw_in(part_raws.get(part_idx_in_chunk), "functionCall.args");
                 if !self.process_part(part_idx_in_chunk as i64, part, args_raw, valid_json) {
                     break;
                 }
@@ -1065,11 +1033,7 @@ impl Stream<'_> {
                 self.st.text_part_run_active = true;
             }
         } else {
-            if part_idx_in_chunk > 0 {
-                self.st.current_logical_part_index += 1;
-                self.st.current_part_kind = part_kind.to_string();
-                self.st.text_part_run_active = part_kind == "text";
-            } else if part_kind != self.st.current_part_kind {
+            if part_idx_in_chunk > 0 || part_kind != self.st.current_part_kind {
                 self.st.current_logical_part_index += 1;
                 self.st.current_part_kind = part_kind.to_string();
                 self.st.text_part_run_active = part_kind == "text";
@@ -1084,7 +1048,6 @@ impl Stream<'_> {
             }
             current_part_index = self.st.current_logical_part_index;
         }
-        self.st.stream_part_index = current_part_index;
 
         let text_str = text.str();
         if function_call.exists() && !self.st.pending_reasoning_signature.is_empty() {
@@ -1316,15 +1279,14 @@ impl Stream<'_> {
         let name = identity.name.clone();
         let namespace = identity.namespace.clone();
         let is_custom = identity.custom;
-        if evidence_apply_patch {
-            if let Some(patch_call) = self.st.evidence.entries[evidence_idx].patch_call.as_mut() {
+        if evidence_apply_patch
+            && let Some(patch_call) = self.st.evidence.entries[evidence_idx].patch_call.as_mut() {
                 if let Err(err) = patch_call.finish_arguments(&args_text) {
                     self.fail(err);
                     return false;
                 }
                 return true;
             }
-        }
 
         let idx = self.st.next_index;
         self.st.next_index += 1;
@@ -1333,7 +1295,7 @@ impl Stream<'_> {
             self.st.func_call_ids.insert(idx, evidence_upstream_id);
         }
         if self.st.func_call_ids.get(&idx).is_none_or(|id| id.is_empty()) {
-            self.st.func_call_ids.insert(idx, format!("call_{}_{}", unix_nanos_now(), next_func_call_id_counter()));
+            self.st.func_call_ids.insert(idx, format!("call_{}_{}", unix_nano_now(), next_func_call_id_counter()));
         }
         self.st.func_names.insert(idx, name.clone());
         self.st.func_namespaces.insert(idx, namespace.clone());
@@ -1341,11 +1303,10 @@ impl Stream<'_> {
         let call_id = self.st.func_call_ids.get(&idx).cloned().unwrap_or_default();
 
         let args_json = if args.exists() { args_text.clone() } else { "{}".to_string() };
-        if let Some(buf) = self.st.func_args_buf.get_mut(&idx) {
-            if buf.is_empty() && !args_json.is_empty() {
+        if let Some(buf) = self.st.func_args_buf.get_mut(&idx)
+            && buf.is_empty() && !args_json.is_empty() {
                 buf.push_str(&args_json);
             }
-        }
 
         if is_custom {
             let mut input_str = unwrap_responses_custom_tool_input(&args_json);
@@ -1383,13 +1344,12 @@ impl Stream<'_> {
             self.push("response.output_item.added", &added);
 
             // Gemini delivers complete arguments; this delta is not an early preview.
-            if let Some(pc) = &patch_call {
-                if !input_str.is_empty() {
+            if let Some(pc) = &patch_call
+                && !input_str.is_empty() {
                     let seq = self.next_seq();
                     let delta = cpa_json::parse(&apply_patch_input_delta(pc, &input_str, seq));
                     self.push("response.custom_tool_call_input.delta", &delta);
                 }
-            }
             if !self.st.func_done.get(&idx).copied().unwrap_or(false) {
                 let seq = self.next_seq();
                 let input_done = match &patch_call {

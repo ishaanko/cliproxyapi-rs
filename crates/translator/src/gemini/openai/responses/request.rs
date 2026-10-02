@@ -4,6 +4,7 @@
 //! are `Res` values (gjson results); each is turned into Gemini contents following the Go state
 //! machine: pending function calls, deferred developer messages, reasoning/signature carriers.
 
+use crate::common::text_part;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::signature::{
@@ -22,7 +23,7 @@ use super::signature_carrier::{
     normalize_gemini_responses_carriers, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_SIGNATURE_FIELD,
     CARRIER_SUMMARY_FIELD, CARRIER_TEXT,
 };
-use super::lenient::{collect_output_raws, parse_gjson, restore_raw, RawTexts};
+use super::lenient::{collect_output_raws, parse_gjson, RawTexts};
 use super::trailing_signature::restore_gemini_responses_text_signatures;
 use super::web_search::{
     allows_responses_web_search_tool_choice, extract_responses_web_search_allowed_domains, has_responses_web_search_tool,
@@ -43,7 +44,7 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
 
     // Base Gemini template; thinkingConfig is only added when requested.
     let mut out = json!({"contents": []});
-    let root = parse_gjson(input_raw_json).unwrap_or(Value::Null);
+    let root = cpa_json::parse(input_raw_json);
     let raw_outputs = collect_output_raws(input_raw_json, &root);
 
     // Tools and the forward map are computed first so contents and declarations agree on names.
@@ -67,11 +68,10 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
     // tool_choice only applies when function declarations exist.
     if !function_declarations.is_empty() {
         let tool_choice = root.g("tool_choice");
-        if let Some(tc) = tool_choice.v() {
-            if let Some(tool_config) = convert_responses_tool_choice_to_gemini(Some(tc), &forward_map) {
+        if let Some(tc) = tool_choice.v()
+            && let Some(tool_config) = convert_responses_tool_choice_to_gemini(Some(tc), &forward_map) {
                 cpa_json::set(&mut out, "toolConfig.functionCallingConfig", tool_config);
             }
-        }
     }
 
     // System instruction from "instructions".
@@ -98,14 +98,14 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
             let item_type = item.g("type").str();
             if item_type == "function_call" || item_type == "custom_tool_call" {
                 let call_id = extract_responses_call_id(item);
-                if !function_names_by_call_id.contains_key(&call_id) {
+                function_names_by_call_id.entry(call_id).or_insert_with(|| {
                     let mut name = item.g("name").str();
                     let ns = item.g("namespace").str();
                     if !ns.is_empty() {
                         name = qualify_responses_namespace_tool_name(&ns, &name);
                     }
-                    function_names_by_call_id.insert(call_id, map_responses_tool_name(&forward_map, &name));
-                }
+                    map_responses_tool_name(&forward_map, &name)
+                });
             }
         }
 
@@ -495,10 +495,6 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
         result = sanitize_gemini_request_thought_signatures(&result, "contents");
     }
     strip_trailing_openai_responses_model_prefill(&result)
-}
-
-fn text_part(text: &str) -> Value {
-    json!({"text": text})
 }
 
 fn gemini_content(role: &str, parts: Vec<Value>) -> Value {
@@ -898,7 +894,7 @@ fn build_openai_responses_standalone_tool_output_text_parts(item: &Res<'_>) -> V
 }
 
 /// The `functionResponse` part for a tool output (the Go helper returns a one-element list).
-fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names_by_call_id: &HashMap<String, String>, raws: &RawTexts) -> Vec<Value> {
+fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names_by_call_id: &HashMap<String, String>, raws: &RawTexts<'_>) -> Vec<Value> {
     let call_id = extract_responses_call_id(item);
     let function_name = if let Some(matched) = function_names_by_call_id.get(&call_id) {
         matched.clone()
@@ -935,7 +931,7 @@ fn build_openai_responses_function_response_parts(item: &Res<'_>, function_names
             image_parts.push(gemini_responses_inline_data_part(&mime_type, &data));
             cpa_json::set(&mut function_response, "functionResponse.response.result", "");
         } else {
-            let raw = restore_raw(raws, output_result.raw());
+            let raw = raws.restore(&output_result);
             set_function_response_result_raw(&mut function_response, "functionResponse.response.result", &raw);
         }
     } else if output_result.exists() && !output_result.is_null() {

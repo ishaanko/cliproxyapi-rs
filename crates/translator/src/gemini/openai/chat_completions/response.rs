@@ -1,10 +1,10 @@
 //! Gemini response to OpenAI Chat Completions response
 //! (Go: gemini/openai/chat-completions/gemini_openai_response.go).
 
+use crate::common::{args_raw, parse_create_time, unix_nano_now};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::{DateTime, Utc};
 use cpa_core::util::{restore_sanitized_tool_name, sanitized_tool_name_map};
 use cpa_json::{json, Res, Value, J};
 
@@ -24,18 +24,8 @@ struct ChatParams {
 static FUNCTION_CALL_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn function_call_id(name: &str) -> String {
-    let nanos = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let nanos = unix_nano_now();
     format!("{name}-{nanos}-{}", FUNCTION_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1)
-}
-
-/// Unix seconds of an RFC 3339 timestamp (Go: time.Parse(RFC3339Nano, s).Unix()).
-fn parse_create_time(s: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(s).ok().map(|t| t.timestamp())
-}
-
-/// Source text of `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(src: &[u8], path: &str, args: &Res<'_>) -> String {
-    cpa_json::raw_at(src, path).map(str::to_string).unwrap_or_else(|| args.raw())
 }
 
 fn inline_data_of<'a>(part: &'a Res<'_>) -> Res<'a> {
@@ -126,11 +116,10 @@ pub fn convert_gemini_response_to_openai(
     }
 
     let create_time = root.g("createTime");
-    if create_time.exists() {
-        if let Some(ts) = parse_create_time(&create_time.str()) {
+    if create_time.exists()
+        && let Some(ts) = parse_create_time(&create_time.str()) {
             p.unix_timestamp = ts;
         }
-    }
     cpa_json::set(&mut base_template, "created", p.unix_timestamp);
 
     let response_id = root.g("responseId");
@@ -170,6 +159,7 @@ pub fn convert_gemini_response_to_openai(
             };
 
             if parts.is_array() {
+                let part_raws = cpa_json::raw_children(raw, &format!("candidates.{candidate_pos}.content.parts"));
                 for (part_pos, part) in parts.array().into_iter().enumerate() {
                     let part_text = part_text_of(&part);
                     let function_call = part.g("functionCall");
@@ -222,8 +212,7 @@ pub fn convert_gemini_response_to_openai(
                         cpa_json::set(&mut call, "function.name", fc_name);
                         let args = function_call.g("args");
                         if args.exists() {
-                            let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(part_raws.get(part_pos), &args));
                         }
                         set_assistant_role(&mut template);
                         cpa_json::set(&mut template, "choices.0.delta.tool_calls.-1", call);
@@ -291,11 +280,10 @@ pub fn convert_gemini_response_to_openai_non_stream(
     }
 
     let create_time = root.g("createTime");
-    if create_time.exists() {
-        if let Some(ts) = parse_create_time(&create_time.str()) {
+    if create_time.exists()
+        && let Some(ts) = parse_create_time(&create_time.str()) {
             unix_timestamp = ts;
         }
-    }
     cpa_json::set(&mut template, "created", unix_timestamp);
 
     let response_id = root.g("responseId");
@@ -332,6 +320,7 @@ pub fn convert_gemini_response_to_openai_non_stream(
                 let mut reasoning_content = String::new();
                 let (mut has_text, mut has_reasoning) = (false, false);
 
+                let part_raws = cpa_json::raw_children(raw, &format!("candidates.{candidate_pos}.content.parts"));
                 for (part_pos, part) in parts.array().into_iter().enumerate() {
                     let part_text = part_text_of(&part);
                     let function_call = part.g("functionCall");
@@ -353,18 +342,16 @@ pub fn convert_gemini_response_to_openai_non_stream(
                         cpa_json::set(&mut call, "function.name", fc_name);
                         let args = function_call.g("args");
                         if args.exists() {
-                            let path = format!("candidates.{candidate_pos}.content.parts.{part_pos}.functionCall.args");
-                            cpa_json::set(&mut call, "function.arguments", args_raw(raw, &path, &args));
+                            cpa_json::set(&mut call, "function.arguments", args_raw(part_raws.get(part_pos), &args));
                         }
                         tool_calls.push(call);
-                    } else if inline_data.exists() {
-                        if let Some(image_url) = inline_image_url(&inline_data) {
+                    } else if inline_data.exists()
+                        && let Some(image_url) = inline_image_url(&inline_data) {
                             let mut payload = json!({ "type": "image_url", "image_url": { "url": "" } });
                             cpa_json::set(&mut payload, "index", images.len());
                             cpa_json::set(&mut payload, "image_url.url", image_url);
                             images.push(payload);
                         }
-                    }
                 }
 
                 if has_text {

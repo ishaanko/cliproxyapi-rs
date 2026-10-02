@@ -1,6 +1,6 @@
 //! Per-request facts handlers need (the parts of gin's `Context` the Go handlers read).
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::extract::{ConnectInfo, FromRequestParts, MatchedPath, OriginalUri};
@@ -15,6 +15,32 @@ use crate::state::AppState;
 /// Request id generated for AI API paths (UUIDv7); stored as a request extension.
 #[derive(Debug, Clone, Default)]
 pub struct RequestId(pub String);
+
+/// `X-CPA-TRACE-ID` value of the credential most recently selected for a request (Go:
+/// `cpaTraceState`). The executor callback writes it; the trace layer reads it when the response
+/// headers are committed, so streams and upstream error replies carry it too.
+#[derive(Debug, Default)]
+pub struct TraceState(parking_lot::Mutex<String>);
+
+impl TraceState {
+    /// `FormatCPATraceID(time.Now(), authIndex, requestID)`; ignored when either part is blank.
+    pub fn record(&self, auth_index: &str, request_id: &str) {
+        let (auth_index, request_id) = (auth_index.trim(), request_id.trim());
+        if auth_index.is_empty() || request_id.is_empty() {
+            return;
+        }
+        let id = format!("{}-{auth_index}-{request_id}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+        *self.0.lock() = id;
+    }
+
+    pub fn get(&self) -> String {
+        self.0.lock().clone()
+    }
+}
+
+/// Extension carrying the shared [`TraceState`].
+#[derive(Clone, Default)]
+pub struct TraceHandle(pub Arc<TraceState>);
 
 /// Principal set by the API-key middleware (gin key `userApiKey`).
 #[derive(Debug, Clone)]
@@ -35,6 +61,7 @@ pub struct ReqInfo {
     pub request_id: String,
     /// Shared request-log context (upstream errors, responses, websocket timeline).
     pub api_log: Arc<ApiLog>,
+    pub trace: Arc<TraceState>,
 }
 
 impl ReqInfo {
@@ -55,21 +82,6 @@ impl ReqInfo {
     /// `strings.TrimSpace(c.GetHeader(name))`.
     pub fn header(&self, name: &str) -> String {
         crate::headers::header_trimmed(&self.headers, name)
-    }
-
-    /// `c.GetHeader(name)` without trimming.
-    pub fn header_raw(&self, name: &str) -> &str {
-        self.headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("")
-    }
-
-    /// `"<METHOD> <route>"` used for usage records.
-    pub fn endpoint(&self) -> String {
-        format!("{} {}", self.method, self.route)
-    }
-
-    /// Remote address host only (`requestClientIP`).
-    pub fn remote_host(&self) -> String {
-        self.remote.map(|a| a.ip().to_string()).unwrap_or_default()
     }
 }
 
@@ -122,11 +134,12 @@ impl FromRequestParts<AppState> for ReqInfo {
                 .get::<ApiLogHandle>()
                 .map(|h| h.0.clone())
                 .unwrap_or_default(),
+            trace: parts
+                .extensions
+                .get::<TraceHandle>()
+                .map(|h| h.0.clone())
+                .unwrap_or_default(),
         })
     }
 }
 
-/// IP helper re-exported for logging code.
-pub fn ip_to_string(ip: Option<IpAddr>) -> String {
-    ip.map(|i| i.to_string()).unwrap_or_default()
-}

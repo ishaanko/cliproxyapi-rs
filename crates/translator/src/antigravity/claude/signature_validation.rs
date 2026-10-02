@@ -3,12 +3,11 @@
 
 use cpa_core::cache;
 use cpa_core::signature::{
-    self, ClaudeSignatureValidationOptions, SignatureBlockKind, SignatureProvider,
+    self, b64, ClaudeSignatureValidationOptions, SignatureBlockKind, SignatureProvider,
     MAX_GEMINI_THOUGHT_SIGNATURE_LEN,
 };
 use cpa_json::{J, Value};
 
-use crate::antigravity::b64;
 use crate::common::join_raw_array;
 
 /// Gemini carrier envelopes exist only on the Claude-facing wire. The request translator
@@ -65,7 +64,7 @@ pub fn decode_gemini_claude_carrier_signature(raw_signature: &str) -> Carrier {
     if !matches!(target_kind, CARRIER_TEXT | CARRIER_FUNCTION | CARRIER_ANY) {
         return rejected();
     }
-    let Some(decoded) = b64::decode_raw_std(fields[2]) else {
+    let Some(decoded) = b64::raw_std(fields[2]).ok() else {
         return rejected();
     };
     let decoded = String::from_utf8_lossy(&decoded).into_owned();
@@ -202,9 +201,8 @@ fn precompute_carrier_context(blocks: &[Value]) -> CarrierContext {
                     continue;
                 }
                 current_next = CARRIER_TEXT;
-                if active_valid && (active_kind == CARRIER_ANY || active_kind == CARRIER_TEXT) {
-                    ctx.has_trailing_previous_carrier[i] = true;
-                } else if latest_semantic.is_some_and(|l| ctx.has_trailing_previous_carrier[l]) {
+                let binds_text = active_valid && (active_kind == CARRIER_ANY || active_kind == CARRIER_TEXT);
+                if binds_text || latest_semantic.is_some_and(|l| ctx.has_trailing_previous_carrier[l]) {
                     ctx.has_trailing_previous_carrier[i] = true;
                 }
                 active_kind.clear();
