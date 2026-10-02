@@ -8,6 +8,7 @@ use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
 
 use crate::antigravity::gemini::has_response_payload;
+use crate::gemini::openai::chat_completions::convert_gemini_response_to_openai_non_stream;
 use crate::registry::{Ctx, Param};
 
 /// Per-stream conversion state.
@@ -266,34 +267,22 @@ pub fn convert_antigravity_response_to_openai_non_stream(
     raw_json: &[u8],
     param: &mut Param,
 ) -> Option<Vec<u8>> {
-    let parsed = cpa_json::parse(raw_json);
-    let response = parsed.g("response");
-    if response.exists() {
-        let response_json = restore_function_names(response.value(), original_request_raw_json);
-        return convert_gemini_non_stream(ctx, model, original_request_raw_json, request_raw_json, &cpa_json::to_vec(&response_json), param);
+    if let Some(response) = cpa_json::raw_at(raw_json, "response") {
+        // Keep the original text unless a tool name has to be restored.
+        let response_json = restore_function_names(response.as_bytes(), original_request_raw_json);
+        return convert_gemini_response_to_openai_non_stream(ctx, model, original_request_raw_json, request_raw_json, &response_json, param);
     }
     Some(vec![])
 }
 
-// BLOCKED: delegates to gemini/openai/chat-completions' ConvertGeminiResponseToOpenAINonStream,
-// which another porter owns; wire it once it lands on main.
-fn convert_gemini_non_stream(
-    _ctx: &Ctx,
-    _model: &str,
-    _original_request_raw_json: &[u8],
-    _request_raw_json: &[u8],
-    _response_json: &[u8],
-    _param: &mut Param,
-) -> Option<Vec<u8>> {
-    None
-}
-
 /// Restores the client's tool names in functionCall/functionResponse parts of every candidate.
-fn restore_function_names(mut raw: Value, original_request_raw_json: &[u8]) -> Value {
+fn restore_function_names(raw_bytes: &[u8], original_request_raw_json: &[u8]) -> Vec<u8> {
     let name_map = util::disambiguated_tool_name_map(original_request_raw_json);
     if name_map.is_empty() {
-        return raw;
+        return raw_bytes.to_vec();
     }
+    let mut raw = cpa_json::parse(raw_bytes);
+    let mut changed = false;
     let candidates = raw.g("candidates").array().len();
     for candidate_index in 0..candidates {
         let parts = raw.g(&format!("candidates.{candidate_index}.content.parts")).array().len();
@@ -310,8 +299,9 @@ fn restore_function_names(mut raw: Value, original_request_raw_json: &[u8]) -> V
                     continue;
                 }
                 cpa_json::set(&mut raw, &path, restored);
+                changed = true;
             }
         }
     }
-    raw
+    if changed { cpa_json::to_vec(&raw) } else { raw_bytes.to_vec() }
 }

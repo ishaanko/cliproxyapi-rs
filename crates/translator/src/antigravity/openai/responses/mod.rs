@@ -1,7 +1,6 @@
 //! Port of internal/translator/antigravity/openai/responses: OpenAI Responses client ->
 //! Antigravity upstream.
 
-mod deps;
 mod request;
 mod response;
 

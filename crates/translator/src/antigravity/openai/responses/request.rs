@@ -6,7 +6,7 @@ use cpa_core::thinking::{self, SummaryConfig, SummaryMode};
 use cpa_core::util::{go_json_sorted, GoJsonStyle};
 use cpa_json::{json, J, Value};
 
-use super::deps;
+use crate::gemini::openai::responses as gemini_responses;
 use crate::antigravity::claude::WEB_SEARCH_SYSTEM_INSTRUCTION;
 use crate::antigravity::gemini::convert_gemini_request_to_antigravity;
 use crate::registry::{Ctx, RequestEnvelope};
@@ -37,14 +37,14 @@ fn supports_native_responses_web_search(model: &str, model_info: Option<&ModelIn
 
 fn should_build_web_search_request(model: &str, payload: &[u8], model_info: Option<&ModelInfo>) -> bool {
     let root = cpa_json::parse(payload);
-    deps::has_only_responses_web_search_tools(&root)
+    gemini_responses::has_only_responses_web_search_tools(&root)
         && supports_native_responses_web_search(model, model_info)
-        && deps::allows_responses_web_search_tool_choice(&root)
+        && gemini_responses::allows_responses_web_search_tool_choice(&root)
 }
 
 fn build_web_search_request(model: &str, payload: &[u8], stream: bool) -> Vec<u8> {
-    let included_domains = deps::extract_responses_web_search_allowed_domains(&cpa_json::parse(payload));
-    let raw = deps::convert_openai_responses_request_to_gemini(model, payload, stream);
+    let included_domains = gemini_responses::extract_responses_web_search_allowed_domains(&cpa_json::parse(payload));
+    let raw = gemini_responses::convert_openai_responses_request_to_gemini(model, payload, stream);
     let raw = rewrite_reasoning_for_antigravity_claude(model, payload, raw);
     let out = convert_gemini_request_to_antigravity(model, &raw, stream);
     let mut root = cpa_json::parse(&out);
@@ -125,7 +125,7 @@ pub fn convert_openai_responses_request_envelope_to_antigravity(_ctx: &Ctx, mut 
         return req;
     }
     let input_raw_json = std::mem::take(&mut req.body);
-    let mut body = deps::convert_openai_responses_request_to_gemini(&req.model, &input_raw_json, req.stream);
+    let mut body = gemini_responses::convert_openai_responses_request_to_gemini(&req.model, &input_raw_json, req.stream);
     body = strip_google_search(body);
     body = rewrite_reasoning_for_antigravity_claude(&req.model, &input_raw_json, body);
     body = convert_gemini_request_to_antigravity(&req.model, &body, req.stream);
