@@ -1,7 +1,6 @@
 //! HTTP middleware (Go: internal/api/server_middleware.go, internal/logging/gin_logger.go).
 
 use std::net::SocketAddr;
-use std::sync::Arc;
 use std::time::Instant;
 
 use axum::extract::{ConnectInfo, Request, State};
@@ -15,7 +14,7 @@ use crate::bodytee::TeeBody;
 use crate::clientip;
 use crate::logging::{self, REQUEST_ID, go_duration_string};
 use crate::reply::Reply;
-use crate::req::{AuthenticatedKey, RequestId, parse_query};
+use crate::req::{AuthenticatedKey, RequestId, TraceHandle, parse_query};
 use crate::reqlog::ApiLogHandle;
 use crate::safemode;
 use crate::state::AppState;
@@ -102,6 +101,21 @@ fn auth_failure_reply(failure: AuthFailure) -> Reply {
     Reply::json(failure.status(), format!(r#"{{"error":"{}"}}"#, failure.message()).into_bytes())
 }
 
+/// `CPATraceIDMiddleware`: installs the shared trace state and stamps `X-CPA-TRACE-ID` on the
+/// response once a credential was selected (set when the response headers are committed).
+pub async fn trace_header(mut req: Request, next: Next) -> Response {
+    let trace = TraceHandle::default();
+    req.extensions_mut().insert(trace.clone());
+    let mut resp = next.run(req).await;
+    let id = trace.0.get();
+    if let Ok(value) = HeaderValue::from_str(&id)
+        && !id.is_empty()
+    {
+        resp.headers_mut().insert("x-cpa-trace-id", value);
+    }
+    resp
+}
+
 /// `isAIAPIPath`: request ids are generated only for these prefixes.
 fn is_ai_api_path(path: &str) -> bool {
     ["/v1", "/v1beta", "/openai/v1", "/backend-api/codex"]
@@ -127,7 +141,9 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
     if !request_id.is_empty() {
         req.extensions_mut().insert(RequestId(request_id.clone()));
     }
-    req.extensions_mut().insert(ApiLogHandle::default());
+    let api_log = ApiLogHandle::default();
+    api_log.0.set_error_logging(st.cfg().request_log);
+    req.extensions_mut().insert(api_log);
 
     let scope_id = request_id.clone();
     let resp = REQUEST_ID.scope(scope_id, next.run(req)).await;
@@ -183,6 +199,3 @@ pub fn recover_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<a
     *resp.status_mut() = StatusCode::INTERNAL_SERVER_ERROR;
     resp
 }
-
-/// Shared handle type used by routers that need the config without the whole state.
-pub type SharedState = Arc<AppState>;

@@ -96,17 +96,6 @@ pub fn reverse_map(m: HashMap<String, String>) -> HashMap<String, String> {
     m.into_iter().map(|(orig, short)| (short, orig)).collect()
 }
 
-/// Audio MIME type to the Responses `input_audio.format` value.
-pub fn input_audio_format_from_mime(mime_type: &str) -> &'static str {
-    match mime_type.trim().to_lowercase().as_str() {
-        "audio/wav" | "audio/wave" | "audio/x-wav" => "wav",
-        "audio/flac" => "flac",
-        "audio/opus" | "audio/ogg" => "opus",
-        "audio/pcm" | "audio/l16" => "pcm16",
-        _ => "mp3",
-    }
-}
-
 /// Placeholder filename for an inline file of the given MIME type.
 pub fn file_name_from_mime(mime_type: &str) -> &'static str {
     let m = mime_type.trim().to_lowercase();
@@ -155,16 +144,6 @@ pub fn rfc3339_utc(secs: i64) -> String {
         .unwrap_or_default()
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string()
-}
-
-/// Current Unix time in seconds.
-pub fn unix_now() -> i64 {
-    chrono::Utc::now().timestamp()
-}
-
-/// Current Unix time in nanoseconds (Go `time.Now().UnixNano()`).
-pub fn unix_nano_now() -> i64 {
-    chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
 }
 
 /// gjson `ForEach` values: array elements, object values, a scalar once, nothing when absent.

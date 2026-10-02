@@ -9,17 +9,16 @@ use cpa_core::format::Format;
 use cpa_core::util::{go_json_sorted, GoJsonStyle};
 use cpa_json::Value;
 
-use std::borrow::Cow;
-
-use cpa_json::{raw_at, Res};
+use cpa_json::{raw_at, raw_children, Res};
 
 use crate::registry::{Registry, ResponseFns};
 
 pub use request::convert_openai_responses_request_to_openai_chat_completions;
 pub use response::{
     convert_openai_chat_completions_response_to_openai_responses,
-    convert_openai_chat_completions_response_to_openai_responses_non_stream, finalize_tool_input,
+    convert_openai_chat_completions_response_to_openai_responses_non_stream,
 };
+use response::finalize_tool_input;
 
 pub fn register(r: &mut Registry) {
     r.register(
@@ -30,6 +29,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_openai_chat_completions_response_to_openai_responses),
             non_stream: Some(convert_openai_chat_completions_response_to_openai_responses_non_stream),
             token_count: None,
+            finalize: Some(finalize_tool_input),
         },
     );
 }
@@ -49,39 +49,39 @@ fn pick_request_json<'a>(original: &'a [u8], translated: &'a [u8]) -> Option<&'a
     [original, translated].into_iter().find(|raw| !raw.is_empty() && cpa_json::valid(raw))
 }
 
-/// Where a value sits in a JSON document, so Go's verbatim `Raw` copies of objects and arrays
-/// (client whitespace and escapes included) can be reproduced from the original bytes.
-#[derive(Clone)]
+/// The original text of a value in a JSON document, so Go's verbatim `Raw` copies of objects and
+/// arrays (client whitespace and escapes included) can be reproduced. Lookups are relative to the
+/// value's own text; use [`RawSrc::children`] to walk array elements in one pass.
+#[derive(Clone, Copy)]
 struct RawSrc<'a> {
-    doc: Cow<'a, [u8]>,
-    /// Dotted gjson path of the value inside `doc`.
-    path: String,
+    text: Option<&'a str>,
 }
 
 impl<'a> RawSrc<'a> {
-    fn new(doc: &'a [u8], path: String) -> Self {
-        RawSrc { doc: Cow::Borrowed(doc), path }
-    }
-
-    /// A source owning its document (a JSON string output parsed as its own document).
-    fn owned(doc: Vec<u8>) -> RawSrc<'static> {
-        RawSrc { doc: Cow::Owned(doc), path: String::new() }
+    /// A whole document.
+    fn new(doc: &'a [u8]) -> Self {
+        RawSrc { text: std::str::from_utf8(doc).ok() }
     }
 
     /// A source with no document: every lookup falls back to the parsed value.
     fn none() -> RawSrc<'static> {
-        RawSrc { doc: Cow::Borrowed(&[]), path: String::new() }
+        RawSrc { text: None }
     }
 
-    fn child(&self, seg: impl std::fmt::Display) -> RawSrc<'_> {
-        let path = if self.path.is_empty() { seg.to_string() } else { format!("{}.{seg}", self.path) };
-        RawSrc { doc: Cow::Borrowed(&self.doc), path }
+    /// The member or element at a plain dotted key/index `path`.
+    fn child(&self, path: &str) -> RawSrc<'a> {
+        RawSrc { text: self.text.and_then(|t| raw_at(t.as_bytes(), path)) }
+    }
+
+    /// Every element of the array (or member of the object) in one pass.
+    fn children(&self) -> Vec<RawSrc<'a>> {
+        let items = self.text.map(|t| raw_children(t.as_bytes(), "")).unwrap_or_default();
+        items.into_iter().map(|t| RawSrc { text: Some(t) }).collect()
     }
 
     /// gjson `Raw`: original text, else the value's compact serialization.
     fn raw(&self, fallback: &Res<'_>) -> String {
-        let found = if self.path.is_empty() { None } else { raw_at(&self.doc, &self.path) };
-        found.map_or_else(|| fallback.raw(), str::to_string)
+        self.text.map_or_else(|| fallback.raw(), str::to_string)
     }
 
     /// gjson `String()`: containers come back as their raw text.

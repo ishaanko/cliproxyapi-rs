@@ -5,10 +5,9 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::cache;
-use cpa_core::signature::{self, SignatureProvider};
+use cpa_core::signature::{self, b64, SignatureProvider};
 use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
 
@@ -30,7 +29,7 @@ fn decode_signature(signature: &str) -> String {
         return String::new();
     }
     if signature.starts_with('R') {
-        return match crate::antigravity::b64::decode_std(signature) {
+        return match b64::std(signature).ok() {
             Some(decoded) => String::from_utf8_lossy(&decoded).into_owned(),
             None => {
                 tracing::warn!("antigravity claude response: failed to decode signature, skipping");
@@ -86,20 +85,21 @@ pub struct Params {
     current_thinking_signed: bool,
     /// Sanitized Gemini function name -> original Claude tool name.
     tool_name_map: HashMap<String, String>,
+    /// `model` of the translated request, fixed for the stream.
+    model_name: std::sync::Arc<str>,
+    /// Whether the request asked for translated web search grounding, fixed for the stream.
+    web_search_stream_mode: bool,
 }
 
 static TOOL_USE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn unix_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
-fn claude_tool_use_id(model: &str, function_call: &Res<'_>, fallback: &str) -> String {
+/// `args_raw` is the upstream text of `functionCall.args` (Go: `args.Raw`), hashed as sent.
+fn claude_tool_use_id(model: &str, function_call: &Res<'_>, fallback: &str, args_raw: Option<&str>) -> String {
     if signature::signature_provider_from_model_name(model) == SignatureProvider::Gemini {
         let stable = util::gemini_claude_tool_use_id(
             &function_call.g("id").str(),
             &function_call.g("name").str(),
-            &function_call.g("args").raw(),
+            &args_raw.map_or_else(|| function_call.g("args").raw(), str::to_string),
         );
         if !stable.is_empty() {
             return stable;
@@ -215,9 +215,18 @@ pub fn convert_antigravity_response_to_claude(
     raw_json: &[u8],
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
-    let params = param.state(|| Params { tool_name_map: util::disambiguated_tool_name_map(original_request_raw_json), ..Default::default() });
-    let request = cpa_json::parse(request_raw_json);
-    let model_name = request.g("model").str();
+    let params = param.state(|| {
+        let request = cpa_json::parse(request_raw_json);
+        let original = cpa_json::parse(original_request_raw_json);
+        Params {
+            tool_name_map: util::disambiguated_tool_name_map(original_request_raw_json),
+            model_name: request.g("model").str().into(),
+            web_search_stream_mode: should_translate_grounding(&original, &request),
+            ..Default::default()
+        }
+    });
+    let model_name = std::sync::Arc::clone(&params.model_name);
+    let web_search_stream_mode = params.web_search_stream_mode;
 
     if raw_json == b"[DONE]" {
         let mut em = Emitter { p: params, out: Vec::with_capacity(256), model: &model_name };
@@ -235,9 +244,7 @@ pub fn convert_antigravity_response_to_claude(
         return vec![];
     }
 
-    let original = cpa_json::parse(original_request_raw_json);
     let root = cpa_json::parse(raw_json);
-    let web_search_stream_mode = should_translate_grounding(&original, &request);
     let mut em = Emitter { p: params, out: Vec::with_capacity(1024), model: &model_name };
 
     // message_start is only sent for the very first chunk.
@@ -272,8 +279,8 @@ pub fn convert_antigravity_response_to_claude(
     }
 
     let mut handled_web_search_grounding = false;
-    if web_search_stream_mode && !em.p.has_web_search_tool {
-        if let Some(grounding) = grounding_metadata(&root) {
+    if web_search_stream_mode && !em.p.has_web_search_tool
+        && let Some(grounding) = grounding_metadata(&root) {
             let tool_use_id = new_web_search_tool_use_id();
             let text = std::mem::take(&mut em.p.web_search_text_buffer) + &text_content(&root);
             let mut out = std::mem::take(&mut em.out);
@@ -286,16 +293,16 @@ pub fn convert_antigravity_response_to_claude(
             em.p.response_type = 0;
             handled_web_search_grounding = true;
         }
-    }
 
     // Each part can carry text, thinking, a thought signature or a function call.
     let parts_result = root.g("response.candidates.0.content.parts");
     if parts_result.is_array() && web_search_stream_mode && !em.p.has_web_search_tool && !handled_web_search_grounding {
         append_web_search_buffered_text(&parts_result, &mut em.p.web_search_text_buffer);
     } else if parts_result.is_array() && !handled_web_search_grounding {
+        let part_raws = cpa_json::raw_children(raw_json, "response.candidates.0.content.parts");
         for (i, part) in parts_result.array().iter().enumerate() {
             // Go copies `args.Raw` into partial_json, so keep the upstream text as sent.
-            let raw_args = cpa_json::raw_at(raw_json, &format!("response.candidates.0.content.parts.{i}.functionCall.args"));
+            let raw_args = crate::common::raw_in(part_raws.get(i), "functionCall.args");
             convert_part(&mut em, part, raw_args);
         }
     }
@@ -428,9 +435,9 @@ fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>, raw_args: Option<&str>) {
             em.p.response_index += 1;
         }
 
-        let fallback_id = format!("{fc_name}-{}-{}", unix_nanos(), TOOL_USE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
+        let fallback_id = format!("{fc_name}-{}-{}", common::unix_nano_now(), TOOL_USE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
         let mut data = json!({"type": "content_block_start", "index": em.p.response_index, "content_block": {"type": "tool_use", "id": "", "name": "", "input": {}}});
-        cpa_json::set(&mut data, "content_block.id", claude_tool_use_id(em.model, &function_call, &fallback_id));
+        cpa_json::set(&mut data, "content_block.id", claude_tool_use_id(em.model, &function_call, &fallback_id, raw_args));
         cpa_json::set(&mut data, "content_block.name", fc_name);
         if is_claude_model && !tool_signature.is_empty() {
             cpa_json::set(&mut data, "content_block.signature", format_claude_signature_value(em.model, &tool_signature));
@@ -522,7 +529,6 @@ fn resolve_stop_reason(params: &Params) -> &'static str {
 }
 
 /// Go: `ConvertAntigravityResponseToClaudeNonStream`.
-#[allow(unused_assignments)]
 pub fn convert_antigravity_response_to_claude_non_stream(
     _ctx: &Ctx,
     _model: &str,
@@ -559,15 +565,14 @@ pub fn convert_antigravity_response_to_claude_non_stream(
     }
 
     let original = cpa_json::parse(original_request_raw_json);
-    if should_translate_grounding(&original, &request) {
-        if let Some(grounding) = grounding_metadata(&root) {
+    if should_translate_grounding(&original, &request)
+        && let Some(grounding) = grounding_metadata(&root) {
             let tool_use_id = new_web_search_tool_use_id();
             cpa_json::set(&mut response, "content", build_claude_web_search_content(&tool_use_id, &text_content(&root), &grounding));
             cpa_json::set(&mut response, "stop_reason", "end_turn");
             cpa_json::set(&mut response, "usage.server_tool_use.web_search_requests", 1);
             return Some(cpa_json::to_vec(&response));
         }
-    }
 
     let mut blocks: Vec<Value> = Vec::new();
     let parts = root.g("response.candidates.0.content.parts");
@@ -588,8 +593,10 @@ pub fn convert_antigravity_response_to_claude_non_stream(
             }
         };
     }
+    // `flush_thinking!()` emits the buffered thinking block and resets the signature carrier
+    // fields; `flush_thinking!(last)` skips the reset when nothing reads them afterwards.
     macro_rules! flush_thinking {
-        () => {
+        (@emit $($reset:ident)?) => {
             if !(thinking_builder.is_empty() && thinking_signature.is_empty()) {
                 let mut block = json!({"type": "thinking", "thinking": std::mem::take(&mut thinking_builder)});
                 if !thinking_signature.is_empty() {
@@ -598,9 +605,18 @@ pub fn convert_antigravity_response_to_claude_non_stream(
                 }
                 blocks.push(block);
                 thinking_signature.clear();
-                thinking_signature_direction = CARRIER_STANDALONE.to_string();
-                thinking_signature_target_kind = CARRIER_TEXT.to_string();
+                $( flush_thinking!(@$reset); )?
             }
+        };
+        (@reset) => {
+            thinking_signature_direction = CARRIER_STANDALONE.to_string();
+            thinking_signature_target_kind = CARRIER_TEXT.to_string();
+        };
+        () => {
+            flush_thinking!(@emit reset)
+        };
+        (last) => {
+            flush_thinking!(@emit)
         };
     }
     macro_rules! append_signature_carrier {
@@ -615,7 +631,9 @@ pub fn convert_antigravity_response_to_claude_non_stream(
     }
 
     if parts.is_array() {
-        for part in parts.array() {
+        let part_raws = cpa_json::raw_children(raw_json, "response.candidates.0.content.parts");
+        for (part_index, part) in parts.array().into_iter().enumerate() {
+            let args_text = crate::common::raw_in(part_raws.get(part_index), "functionCall.args");
             let mut sig = part.g("thoughtSignature");
             if !sig.exists() {
                 sig = part.g("thought_signature");
@@ -642,14 +660,18 @@ pub fn convert_antigravity_response_to_claude_non_stream(
                     append_signature_carrier!(&signature, CARRIER_NEXT, CARRIER_FUNCTION);
                 }
                 let mut tool_block = json!({"type": "tool_use", "id": "", "name": "", "input": {}});
-                cpa_json::set(&mut tool_block, "id", claude_tool_use_id(&model_name, &function_call, &format!("tool_{tool_id_counter}")));
+                cpa_json::set(&mut tool_block, "id", claude_tool_use_id(&model_name, &function_call, &format!("tool_{tool_id_counter}"), args_text));
                 cpa_json::set(&mut tool_block, "name", name);
                 if is_claude_target && !signature.is_empty() {
                     cpa_json::set(&mut tool_block, "signature", format_claude_signature_value(&model_name, &signature));
                 }
                 let args = function_call.g("args");
                 if args.exists() && args.is_object() {
-                    cpa_json::set(&mut tool_block, "input", args.value());
+                    // Go: SetRawBytes(args.Raw) when the upstream text is valid JSON.
+                    let args_raw = args_text.map_or_else(|| args.raw(), str::to_string);
+                    if !args_raw.is_empty() && cpa_json::valid(args_raw.as_bytes()) {
+                        let _ = cpa_json::set_raw(&mut tool_block, "input", &args_raw);
+                    }
                 }
                 blocks.push(tool_block);
                 has_semantic_content = true;
@@ -720,7 +742,7 @@ pub fn convert_antigravity_response_to_claude_non_stream(
         }
     }
 
-    flush_thinking!();
+    flush_thinking!(last);
     flush_text!();
 
     if !blocks.is_empty() {

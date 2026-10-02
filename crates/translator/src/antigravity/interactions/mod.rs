@@ -20,6 +20,7 @@ pub fn register(r: &mut Registry) {
             stream: Some(convert_antigravity_response_to_interactions),
             non_stream: Some(convert_antigravity_response_to_interactions_non_stream),
             token_count: None,
+            finalize: None,
         },
     );
 }

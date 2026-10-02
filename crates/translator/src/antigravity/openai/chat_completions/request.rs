@@ -1,5 +1,6 @@
 //! OpenAI Chat Completions request -> Antigravity request (Go: antigravity_openai_request.go).
 
+use crate::common::text_part;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::thinking;
@@ -123,10 +124,6 @@ pub fn convert_openai_request_to_antigravity(model: &str, input_raw_json: &[u8],
         out_bytes = sanitize_antigravity_claude_gemini_request_signatures(model, &out_bytes);
     }
     attach_default_safety_settings(&out_bytes, "request.safetySettings")
-}
-
-fn text_part(text: &str) -> Value {
-    json!({"text": text})
 }
 
 fn inline_data_part(mime_type: &str, data: &str, snake_case: bool) -> Value {
@@ -524,11 +521,10 @@ fn normalize_thinking_config(out: &mut Value) {
 }
 
 fn set_bool_if_valid(out: &mut Value, path: &str, value: &Value) {
-    if let Value::Bool(b) = value {
-        if out.g(path).v() != Some(&Value::Bool(*b)) {
+    if let Value::Bool(b) = value
+        && out.g(path).v() != Some(&Value::Bool(*b)) {
             cpa_json::set(out, path, *b);
         }
-    }
 }
 
 fn set_raw_if_different(out: &mut Value, path: &str, value: &Value) {

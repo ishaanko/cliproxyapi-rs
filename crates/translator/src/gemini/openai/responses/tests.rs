@@ -3,7 +3,6 @@
 
 use cpa_json::{Value, J};
 
-use super::lenient::parse_gjson;
 use super::{build_responses_url_citations, convert_gemini_response_to_openai_responses, finalize_tool_input};
 use crate::registry::{Ctx, Param};
 
@@ -33,14 +32,6 @@ fn finalize_ignores_streams_without_apply_patch() {
     stream(b"{}", r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}"#, &mut param);
     assert!(finalize_tool_input(&mut param).is_empty());
     assert!(param.tool_input_error.is_none());
-}
-
-#[test]
-fn malformed_payload_still_yields_a_document() {
-    // Mismatched closer: gjson reads the call, a strict parser sees nothing.
-    let doc = parse_gjson(br#"{"parts":[{"functionCall":{"name":"f"}]},"after":1}"#).expect("document");
-    assert_eq!(doc.g("parts.0.functionCall.name").str(), "f");
-    assert!(parse_gjson(b"not json").is_none());
 }
 
 #[test]

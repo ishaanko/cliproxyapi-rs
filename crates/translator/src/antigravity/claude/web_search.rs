@@ -2,7 +2,6 @@
 //! grounding metadata translation (Go: antigravity/claude/web_search.go).
 
 use std::collections::HashSet;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::registry::antigravity_web_search_model_for;
 use cpa_json::{json, J, Value};
@@ -211,11 +210,10 @@ pub fn text_content(root: &Value) -> String {
 
 fn query_from_grounding(grounding: &Value) -> String {
     let queries = grounding.g("webSearchQueries");
-    if queries.is_array() {
-        if let Some(first) = queries.array().first() {
+    if queries.is_array()
+        && let Some(first) = queries.array().first() {
             return first.str();
         }
-    }
     String::new()
 }
 
@@ -450,6 +448,6 @@ fn split_runes(text: &str, chunk_size: usize) -> Vec<String> {
 
 /// `srvtoolu_<unix nanos>` id for server tool blocks.
 pub fn new_web_search_tool_use_id() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let nanos = crate::common::unix_nano_now();
     format!("srvtoolu_{nanos}")
 }

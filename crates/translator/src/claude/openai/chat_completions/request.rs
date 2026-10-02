@@ -1,6 +1,7 @@
 //! OpenAI Chat Completions request to Claude Messages request
 //! (Go: claude/openai/chat-completions/claude_openai_request.go).
 
+use crate::common::first_existing;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::registry::lookup_model_info;
@@ -277,7 +278,7 @@ fn convert(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_b
     }
 
     let format_instruction =
-        super::raw_json::structured_output_instruction(raw, "response_format", &root.g("response_format"));
+        structured_output_instruction(raw, "response_format", &root.g("response_format"));
     if !format_instruction.is_empty() {
         system_blocks.push(text_block(&format_instruction));
     }
@@ -513,7 +514,10 @@ fn convert_tool_result_content(content: &Res<'_>) -> Value {
     Value::String(content.raw())
 }
 
-/// The first result that exists, or a missing result.
-fn first_existing<'a>(values: impl IntoIterator<Item = Res<'a>>) -> Res<'a> {
-    values.into_iter().find(Res::exists).unwrap_or(Res::NONE)
+/// The structured output instruction (Go: `common.BuildClaudeStructuredOutputInstruction`) with
+/// the schema embedded as the client sent it. `format` is the value at `format_path` of `body`.
+pub(crate) fn structured_output_instruction(body: &[u8], format_path: &str, format: &Res<'_>) -> String {
+    let schema_path = if format.g("json_schema.schema").exists() { "json_schema.schema" } else { "schema" };
+    let schema_raw = cpa_json::raw_at(body, &format!("{format_path}.{schema_path}"));
+    common::build_claude_structured_output_instruction(format, schema_raw)
 }

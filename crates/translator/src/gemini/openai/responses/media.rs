@@ -1,25 +1,13 @@
 //! Media blocks (image, audio, video, file) of OpenAI Responses input mapped to Gemini
 //! `inline_data` / `file_data` parts (Go: gemini_openai-responses_request.go, media helpers).
 
-use base64::alphabet::STANDARD;
-use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
-use base64::Engine;
+use crate::common::first_trimmed;
 use cpa_core::misc::mime_type_for_extension;
+use cpa_core::signature::b64;
 use cpa_json::{json, Res, Value};
 
-use super::lenient::{restore_raw, RawTexts};
+use super::lenient::RawTexts;
 use crate::common::normalize_openai_file_data;
-
-/// Go `base64.StdEncoding`: padding required, non-zero trailing bits tolerated.
-const STD_PADDED: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::RequireCanonical).with_decode_allow_trailing_bits(true),
-);
-/// Go `base64.RawStdEncoding`.
-const STD_RAW: GeneralPurpose = GeneralPurpose::new(
-    &STANDARD,
-    GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::RequireNone).with_decode_allow_trailing_bits(true),
-);
 
 pub(super) fn gemini_responses_inline_data_part(mime_type: &str, data: &str) -> Value {
     json!({"inline_data": {"mime_type": mime_type, "data": data}})
@@ -27,11 +15,6 @@ pub(super) fn gemini_responses_inline_data_part(mime_type: &str, data: &str) -> 
 
 fn gemini_responses_file_data_part(mime_type: &str, file_uri: &str) -> Value {
     json!({"file_data": {"mime_type": mime_type, "file_uri": file_uri}})
-}
-
-/// The first non-blank value, trimmed.
-fn first_non_empty(values: &[String]) -> String {
-    values.iter().map(|v| v.trim()).find(|v| !v.is_empty()).unwrap_or_default().to_string()
 }
 
 fn is_data_url(raw: &str) -> bool {
@@ -68,9 +51,7 @@ fn parse_openai_responses_data_url(raw_url: &str) -> Option<(String, String)> {
     if !fields.any(|f| f.trim().eq_ignore_ascii_case("base64")) {
         return None;
     }
-    // Go's decoder skips CR/LF.
-    let stripped: Vec<u8> = payload.bytes().filter(|b| *b != b'\r' && *b != b'\n').collect();
-    if STD_PADDED.decode(&stripped).is_err() && STD_RAW.decode(&stripped).is_err() {
+    if b64::std(payload).is_err() && b64::raw_std(payload).is_err() {
         return None;
     }
     Some((mime_type, payload.to_string()))
@@ -213,7 +194,7 @@ fn open_ai_responses_audio_from_block(block: &Res<'_>) -> Option<(String, String
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
     let mut audio_obj = block.g("input_audio");
     if !audio_obj.exists() {
         audio_obj = block.g("audio");
@@ -235,7 +216,7 @@ fn open_ai_responses_audio_from_block(block: &Res<'_>) -> Option<(String, String
 
     // 3. audio_url / url
     if audio_data.is_empty() {
-        let audio_url = first_non_empty(&[opt_str(block, "audio_url.url"), opt_str(block, "audio_url"), opt_str(block, "url")]);
+        let audio_url = first_trimmed(&[opt_str(block, "audio_url.url"), opt_str(block, "audio_url"), opt_str(block, "url")]);
         if !audio_url.is_empty() {
             if is_data_url(&audio_url) {
                 return match parse_openai_responses_data_url(&audio_url) {
@@ -288,7 +269,7 @@ fn open_ai_responses_video_from_block(block: &Res<'_>) -> Option<(String, String
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
     let mut video_obj = block.g("input_video");
     if !video_obj.exists() {
         video_obj = block.g("video");
@@ -301,7 +282,7 @@ fn open_ai_responses_video_from_block(block: &Res<'_>) -> Option<(String, String
     ]);
 
     // 1. video_url (string or { "url": "..." }) or url
-    let video_url = first_non_empty(&[opt_str(block, "video_url.url"), opt_str(block, "video_url"), opt_str(block, "url")]);
+    let video_url = first_trimmed(&[opt_str(block, "video_url.url"), opt_str(block, "video_url"), opt_str(block, "url")]);
     if !video_url.is_empty() {
         if is_data_url(&video_url) {
             return match parse_openai_responses_data_url(&video_url) {
@@ -383,10 +364,10 @@ fn open_ai_responses_file_from_block(block: &Res<'_>) -> Option<(String, String)
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
-    let mut file_data = first_non_empty(&[opt_str(block, "file_data"), opt_str(block, "file.file_data"), opt_str(block, "data")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let mut file_data = first_trimmed(&[opt_str(block, "file_data"), opt_str(block, "file.file_data"), opt_str(block, "data")]);
     if file_data.is_empty() {
-        let file_url = first_non_empty(&[
+        let file_url = first_trimmed(&[
             opt_str(block, "file_url.url"),
             opt_str(block, "file_url"),
             opt_str(block, "file.file_url"),
@@ -456,7 +437,7 @@ pub(super) fn open_ai_responses_part_from_block(block: &Res<'_>) -> Option<Value
     let b_type = block.g("type").str().trim().to_lowercase();
 
     // 1. Remote URLs (http://, https://, gs://)
-    let raw_url = first_non_empty(&[
+    let raw_url = first_trimmed(&[
         opt_str(block, "video_url.url"),
         opt_str(block, "video_url"),
         opt_str(block, "audio_url.url"),
@@ -469,12 +450,11 @@ pub(super) fn open_ai_responses_part_from_block(block: &Res<'_>) -> Option<Value
         opt_str(block, "url"),
     ]);
     if is_remote_url(&raw_url) {
-        let mut filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
-        if filename.is_empty() {
-            if let Some(path) = url_path(&raw_url) {
+        let mut filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+        if filename.is_empty()
+            && let Some(path) = url_path(&raw_url) {
                 filename = path_base(&path);
             }
-        }
         let format = first_non_generic_format(
             &[
                 "format",
@@ -572,11 +552,10 @@ fn open_ai_responses_image_mime_type(format: &str, filename: &str) -> String {
         if ext == "jpg" || ext == "jpeg" {
             return "image/jpeg".to_string();
         }
-        if !ext.is_empty() {
-            if let Some(mapped) = mime_type_for_extension(&ext) {
+        if !ext.is_empty()
+            && let Some(mapped) = mime_type_for_extension(&ext) {
                 return mapped.to_string();
             }
-        }
     }
     "image/png".to_string()
 }
@@ -594,10 +573,10 @@ fn open_ai_responses_image_from_block(block: &Res<'_>) -> Option<(String, String
         opt_str(block, "image.format"),
         opt_str(block, "image.mime_type"),
     ]);
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
 
     // 1. image_url
-    let image_url = first_non_empty(&[opt_str(block, "image_url.url"), opt_str(block, "image_url"), opt_str(block, "url")]);
+    let image_url = first_trimmed(&[opt_str(block, "image_url.url"), opt_str(block, "image_url"), opt_str(block, "url")]);
     if !image_url.is_empty() {
         if is_data_url(&image_url) {
             return match parse_openai_responses_data_url(&image_url) {
@@ -656,7 +635,7 @@ struct OutputBlock {
 /// Flattens an array tool output: media blocks become inline parts (second value of the result
 /// tuple's images); text blocks collapse to a string, anything else stays raw JSON.
 /// Returns (result, is_raw_json, media parts).
-pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws: &RawTexts) -> (String, bool, Vec<Value>) {
+pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws: &RawTexts<'_>) -> (String, bool, Vec<Value>) {
     let mut image_parts: Vec<Value> = Vec::new();
     let mut non_image_entries: Vec<OutputBlock> = Vec::new();
     let mut has_content_block = false;
@@ -671,17 +650,17 @@ pub(super) fn parse_open_ai_responses_array_output(output_result: &Res<'_>, raws
         let b_type = block.g("type").str();
         if b_type == "input_text" || b_type == "output_text" || b_type == "text" {
             has_content_block = true;
-            non_image_entries.push(OutputBlock { text: block.g("text").str(), is_text: true, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: block.g("text").str(), is_text: true, raw: raws.restore(&block) });
         } else if block.is_string() {
-            non_image_entries.push(OutputBlock { text: block.str(), is_text: true, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: block.str(), is_text: true, raw: raws.restore(&block) });
         } else {
             has_non_text_block = true;
-            non_image_entries.push(OutputBlock { text: restore_raw(raws, block.raw()), is_text: false, raw: restore_raw(raws, block.raw()) });
+            non_image_entries.push(OutputBlock { text: raws.restore(&block), is_text: false, raw: raws.restore(&block) });
         }
     }
 
     if !has_content_block {
-        return (restore_raw(raws, output_result.raw()), true, Vec::new());
+        return (raws.restore(output_result), true, Vec::new());
     }
 
     match non_image_entries.len() {

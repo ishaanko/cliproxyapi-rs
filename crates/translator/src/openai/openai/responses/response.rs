@@ -3,7 +3,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_json::{Value, J};
 
@@ -68,10 +67,6 @@ type Out = Vec<Vec<u8>>;
 
 /// Synthesized response identifiers need a process-wide unique counter.
 static RESPONSE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
 
 fn emit(out: &mut Out, event: &str, payload: &Value) {
     out.push(common::sse_event_data(event, &cpa_json::to_vec(payload)));
@@ -197,7 +192,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
         status = "incomplete";
     }
 
-    let mut completed = tpl(
+    let mut completed = cpa_json::parse_str(
         r#"{"type":"","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"","background":false,"error":null}}"#,
     );
     cpa_json::set(&mut completed, "type", event_type);
@@ -207,7 +202,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
     cpa_json::set(&mut completed, "response.created_at", st.created);
     cpa_json::set(&mut completed, "response.status", status);
     if let Some(details) = incomplete_details {
-        cpa_json::set(&mut completed, "response.incomplete_details", tpl(details));
+        cpa_json::set(&mut completed, "response.incomplete_details", cpa_json::parse_str(details));
     }
     // Inject original request fields into the response.
     if !request_raw_json.is_empty() {
@@ -217,7 +212,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
     let is_incomplete = incomplete_details.is_some();
     let mut output_items: Vec<(i64, Value)> = Vec::new();
     for r in &st.reasonings {
-        let mut item = tpl(r#"{"id":"","type":"reasoning","summary":[{"type":"summary_text","text":""}]}"#);
+        let mut item = cpa_json::parse_str(r#"{"id":"","type":"reasoning","summary":[{"type":"summary_text","text":""}]}"#);
         cpa_json::set(&mut item, "id", r.reasoning_id.clone());
         cpa_json::set(&mut item, "summary.0.text", r.reasoning_data.clone());
         output_items.push((r.output_index, item));
@@ -225,7 +220,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
     for &i in &st.msg_item_added {
         let txt = st.msg_text_buf.get(&i).cloned().unwrap_or_default();
         let msg_status = if is_incomplete { "incomplete" } else { "completed" };
-        let mut item = tpl(
+        let mut item = cpa_json::parse_str(
             r#"{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}"#,
         );
         cpa_json::set(&mut item, "id", format!("msg_{}_{}", st.response_id, i));
@@ -244,7 +239,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
         let tool_status = if is_incomplete { "incomplete" } else { "completed" };
         let output_ix = st.func_output_ix.get(&key).copied().unwrap_or(0);
         if st.func_item_custom.contains(&key) {
-            let mut item = tpl(r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#);
+            let mut item = cpa_json::parse_str(r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#);
             cpa_json::set(&mut item, "id", format!("ctc_{call_id}"));
             cpa_json::set(&mut item, "status", tool_status);
             let input = match st.apply_patch_calls.get(&key) {
@@ -257,7 +252,7 @@ fn build_responses_completed_event(st: &mut State, request_raw_json: &[u8]) -> V
             output_items.push((output_ix, cpa_json::parse(&item)));
             continue;
         }
-        let mut item = tpl(r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#);
+        let mut item = cpa_json::parse_str(r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#);
         cpa_json::set(&mut item, "id", format!("fc_{call_id}"));
         cpa_json::set(&mut item, "status", tool_status);
         cpa_json::set(&mut item, "arguments", args);
@@ -345,7 +340,7 @@ fn emit_tool_item(st: &mut State, out: &mut Out, key: &str, force: bool) {
                 },
             );
         }
-        let mut o = tpl(
+        let mut o = cpa_json::parse_str(
             r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}"#,
         );
         let seq = next_seq(st);
@@ -356,7 +351,7 @@ fn emit_tool_item(st: &mut State, out: &mut Out, key: &str, force: bool) {
         let o = st.tool_index.apply_identity(&cpa_json::to_vec(&o), &name, "item");
         emit_bytes(out, "response.output_item.added", &o);
     } else {
-        let mut o = tpl(
+        let mut o = cpa_json::parse_str(
             r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}"#,
         );
         let seq = next_seq(st);
@@ -376,9 +371,10 @@ fn emit_pending_function_args(st: &mut State, out: &mut Out, key: &str) {
         return;
     }
     let sent = st.func_args_sent.get(key).copied().unwrap_or(0);
-    let Some(args) = st.func_args_buf.get(key).filter(|b| b.len() > sent).cloned() else {
+    let Some(args) = st.func_args_buf.get(key).filter(|b| b.len() > sent) else {
         return;
     };
+    let total = args.len();
     let delta = args[sent..].to_string();
     if st.func_item_custom.contains(key) {
         if let Some(patch_call) = st.apply_patch_calls.get_mut(key) {
@@ -396,23 +392,23 @@ fn emit_pending_function_args(st: &mut State, out: &mut Out, key: &str) {
                 }
                 Ok(_) => {}
             }
-            st.func_args_sent.insert(key.to_string(), args.len());
+            st.func_args_sent.insert(key.to_string(), total);
         }
         return;
     }
     let call_id = st.func_call_ids.get(key).cloned().unwrap_or_default();
-    let mut ad = tpl(r#"{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}"#);
+    let mut ad = cpa_json::parse_str(r#"{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}"#);
     let seq = next_seq(st);
     cpa_json::set(&mut ad, "sequence_number", seq);
     cpa_json::set(&mut ad, "item_id", format!("fc_{call_id}"));
     cpa_json::set(&mut ad, "output_index", st.func_output_ix.get(key).copied().unwrap_or(0));
     cpa_json::set(&mut ad, "delta", delta);
     emit(out, "response.function_call_arguments.delta", &ad);
-    st.func_args_sent.insert(key.to_string(), args.len());
+    st.func_args_sent.insert(key.to_string(), total);
 }
 
 fn stop_reasoning(st: &mut State, out: &mut Out, text: &str) {
-    let mut text_done = tpl(
+    let mut text_done = cpa_json::parse_str(
         r#"{"type":"response.reasoning_summary_text.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"text":""}"#,
     );
     let seq = next_seq(st);
@@ -422,7 +418,7 @@ fn stop_reasoning(st: &mut State, out: &mut Out, text: &str) {
     cpa_json::set(&mut text_done, "text", text);
     emit(out, "response.reasoning_summary_text.done", &text_done);
 
-    let mut part_done = tpl(
+    let mut part_done = cpa_json::parse_str(
         r#"{"type":"response.reasoning_summary_part.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
     );
     let seq = next_seq(st);
@@ -432,7 +428,7 @@ fn stop_reasoning(st: &mut State, out: &mut Out, text: &str) {
     cpa_json::set(&mut part_done, "part.text", text);
     emit(out, "response.reasoning_summary_part.done", &part_done);
 
-    let mut item_done = tpl(
+    let mut item_done = cpa_json::parse_str(
         r#"{"type":"response.output_item.done","item":{"id":"","type":"reasoning","encrypted_content":"","summary":[{"type":"summary_text","text":""}]},"output_index":0,"sequence_number":0}"#,
     );
     let seq = next_seq(st);
@@ -457,7 +453,7 @@ fn emit_message_item_done(st: &mut State, out: &mut Out, idx: i64) {
     let full_text = st.msg_text_buf.get(&idx).cloned().unwrap_or_default();
     let item_id = format!("msg_{}_{}", st.response_id, idx);
 
-    let mut done = tpl(
+    let mut done = cpa_json::parse_str(
         r#"{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}"#,
     );
     let seq = next_seq(st);
@@ -468,7 +464,7 @@ fn emit_message_item_done(st: &mut State, out: &mut Out, idx: i64) {
     cpa_json::set(&mut done, "text", full_text.clone());
     emit(out, "response.output_text.done", &done);
 
-    let mut part_done = tpl(
+    let mut part_done = cpa_json::parse_str(
         r#"{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}"#,
     );
     let seq = next_seq(st);
@@ -480,7 +476,7 @@ fn emit_message_item_done(st: &mut State, out: &mut Out, idx: i64) {
     emit(out, "response.content_part.done", &part_done);
 
     let msg_status = if incomplete_by_finish_reason(&st.finish_reason).is_some() { "incomplete" } else { "completed" };
-    let mut item_done = tpl(
+    let mut item_done = cpa_json::parse_str(
         r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}"#,
     );
     let seq = next_seq(st);
@@ -589,7 +585,7 @@ fn finalize_open_items(st: &mut State, out: &mut Out) {
                 }
             } else {
                 input = unwrap_custom_tool_input(&args);
-                let mut input_done = tpl(
+                let mut input_done = cpa_json::parse_str(
                     r#"{"type":"response.custom_tool_call_input.done","sequence_number":0,"item_id":"","output_index":0,"input":""}"#,
                 );
                 let seq = next_seq(st);
@@ -600,7 +596,7 @@ fn finalize_open_items(st: &mut State, out: &mut Out) {
                 emit(out, "response.custom_tool_call_input.done", &input_done);
             }
 
-            let mut item_done = tpl(
+            let mut item_done = cpa_json::parse_str(
                 r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}}"#,
             );
             let seq = next_seq(st);
@@ -617,7 +613,7 @@ fn finalize_open_items(st: &mut State, out: &mut Out) {
             continue;
         }
 
-        let mut fc_done = tpl(r#"{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}"#);
+        let mut fc_done = cpa_json::parse_str(r#"{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}"#);
         let seq = next_seq(st);
         cpa_json::set(&mut fc_done, "sequence_number", seq);
         cpa_json::set(&mut fc_done, "item_id", format!("fc_{call_id}"));
@@ -625,7 +621,7 @@ fn finalize_open_items(st: &mut State, out: &mut Out) {
         cpa_json::set(&mut fc_done, "arguments", args.clone());
         emit(out, "response.function_call_arguments.done", &fc_done);
 
-        let mut item_done = tpl(
+        let mut item_done = cpa_json::parse_str(
             r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}"#,
         );
         let seq = next_seq(st);
@@ -768,7 +764,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
         st.usage_seen = false;
         st.completed_emitted = false;
 
-        let mut created = tpl(
+        let mut created = cpa_json::parse_str(
             r#"{"type":"response.created","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress","background":false,"error":null,"output":[]}}"#,
         );
         let seq = next_seq(st);
@@ -784,7 +780,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
         }
         emit(&mut out, "response.created", &created);
 
-        let mut inprog = tpl(
+        let mut inprog = cpa_json::parse_str(
             r#"{"type":"response.in_progress","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress","output":[]}}"#,
         );
         let seq = next_seq(st);
@@ -832,7 +828,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                 if st.reasoning_id.is_empty() {
                     st.reasoning_id = format!("rs_{}_{}", st.response_id, idx);
                     st.reasoning_index = alloc_output_index(st);
-                    let mut item = tpl(
+                    let mut item = cpa_json::parse_str(
                         r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"in_progress","summary":[]}}"#,
                     );
                     let seq = next_seq(st);
@@ -840,7 +836,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                     cpa_json::set(&mut item, "output_index", st.reasoning_index);
                     cpa_json::set(&mut item, "item.id", st.reasoning_id.clone());
                     emit(&mut out, "response.output_item.added", &item);
-                    let mut part = tpl(
+                    let mut part = cpa_json::parse_str(
                         r#"{"type":"response.reasoning_summary_part.added","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
                     );
                     let seq = next_seq(st);
@@ -850,7 +846,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                     emit(&mut out, "response.reasoning_summary_part.added", &part);
                 }
                 st.reasoning_buf.push_str(&rc_text);
-                let mut msg = tpl(
+                let mut msg = cpa_json::parse_str(
                     r#"{"type":"response.reasoning_summary_text.delta","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"delta":""}"#,
                 );
                 let seq = next_seq(st);
@@ -876,7 +872,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                 let msg_output_index = st.msg_output_ix.get(&idx).copied().unwrap_or(0);
                 let item_id = format!("msg_{}_{}", st.response_id, idx);
                 if !st.msg_item_added.contains(&idx) {
-                    let mut item = tpl(
+                    let mut item = cpa_json::parse_str(
                         r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"in_progress","content":[],"role":"assistant"}}"#,
                     );
                     let seq = next_seq(st);
@@ -887,7 +883,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                     st.msg_item_added.insert(idx);
                 }
                 if !st.msg_content_added.contains(&idx) {
-                    let mut part = tpl(
+                    let mut part = cpa_json::parse_str(
                         r#"{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}"#,
                     );
                     let seq = next_seq(st);
@@ -899,7 +895,7 @@ fn convert_stream(st: &mut State, model_name: &str, original: &[u8], translated:
                     st.msg_content_added.insert(idx);
                 }
 
-                let mut msg = tpl(
+                let mut msg = cpa_json::parse_str(
                     r#"{"type":"response.output_text.delta","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"delta":"","logprobs":[]}"#,
                 );
                 let seq = next_seq(st);
@@ -1015,26 +1011,25 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
 
     let resp_status = if is_incomplete { "incomplete" } else { "completed" };
 
-    let mut resp = tpl(
+    let mut resp = cpa_json::parse_str(
         r#"{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null,"incomplete_details":null}"#,
     );
     cpa_json::set(&mut resp, "status", resp_status);
     if let Some(details) = incomplete_details {
-        cpa_json::set(&mut resp, "incomplete_details", tpl(details));
+        cpa_json::set(&mut resp, "incomplete_details", cpa_json::parse_str(details));
     }
 
     // id: provider id when present, otherwise synthesized.
     let mut id = root.g("id").str();
     if id.is_empty() {
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        id = format!("resp_{:x}_{}", nanos, RESPONSE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
+        id = format!("resp_{:x}_{}", common::unix_nano_now(), RESPONSE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
     }
     cpa_json::set(&mut resp, "id", id.clone());
 
     // created_at: from chat.completion `created`.
     let mut created = root.g("created").int();
     if created == 0 {
-        created = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        created = common::unix_now();
     }
     cpa_json::set(&mut resp, "created_at", created);
 
@@ -1153,7 +1148,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
     }
     if include_reasoning {
         let rid = id.strip_prefix("resp_").unwrap_or(&id);
-        let mut reasoning_item = tpl(r#"{"id":"","type":"reasoning","encrypted_content":"","summary":[]}"#);
+        let mut reasoning_item = cpa_json::parse_str(r#"{"id":"","type":"reasoning","encrypted_content":"","summary":[]}"#);
         cpa_json::set(&mut reasoning_item, "id", format!("rs_{rid}"));
         if !rc_text.is_empty() {
             cpa_json::set(&mut reasoning_item, "summary.0.type", "summary_text");
@@ -1171,7 +1166,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
                 let c = msg.g("content");
                 if c.exists() && !c.str().is_empty() {
                     let item_status = if is_incomplete { "incomplete" } else { "completed" };
-                    let mut item = tpl(
+                    let mut item = cpa_json::parse_str(
                         r#"{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}"#,
                     );
                     cpa_json::set(&mut item, "id", format!("msg_{}_{}", id, choice.g("index").int()));
@@ -1194,7 +1189,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
                         let args = tc.g("function.arguments").str();
                         let tool_status = if is_incomplete { "incomplete" } else { "completed" };
                         if tool_index.custom.contains(&name) {
-                            let mut item = tpl(r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#);
+                            let mut item = cpa_json::parse_str(r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#);
                             cpa_json::set(&mut item, "id", format!("ctc_{call_id}"));
                             cpa_json::set(&mut item, "status", tool_status);
                             let input = if tool_index.is_apply_patch(&name) {
@@ -1215,7 +1210,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
                             output_items.push(cpa_json::parse(&item));
                             continue;
                         }
-                        let mut item = tpl(r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#);
+                        let mut item = cpa_json::parse_str(r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#);
                         cpa_json::set(&mut item, "id", format!("fc_{call_id}"));
                         cpa_json::set(&mut item, "status", tool_status);
                         cpa_json::set(&mut item, "arguments", args);
@@ -1266,7 +1261,7 @@ fn convert_non_stream(st: &mut State, original: &[u8], translated: &[u8], raw: &
 /// Rejects a patch-enabled stream that lacks its source terminator: when the request declares an
 /// apply_patch custom tool and the stream ended before completion, returns the `response.failed`
 /// frame (executors call this at stream EOF; Go: `FinalizeToolInput`).
-pub fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
+pub(super) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     let Some(st) = param.get::<State>() else { return vec![] };
     if st.err.tool_input_error().is_some() || st.completed_emitted {
         return vec![];

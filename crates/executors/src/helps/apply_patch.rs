@@ -28,14 +28,11 @@ pub fn apply_patch_translation_error(param: &Param) -> Option<&str> {
 /// source terminator; returns the failure frames to deliver (never a success terminator).
 /// Safe to call for any pair: only the translator that owns the state reacts.
 pub fn finalize_apply_patch_stream(param: &mut Param) -> Vec<Vec<u8>> {
-    use cpa_translator::{claude, gemini, openai};
-    for finalize in [
-        openai::openai::responses::finalize_tool_input,
-        claude::openai::responses::finalize_tool_input,
-        gemini::openai::responses::finalize_tool_input,
-        openai::interactions::responses::finalize_tool_input,
-    ] {
-        let frames = finalize(param);
+    use cpa_translator::Format;
+    // Go type-asserts the translator state; here each registered finalizer only reacts to its
+    // own state type, so trying every Responses pair is equivalent.
+    for upstream in [Format::OpenAI, Format::Claude, Format::Gemini, Format::Antigravity, Format::Interactions] {
+        let frames = cpa_translator::global().finalize_stream(upstream, Format::OpenAIResponse, param);
         if !frames.is_empty() {
             return frames;
         }
