@@ -34,6 +34,7 @@ pub mod responses_framer;
 pub mod router;
 pub mod safemode;
 pub mod serve;
+pub mod sniff;
 pub mod sse_validate;
 pub mod state;
 pub mod thinking;
