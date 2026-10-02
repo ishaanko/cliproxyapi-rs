@@ -8,16 +8,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use cpa_auth::{FileTokenStore, OAuthSessions};
+use cpa_auth::OAuthSessions;
 use cpa_config::Config;
-use cpa_config::watcher::ConfigWatcher;
-use cpa_runtime::conductor::Manager;
+use cpa_runtime::service::ServiceBuilder;
 use cpa_runtime::usage::UsageTracker;
 use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
 use cpa_server::reqlog::RequestLogger;
-use cpa_server::{AppState, BuildInfo, KeepAlive, build_router, safemode, serve};
-use tokio::sync::watch;
+use cpa_management::ManagementState;
+use cpa_server::{AppState, BuildInfo, KeepAlive, build_router_with_management, safemode, serve};
 
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -154,37 +153,63 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         );
     }
 
-    let initial = Arc::new(cfg.clone());
-    // The watcher publishes reloaded configs; a missing file keeps the static snapshot.
-    let (config_rx, _watcher, _static_tx): (watch::Receiver<Arc<Config>>, Option<ConfigWatcher>, Option<watch::Sender<Arc<Config>>>) =
-        match ConfigWatcher::start(&config_path, initial.clone(), Some(std::path::PathBuf::from(&cfg.auth_dir))) {
-            Ok(w) => (w.subscribe(), Some(w), None),
-            Err(e) => {
-                tracing::warn!("config hot reload unavailable: {e}");
-                let (tx, rx) = watch::channel(initial.clone());
-                (rx, None, Some(tx))
-            }
-        };
+    // The service owns config reload, the credential manager, the auth store and model
+    // registration; executors are registered through its builder by the executor layer.
+    let service = match ServiceBuilder::new(&config_path).dotenv_dir(None).build() {
+        Ok(s) => Arc::new(s),
+        Err(e) => {
+            tracing::error!("failed to build proxy service: {e}");
+            return 0;
+        }
+    };
+    if let Err(e) = service.start().await {
+        tracing::error!("failed to build proxy service: {e}");
+        return 0;
+    }
+    let config_rx = service.subscribe_config();
+    let manager = service.manager();
+    let store = service.store();
+    let sessions = Arc::new(OAuthSessions::default());
+    let usage = Arc::new(UsageTracker::default());
 
-    let store = Arc::new(FileTokenStore::with_dir(&cfg.auth_dir));
-    let mut state = AppState::new(
-        config_rx.clone(),
-        Arc::new(Manager::default()),
-        store,
-        Arc::new(OAuthSessions::default()),
-        Arc::new(UsageTracker::default()),
-    );
-    state.build = build;
+    let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
+    state.build = build.clone();
     state.example_api_key_safe_mode = safe_mode;
     if !cfg.commercial_mode {
         state.request_logger = Some(Arc::new(RequestLogger::new(config_rx.clone(), config_path.parent().map(|p| p.to_path_buf()))));
     }
-
     let mut idle_shutdown: Option<tokio::sync::mpsc::Receiver<()>> = None;
     if !cli.password.is_empty() {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
         state.keep_alive = Some(KeepAlive { password: cli.password.clone(), heartbeat: tx });
         idle_shutdown = Some(rx);
+    }
+
+    let login = cpa_auth::Manager::new(store.clone()).with_sessions(sessions.clone());
+    let reload_service = service.clone();
+    let mut management = ManagementState::new(
+        &config_path,
+        config_rx.clone(),
+        manager,
+        store,
+        sessions,
+        login,
+        usage,
+        logging::resolve_log_directory(&cfg),
+    )
+    .with_build_info(cpa_management::BuildInfo {
+        version: build.version.clone(),
+        commit: build.commit.clone(),
+        build_date: build.build_date.clone(),
+    })
+    .with_reload_hook(Arc::new(move || {
+        let service = reload_service.clone();
+        Box::pin(async move {
+            service.reload_config().await;
+        })
+    }));
+    if !cli.password.is_empty() {
+        management = management.with_local_password(cli.password.clone());
     }
 
     // Log level / destination follow config reloads.
@@ -206,7 +231,8 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         });
     }
 
-    let app = build_router(state);
+    // The provider redirect routes (`/anthropic/callback`, ...) live in the proxy router.
+    let app = build_router_with_management(state, cpa_management::router(management));
     let server = serve::serve(&cfg, app);
     let idle = async move {
         match idle_shutdown.as_mut() {
@@ -231,6 +257,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         _ = shutdown_signal() => {}
         _ = idle => {}
     }
+    service.shutdown();
     0
 }
 

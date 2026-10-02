@@ -37,6 +37,5 @@ pub mod thinking;
 pub mod ui;
 pub mod ws;
 
-pub use models::{ModelCatalog, RegistryModelCatalog};
 pub use router::{apply_global_layers, build_router, build_router_with_management, nest_management};
 pub use state::{AppState, BuildInfo, KeepAlive};

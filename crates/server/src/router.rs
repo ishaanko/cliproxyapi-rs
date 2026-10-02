@@ -279,33 +279,30 @@ fn success_html() -> Reply {
 }
 
 /// Provider redirect landing page: hands the result to the pending login session, always 200.
-fn provider_callback(st: &AppState, provider: &str, q: &CallbackQuery) -> Response {
+async fn provider_callback(st: &AppState, provider: &str, q: &CallbackQuery) -> Response {
     let state = q.state.clone().unwrap_or_default();
     if !state.is_empty() {
         let cfg = st.cfg();
         let dir = std::path::PathBuf::from(&cfg.auth_dir);
         // Failures are swallowed like Go; the page is shown regardless.
-        let _ = st.oauth_sessions.submit_callback(
-            Some(&dir),
-            provider,
-            &state,
-            q.code.as_deref().unwrap_or(""),
-            &q.error_text(),
-        );
+        let _ = st
+            .oauth_sessions
+            .submit_callback(Some(&dir), provider, &state, q.code.as_deref().unwrap_or(""), &q.error_text())
+            .await;
     }
     success_html().into_response()
 }
 
 async fn callback_anthropic(State(st): State<AppState>, Query(q): Query<CallbackQuery>) -> Response {
-    provider_callback(&st, "anthropic", &q)
+    provider_callback(&st, "anthropic", &q).await
 }
 
 async fn callback_codex(State(st): State<AppState>, Query(q): Query<CallbackQuery>) -> Response {
-    provider_callback(&st, "codex", &q)
+    provider_callback(&st, "codex", &q).await
 }
 
 async fn callback_antigravity(State(st): State<AppState>, Query(q): Query<CallbackQuery>) -> Response {
-    provider_callback(&st, "antigravity", &q)
+    provider_callback(&st, "antigravity", &q).await
 }
 
 /// Devin redirect: values are trimmed, `no-store`, and failures are visible (400).
@@ -319,7 +316,7 @@ async fn callback_devin(State(st): State<AppState>, Query(q): Query<CallbackQuer
     }
     let cfg = st.cfg();
     let dir = std::path::PathBuf::from(&cfg.auth_dir);
-    if st.oauth_sessions.submit_callback(Some(&dir), "devin", &state, &code, &err).is_err() {
+    if st.oauth_sessions.submit_callback(Some(&dir), "devin", &state, &code, &err).await.is_err() {
         return no_store(Reply::json(400, r#"{"error":"invalid or expired OAuth callback"}"#.as_bytes().to_vec())).into_response();
     }
     no_store(success_html()).into_response()

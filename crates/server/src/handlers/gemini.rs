@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use bytes::Bytes;
 use cpa_core::format::{Format, constant};
 use cpa_json::J;
@@ -21,18 +21,18 @@ use crate::req::ReqInfo;
 use crate::state::AppState;
 
 /// `GET /v1beta/models`.
-pub async fn list_models(State(st): State<AppState>) -> Response {
-    models::gemini_models(st.models.as_ref()).into_response()
+pub async fn list_models() -> Response {
+    models::gemini_models().into_response()
 }
 
 /// `GET /v1beta/models/*action`: single model lookup.
-pub async fn get_model(State(st): State<AppState>, Path(action): Path<String>) -> Response {
-    models::gemini_get_model(st.models.as_ref(), &action).into_response()
+pub async fn get_model(Path(action): Path<String>) -> Response {
+    models::gemini_get_model(&action).into_response()
 }
 
 /// `GET /v1beta/models/` (gin's wildcard also matches the empty action).
-pub async fn get_model_root(State(st): State<AppState>) -> Response {
-    models::gemini_get_model(st.models.as_ref(), "/").into_response()
+pub async fn get_model_root() -> Response {
+    models::gemini_get_model("/").into_response()
 }
 
 /// `POST /v1beta/models/` (empty action).

@@ -14,7 +14,7 @@ use super::ok_reply;
 use crate::error::{ErrorMessage, claude_error_body};
 use crate::exec::{ExecArgs, Pipeline};
 use crate::forward::{First, StreamHooks, claude_error_reply, empty_stream_reply, peek_first, start_sse_stream, with_nonstream_keepalive};
-use crate::models::resolve_claude_model_id_prefix;
+use cpa_runtime::service::resolve_claude_model_id_prefix;
 use crate::req::ReqInfo;
 use crate::state::AppState;
 

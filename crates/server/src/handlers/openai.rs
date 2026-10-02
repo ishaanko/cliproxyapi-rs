@@ -20,7 +20,7 @@ use crate::state::AppState;
 /// `GET /v1/models`.
 pub async fn unified_models(State(st): State<AppState>, info: ReqInfo) -> Response {
     let cfg = st.cfg();
-    models::unified_models(st.models.as_ref(), &cfg, &st.manager, &info.headers, &info.query).into_response()
+    models::unified_models(&cfg, &st.manager, &info.headers, &info.query).into_response()
 }
 
 /// `shouldTreatAsResponsesFormat`: Responses-style payloads sent to the chat endpoint.
@@ -219,10 +219,18 @@ pub fn convert_completions_request_to_chat(root: &Value) -> Vec<u8> {
             continue;
         }
         match kind {
-            'i' => cpa_json::set(&mut out, key, node.int()),
-            'f' => cpa_json::set(&mut out, key, float_value(node.float())),
-            'b' => cpa_json::set(&mut out, key, node.bool()),
-            _ => cpa_json::set(&mut out, key, node.value()),
+            'i' => {
+                cpa_json::set(&mut out, key, node.int());
+            }
+            'f' => {
+                cpa_json::set(&mut out, key, float_value(node.float()));
+            }
+            'b' => {
+                cpa_json::set(&mut out, key, node.bool());
+            }
+            _ => {
+                cpa_json::set(&mut out, key, node.value());
+            }
         }
     }
     cpa_json::to_vec(&out)

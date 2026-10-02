@@ -10,7 +10,6 @@ use cpa_runtime::conductor::Manager;
 use cpa_runtime::usage::UsageTracker;
 use tokio::sync::watch;
 
-use crate::models::{ModelCatalog, RegistryModelCatalog};
 use crate::reqlog::RequestLogger;
 
 /// Build identity reported by `X-CPA-*` headers and the CLI banner.
@@ -46,8 +45,6 @@ pub struct AppState {
     pub auth_store: Arc<dyn Store>,
     pub oauth_sessions: Arc<OAuthSessions>,
     pub usage: Arc<UsageTracker>,
-    /// Model listing computation behind `/v1/models` and `/v1beta/models`.
-    pub models: Arc<dyn ModelCatalog>,
     pub build: BuildInfo,
     /// Active when the config still contains template API keys (decided at startup).
     pub example_api_key_safe_mode: bool,
@@ -73,7 +70,6 @@ impl AppState {
             auth_store,
             oauth_sessions,
             usage,
-            models: Arc::new(RegistryModelCatalog),
             build: BuildInfo::default(),
             example_api_key_safe_mode: false,
             keep_alive: None,
