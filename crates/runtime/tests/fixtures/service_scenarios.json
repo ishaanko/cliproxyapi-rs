@@ -60,5 +60,17 @@
    "codex-p.json": "{\"type\": \"codex\", \"plan_type\": \"pro\", \"prefix\": \"cx\"}",
    "agy-p.json": "{\"type\": \"antigravity\", \"prefix\": \"ag\"}"
   }
+ },
+ {
+  "name": "listing",
+  "dump_handlers": true,
+  "config_yaml": "debug: false\n",
+  "auth_files": {
+   "claude-l.json": "{\"type\": \"claude\", \"email\": \"l@x\", \"prefix\": \"team\", \"model_aliases\": [{\"name\": \"claude-sonnet-4-5\", \"alias\": \"sonnet\", \"fork\": true, \"display-name\": \"Sonnet!\"}]}",
+   "aistudio-l.json": "{\"type\": \"aistudio\", \"email\": \"as@x\", \"excluded_models\": [\"gemini-1*\"]}",
+   "vertex-l.json": "{\"type\": \"vertex\", \"email\": \"v@x\"}",
+   "agy-l.json": "{\"type\": \"antigravity\", \"email\": \"a@x\", \"model_aliases\": [{\"name\": \"gemini-3-pro-preview\", \"alias\": \"g3\"}]}",
+   "codex-l.json": "{\"type\": \"codex\", \"plan_type\": \"plus\"}"
+  }
  }
 ]

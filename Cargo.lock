@@ -618,6 +618,8 @@ dependencies = [
  "hex",
  "http",
  "parking_lot",
+ "rand 0.9.5",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -626,6 +628,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -82,7 +82,7 @@ pub(crate) struct Shared {
     /// SHA-256 of the last management key that verified, with the bcrypt hash it matched.
     pub verified: Mutex<Option<([u8; 32], String)>>,
     /// Serializes config file mutations (Go: `Handler.mu`).
-    pub config_lock: tokio::sync::Mutex<()>,
+    pub config_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// Everything the management API needs, passed explicitly. Cheap to clone.

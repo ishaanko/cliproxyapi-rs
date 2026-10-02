@@ -23,6 +23,7 @@ use cpa_core::registry::{
     get_gemini_vertex_models, get_kimi_models, get_meta_models, get_xai_models,
     lookup_static_model_info, lookup_static_model_info_by_channel,
 };
+use cpa_core::thinking::parse_suffix;
 use cpa_core::util::openai_compatible_provider_key;
 
 use super::synth::{ATTRIBUTE_CONFIG_INDEX, oauth_model_aliases_from_attributes};
@@ -518,7 +519,7 @@ pub fn oauth_model_alias_channel(provider: &str, auth_kind: &str) -> String {
 
 /// Go `oauthModelAliasesForAuth`: per-auth aliases first, then the channel's global aliases
 /// (deduplicated by alias, per-auth wins).
-fn oauth_model_aliases_for_auth(
+pub(super) fn oauth_model_aliases_for_auth(
     cfg: &Config,
     channel: &str,
     attributes: &BTreeMap<String, String>,
@@ -823,21 +824,13 @@ pub fn normalize_thinking_support(raw: Option<ThinkingSupport>) -> Option<Thinki
     Some(normalized)
 }
 
-/// Go `thinking.ParseSuffix(model).ModelName`: the name without a trailing `(...)` suffix.
-fn strip_thinking_suffix(model: &str) -> &str {
-    match model.rfind('(') {
-        Some(open) if model.ends_with(')') => &model[..open],
-        _ => model,
-    }
-}
-
 /// Go `modelconfig.ResolveModelInfo(...).Thinking`: explicit configuration wins, otherwise the
 /// static capability of the suffix-free upstream name.
 fn resolve_model_thinking(name: &str, explicit: Option<ThinkingSupport>) -> Option<ThinkingSupport> {
     if let Some(explicit) = explicit {
         return normalize_thinking_support(Some(explicit));
     }
-    lookup_static_model_info(strip_thinking_suffix(name.trim())).and_then(|info| info.thinking)
+    lookup_static_model_info(parse_suffix(name.trim()).model_name.trim()).and_then(|info| info.thinking)
 }
 
 /// Go `buildConfigModels`: key-entry models, deduplicated by lowercase alias.
