@@ -176,7 +176,9 @@ function Row({
       <td className="num text-muted">{relTime(f.last_refresh || f.updated_at)}</td>
       <td className="fit" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">
-          <IconButton icon="download" label="Download" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={() => void downloadCredential(f.name).catch((e: unknown) => toast.error(errorText(e)))} />
+          {f.source === "file" && (
+            <IconButton icon="download" label="Download" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={() => void downloadCredential(f.name).catch((e: unknown) => toast.error(errorText(e)))} />
+          )}
           <IconButton icon="trash" danger label="Delete" className="opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" onClick={onDelete} />
           <span className="ml-1.5 inline-flex">
             <Switch checked={!f.disabled} onChange={onToggle} label={f.disabled ? "Enable" : "Disable"} />

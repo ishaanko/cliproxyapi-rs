@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, api, saveBlob } from "@/lib/api";
 import { NONE, clock, dateTime, fmtBytes, fmtCompact, fmtMs, maskKey, relTime } from "@/lib/format";
 import { useRowNav } from "@/lib/hotkeys";
@@ -105,11 +105,7 @@ function AppLog() {
         } catch (e) {
           if (stopped) return;
           if (e instanceof ApiError && e.status === 400) setState("disabled");
-          else if (e instanceof ApiError && e.status === 503) setState("error");
-          else {
-            setState("error");
-            setError(e);
-          }
+          else setState("error");
           setError(e);
         }
       }
@@ -325,6 +321,9 @@ function RequestSheet({ event: e, onClose }: { event: UsageEvent; onClose: () =>
             ["Model", <span key="m" className="mono text-[12px]">{e.model}</span>],
             ["Tokens", <span key="t" className="num">{fmtCompact(e.tokens.input_tokens)} in, {fmtCompact(e.tokens.output_tokens)} out, {fmtCompact(e.tokens.cached_tokens)} cached</span>],
             ["Latency", <span key="l" className="num">{fmtMs(e.latency_ms)}  (first token {fmtMs(e.ttft_ms)})</span>],
+            ...(e.failed && (e.fail?.status_code || e.fail?.body)
+              ? ([["Error", <span key="f" className="mono text-[12px] break-words text-bad">{[e.fail.status_code || "", e.fail.body ?? ""].filter(Boolean).join("  ")}</span>]] as [string, ReactNode][])
+              : []),
             ["Stream", e.stream ? "yes" : "no"],
             ["Request id", <span key="i" className="mono text-[12px]">{e.request_id ?? NONE}</span>],
           ]}

@@ -108,6 +108,9 @@ export interface PluginInfo {
   effective_enabled?: boolean;
   metadata?: { name?: string } | null;
 }
+export interface PluginList {
+  plugins: PluginInfo[];
+}
 
 export interface LogsResponse {
   lines: string[];
@@ -186,10 +189,16 @@ export interface UsageEvent {
   request_id?: string;
   failed: boolean;
   stream?: boolean;
+  fail?: { status_code?: number; body?: string };
   tokens: Partial<TokenTotals>;
 }
 export interface RequestsResponse {
+  /** Highest assigned sequence number. */
   seq: number;
+  /** Changes when the server restarts, which resets `seq`. */
+  started_at: string;
   capacity: number;
+  /** More events with seq above the last returned one are waiting. */
+  has_more: boolean;
   events: UsageEvent[];
 }

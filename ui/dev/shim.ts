@@ -32,6 +32,7 @@ interface UsageEvent {
   request_id: string;
   failed: boolean;
   stream: boolean;
+  fail?: { status_code: number; body: string };
   tokens: Tokens;
 }
 
@@ -55,7 +56,26 @@ function bump(a: Agg, e: UsageEvent) {
 }
 
 function ingest(raw: Omit<UsageEvent, "seq">) {
-  const e: UsageEvent = { ...raw, seq: ++seq };
+  // Only the documented fields: no response headers, token hashes or session ids.
+  const e: UsageEvent = {
+    seq: ++seq,
+    timestamp: raw.timestamp,
+    latency_ms: raw.latency_ms,
+    ttft_ms: raw.ttft_ms,
+    source: raw.source,
+    auth_index: raw.auth_index,
+    auth_type: raw.auth_type,
+    provider: raw.provider,
+    model: raw.model,
+    alias: raw.alias,
+    endpoint: raw.endpoint,
+    api_key: raw.api_key,
+    request_id: raw.request_id,
+    failed: raw.failed,
+    stream: raw.stream,
+    fail: raw.fail,
+    tokens: raw.tokens,
+  };
   ring.push(e);
   if (ring.length > CAPACITY) ring.shift();
   bump(totals, e);
@@ -126,6 +146,7 @@ async function seedDemo() {
       request_id: crypto.randomUUID().slice(0, 8),
       failed,
       stream: Math.random() < 0.7,
+      fail: failed ? { status_code: pick([429, 500, 529]), body: pick(["rate_limit_exceeded", "upstream overloaded", "context_length_exceeded"]) } : undefined,
       tokens: failed
         ? zeroTokens()
         : { input_tokens: input, output_tokens: output, reasoning_tokens: Math.random() < 0.3 ? Math.floor(output / 3) : 0, cached_tokens: Math.floor(input * Math.random() * 0.6), total_tokens: input + output },
@@ -196,10 +217,21 @@ Bun.serve({
     const p = url.pathname;
     if (!noExt && p === "/v8/management/observability/requests" && req.method === "GET") {
       if (!authorized(req)) return json({ error: "invalid management key" }, 401);
-      const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 100) || 100, 1), CAPACITY);
+      const limitParam = url.searchParams.get("limit");
+      const limit = limitParam === null ? 100 : Math.min(Math.max(Math.trunc(Number(limitParam)) || 100, 1), CAPACITY);
       const afterParam = url.searchParams.get("after");
-      const events = afterParam === null ? ring.slice(-limit) : ring.filter((e) => e.seq > Number(afterParam)).slice(0, limit);
-      return json({ seq, capacity: CAPACITY, events });
+      if (afterParam !== null && !/^\d+$/.test(afterParam)) return json({ error: "after must be a non-negative integer" }, 400);
+      let events: UsageEvent[];
+      let hasMore = false;
+      if (afterParam === null) {
+        events = ring.slice(-limit);
+      } else {
+        // Oldest `limit` events after the cursor, so a client can page without gaps.
+        const newer = ring.filter((e) => e.seq > Number(afterParam));
+        events = newer.slice(0, limit);
+        hasMore = newer.length > limit;
+      }
+      return json({ seq, started_at: since, capacity: CAPACITY, has_more: hasMore, events });
     }
     if (!noExt && p === "/v8/management/observability/usage/summary" && req.method === "GET") {
       if (!authorized(req)) return json({ error: "invalid management key" }, 401);

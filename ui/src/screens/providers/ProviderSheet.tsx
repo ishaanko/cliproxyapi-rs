@@ -32,6 +32,22 @@ const lines = (text: string): string[] | undefined => {
   return out.length ? out : undefined;
 };
 
+/** Parses an entry from JSON text; rejects anything but a plain object. */
+function parseEntry(text: string): ProviderEntry {
+  const value: unknown = JSON.parse(text);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("expected a JSON object");
+  return value as ProviderEntry;
+}
+
+/** Integer in range, or undefined for empty text. Throws with a field-specific message. */
+function parseInteger(text: string, label: string, min: number, max: number): number | undefined {
+  const t = text.trim();
+  if (t === "") return undefined;
+  const n = Number(t);
+  if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${label} must be an integer from ${min} to ${max}`);
+  return n;
+}
+
 /** Drop empty values so the saved YAML stays tidy. */
 function clean(e: ProviderEntry): ProviderEntry {
   const out: ProviderEntry = { ...e };
@@ -69,6 +85,8 @@ export function ProviderSheet({
   const [mode, setMode] = useState<Mode>("form");
   const [json, setJson] = useState("");
   const [headers, setHeaders] = useState(() => headersToText(entry.headers));
+  const [priorityText, setPriorityText] = useState(() => entry.priority?.toString() ?? "");
+  const [weightText, setWeightText] = useState<string[]>(() => (entry.keys ?? []).map((k) => k.weight?.toString() ?? ""));
   const [excluded, setExcluded] = useState(() => (entry["excluded-models"] ?? []).join("\n"));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -85,8 +103,10 @@ export function ProviderSheet({
       return;
     }
     try {
-      const parsed = JSON.parse(json) as ProviderEntry;
+      const parsed = parseEntry(json);
       setDraft(parsed);
+      setPriorityText(parsed.priority?.toString() ?? "");
+      setWeightText((parsed.keys ?? []).map((k) => k.weight?.toString() ?? ""));
       setHeaders(headersToText(parsed.headers));
       setExcluded((parsed["excluded-models"] ?? []).join("\n"));
       setMode("form");
@@ -97,18 +117,28 @@ export function ProviderSheet({
 
   async function save() {
     let next: ProviderEntry;
-    if (mode === "json") {
-      try {
-        next = JSON.parse(json) as ProviderEntry;
-      } catch (e) {
-        setError(`Invalid JSON: ${errorText(e)}`);
-        return;
+    try {
+      if (mode === "json") next = parseEntry(json);
+      else {
+        const full = withText();
+        next = clean({
+          ...full,
+          priority: parseInteger(priorityText, "Priority", -1_000_000, 1_000_000),
+          keys: (full.keys ?? []).map((k, i) => ({ ...k, weight: parseInteger(weightText[i] ?? "", `Key ${i + 1} weight`, 0, 1_000_000) })),
+        });
       }
-    } else next = clean(withText());
+    } catch (e) {
+      setError(mode === "json" ? `Invalid JSON: ${errorText(e)}` : errorText(e));
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await updateProviderGroup(group, (list) => (index === null ? [...list, next] : list.map((x, i) => (i === index ? next : x))));
+      await updateProviderGroup(
+        group,
+        (list) => (index === null ? [...list, next] : list.map((x, i) => (i === index ? next : x))),
+        index === null ? undefined : { index, entry },
+      );
       await qc.invalidateQueries({ queryKey: qk.providers });
       toast.ok("Saved");
       onClose();
@@ -170,12 +200,7 @@ export function ProviderSheet({
               <Input value={draft["proxy-url"] ?? ""} onChange={(e) => patch({ "proxy-url": e.target.value })} placeholder="direct" className="mono text-[12px]" />
             </Field>
             <Field label="Priority">
-              <Input
-                inputMode="numeric"
-                value={draft.priority ?? ""}
-                onChange={(e) => patch({ priority: e.target.value === "" ? undefined : Number(e.target.value) })}
-                placeholder="0"
-              />
+              <Input inputMode="numeric" value={priorityText} onChange={(e) => setPriorityText(e.target.value)} placeholder="0" />
             </Field>
           </div>
           {group === "openai-compatibility" && (
@@ -185,19 +210,29 @@ export function ProviderSheet({
             </div>
           )}
 
-          <ListEditor title="Keys" onAdd={() => patch({ keys: [...keys, { "api-key": "" }] })}>
+          <ListEditor
+            title="Keys"
+            onAdd={() => {
+              patch({ keys: [...keys, { "api-key": "" }] });
+              setWeightText([...weightText, ""]);
+            }}
+          >
             {keys.map((k, i) => (
               <div key={i} className="flex gap-2">
                 <Input value={k["api-key"]} onChange={(e) => setKey(i, { "api-key": e.target.value })} placeholder="api key" className="mono text-[12px]" aria-label="API key" />
                 <Input
-                  value={k.weight ?? ""}
-                  onChange={(e) => setKey(i, { weight: e.target.value === "" ? undefined : Number(e.target.value) })}
+                  value={weightText[i] ?? ""}
+                  onChange={(e) => setWeightText(weightText.map((w, j) => (j === i ? e.target.value : w)))}
                   placeholder="weight"
                   inputMode="numeric"
                   className="w-20"
                   aria-label="Weight"
                 />
-                <IconButton icon="x" label="Remove key" onClick={() => patch({ keys: keys.filter((_, j) => j !== i) })} />
+                <IconButton icon="x" label="Remove key" onClick={() => {
+                    patch({ keys: keys.filter((_, j) => j !== i) });
+                    setWeightText(weightText.filter((_, j) => j !== i));
+                  }}
+                />
               </div>
             ))}
           </ListEditor>

@@ -22,8 +22,9 @@ export function activeCooldowns(f: CredentialFile, now = Date.now()): Cooldown[]
 
 export function credentialState(f: CredentialFile): { tone: Tone; label: string } {
   if (f.disabled || f.status === "disabled") return { tone: "off", label: "Disabled" };
-  if (f.status === "error") return { tone: "bad", label: "Error" };
+  // The server reports cooldowns as unavailable with status "error", so check them first.
   if (activeCooldowns(f).length > 0 || f.unavailable) return { tone: "warn", label: "Cooldown" };
+  if (f.status === "error") return { tone: "bad", label: "Error" };
   if (f.status === "active" || f.status === "") return { tone: "ok", label: "Active" };
   return { tone: "warn", label: cap(f.status) };
 }

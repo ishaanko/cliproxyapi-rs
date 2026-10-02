@@ -22,7 +22,7 @@ interface Provider {
 const BUILTIN: Provider[] = [
   { id: "claude", label: "Claude", provider: "claude", flow: "browser", webui: true },
   { id: "codex", label: "Codex", provider: "codex", flow: "browser", webui: true },
-  { id: "codex-device", label: "Codex, device code", provider: "codex", flow: "device", query: { flow: "device" } },
+  { id: "codex-device", label: "Codex, device code", provider: "codex", flow: "device", query: { flow: "device" }, webui: true },
   { id: "antigravity", label: "Antigravity", provider: "antigravity", flow: "browser", webui: true },
   { id: "kimi", label: "Kimi", provider: "kimi", flow: "device" },
   { id: "kimi-ai", label: "Kimi.ai", provider: "kimi-ai", flow: "device" },
@@ -69,15 +69,14 @@ function PickList({ providers, onOAuth, onFiles }: { providers: Provider[]; onOA
   };
   const row = "flex h-9 w-full items-center justify-between px-5 text-left text-[13px] transition-colors duration-100 hover:bg-hover focus-visible:bg-active focus-visible:outline-none";
   return (
-    <div ref={root} onKeyDown={move} className="py-1">
-      <div className="px-5 pt-2 pb-1 text-[11.5px] text-faint">Sign in</div>
+    <div ref={root} onKeyDown={move} className="py-1.5">
       {providers.map((p, i) => (
         <button key={p.id} data-opt data-af={i === 0 ? true : undefined} className={row} onClick={() => onOAuth(p)}>
           <span>{p.label}</span>
           <span className="text-[12px] text-muted">{p.flow === "device" ? "Device code" : "Browser"}</span>
         </button>
       ))}
-      <div className="px-5 pt-3 pb-1 text-[11.5px] text-faint">Files</div>
+      <div className="my-1 border-t border-line" />
       <button data-opt className={row} onClick={onFiles}>
         <span>Upload auth JSON or Vertex service account</span>
         <Icon name="upload" size={13} className="text-muted" />

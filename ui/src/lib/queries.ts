@@ -2,8 +2,10 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tansta
 import { ApiError, api, isMissingEndpoint } from "./api";
 import type {
   ApiKeyUsage,
+  CredentialFile,
   CredentialList,
   ModelInfo,
+  PluginList,
   ProviderEntry,
   ProviderGroups,
   RequestsResponse,
@@ -46,10 +48,27 @@ async function optional<T>(run: () => Promise<T>): Promise<T | null> {
   }
 }
 
+/** The server lists disk-only files without id, provider or counters; fill the gaps. */
+function normalizeCredential(f: CredentialFile): CredentialFile {
+  return {
+    ...f,
+    id: f.id || f.name,
+    auth_index: f.auth_index ?? "",
+    provider: f.provider || f.type || "unknown",
+    status: f.status ?? "",
+    disabled: f.disabled ?? false,
+    unavailable: f.unavailable ?? false,
+    runtime_only: f.runtime_only ?? false,
+    source: f.source ?? "file",
+    success: f.success ?? 0,
+    failed: f.failed ?? 0,
+  };
+}
+
 export function useCredentials() {
   return useQuery({
     queryKey: qk.credentials,
-    queryFn: async () => (await api.get<CredentialList>("/credentials")).files,
+    queryFn: async () => (await api.get<CredentialList>("/credentials")).files.map(normalizeCredential),
     refetchInterval: 10_000,
   });
 }
@@ -71,15 +90,20 @@ export function useUsageSummary() {
 }
 
 export interface RequestFeed {
+  /** Cursor: the last event seq received. */
   seq: number;
+  startedAt: string;
   events: UsageEvent[];
 }
 
 const FEED_MAX = 500;
+const FEED_PAGES = 5;
 
 /**
- * Recent requests, newest first. Polls with an `after` cursor and merges into the
- * cached feed. Data is null when the server lacks the extension endpoint.
+ * Recent requests, newest first. Pages through `after` using the last returned seq as
+ * the cursor, so a burst larger than one page loses nothing. A new `started_at` or a
+ * lower `seq` means the server restarted and the buffer is rebuilt. Data is null when
+ * the server lacks the extension endpoint.
  */
 export function useRequestFeed(intervalMs = 3000) {
   const qc = useQueryClient();
@@ -87,14 +111,24 @@ export function useRequestFeed(intervalMs = 3000) {
     queryKey: qk.requests,
     refetchInterval: intervalMs,
     queryFn: async (): Promise<RequestFeed | null> => {
-      const prev = qc.getQueryData<RequestFeed | null>(qk.requests);
-      const res = await optional(() =>
-        api.get<RequestsResponse>("/observability/requests", { limit: FEED_MAX, after: prev?.seq }),
-      );
-      if (!res) return null;
-      if (!prev || res.seq < prev.seq) return { seq: res.seq, events: [...res.events].reverse() };
-      if (res.events.length === 0) return prev;
-      return { seq: res.seq, events: [...res.events].reverse().concat(prev.events).slice(0, FEED_MAX) };
+      let feed = qc.getQueryData<RequestFeed | null>(qk.requests) ?? null;
+      for (let page = 0; page < FEED_PAGES; page++) {
+        const res = await optional(() =>
+          api.get<RequestsResponse>("/observability/requests", { limit: FEED_MAX, after: feed?.seq }),
+        );
+        if (!res) return null;
+        const reset = feed === null || res.started_at !== feed.startedAt || res.seq < feed.seq;
+        const prevEvents = reset || feed === null ? [] : feed.events;
+        const prevSeq = reset || feed === null ? res.seq : feed.seq;
+        const last = res.events[res.events.length - 1];
+        feed = {
+          seq: last ? last.seq : prevSeq,
+          startedAt: res.started_at,
+          events: [...res.events].reverse().concat(prevEvents).slice(0, FEED_MAX),
+        };
+        if (!res.has_more) break;
+      }
+      return feed;
     },
   });
 }
@@ -172,10 +206,10 @@ export function useOAuthPlugins() {
     queryKey: qk.plugins,
     staleTime: 60_000,
     queryFn: async () => {
-      const res = await optional(() =>
-        api.get<{ plugins: { id: string; supports_oauth?: boolean; oauth_provider?: string; metadata?: { name?: string } | null }[] }>("/plugins"),
-      );
-      return (res?.plugins ?? []).filter((p) => p.supports_oauth).map((p) => ({ id: p.oauth_provider || p.id, name: p.metadata?.name || p.id }));
+      const res = await optional(() => api.get<PluginList>("/plugins"));
+      return (res?.plugins ?? [])
+        .filter((p) => p.supports_oauth && p.effective_enabled)
+        .map((p) => ({ id: p.oauth_provider || p.id, name: p.metadata?.name || p.id }));
     },
   });
 }
@@ -205,8 +239,19 @@ export async function updateClientKeys(edit: (keys: string[]) => string[]): Prom
   return next;
 }
 
-export async function updateProviderGroup(group: string, edit: (entries: ProviderEntry[]) => ProviderEntry[]): Promise<void> {
+/**
+ * Entries have no stable id, so index-based edits pass `expect` (index and the entry as
+ * the UI last saw it). If the server list moved underneath, the write is refused.
+ */
+export async function updateProviderGroup(
+  group: string,
+  edit: (entries: ProviderEntry[]) => ProviderEntry[],
+  expect?: { index: number; entry: ProviderEntry },
+): Promise<void> {
   const current = (await getConfigNode<ProviderEntry[]>(`api-keys/${group}`)) ?? [];
+  if (expect && JSON.stringify(current[expect.index]) !== JSON.stringify(expect.entry)) {
+    throw new Error("This provider changed on the server. Reload and try again.");
+  }
   const next = edit(current);
   if (next.length === 0) await api.del(`/config/api-keys/${group}`).catch((e: unknown) => {
     if (!(e instanceof ApiError && e.status === 404)) throw e;
