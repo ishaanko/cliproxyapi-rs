@@ -64,7 +64,7 @@ impl StreamState {
 
 /// Whether a chunk carries generated content or token accounting; an envelope such as `{}` or
 /// `{"response":{"candidates":[]}}` must not count as a started stream.
-fn has_response_payload(raw: &Value) -> bool {
+pub(crate) fn has_response_payload(raw: &Value) -> bool {
     for path in ["response.candidates", "candidates"] {
         let candidates = raw.g(path);
         if candidates.is_array() && !candidates.array().is_empty() {
