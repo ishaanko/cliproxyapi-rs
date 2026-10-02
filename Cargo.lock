@@ -699,6 +699,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpa-home"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "cpa-config",
+ "cpa-json",
+ "hex",
+ "http",
+ "parking_lot",
+ "rustls-native-certs",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "cpa-json"
 version = "0.1.0"
 dependencies = [

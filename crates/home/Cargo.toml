@@ -1,0 +1,29 @@
+[package]
+name = "cpa-home"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cpa-json.workspace = true
+cpa-config = { path = "../config" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+hex.workspace = true
+base64.workspace = true
+chrono.workspace = true
+http = "1"
+url = "2"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls-pemfile = "2"
+rustls-native-certs = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
