@@ -47,3 +47,23 @@ impl fmt::Display for Format {
         f.write_str(self.as_str())
     }
 }
+
+/// Provider and format identifier strings (Go: internal/constant).
+pub mod constant {
+    /// Google Gemini provider.
+    pub const GEMINI: &str = "gemini";
+    /// Native Google Interactions API provider.
+    pub const GEMINI_INTERACTIONS: &str = "gemini-interactions";
+    /// OpenAI Codex provider.
+    pub const CODEX: &str = "codex";
+    /// Anthropic Claude provider.
+    pub const CLAUDE: &str = "claude";
+    /// OpenAI provider.
+    pub const OPENAI: &str = "openai";
+    /// OpenAI Responses format.
+    pub const OPENAI_RESPONSE: &str = "openai-response";
+    /// Antigravity format.
+    pub const ANTIGRAVITY: &str = "antigravity";
+    /// Google Interactions API format.
+    pub const INTERACTIONS: &str = "interactions";
+}
