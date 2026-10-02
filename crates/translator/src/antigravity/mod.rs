@@ -1,3 +1,4 @@
+mod b64;
 pub mod claude;
 pub mod gemini;
 pub mod interactions;
