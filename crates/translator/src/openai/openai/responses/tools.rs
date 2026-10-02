@@ -293,7 +293,7 @@ fn parse_lenient(text: &str) -> Value {
         return strict;
     }
     let Some(start) = lenient_start(text) else { return strict };
-    serde_json::Deserializer::from_str(&text[start..]).into_iter::<Value>().next().and_then(Result::ok).unwrap_or(strict)
+    cpa_json::parse(text[start..].as_bytes())
 }
 
 /// Offset of the first object or array when `text` is not valid JSON as a whole.

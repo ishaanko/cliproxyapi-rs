@@ -1383,7 +1383,12 @@ fn unwrap_custom_tool_input(arguments: &str) -> String {
     let parsed = cpa_json::parse_str(trimmed);
     let v = parsed.g("input");
     if v.exists() {
-        return if v.is_string() { v.str() } else { v.raw() };
+        // Non-strings come back as the original text of the value (gjson `Raw`).
+        return if v.is_string() {
+            v.str()
+        } else {
+            cpa_json::raw_at(trimmed.as_bytes(), "input").map_or_else(|| v.raw(), str::to_string)
+        };
     }
     if let Some(idx) = trimmed.find("\"input\"") {
         let rest = trimmed[idx + 7..].trim();

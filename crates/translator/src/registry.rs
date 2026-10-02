@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use cpa_core::format::Format;
 use cpa_core::registry::ModelInfo;
 use cpa_core::thinking;
-use cpa_json::J;
+use cpa_json::{Value, J};
 use once_cell::sync::Lazy;
 
 /// Values Go reads from `context.Context` inside translators.
@@ -127,7 +127,11 @@ impl Registry {
                 // Fallback: pass through, normalising the model field (Go does the same).
                 if !req.model.is_empty() {
                     let mut v = cpa_json::parse(&req.body);
-                    if v.g("model").str() != req.model && v.is_object() {
+                    // sjson turns an empty, null or scalar body into `{"model":...}` and refuses arrays.
+                    if v.g("model").str() != req.model && !v.is_array() {
+                        if !v.is_object() {
+                            v = Value::Object(Default::default());
+                        }
                         cpa_json::set(&mut v, "model", req.model.clone());
                         req.body = cpa_json::to_vec(&v);
                     }

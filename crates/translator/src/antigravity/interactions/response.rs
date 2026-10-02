@@ -126,18 +126,25 @@ fn stream_payloads(raw_json: &[u8]) -> Vec<Vec<u8>> {
     // Go quirk: gjson parses a bare `[DONE]` line as an array holding one garbage number, so the
     // line becomes a single unparseable payload and never reaches the `[DONE]` branch. Only a
     // `data: [DONE]` line does.
-    if trimmed.starts_with(b"[") && !cpa_json::valid(trimmed) {
+    if trimmed == b"[DONE]" {
         return vec![vec![]];
     }
     let root = cpa_json::parse(trimmed);
     if let Value::Array(items) = &root {
-        let payloads: Vec<Vec<u8>> = items
-            .iter()
-            .map(|item| match item.g("response").v() {
-                Some(response) => cpa_json::to_vec(response),
-                None => cpa_json::to_vec(item),
-            })
-            .collect();
+        // Items keep their source text like gjson's `Raw`; a malformed array (no clean split)
+        // falls back to the re-serialized items.
+        let raws = cpa_json::raw_children(trimmed, "");
+        let payloads: Vec<Vec<u8>> = if raws.len() == items.len() {
+            raws.iter().map(|raw| cpa_json::raw_at(raw.as_bytes(), "response").unwrap_or(raw).as_bytes().to_vec()).collect()
+        } else {
+            items
+                .iter()
+                .map(|item| match item.g("response").v() {
+                    Some(response) => cpa_json::to_vec(response),
+                    None => cpa_json::to_vec(item),
+                })
+                .collect()
+        };
         if !payloads.is_empty() {
             return payloads;
         }

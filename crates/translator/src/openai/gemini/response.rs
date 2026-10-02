@@ -431,7 +431,8 @@ fn try_parse_number(s: &str) -> Option<Value> {
     if let Ok(u) = s.parse::<u64>() {
         return Some(Value::from(u));
     }
-    s.parse::<f64>().ok().map(cpa_json::num_f64)
+    // Go's ParseFloat reports a range error for overflow (and the token stays a string).
+    s.parse::<f64>().ok().filter(|f| f.is_finite()).map(cpa_json::num_f64)
 }
 
 /// Converts a complete OpenAI response into a Gemini response.

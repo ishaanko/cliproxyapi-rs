@@ -98,12 +98,13 @@ fn unix_nanos() -> u128 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
 }
 
-fn claude_tool_use_id(model: &str, function_call: &Res<'_>, fallback: &str) -> String {
+/// `args_raw` is the upstream text of `functionCall.args` (Go: `args.Raw`), hashed as sent.
+fn claude_tool_use_id(model: &str, function_call: &Res<'_>, fallback: &str, args_raw: Option<&str>) -> String {
     if signature::signature_provider_from_model_name(model) == SignatureProvider::Gemini {
         let stable = util::gemini_claude_tool_use_id(
             &function_call.g("id").str(),
             &function_call.g("name").str(),
-            &function_call.g("args").raw(),
+            &args_raw.map_or_else(|| function_call.g("args").raw(), str::to_string),
         );
         if !stable.is_empty() {
             return stable;
@@ -442,7 +443,7 @@ fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>, raw_args: Option<&str>) {
 
         let fallback_id = format!("{fc_name}-{}-{}", unix_nanos(), TOOL_USE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
         let mut data = json!({"type": "content_block_start", "index": em.p.response_index, "content_block": {"type": "tool_use", "id": "", "name": "", "input": {}}});
-        cpa_json::set(&mut data, "content_block.id", claude_tool_use_id(em.model, &function_call, &fallback_id));
+        cpa_json::set(&mut data, "content_block.id", claude_tool_use_id(em.model, &function_call, &fallback_id, raw_args));
         cpa_json::set(&mut data, "content_block.name", fc_name);
         if is_claude_model && !tool_signature.is_empty() {
             cpa_json::set(&mut data, "content_block.signature", format_claude_signature_value(em.model, &tool_signature));
@@ -627,7 +628,9 @@ pub fn convert_antigravity_response_to_claude_non_stream(
     }
 
     if parts.is_array() {
-        for part in parts.array() {
+        let part_raws = cpa_json::raw_children(raw_json, "response.candidates.0.content.parts");
+        for (part_index, part) in parts.array().into_iter().enumerate() {
+            let args_text = crate::common::raw_in(part_raws.get(part_index), "functionCall.args");
             let mut sig = part.g("thoughtSignature");
             if !sig.exists() {
                 sig = part.g("thought_signature");
@@ -654,14 +657,18 @@ pub fn convert_antigravity_response_to_claude_non_stream(
                     append_signature_carrier!(&signature, CARRIER_NEXT, CARRIER_FUNCTION);
                 }
                 let mut tool_block = json!({"type": "tool_use", "id": "", "name": "", "input": {}});
-                cpa_json::set(&mut tool_block, "id", claude_tool_use_id(&model_name, &function_call, &format!("tool_{tool_id_counter}")));
+                cpa_json::set(&mut tool_block, "id", claude_tool_use_id(&model_name, &function_call, &format!("tool_{tool_id_counter}"), args_text));
                 cpa_json::set(&mut tool_block, "name", name);
                 if is_claude_target && !signature.is_empty() {
                     cpa_json::set(&mut tool_block, "signature", format_claude_signature_value(&model_name, &signature));
                 }
                 let args = function_call.g("args");
                 if args.exists() && args.is_object() {
-                    cpa_json::set(&mut tool_block, "input", args.value());
+                    // Go: SetRawBytes(args.Raw) when the upstream text is valid JSON.
+                    let args_raw = args_text.map_or_else(|| args.raw(), str::to_string);
+                    if !args_raw.is_empty() && cpa_json::valid(args_raw.as_bytes()) {
+                        let _ = cpa_json::set_raw(&mut tool_block, "input", &args_raw);
+                    }
                 }
                 blocks.push(tool_block);
                 has_semantic_content = true;
