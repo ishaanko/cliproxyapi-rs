@@ -27,7 +27,10 @@ const ASSERTION_LIFETIME_SECS: i64 = 3600;
 static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, (String, Instant)>>> = LazyLock::new(Default::default);
 
 /// Access token for the (already normalized) service account JSON object, minted via `client`.
-pub(crate) async fn access_token(client: &reqwest::Client, service_account: &Map<String, Value>) -> Result<String, String> {
+pub(crate) async fn access_token(
+    client: &reqwest::Client,
+    service_account: &Map<String, Value>,
+) -> Result<String, String> {
     let str_field = |key: &str| service_account.get(key).and_then(Value::as_str).unwrap_or("").to_string();
     let client_email = str_field("client_email");
     let private_key = str_field("private_key");
@@ -37,7 +40,8 @@ pub(crate) async fn access_token(client: &reqwest::Client, service_account: &Map
         token_url = DEFAULT_TOKEN_URL.to_string();
     }
 
-    let cache_key = hex::encode(Sha256::digest(format!("{client_email}\n{key_id}\n{token_url}\n{private_key}").as_bytes()));
+    let cache_key =
+        hex::encode(Sha256::digest(format!("{client_email}\n{key_id}\n{token_url}\n{private_key}").as_bytes()));
     if let Some((token, expires)) = TOKEN_CACHE.lock().get(&cache_key)
         && Instant::now() + EXPIRY_MARGIN < *expires
     {
@@ -95,11 +99,7 @@ fn sign_assertion(client_email: &str, key_id: &str, private_key_pem: &str, token
 
 /// Base64 body of the first PEM block.
 fn pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
-    let body: String = pem
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with("-----"))
-        .collect();
+    let body: String = pem.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("-----")).collect();
     STANDARD.decode(body).map_err(|e| format!("private key is not valid pem: {e}"))
 }
 
@@ -113,7 +113,13 @@ mod tests {
 
     /// Runs openssl with `stdin`, `None` when openssl is unavailable.
     fn openssl(args: &[&str], stdin: &[u8]) -> Option<Vec<u8>> {
-        let mut child = Command::new("openssl").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        let mut child = Command::new("openssl")
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
         child.stdin.take()?.write_all(stdin).ok()?;
         let out = child.wait_with_output().ok()?;
         out.status.success().then_some(out.stdout)
@@ -121,7 +127,8 @@ mod tests {
 
     #[test]
     fn pem_body_is_decoded_and_garbage_rejected() {
-        let pem = format!("-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----\n", STANDARD.encode(b"abc"));
+        let pem =
+            format!("-----BEGIN RSA PRIVATE KEY-----\n{}\n-----END RSA PRIVATE KEY-----\n", STANDARD.encode(b"abc"));
         assert_eq!(pem_to_der(&pem).unwrap(), b"abc");
         assert!(pem_to_der("-----BEGIN X-----\n!!!\n-----END X-----").is_err());
         assert!(sign_assertion("a@b", "", "-----BEGIN X-----\nYWJj\n-----END X-----", DEFAULT_TOKEN_URL).is_err());
@@ -154,7 +161,10 @@ mod tests {
         let parts: Vec<&str> = jwt.split('.').collect();
         let header: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[0]).unwrap()).unwrap();
         let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(parts[1]).unwrap()).unwrap();
-        assert_eq!((header["alg"].as_str(), header["typ"].as_str(), header["kid"].as_str()), (Some("RS256"), Some("JWT"), Some("kid-1")));
+        assert_eq!(
+            (header["alg"].as_str(), header["typ"].as_str(), header["kid"].as_str()),
+            (Some("RS256"), Some("JWT"), Some("kid-1"))
+        );
         assert_eq!(claims["iss"], "svc@proj.iam.gserviceaccount.com");
         assert_eq!(claims["scope"], SCOPE);
         assert_eq!(claims["aud"], token_uri.as_str());

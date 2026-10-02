@@ -14,9 +14,10 @@ use http::HeaderMap;
 use serde_json::Map;
 
 use super::common::{
-    PumpSetup, StreamPump, observed_lines, apply_custom_headers, apply_patch_gateway_error, compact_unsupported,
-    fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, original_payload, post_json, pre_send,
-    error_body, read_body, set_header, set_model, thinking_error, translate_request, upstream_error, usage_metadata,
+    PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error, compact_unsupported, error_body,
+    fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, observed_lines, original_payload, post_json,
+    pre_send, read_body, set_header, set_model, thinking_error, translate_request, translator_input, upstream_error,
+    usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
@@ -166,7 +167,8 @@ fn service_account_creds(auth: &Auth) -> Result<Creds, ExecError> {
     if auth.metadata.is_empty() {
         return Err(fail("vertex executor: missing auth metadata".into()));
     }
-    let meta_str = |key: &str| auth.metadata.get(key).and_then(Value::as_str).map(|s| s.trim().to_string()).unwrap_or_default();
+    let meta_str =
+        |key: &str| auth.metadata.get(key).and_then(Value::as_str).map(|s| s.trim().to_string()).unwrap_or_default();
     let mut project_id = meta_str("project_id");
     if project_id.is_empty() {
         project_id = meta_str("project");
@@ -181,8 +183,8 @@ fn service_account_creds(auth: &Auth) -> Result<Creds, ExecError> {
     let Some(Value::Object(sa)) = auth.metadata.get("service_account") else {
         return Err(fail("vertex executor: missing service_account in credentials".into()));
     };
-    let normalized = cpa_auth::vertex::normalize_service_account_map(sa)
-        .map_err(|e| fail(format!("vertex executor: {e}")))?;
+    let normalized =
+        cpa_auth::vertex::normalize_service_account_map(sa).map_err(|e| fail(format!("vertex executor: {e}")))?;
     Ok(Creds::ServiceAccount { project_id, location, service_account: normalized })
 }
 
@@ -245,7 +247,9 @@ async fn request_headers(
             // The token exchange honors the credential or global proxy, never the per-request one.
             let token_client = new_proxy_aware_http_client("", Some(cfg), Some(auth), None);
             match vertex_token::access_token(&token_client, service_account).await {
-                Ok(token) if !token.is_empty() => set_header(&mut headers, "authorization", &format!("Bearer {token}"))?,
+                Ok(token) if !token.is_empty() => {
+                    set_header(&mut headers, "authorization", &format!("Bearer {token}"))?
+                }
                 Ok(_) => {}
                 Err(err) => {
                     tracing::error!("vertex executor: access token error: {err}");
@@ -277,9 +281,11 @@ impl GeminiVertexExecutor {
     ) -> Result<VertexBody, ExecError> {
         let from = opts.source_format;
         let to = Format::Gemini;
-        let original_translated = translate_request(&opts.headers, from, to, base_model, original_payload(req, opts), stream, false);
+        let original_translated =
+            translate_request(&opts.headers, from, to, base_model, original_payload(req, opts), stream, false);
         let body = translate_request(&opts.headers, from, to, base_model, &req.payload, stream, false);
-        let body = apply_request_thinking(&body, req, opts, from.as_str(), to.as_str(), "vertex", false).map_err(thinking_error)?;
+        let body = apply_request_thinking(&body, req, opts, from.as_str(), to.as_str(), "vertex", false)
+            .map_err(thinking_error)?;
         let body = fix_gemini_image_aspect_ratio(base_model, body);
         let requested_model = payload_requested_model(opts, &req.model);
         let request_path = payload_request_path(opts);
@@ -329,7 +335,8 @@ impl Executor for GeminiVertexExecutor {
         let creds = resolve_creds(auth)?;
         let base_model = parse_suffix(&req.model).model_name;
         let reporter = self.reporter(&base_model, auth, &opts);
-        let result = self.execute_inner(&cfg, auth, &req, &opts, &creds, &base_model, session_id.as_deref(), &reporter).await;
+        let result =
+            self.execute_inner(&cfg, auth, &req, &opts, &creds, &base_model, session_id.as_deref(), &reporter).await;
         reporter.track_failure(&result);
         result
     }
@@ -343,7 +350,8 @@ impl Executor for GeminiVertexExecutor {
         let creds = resolve_creds(auth)?;
         let base_model = parse_suffix(&req.model).model_name;
         let reporter = self.reporter(&base_model, auth, &opts);
-        let result = self.stream_inner(&cfg, auth, req, opts, &creds, &base_model, session_id.as_deref(), &reporter).await;
+        let result =
+            self.stream_inner(&cfg, auth, req, opts, &creds, &base_model, session_id.as_deref(), &reporter).await;
         reporter.track_failure(&result);
         result
     }
@@ -514,8 +522,7 @@ impl GeminiVertexExecutor {
         });
         let reporter = reporter.clone();
         tokio::spawn(async move {
-            let mut lines =
-                observed_lines(reporter.clone(), resp);
+            let mut lines = observed_lines(reporter.clone(), resp);
             let mut scan_err = None;
             loop {
                 let line = tokio::select! {
@@ -534,7 +541,7 @@ impl GeminiVertexExecutor {
                 if let Some(detail) = parse_gemini_stream_usage(&line) {
                     pump.usage.observe(detail, true);
                 }
-                if !pump.feed(&line).await {
+                if !pump.feed(translator_input(response_format, &line)).await {
                     return;
                 }
             }
@@ -599,7 +606,10 @@ mod tests {
         assert_eq!(v.g("parameters.aspectRatio").str(), "16:9");
         assert_eq!(v.g("parameters.sampleCount").int(), 2);
         let messages = br#"{"messages":[{"content":""},{"content":"from messages"}]}"#;
-        assert_eq!(cpa_json::parse(&convert_to_imagen_request(messages).unwrap()).g("instances.0.prompt").str(), "from messages");
+        assert_eq!(
+            cpa_json::parse(&convert_to_imagen_request(messages).unwrap()).g("instances.0.prompt").str(),
+            "from messages"
+        );
         let direct = br#"{"prompt":"direct"}"#;
         assert_eq!(cpa_json::parse(&convert_to_imagen_request(direct).unwrap()).g("parameters.sampleCount").int(), 1);
         assert!(convert_to_imagen_request(b"{}").unwrap_err().message.contains("no prompt"));

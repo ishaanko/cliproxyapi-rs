@@ -99,14 +99,14 @@ pub(crate) fn translate_request(
     }
     if is_compat {
         let compat = match (from, to) {
-            (Format::Claude, Format::Gemini) => {
-                Some(cpa_translator::gemini::claude::convert_claude_request_to_gemini_with_compat(model, &payload, stream))
-            }
-            (Format::Claude, Format::Interactions) => Some(
-                cpa_translator::interactions::claude::convert_claude_request_to_interactions_with_compat(
-                    model, &payload, stream,
-                ),
+            (Format::Claude, Format::Gemini) => Some(
+                cpa_translator::gemini::claude::convert_claude_request_to_gemini_with_compat(model, &payload, stream),
             ),
+            (Format::Claude, Format::Interactions) => {
+                Some(cpa_translator::interactions::claude::convert_claude_request_to_interactions_with_compat(
+                    model, &payload, stream,
+                ))
+            }
             _ => None,
         };
         if let Some(translated) = compat {
@@ -217,7 +217,8 @@ pub(crate) fn json_headers() -> HeaderMap {
 
 /// Sets a header, failing like net/http does for values that are not valid on the wire.
 pub(crate) fn set_header(headers: &mut HeaderMap, name: &'static str, value: &str) -> Result<(), ExecError> {
-    let value = HeaderValue::from_str(value).map_err(|_| pre_send(ExecError::new(0, format!("invalid header field value for {name:?}"))))?;
+    let value = HeaderValue::from_str(value)
+        .map_err(|_| pre_send(ExecError::new(0, format!("invalid header field value for {name:?}"))))?;
     headers.insert(HeaderName::from_static(name), value);
     Ok(())
 }
@@ -302,6 +303,20 @@ pub(crate) async fn error_body(resp: reqwest::Response) -> Bytes {
 /// Joins a header-carrying `Response` metadata map with the usage object the conductor reads.
 pub(crate) fn usage_metadata(detail: &crate::helps::usage::Detail) -> HashMap<String, Value> {
     HashMap::from([("usage".to_string(), UsageReporter::usage_metadata(detail))])
+}
+
+/// The translator input for a raw SSE line or chunk. gjson (Go) reads from the first `{` or `[`
+/// and ignores what precedes it, so translators there parse `data: {...}` directly; ours need the
+/// bare document. Clients that speak Gemini keep the raw text because that translator passes it
+/// through unchanged.
+pub(crate) fn translator_input(response: Format, raw: &[u8]) -> &[u8] {
+    if response == Format::Gemini {
+        return raw;
+    }
+    match raw.iter().position(|b| *b == b'{' || *b == b'[') {
+        Some(start) if start > 0 && raw[start..].trim_ascii() != b"[DONE]" => &raw[start..],
+        _ => raw,
+    }
 }
 
 // ---------------------------------------------------------------- streaming pump

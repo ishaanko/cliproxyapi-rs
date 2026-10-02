@@ -13,7 +13,12 @@ use super::{AiStudioExecutor, GeminiExecutor, GeminiVertexExecutor};
 const OK_BODY: &str = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}"#;
 
 fn request(model: &str, payload: &str) -> Request {
-    Request { model: model.into(), payload: Bytes::from(payload.to_string()), format: Format::Gemini, metadata: Default::default() }
+    Request {
+        model: model.into(),
+        payload: Bytes::from(payload.to_string()),
+        format: Format::Gemini,
+        metadata: Default::default(),
+    }
 }
 
 fn gemini_opts() -> Options {
@@ -49,7 +54,10 @@ async fn gemini_generate_request_shape_and_usage() {
 
     assert_eq!(cpa_json::parse(&resp.payload).g("candidates.0.content.parts.0.text").str(), "ok");
     let usage = &resp.metadata["usage"];
-    assert_eq!((usage["input_tokens"].as_i64(), usage["output_tokens"].as_i64(), usage["total_tokens"].as_i64()), (Some(1), Some(1), Some(2)));
+    assert_eq!(
+        (usage["input_tokens"].as_i64(), usage["output_tokens"].as_i64(), usage["total_tokens"].as_i64()),
+        (Some(1), Some(1), Some(2))
+    );
 }
 
 #[tokio::test]
@@ -134,7 +142,11 @@ async fn upstream_errors_are_plain_status_errors_and_compact_is_rejected() {
     let (base, _seen) = mock_upstream(vec![reply]).await;
     let exec = GeminiExecutor::new(config_rx());
     let err = exec
-        .execute(&key_auth("gemini", &base), request("gemini-2.5-flash", r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}]}"#), gemini_opts())
+        .execute(
+            &key_auth("gemini", &base),
+            request("gemini-2.5-flash", r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}]}"#),
+            gemini_opts(),
+        )
         .await
         .unwrap_err();
     assert_eq!(err.status, 429);
@@ -144,7 +156,10 @@ async fn upstream_errors_are_plain_status_errors_and_compact_is_rejected() {
     let mut opts = gemini_opts();
     opts.alt = "responses/compact".into();
     let err = exec.execute(&key_auth("gemini", &base), request("gemini-2.5-flash", "{}"), opts).await.unwrap_err();
-    assert_eq!((err.status, err.message.as_str(), err.upstream_attempted), (501, "/responses/compact not supported", false));
+    assert_eq!(
+        (err.status, err.message.as_str(), err.upstream_attempted),
+        (501, "/responses/compact not supported", false)
+    );
 }
 
 #[tokio::test]
@@ -231,15 +246,21 @@ async fn native_interactions_stream_forwards_frames_and_parses_usage() {
     assert_eq!(frames.len(), 2);
     assert!(frames[0].starts_with("event: interaction.created\ndata: ") && frames[0].ends_with("\n\n"));
     let usage = stream.usage.take().unwrap().await.expect("usage");
-    assert_eq!((usage["input_tokens"].as_i64(), usage["output_tokens"].as_i64(), usage["total_tokens"].as_i64()), (Some(2), Some(3), Some(5)));
+    assert_eq!(
+        (usage["input_tokens"].as_i64(), usage["output_tokens"].as_i64(), usage["total_tokens"].as_i64()),
+        (Some(2), Some(3), Some(5))
+    );
 }
 
 #[tokio::test]
 async fn vertex_api_key_requests_use_project_less_paths() {
     let (base, mut seen) = mock_upstream(vec![json_reply(OK_BODY)]).await;
     let exec = GeminiVertexExecutor::new(config_rx());
-    let payload = r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}],"generationConfig":{"maxOutputTokens":500000}}"#;
-    exec.execute(&key_auth("vertex", &base), request("gemini-3.1-pro-preview", payload), gemini_opts()).await.expect("execute");
+    let payload =
+        r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}],"generationConfig":{"maxOutputTokens":500000}}"#;
+    exec.execute(&key_auth("vertex", &base), request("gemini-3.1-pro-preview", payload), gemini_opts())
+        .await
+        .expect("execute");
     let upstream = seen.recv().await.unwrap();
     assert_eq!(upstream.path(), "/v1/publishers/google/models/gemini-3.1-pro-preview:generateContent");
     assert_eq!(upstream.headers["x-goog-api-key"], "test-key");
@@ -248,7 +269,10 @@ async fn vertex_api_key_requests_use_project_less_paths() {
     assert_eq!(upstream.json().g("generationConfig.maxOutputTokens").int(), 500000);
 
     let (base, mut seen) = mock_upstream(vec![json_reply(r#"{"totalTokens":3}"#)]).await;
-    let resp = exec.count_tokens(&key_auth("vertex", &base), request("gemini-2.5-flash", payload), gemini_opts()).await.expect("count");
+    let resp = exec
+        .count_tokens(&key_auth("vertex", &base), request("gemini-2.5-flash", payload), gemini_opts())
+        .await
+        .expect("count");
     let upstream = seen.recv().await.unwrap();
     assert_eq!(upstream.path(), "/v1/publishers/google/models/gemini-2.5-flash:countTokens");
     assert_eq!(cpa_json::parse(&resp.payload).g("totalTokens").int(), 3);
@@ -256,11 +280,18 @@ async fn vertex_api_key_requests_use_project_less_paths() {
     // Stream: `?alt=sse`, raw lines go to the translator.
     let (base, mut seen) = mock_upstream(vec![sse_reply(&format!("data: {OK_BODY}\n\n"))]).await;
     let mut stream = exec
-        .execute_stream(&key_auth("vertex", &base), request("gemini-2.5-flash", payload), Options { stream: true, ..gemini_opts() })
+        .execute_stream(
+            &key_auth("vertex", &base),
+            request("gemini-2.5-flash", payload),
+            Options { stream: true, ..gemini_opts() },
+        )
         .await
         .expect("stream");
     let upstream = seen.recv().await.unwrap();
-    assert_eq!((upstream.path(), upstream.query()), ("/v1/publishers/google/models/gemini-2.5-flash:streamGenerateContent", "alt=sse"));
+    assert_eq!(
+        (upstream.path(), upstream.query()),
+        ("/v1/publishers/google/models/gemini-2.5-flash:streamGenerateContent", "alt=sse")
+    );
     let mut seen_text = false;
     while let Some(chunk) = stream.chunks.recv().await {
         seen_text |= String::from_utf8_lossy(&chunk.expect("chunk")).contains("\"ok\"");
@@ -311,7 +342,10 @@ async fn aistudio_relays_requests_through_the_page() {
     struct Rx(mpsc::Receiver<Result<Inbound, String>>);
     impl futures_util::Stream for Rx {
         type Item = Result<Inbound, String>;
-        fn poll_next(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
             self.0.poll_recv(cx)
         }
     }
@@ -334,7 +368,11 @@ async fn aistudio_relays_requests_through_the_page() {
                 serde_json::json!({"id": msg.id, "type": "http_response", "payload": {"status": 200, "body": "{\"totalTokens\":9}"}})
             } else if url.contains(":streamGenerateContent") {
                 let chunk = format!("data: {OK_BODY}\n\n");
-                for (kind, p) in [("stream_start", serde_json::json!({"status": 200})), ("stream_chunk", serde_json::json!({"data": chunk})), ("stream_end", serde_json::json!({}))] {
+                for (kind, p) in [
+                    ("stream_start", serde_json::json!({"status": 200})),
+                    ("stream_chunk", serde_json::json!({"data": chunk})),
+                    ("stream_end", serde_json::json!({})),
+                ] {
                     let frame = serde_json::json!({"id": msg.id, "type": kind, "payload": p}).to_string();
                     in_tx.send(Ok(Inbound::Text(frame))).await.unwrap();
                 }
@@ -369,13 +407,21 @@ async fn aistudio_relays_requests_through_the_page() {
     assert_eq!(cpa_json::parse(&counted.payload).g("totalTokens").int(), 9);
 
     let requests = page.await.unwrap();
-    assert_eq!(requests[0]["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent");
+    assert_eq!(
+        requests[0]["url"],
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    );
     assert_eq!(requests[0]["headers"]["Content-Type"][0], "application/json");
     let body = cpa_json::parse(requests[0]["body"].as_str().unwrap().as_bytes());
-    assert!(!body.g("generationConfig.maxOutputTokens").exists() && !body.g("generationConfig.responseMimeType").exists());
+    assert!(
+        !body.g("generationConfig.maxOutputTokens").exists() && !body.g("generationConfig.responseMimeType").exists()
+    );
     assert_eq!(body.g("contents.0.role").str(), "user");
     assert_eq!(body.g("contents.2.role").str(), "user");
-    assert_eq!(requests[1]["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse");
+    assert_eq!(
+        requests[1]["url"],
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse"
+    );
     let count_body = cpa_json::parse(requests[2]["body"].as_str().unwrap().as_bytes());
     assert!(!count_body.g("tools").exists() && !count_body.g("generationConfig").exists());
     assert_eq!(count_body.g("contents.#").int(), 2);
@@ -385,7 +431,14 @@ async fn aistudio_relays_requests_through_the_page() {
 async fn aistudio_disconnected_channel_fails_before_sending() {
     let exec = AiStudioExecutor::new(config_rx(), std::sync::Arc::new(super::wsrelay::Manager::new("")));
     let auth = cpa_auth::Auth::new("aistudio-gone", "aistudio");
-    let err = exec.execute(&auth, request("gemini-2.5-flash", r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}]}"#), gemini_opts()).await.unwrap_err();
+    let err = exec
+        .execute(
+            &auth,
+            request("gemini-2.5-flash", r#"{"contents":[{"role":"user","parts":[{"text":"q"}]}]}"#),
+            gemini_opts(),
+        )
+        .await
+        .unwrap_err();
     assert_eq!(err.message, "wsrelay: provider aistudio-gone not connected");
     assert!(!err.upstream_attempted);
 }

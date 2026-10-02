@@ -15,10 +15,10 @@ use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 
 use super::common::{
-    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, observed_lines, apply_custom_headers, apply_patch_gateway_error,
-    cap_gemini_max_output_tokens, compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action,
-    json_headers, original_payload, post_json, error_body, read_body, set_header, set_model, thinking_error,
-    translate_request_pair, upstream_error, usage_metadata,
+    GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error,
+    cap_gemini_max_output_tokens, compact_unsupported, error_body, fix_gemini_image_aspect_ratio,
+    is_count_tokens_action, json_headers, observed_lines, original_payload, post_json, read_body, set_header,
+    set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::interactions;
@@ -77,11 +77,7 @@ pub(super) fn resolve_base_url(auth: &Auth) -> String {
 }
 
 /// Request headers: JSON content type, the API key when present, then custom headers.
-pub(super) fn request_headers(
-    auth: &Auth,
-    opts: &Options,
-    session_id: Option<&str>,
-) -> Result<HeaderMap, ExecError> {
+pub(super) fn request_headers(auth: &Auth, opts: &Options, session_id: Option<&str>) -> Result<HeaderMap, ExecError> {
     let mut headers = json_headers();
     let api_key = gemini_api_key(auth);
     if !api_key.is_empty() {
@@ -94,14 +90,12 @@ pub(super) fn request_headers(
 /// Whether the request runs on the native Interactions API: an Interactions-capable client
 /// protocol on a `gemini-interactions` credential.
 pub(super) fn should_execute_native_interactions(auth: &Auth, opts: &Options) -> bool {
-    native_interactions_source_format(opts.source_format) && auth.provider.trim().eq_ignore_ascii_case(INTERACTIONS_PROVIDER)
+    native_interactions_source_format(opts.source_format)
+        && auth.provider.trim().eq_ignore_ascii_case(INTERACTIONS_PROVIDER)
 }
 
 pub(super) fn native_interactions_source_format(format: Format) -> bool {
-    matches!(
-        format,
-        Format::Interactions | Format::OpenAI | Format::OpenAIResponse | Format::Claude | Format::Gemini
-    )
+    matches!(format, Format::Interactions | Format::OpenAI | Format::OpenAIResponse | Format::Claude | Format::Gemini)
 }
 
 /// Everything that goes into the upstream generate/stream body.
@@ -126,8 +120,16 @@ impl GeminiExecutor {
         let to = Format::Gemini;
         let is_compat = api_key_model_is_compat(req);
         let original_source = original_payload(req, opts);
-        let (original_translated, body) =
-            translate_request_pair(&opts.headers, from, to, base_model, original_source, &req.payload, stream, is_compat);
+        let (original_translated, body) = translate_request_pair(
+            &opts.headers,
+            from,
+            to,
+            base_model,
+            original_source,
+            &req.payload,
+            stream,
+            is_compat,
+        );
 
         let body = apply_request_thinking(&body, req, opts, from.as_str(), to.as_str(), self.identifier, false)
             .map_err(thinking_error)?;
@@ -222,8 +224,9 @@ impl Executor for GeminiExecutor {
             false,
             api_key_model_is_compat(&req),
         );
-        let translated = apply_request_thinking(&translated, &req, &opts, from.as_str(), to.as_str(), self.identifier, false)
-            .map_err(thinking_error)?;
+        let translated =
+            apply_request_thinking(&translated, &req, &opts, from.as_str(), to.as_str(), self.identifier, false)
+                .map_err(thinking_error)?;
         let translated = fix_gemini_image_aspect_ratio(&base_model, translated);
         let mut v = cpa_json::parse(&translated);
         for key in ["tools", "generationConfig", "safetySettings"] {

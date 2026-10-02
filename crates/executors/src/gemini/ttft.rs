@@ -66,7 +66,9 @@ mod tests {
     #[test]
     fn token_events() {
         assert!(is_gemini_token_event(br#"data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}"#));
-        assert!(is_gemini_token_event(br#"{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"f"}}]}}]}}"#));
+        assert!(is_gemini_token_event(
+            br#"{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"name":"f"}}]}}]}}"#
+        ));
         assert!(is_gemini_token_event(br#"{"candidates":[{"finishReason":"STOP"}]}"#));
         assert!(is_gemini_token_event(br#"{"error":{"message":"x"}}"#));
         assert!(!is_gemini_token_event(br#"{"usageMetadata":{"totalTokenCount":3}}"#));

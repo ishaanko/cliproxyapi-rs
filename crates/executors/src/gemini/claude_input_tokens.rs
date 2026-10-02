@@ -10,9 +10,9 @@ use bytes::Bytes;
 use cpa_json::{J, Res, Value};
 use cpa_translator::{Ctx, Format, Param};
 
+use crate::helps::apply_patch::apply_patch_translation_error;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::token_count::tokenizer_for_model;
-use crate::helps::apply_patch::apply_patch_translation_error;
 
 /// Request-scoped state: estimates once, on the first `message_start` seen.
 pub struct ClaudeInputTokenState {
@@ -53,14 +53,15 @@ impl ClaudeInputTokenState {
                 content_end -= 1;
             }
             let line = &chunk[line_start..content_end];
-            let trimmed_left = line.iter().position(|b| *b != b' ' && *b != b'\t').map_or(line.len(), |i| i);
+            let trimmed_left = line.iter().position(|b| *b != b' ' && *b != b'\t').unwrap_or(line.len());
             if line[trimmed_left..].starts_with(b"data:") {
                 let mut payload_offset = trimmed_left + 5;
                 while payload_offset < line.len() && (line[payload_offset] == b' ' || line[payload_offset] == b'\t') {
                     payload_offset += 1;
                 }
                 let mut payload_end = line.len();
-                while payload_end > payload_offset && (line[payload_end - 1] == b' ' || line[payload_end - 1] == b'\t') {
+                while payload_end > payload_offset && (line[payload_end - 1] == b' ' || line[payload_end - 1] == b'\t')
+                {
                     payload_end -= 1;
                 }
                 let payload = &line[payload_offset..payload_end];
@@ -122,7 +123,8 @@ pub fn translate_stream_with_claude_input_tokens(
     param: &mut Param,
     state: &mut ClaudeInputTokenState,
 ) -> Vec<Vec<u8>> {
-    let mut chunks = cpa_translator::translate_stream(ctx, upstream, response, model, original_request, request, raw, param);
+    let mut chunks =
+        cpa_translator::translate_stream(ctx, upstream, response, model, original_request, request, raw, param);
     if apply_patch_translation_error(param).is_some() {
         return chunks;
     }
@@ -236,8 +238,13 @@ fn collect_content_object(content: &Value, segments: &mut Vec<String>) {
             add(segments, &s("name"));
             add_json(segments, &content.g("input"));
         }
-        "tool_result" | "mcp_tool_result" | "web_search_tool_result" | "web_fetch_tool_result"
-        | "code_execution_tool_result" | "bash_code_execution_tool_result" | "text_editor_code_execution_tool_result" => {
+        "tool_result"
+        | "mcp_tool_result"
+        | "web_search_tool_result"
+        | "web_fetch_tool_result"
+        | "code_execution_tool_result"
+        | "bash_code_execution_tool_result"
+        | "text_editor_code_execution_tool_result" => {
             add(segments, &s("tool_use_id"));
             add(segments, &s("tool_call_id"));
             collect_content(&content.g("content"), segments);
@@ -298,7 +305,8 @@ mod tests {
 
     #[test]
     fn patches_only_the_first_empty_message_start() {
-        let request = Bytes::from_static(br#"{"system":"be brief","messages":[{"role":"user","content":"hello world"}]}"#);
+        let request =
+            Bytes::from_static(br#"{"system":"be brief","messages":[{"role":"user","content":"hello world"}]}"#);
         let mut state = ClaudeInputTokenState::new(Format::Claude, Format::Gemini, Format::Claude, request);
         let start = br#"event: message_start
 data: {"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}

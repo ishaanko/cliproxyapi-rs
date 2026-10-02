@@ -12,8 +12,8 @@ use cpa_translator::{Ctx, Format, Param};
 use http::{HeaderMap, HeaderValue};
 
 use super::common::{
-    GL_API_VERSION, PumpSetup, StreamPump, observed_lines, apply_patch_gateway_error, error_body, post_json, read_body, set_model,
-    thinking_error, translate_request, upstream_error, usage_metadata,
+    GL_API_VERSION, PumpSetup, StreamPump, apply_patch_gateway_error, error_body, observed_lines, post_json, read_body,
+    set_model, thinking_error, translate_request, upstream_error, usage_metadata,
 };
 use super::executor::{GeminiExecutor, request_headers, resolve_base_url};
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error};
@@ -30,13 +30,7 @@ use crate::helps::usage::{parse_interactions_stream_usage, parse_interactions_us
 const API_REVISION: &str = "2026-05-20";
 
 /// Translates the client payload to Interactions; native Interactions payloads pass through.
-fn translate_body(
-    opts: &Options,
-    model: &str,
-    payload: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> Vec<u8> {
+fn translate_body(opts: &Options, model: &str, payload: &[u8], stream: bool, is_compat: bool) -> Vec<u8> {
     if opts.source_format == Format::Interactions {
         return payload.to_vec();
     }
@@ -234,8 +228,7 @@ pub(super) async fn execute_stream(
         });
         let reporter = reporter.clone();
         tokio::spawn(async move {
-            let mut lines =
-                observed_lines(reporter.clone(), resp);
+            let mut lines = observed_lines(reporter.clone(), resp);
             let mut frame: Vec<u8> = Vec::new();
             let mut scan_err = None;
             loop {

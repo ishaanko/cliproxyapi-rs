@@ -320,20 +320,38 @@ impl Manager {
                     msg = rx.recv() => msg,
                 };
                 let Some(msg) = msg else {
-                    let _ = tx.send(StreamEvent { err: Some("wsrelay: stream closed".into()), ..Default::default() }).await;
+                    let _ =
+                        tx.send(StreamEvent { err: Some("wsrelay: stream closed".into()), ..Default::default() }).await;
                     return;
                 };
                 let (event, done) = match msg.kind.as_str() {
                     MESSAGE_TYPE_STREAM_START => {
                         let resp = decode_response(msg.payload.as_ref());
-                        (StreamEvent { kind: msg.kind, status: resp.status, headers: resp.headers, ..Default::default() }, false)
+                        (
+                            StreamEvent {
+                                kind: msg.kind,
+                                status: resp.status,
+                                headers: resp.headers,
+                                ..Default::default()
+                            },
+                            false,
+                        )
                     }
-                    MESSAGE_TYPE_STREAM_CHUNK => {
-                        (StreamEvent { kind: msg.kind, payload: decode_chunk(msg.payload.as_ref()), ..Default::default() }, false)
-                    }
+                    MESSAGE_TYPE_STREAM_CHUNK => (
+                        StreamEvent {
+                            kind: msg.kind,
+                            payload: decode_chunk(msg.payload.as_ref()),
+                            ..Default::default()
+                        },
+                        false,
+                    ),
                     MESSAGE_TYPE_STREAM_END => (StreamEvent { kind: msg.kind, ..Default::default() }, true),
                     MESSAGE_TYPE_ERROR => (
-                        StreamEvent { kind: msg.kind, err: Some(decode_error(msg.payload.as_ref())), ..Default::default() },
+                        StreamEvent {
+                            kind: msg.kind,
+                            err: Some(decode_error(msg.payload.as_ref())),
+                            ..Default::default()
+                        },
                         true,
                     ),
                     MESSAGE_TYPE_HTTP_RESP => {
@@ -674,7 +692,11 @@ impl Session {
         let pipe = self.pending.lock().get(&msg.id).cloned();
         let Some(pipe) = pipe else {
             if msg.is_terminal() {
-                tracing::debug!("wsrelay: received terminal message for unknown id {} (provider={})", msg.id, self.provider);
+                tracing::debug!(
+                    "wsrelay: received terminal message for unknown id {} (provider={})",
+                    msg.id,
+                    self.provider
+                );
             }
             return;
         };
@@ -838,7 +860,12 @@ mod tests {
         assert_eq!(payload["headers"]["Content-Type"][0], "application/json");
         assert_eq!(payload["body"], r#"{"a":1}"#);
         assert!(payload["sent_at"].as_str().unwrap().ends_with('Z'));
-        page.reply(&msg.id, MESSAGE_TYPE_HTTP_RESP, json!({"status": 201, "headers": {"X-A": ["1", "2"], "X-B": "b"}, "body": "ok"})).await;
+        page.reply(
+            &msg.id,
+            MESSAGE_TYPE_HTTP_RESP,
+            json!({"status": 201, "headers": {"X-A": ["1", "2"], "X-B": "b"}, "body": "ok"}),
+        )
+        .await;
         let resp = task.await.unwrap().unwrap();
         assert_eq!(resp.status, 201);
         assert_eq!(resp.body, b"ok");
@@ -921,7 +948,10 @@ mod tests {
         let manager = Arc::new(Manager::new(""));
         let mut page = connect(&manager);
         let provider = page.provider.clone();
-        let mut rx = manager.send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None }).await.unwrap();
+        let mut rx = manager
+            .send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None })
+            .await
+            .unwrap();
         let _ = page.next_request().await;
         for i in 0..PENDING_BUFFER {
             page.reply("r1", MESSAGE_TYPE_STREAM_CHUNK, json!({"data": i.to_string()})).await;
@@ -948,9 +978,14 @@ mod tests {
         let manager = Arc::new(Manager::new(""));
         let mut page = connect(&manager);
         let provider = page.provider.clone();
-        let rx = manager.send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None }).await.unwrap();
+        let rx = manager
+            .send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None })
+            .await
+            .unwrap();
         let _ = page.next_request().await;
-        let dup = manager.send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None }).await;
+        let dup = manager
+            .send(&provider, Message { id: "r1".into(), kind: MESSAGE_TYPE_HTTP_REQ.into(), payload: None })
+            .await;
         assert_eq!(dup.err().unwrap().message, "wsrelay: duplicate message id r1");
         drop(rx);
         assert!(manager.session(&provider).unwrap().pending.lock().is_empty());

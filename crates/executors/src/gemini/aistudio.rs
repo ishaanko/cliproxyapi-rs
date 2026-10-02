@@ -18,8 +18,8 @@ use http::{HeaderMap, HeaderValue};
 
 use super::common::{
     GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers, apply_patch_gateway_error,
-    compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload,
-    thinking_error, translate_request, upstream_error, usage_metadata,
+    compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
+    translate_request, translator_input, upstream_error, usage_metadata,
 };
 use super::content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::wsrelay::{
@@ -33,9 +33,7 @@ use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::ensure_session_id;
 use crate::helps::text::trim_space;
 use crate::helps::thinking::apply_thinking_with_source_payload;
-use crate::helps::usage::{
-    UsageReporter, filter_sse_usage_metadata, parse_gemini_stream_usage, parse_gemini_usage,
-};
+use crate::helps::usage::{UsageReporter, filter_sse_usage_metadata, parse_gemini_stream_usage, parse_gemini_usage};
 
 /// Executor for the `aistudio` provider.
 pub struct AiStudioExecutor {
@@ -142,7 +140,12 @@ pub(super) fn ensure_colon_spaced_json(payload: &[u8]) -> Vec<u8> {
 }
 
 /// Request headers as the relay envelope carries them: `Content-Type` plus custom headers.
-fn envelope_headers(auth: &Auth, opts: &Options, session_id: Option<&str>, with_custom: bool) -> BTreeMap<String, Vec<String>> {
+fn envelope_headers(
+    auth: &Auth,
+    opts: &Options,
+    session_id: Option<&str>,
+    with_custom: bool,
+) -> BTreeMap<String, Vec<String>> {
     let mut headers = HeaderMap::new();
     headers.insert(http::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     if with_custom {
@@ -159,18 +162,13 @@ fn envelope_headers(auth: &Auth, opts: &Options, session_id: Option<&str>, with_
 
 impl AiStudioExecutor {
     /// Translation, thinking, payload rules and the AI Studio specific body edits.
-    fn translate(
-        &self,
-        cfg: &Config,
-        req: &Request,
-        opts: &Options,
-        stream: bool,
-    ) -> Result<Translated, ExecError> {
+    fn translate(&self, cfg: &Config, req: &Request, opts: &Options, stream: bool) -> Result<Translated, ExecError> {
         let base_model = parse_suffix(&req.model).model_name;
         let from = opts.source_format;
         let to = Format::Gemini;
         let original_source = original_payload(req, opts);
-        let original_translated = translate_request(&opts.headers, from, to, &base_model, original_source, stream, false);
+        let original_translated =
+            translate_request(&opts.headers, from, to, &base_model, original_source, stream, false);
         let payload = translate_request(&opts.headers, from, to, &base_model, &req.payload, stream, false);
         let payload = apply_thinking_with_source_payload(
             &payload,
@@ -285,7 +283,13 @@ impl Executor for AiStudioExecutor {
             return Err(ExecError::new(0, "wsrelay: totalTokens missing in response"));
         }
         let response_format = opts.response_format_or_source();
-        let out = cpa_translator::translate_token_count(&Ctx::default(), Format::Gemini, response_format, total_tokens, &resp.body);
+        let out = cpa_translator::translate_token_count(
+            &Ctx::default(),
+            Format::Gemini,
+            response_format,
+            total_tokens,
+            &resp.body,
+        );
         Ok(Response { payload: Bytes::from(out), ..Default::default() })
     }
 
@@ -474,7 +478,8 @@ async fn process_event(pump: &mut StreamPump, reporter: &UsageReporter, event: S
             if let Some(detail) = parse_gemini_stream_usage(&filtered) {
                 pump.usage.observe(detail, true);
             }
-            if feed_spaced(pump, &filtered).await { Flow::Continue } else { Flow::Stop }
+            let input = translator_input(pump.response, &filtered).to_vec();
+            if feed_spaced(pump, &input).await { Flow::Continue } else { Flow::Stop }
         }
         MESSAGE_TYPE_STREAM_END => {
             if pump.end_apply_patch().await {
@@ -515,7 +520,10 @@ mod tests {
         assert_eq!(build_endpoint("m", "generateContent", ""), format!("{base}:generateContent"));
         assert_eq!(build_endpoint("m", "generateContent", "json"), format!("{base}:generateContent?$alt=json"));
         assert_eq!(build_endpoint("m", "streamGenerateContent", ""), format!("{base}:streamGenerateContent?alt=sse"));
-        assert_eq!(build_endpoint("m", "streamGenerateContent", "a b"), format!("{base}:streamGenerateContent?$alt=a+b"));
+        assert_eq!(
+            build_endpoint("m", "streamGenerateContent", "a b"),
+            format!("{base}:streamGenerateContent?$alt=a+b")
+        );
         assert_eq!(build_endpoint("m", "countTokens", "json"), format!("{base}:countTokens"));
     }
 
