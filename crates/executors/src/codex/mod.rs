@@ -15,6 +15,7 @@ mod count;
 mod creds;
 mod headers;
 mod exec_http;
+mod images;
 mod input_ids;
 // Handler-facing API (tool preparation, quota header parsing) is exported but not all used here.
 #[allow(dead_code)]
@@ -101,6 +102,9 @@ impl Executor for CodexExecutor {
     }
 
     async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+        if images::is_image_request(&opts) {
+            return self.execute_openai_image(auth, req, opts).await;
+        }
         if metadata_flag(&opts.metadata, META_DOWNSTREAM_WEBSOCKET) && creds::websockets_enabled(auth) {
             return self.execute_ws(auth, req, opts).await;
         }
@@ -111,6 +115,9 @@ impl Executor for CodexExecutor {
     }
 
     async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        if images::is_image_request(&opts) {
+            return self.execute_openai_image_stream(auth, req, opts).await;
+        }
         if metadata_flag(&opts.metadata, META_DOWNSTREAM_WEBSOCKET) && creds::websockets_enabled(auth) {
             return self.execute_stream_ws(auth, req, opts).await;
         }

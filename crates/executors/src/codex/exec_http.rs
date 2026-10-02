@@ -99,7 +99,7 @@ impl CodexExecutor {
         (url, headers, body)
     }
 
-    async fn send_http(
+    pub(super) async fn send_http(
         &self,
         cfg: &Config,
         auth: &Auth,

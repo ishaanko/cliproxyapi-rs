@@ -8,7 +8,7 @@
 pub(crate) mod claude_input_tokens;
 mod compat_config;
 pub(crate) mod errors;
-mod images;
+pub(crate) mod images;
 pub(crate) mod translate;
 mod stream;
 

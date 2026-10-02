@@ -19,6 +19,7 @@
 pub mod apply_patch;
 pub mod apply_patch_responses;
 pub mod codex_tool_integers;
+pub mod content_type;
 pub mod id_cache;
 pub mod json_retry;
 pub mod logging;
