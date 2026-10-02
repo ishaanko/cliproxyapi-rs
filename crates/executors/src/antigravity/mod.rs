@@ -36,6 +36,8 @@ mod tokens;
 mod transport;
 
 #[cfg(test)]
+mod replay_tests;
+#[cfg(test)]
 mod tests;
 
 /// Provider key of this executor.

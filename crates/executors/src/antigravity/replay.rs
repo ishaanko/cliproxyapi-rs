@@ -861,7 +861,7 @@ pub(crate) fn count_claude_tool_provenance_ids(payload: &[u8]) -> usize {
     count
 }
 
-fn payload_has_claude_tool_provenance_id(v: &Value) -> bool {
+pub(crate) fn payload_has_claude_tool_provenance_id(v: &Value) -> bool {
     let mut found = false;
     each_part(v, |part| found = found || reserved_ids_in(part) > 0);
     found
@@ -874,7 +874,7 @@ fn synthetic_tool_call_id(reserved_id: &str) -> String {
 
 /// Rewrites unresolved reserved ids to neutral deterministic ids so the conversation survives a
 /// ledger miss. Degraded first calls get the bypass sentinel, later ones lose their signature.
-fn degrade_claude_tool_provenance_ids(v: &mut Value) -> usize {
+pub(crate) fn degrade_claude_tool_provenance_ids(v: &mut Value) -> usize {
     let Some(contents) = contents_of(v) else { return 0 };
     // (ci, pi, kind) where kind: 0 = call keeping bypass, 1 = call dropping signature, 2 = response
     let mut edits: Vec<(usize, usize, u8, String)> = Vec::new();
@@ -922,7 +922,7 @@ fn degrade_claude_tool_provenance_ids(v: &mut Value) -> usize {
 }
 
 /// Restores the bypass sentinel on the first function call of any model turn left unsigned.
-fn repair_unsigned_first_function_calls(v: &mut Value) -> bool {
+pub(crate) fn repair_unsigned_first_function_calls(v: &mut Value) -> bool {
     let Some(contents) = contents_of(v) else { return false };
     let mut fixes = Vec::new();
     for (ci, content) in contents.iter().enumerate() {
