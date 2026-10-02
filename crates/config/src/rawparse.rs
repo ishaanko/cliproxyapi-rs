@@ -72,52 +72,6 @@ pub(crate) fn untag_raw(value: &mut Value) {
     }
 }
 
-/// Serialises `value` so that scalars wrapped by the parser are written back exactly as they were
-/// (`1.10` stays `1.10`, `True` stays `True`), like yaml.v3 does for untouched nodes. serde cannot
-/// emit a raw plain scalar, so each is written as a unique placeholder word and swapped afterwards;
-/// if a placeholder does not come out exactly once, the canonical scalar is used instead.
-pub(crate) fn to_yaml_string(value: &Value) -> Result<String, serde_yaml_ng::Error> {
-    fn substitute(value: &mut Value, raws: &mut Vec<(String, Value, String)>) {
-        if let Some((resolved, raw)) = as_raw_pair(value) {
-            let token = format!("cpa_raw_scalar_{}_x", raws.len());
-            raws.push((token.clone(), resolved.clone(), raw.to_string()));
-            *value = Value::String(token);
-            return;
-        }
-        match value {
-            Value::Mapping(map) => {
-                let keys: Vec<Value> = map.keys().cloned().collect();
-                for key in keys {
-                    if let Some(child) = map.get_mut(&key) {
-                        substitute(child, raws);
-                    }
-                }
-            }
-            Value::Sequence(items) => items.iter_mut().for_each(|item| substitute(item, raws)),
-            _ => {}
-        }
-    }
-    let mut tokenised = value.clone();
-    let mut raws = Vec::new();
-    substitute(&mut tokenised, &mut raws);
-    if raws.is_empty() {
-        return serde_yaml_ng::to_string(&tokenised);
-    }
-    let mut text = serde_yaml_ng::to_string(&tokenised)?;
-    let intact = raws
-        .iter()
-        .all(|(token, _, _)| text.matches(token.as_str()).count() == 1);
-    if !intact {
-        let mut plain = value.clone();
-        untag_raw(&mut plain);
-        return serde_yaml_ng::to_string(&plain);
-    }
-    for (token, _, raw) in &raws {
-        text = text.replace(token.as_str(), raw);
-    }
-    Ok(text)
-}
-
 // ---------------------------------------------------------------------------------------------
 // yaml.v3 plain scalar resolution
 // ---------------------------------------------------------------------------------------------
@@ -174,7 +128,7 @@ fn is_yaml_float(s: &str) -> bool {
     }
 }
 
-fn resolve_plain(raw: &str) -> Value {
+pub(crate) fn resolve_plain(raw: &str) -> Value {
     match raw {
         "" | "~" | "null" | "Null" | "NULL" => return Value::Null,
         "true" | "True" | "TRUE" => return lossy_or(Value::Bool(true), raw),
@@ -323,6 +277,30 @@ impl MarkedEventReceiver for Builder {
     }
 }
 
+/// Rewrites a yaml-rust2 error as yaml.v3 words it: the libyaml problem text, with `line N:` taken
+/// from the 0-based problem mark (`N` as is for parser errors, plus one for scanner errors; no
+/// prefix while that mark is on the first line). The context mark yaml.v3 prefers is not
+/// available, which only matters when a construct spans several lines.
+fn go_yaml_error(err: &yaml_rust2::scanner::ScanError) -> String {
+    let info = err.info();
+    let line0 = err.marker().line().saturating_sub(1);
+    let parser_error = info.starts_with("while parsing");
+    let problem = match info.split_once(", ") {
+        Some((context, rest)) if context.starts_with("while ") => rest,
+        _ => info,
+    };
+    let problem = if problem.starts_with("expected ") {
+        format!("did not find {problem}")
+    } else {
+        problem.to_string()
+    };
+    match (line0, parser_error) {
+        (0, _) => format!("yaml: {problem}"),
+        (n, true) => format!("yaml: line {n}: {problem}"),
+        (n, false) => format!("yaml: line {}: {problem}", n + 1),
+    }
+}
+
 /// Parses the first YAML document of `text`. `Ok(None)` means it has no content.
 pub(crate) fn parse_first_document(text: &str) -> Result<Option<Value>, String> {
     let mut builder = Builder::default();
@@ -332,7 +310,7 @@ pub(crate) fn parse_first_document(text: &str) -> Result<Option<Value>, String> 
     }));
     match outcome {
         Ok(Ok(())) => {}
-        Ok(Err(err)) => return Err(format!("yaml: {err}")),
+        Ok(Err(err)) => return Err(go_yaml_error(&err)),
         Err(_) => return Err("yaml: malformed document".to_string()),
     }
     if let Some(error) = builder.error {

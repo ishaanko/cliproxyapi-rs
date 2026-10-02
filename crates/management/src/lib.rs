@@ -38,7 +38,6 @@ mod state;
 mod tools;
 mod v0_routes;
 mod v0_util;
-mod yaml_comments;
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Path, State};

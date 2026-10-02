@@ -140,7 +140,10 @@ pub fn save_config_update_nested_scalar(
     if !root.is_mapping() {
         return Err(ConfigError::invalid("config must be a mapping"));
     }
-    let comments = Comments::extract(&data);
+    let mut comments = Comments::extract(&data);
+    if let Some(Value::String(old)) = yaml_path(&root, &keys.join(".")) {
+        comments.styles.inherit(old, value);
+    }
     set_yaml_path(&mut root, &keys.join("."), Value::String(value.to_string()));
     let out = render_yaml(&root, &comments)?;
     std::fs::write(path, out).map_err(|e| ConfigError::io(format!("write {}", path.display()), e))
@@ -333,7 +336,15 @@ fn merge_node_preserve(dst: &mut Value, src: &Value, cpath: &mut CPath, comments
             }
             dst_items.truncate(src_items.len());
         }
-        _ => *dst = src.clone(),
+        _ => {
+            // A replaced scalar keeps the quoting of the node it replaces.
+            if let (Value::String(old), Value::String(new)) = (&*dst, src)
+                && old != new
+            {
+                comments.styles.inherit(old, new);
+            }
+            *dst = src.clone();
+        }
     }
 }
 

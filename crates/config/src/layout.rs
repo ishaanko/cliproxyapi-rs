@@ -845,6 +845,8 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
         return Ok((data.to_vec(), false));
     }
     comments.foot.extend(footer);
+    // The reference renders the normalized document with `yaml.Marshal` (4-space indent).
+    comments.indent = 4;
     Ok((render_yaml(&root, &comments)?.into_bytes(), true))
 }
 
@@ -1036,17 +1038,26 @@ fn comment_unknown_fields(
         warn_unrecognized_v8_section(&section);
         let mut entry = Mapping::new();
         entry.insert(str_key(&section), value);
-        let text = indent_sequences(&crate::rawparse::to_yaml_string(&Value::Mapping(entry))?);
+        let text = crate::emit::emit(&Value::Mapping(entry), 4, &Default::default());
         let text = text.trim_end_matches('\n');
         footer.push(format!("# {}", text.replace('\n', "\n# ")));
     }
     Ok(())
 }
 
-/// Serialises a document with block sequences indented under their key (the Go encoder's
-/// 2-space style) and re-attaches comments (see [`Comments`]).
+/// Renders `root` the way `yaml.Marshal` would (4-space indent) while keeping the comments and
+/// scalar quoting of `original`, the text it was edited from.
+pub fn marshal_document(root: &Value, original: &str) -> Result<String> {
+    let mut comments = Comments::extract(original);
+    comments.indent = 4;
+    render_yaml(root, &comments)
+}
+
+/// Serialises a document in yaml.v3 layout (see [`crate::emit`]) and re-attaches comments (see
+/// [`Comments`]).
 pub(crate) fn render_yaml(root: &Value, comments: &Comments) -> Result<String> {
-    let mut text = comments.apply(&indent_sequences(&crate::rawparse::to_yaml_string(root)?));
+    let indent = if comments.indent == 0 { 2 } else { comments.indent };
+    let mut text = comments.apply(&crate::emit::emit(root, indent, &comments.styles));
     if !comments.foot.is_empty() {
         if !text.ends_with('\n') {
             text.push('\n');
@@ -1060,46 +1071,6 @@ pub(crate) fn render_yaml(root: &Value, comments: &Comments) -> Result<String> {
     // Comments are re-inserted unindented, so no `normalize_comment_indentation` pass is needed
     // (and running one would corrupt `# ...` lines inside block scalars).
     Ok(text)
-}
-
-/// serde_yaml_ng writes a block sequence at the same column as its parent key; indent such
-/// sequences (and everything inside them) by two spaces to match the reference output.
-fn indent_sequences(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + text.len() / 8);
-    // Columns of the open "same column as parent key" sequences.
-    let mut blocks: Vec<usize> = Vec::new();
-    let mut prev_key_col: Option<usize> = None;
-    for line in text.lines() {
-        let trimmed = line.trim_start_matches(' ');
-        let col = line.len() - trimmed.len();
-        let is_dash = trimmed == "-" || trimmed.starts_with("- ");
-        if !trimmed.is_empty() {
-            while let Some(&top) = blocks.last() {
-                if col < top || (col == top && !is_dash) {
-                    blocks.pop();
-                } else {
-                    break;
-                }
-            }
-            if is_dash && prev_key_col == Some(col) && blocks.last() != Some(&col) {
-                blocks.push(col);
-            }
-            // The key may follow one or more "- " markers ("- models:").
-            let (mut key_col, mut rest) = (col, trimmed);
-            while let Some(after) = rest.strip_prefix("- ") {
-                let stripped = after.trim_start_matches(' ');
-                key_col += 2 + (after.len() - stripped.len());
-                rest = stripped;
-            }
-            prev_key_col = (rest != "-" && rest.ends_with(':')).then_some(key_col);
-        }
-        for _ in 0..blocks.len() {
-            out.push_str("  ");
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out
 }
 
 /// Accepts only the v8 layout (management writes): rejects legacy field names, unknown root

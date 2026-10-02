@@ -34,6 +34,10 @@ pub(crate) struct Comments {
     line: BTreeMap<CPath, String>,
     /// Comment lines after the last node.
     pub foot: Vec<String>,
+    /// How the source quoted its string scalars (kept when the document is written back).
+    pub(crate) styles: crate::emit::Styles,
+    /// Indentation step used when rendering; 0 means the default of 2.
+    pub(crate) indent: usize,
 }
 
 /// What the scanner learned about one content line.
@@ -316,7 +320,10 @@ fn inline_comment_start(line: &str) -> Option<usize> {
 impl Comments {
     /// Collects the comments of a YAML document.
     pub(crate) fn extract(text: &str) -> Self {
-        let mut out = Comments::default();
+        let mut out = Comments {
+            styles: crate::emit::Styles::from_text(text),
+            ..Comments::default()
+        };
         let mut scanner = Scanner::new();
         let mut pending: Vec<String> = Vec::new();
         let mut blank_before = false;

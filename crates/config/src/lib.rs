@@ -10,8 +10,10 @@
 mod comments;
 pub mod diff;
 mod duration;
+mod emit;
 mod env;
 mod error;
+mod goerr;
 mod json_view;
 mod layout;
 mod lenient;
@@ -27,6 +29,7 @@ pub mod watcher;
 mod yamlpath;
 
 pub use comments::normalize_comment_indentation;
+pub use layout::marshal_document;
 pub use duration::{DurationParseError, GoDuration};
 pub use env::load_dotenv;
 pub use error::{ConfigError, Result};
