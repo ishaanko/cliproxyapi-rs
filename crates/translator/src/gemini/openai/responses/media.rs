@@ -1,6 +1,7 @@
 //! Media blocks (image, audio, video, file) of OpenAI Responses input mapped to Gemini
 //! `inline_data` / `file_data` parts (Go: gemini_openai-responses_request.go, media helpers).
 
+use crate::common::first_trimmed;
 use cpa_core::misc::mime_type_for_extension;
 use cpa_core::signature::b64;
 use cpa_json::{json, Res, Value};
@@ -14,11 +15,6 @@ pub(super) fn gemini_responses_inline_data_part(mime_type: &str, data: &str) -> 
 
 fn gemini_responses_file_data_part(mime_type: &str, file_uri: &str) -> Value {
     json!({"file_data": {"mime_type": mime_type, "file_uri": file_uri}})
-}
-
-/// The first non-blank value, trimmed.
-fn first_non_empty(values: &[String]) -> String {
-    values.iter().map(|v| v.trim()).find(|v| !v.is_empty()).unwrap_or_default().to_string()
 }
 
 fn is_data_url(raw: &str) -> bool {
@@ -198,7 +194,7 @@ fn open_ai_responses_audio_from_block(block: &Res<'_>) -> Option<(String, String
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
     let mut audio_obj = block.g("input_audio");
     if !audio_obj.exists() {
         audio_obj = block.g("audio");
@@ -220,7 +216,7 @@ fn open_ai_responses_audio_from_block(block: &Res<'_>) -> Option<(String, String
 
     // 3. audio_url / url
     if audio_data.is_empty() {
-        let audio_url = first_non_empty(&[opt_str(block, "audio_url.url"), opt_str(block, "audio_url"), opt_str(block, "url")]);
+        let audio_url = first_trimmed(&[opt_str(block, "audio_url.url"), opt_str(block, "audio_url"), opt_str(block, "url")]);
         if !audio_url.is_empty() {
             if is_data_url(&audio_url) {
                 return match parse_openai_responses_data_url(&audio_url) {
@@ -273,7 +269,7 @@ fn open_ai_responses_video_from_block(block: &Res<'_>) -> Option<(String, String
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
     let mut video_obj = block.g("input_video");
     if !video_obj.exists() {
         video_obj = block.g("video");
@@ -286,7 +282,7 @@ fn open_ai_responses_video_from_block(block: &Res<'_>) -> Option<(String, String
     ]);
 
     // 1. video_url (string or { "url": "..." }) or url
-    let video_url = first_non_empty(&[opt_str(block, "video_url.url"), opt_str(block, "video_url"), opt_str(block, "url")]);
+    let video_url = first_trimmed(&[opt_str(block, "video_url.url"), opt_str(block, "video_url"), opt_str(block, "url")]);
     if !video_url.is_empty() {
         if is_data_url(&video_url) {
             return match parse_openai_responses_data_url(&video_url) {
@@ -368,10 +364,10 @@ fn open_ai_responses_file_from_block(block: &Res<'_>) -> Option<(String, String)
         return None;
     }
 
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
-    let mut file_data = first_non_empty(&[opt_str(block, "file_data"), opt_str(block, "file.file_data"), opt_str(block, "data")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let mut file_data = first_trimmed(&[opt_str(block, "file_data"), opt_str(block, "file.file_data"), opt_str(block, "data")]);
     if file_data.is_empty() {
-        let file_url = first_non_empty(&[
+        let file_url = first_trimmed(&[
             opt_str(block, "file_url.url"),
             opt_str(block, "file_url"),
             opt_str(block, "file.file_url"),
@@ -441,7 +437,7 @@ pub(super) fn open_ai_responses_part_from_block(block: &Res<'_>) -> Option<Value
     let b_type = block.g("type").str().trim().to_lowercase();
 
     // 1. Remote URLs (http://, https://, gs://)
-    let raw_url = first_non_empty(&[
+    let raw_url = first_trimmed(&[
         opt_str(block, "video_url.url"),
         opt_str(block, "video_url"),
         opt_str(block, "audio_url.url"),
@@ -454,7 +450,7 @@ pub(super) fn open_ai_responses_part_from_block(block: &Res<'_>) -> Option<Value
         opt_str(block, "url"),
     ]);
     if is_remote_url(&raw_url) {
-        let mut filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+        let mut filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
         if filename.is_empty() {
             if let Some(path) = url_path(&raw_url) {
                 filename = path_base(&path);
@@ -579,10 +575,10 @@ fn open_ai_responses_image_from_block(block: &Res<'_>) -> Option<(String, String
         opt_str(block, "image.format"),
         opt_str(block, "image.mime_type"),
     ]);
-    let filename = first_non_empty(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
+    let filename = first_trimmed(&[opt_str(block, "filename"), opt_str(block, "file.filename")]);
 
     // 1. image_url
-    let image_url = first_non_empty(&[opt_str(block, "image_url.url"), opt_str(block, "image_url"), opt_str(block, "url")]);
+    let image_url = first_trimmed(&[opt_str(block, "image_url.url"), opt_str(block, "image_url"), opt_str(block, "url")]);
     if !image_url.is_empty() {
         if is_data_url(&image_url) {
             return match parse_openai_responses_data_url(&image_url) {

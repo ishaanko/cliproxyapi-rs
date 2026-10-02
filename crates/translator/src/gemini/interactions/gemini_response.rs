@@ -1,7 +1,7 @@
 //! Gemini response to Interactions response (Go: interactions_gemini_common.go and
 //! interactions_gemini_response.go, Gemini upstream with an Interactions client).
 
-use chrono::Utc;
+use crate::common::unix_nano_now;
 use cpa_json::{json, Value, J};
 
 use super::shared::{gemini_part_to_interactions_steps, interactions_thought_signature};
@@ -21,10 +21,6 @@ pub struct StreamState {
     active_step_type: String,
     active_step_index: i64,
     step_index: i64,
-}
-
-fn nanos() -> i64 {
-    Utc::now().timestamp_nanos_opt().unwrap_or(0)
 }
 
 fn frame(event: &str, payload: &Value) -> Vec<u8> {
@@ -52,7 +48,7 @@ pub fn convert_gemini_response_to_interactions_stream(
     raw: &[u8],
     param: &mut Param,
 ) -> Vec<Vec<u8>> {
-    let st = param.state(|| StreamState { id: format!("interaction_{}", nanos()), ..Default::default() });
+    let st = param.state(|| StreamState { id: format!("interaction_{}", unix_nano_now()), ..Default::default() });
     let mut out: Vec<Vec<u8>> = Vec::new();
     if raw.trim_ascii() == b"[DONE]" {
         if !st.completed {
@@ -99,7 +95,7 @@ pub fn convert_gemini_response_to_interactions_non_stream(
     let mut out = json!({ "id": "", "object": "interaction", "status": "completed", "model": "", "steps": [] });
     let mut id = root.g("responseId").str();
     if id.is_empty() {
-        id = format!("interaction_{}", nanos());
+        id = format!("interaction_{}", unix_nano_now());
     }
     cpa_json::set(&mut out, "id", id);
     cpa_json::set(&mut out, "model", model_name);
@@ -165,7 +161,7 @@ fn append_status_update(out: &mut Vec<Vec<u8>>, st: &StreamState) {
 }
 
 fn append_completed(out: &mut Vec<Vec<u8>>, st: &mut StreamState, model_name: &str, root: Option<&Value>) {
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let now = crate::common::utc_now_rfc3339();
     let mut completed = json!({
         "interaction": {
             "id": "", "status": "completed", "usage": {}, "created": "", "updated": "",
@@ -233,7 +229,7 @@ fn set_stream_usage_from_gemini(out: &mut Value, path: &str, root: &Value) {
 }
 
 fn append_step_start(out: &mut Vec<Vec<u8>>, st: &mut StreamState, step_type: &str, part: &Value) {
-    st.step_id = format!("step_{}", nanos());
+    st.step_id = format!("step_{}", unix_nano_now());
     st.active_step_index = st.step_index;
     st.step_index += 1;
     st.active_step_type = step_type.to_string();

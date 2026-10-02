@@ -3,9 +3,8 @@
 use cpa_core::thinking;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::util::{
-    file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
-};
+use crate::codex::util::{file_name_from_mime, shorten_name_if_needed};
+use crate::common::input_audio_format_from_mime;
 
 /// The output item list being built. `raw` arguments below are the source text of the value
 /// being converted, used to copy client values verbatim where Go uses `Raw` in a string.

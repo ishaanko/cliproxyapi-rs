@@ -5,22 +5,22 @@ use std::collections::HashMap;
 
 use cpa_json::{Res, Value, J};
 
-use super::{copy_number, first_existing, first_non_empty, is_antigravity_model, openai_reasoning_texts, set_items, tmpl};
+use super::{copy_number, first_existing, first_non_blank, is_antigravity_model, openai_reasoning_texts, set_items};
 use crate::common;
 
 pub(super) fn convert_openai_request_to_interactions(model_name: &str, input_raw_json: &[u8], stream: bool) -> Vec<u8> {
     let root = cpa_json::parse(input_raw_json);
-    let mut out = tmpl(r#"{"model":"","input":[]}"#);
-    let model = first_non_empty(&[model_name, &root.g("model").str()]);
+    let mut out = cpa_json::parse_str(r#"{"model":"","input":[]}"#);
+    let model = first_non_blank(&[model_name, &root.g("model").str()]);
     cpa_json::set(&mut out, "model", model.as_str());
     if let Some(stream_value) = request_stream_value(&root, stream) {
         cpa_json::set(&mut out, "stream", stream_value);
     }
-    let previous = first_non_empty(&[&root.g("previous_response_id").str(), &root.g("previous_interaction_id").str()]);
+    let previous = first_non_blank(&[&root.g("previous_response_id").str(), &root.g("previous_interaction_id").str()]);
     if !previous.is_empty() {
         cpa_json::set(&mut out, "previous_interaction_id", previous);
     }
-    let environment_id = first_non_empty(&[&root.g("environment_id").str(), &root.g("environment.id").str()]);
+    let environment_id = first_non_blank(&[&root.g("environment_id").str(), &root.g("environment.id").str()]);
     if !environment_id.is_empty() {
         cpa_json::set(&mut out, "environment_id", environment_id);
     }
@@ -118,7 +118,7 @@ fn chat_content_step(step_type: &str, content: &Res<'_>) -> Option<Value> {
         if text.is_empty() {
             return None;
         }
-        let mut part = tmpl(r#"{"type":"text","text":""}"#);
+        let mut part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
         cpa_json::set(&mut part, "text", text);
         content_items.push(part);
     } else if content.is_array() {
@@ -129,7 +129,7 @@ fn chat_content_step(step_type: &str, content: &Res<'_>) -> Option<Value> {
     if content_items.is_empty() {
         return None;
     }
-    let mut step = tmpl(r#"{"type":"","content":[]}"#);
+    let mut step = cpa_json::parse_str(r#"{"type":"","content":[]}"#);
     cpa_json::set(&mut step, "type", step_type);
     cpa_json::set(&mut step, "content", Value::Array(content_items));
     Some(step)
@@ -142,20 +142,20 @@ fn chat_content_part_to_interactions(part: &Res<'_>) -> Option<Value> {
     }
     match part_type.as_str() {
         "text" | "input_text" | "output_text" => {
-            let mut out = tmpl(r#"{"type":"text","text":""}"#);
+            let mut out = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
             cpa_json::set(&mut out, "text", part.g("text").str());
             Some(out)
         }
         "image_url" | "input_image" | "image" => Some(chat_image_part_to_interactions(part)),
         "input_audio" | "audio" => {
-            let mut out = tmpl(r#"{"type":"audio","data":""}"#);
+            let mut out = cpa_json::parse_str(r#"{"type":"audio","data":""}"#);
             let audio = part.g("input_audio");
-            let data = first_non_empty(&[&audio.g("data").str(), &part.g("data").str()]);
+            let data = first_non_blank(&[&audio.g("data").str(), &part.g("data").str()]);
             if data.is_empty() {
                 return None;
             }
             cpa_json::set(&mut out, "data", data);
-            let format = first_non_empty(&[&audio.g("format").str(), &part.g("format").str()]);
+            let format = first_non_blank(&[&audio.g("format").str(), &part.g("format").str()]);
             if !format.is_empty() {
                 cpa_json::set(&mut out, "mime_type", input_audio_mime_type(&format));
             }
@@ -163,16 +163,16 @@ fn chat_content_part_to_interactions(part: &Res<'_>) -> Option<Value> {
         }
         "file" | "input_file" | "document" => {
             let file = part.g("file");
-            let filename = first_non_empty(&[&file.g("filename").str(), &part.g("filename").str()]);
-            let fallback_mime = first_non_empty(&[
+            let filename = first_non_blank(&[&file.g("filename").str(), &part.g("filename").str()]);
+            let fallback_mime = first_non_blank(&[
                 &file.g("mime_type").str(),
                 &file.g("mimeType").str(),
                 &part.g("mime_type").str(),
                 &part.g("mimeType").str(),
             ]);
-            let file_data = first_non_empty(&[&file.g("file_data").str(), &part.g("file_data").str(), &part.g("data").str()]);
-            let file_url = first_non_empty(&[&file.g("file_url").str(), &part.g("file_url").str(), &part.g("url").str()]);
-            let mut out = tmpl(r#"{"type":"document"}"#);
+            let file_data = first_non_blank(&[&file.g("file_data").str(), &part.g("file_data").str(), &part.g("data").str()]);
+            let file_url = first_non_blank(&[&file.g("file_url").str(), &part.g("file_url").str(), &part.g("url").str()]);
+            let mut out = cpa_json::parse_str(r#"{"type":"document"}"#);
             if !filename.is_empty() {
                 cpa_json::set(&mut out, "filename", filename.as_str());
             }
@@ -193,8 +193,8 @@ fn chat_content_part_to_interactions(part: &Res<'_>) -> Option<Value> {
 }
 
 fn chat_image_part_to_interactions(part: &Res<'_>) -> Value {
-    let mut out = tmpl(r#"{"type":"image"}"#);
-    let image_url = first_non_empty(&[&part.g("image_url.url").str(), &part.g("image_url").str(), &part.g("url").str()]);
+    let mut out = cpa_json::parse_str(r#"{"type":"image"}"#);
+    let image_url = first_non_blank(&[&part.g("image_url.url").str(), &part.g("image_url").str(), &part.g("url").str()]);
     if let Some((mime_type, data)) = parse_data_url(&image_url) {
         cpa_json::set(&mut out, "mime_type", mime_type);
         cpa_json::set(&mut out, "data", data);
@@ -216,8 +216,8 @@ fn chat_image_part_to_interactions(part: &Res<'_>) -> Value {
 }
 
 fn tool_result_to_interactions(message: &Res<'_>, for_antigravity: bool, tool_names_by_id: &HashMap<String, String>) -> Value {
-    let mut out = tmpl(r#"{"type":"function_result","result":""}"#);
-    let call_id = first_non_empty(&[&message.g("tool_call_id").str(), &message.g("id").str()]);
+    let mut out = cpa_json::parse_str(r#"{"type":"function_result","result":""}"#);
+    let call_id = first_non_blank(&[&message.g("tool_call_id").str(), &message.g("id").str()]);
     if !call_id.is_empty() {
         cpa_json::set(&mut out, "call_id", call_id.as_str());
     }
@@ -307,14 +307,14 @@ fn tool_to_interactions(tool: &Res<'_>, for_antigravity: bool) -> Option<Value> 
     if !tool_type.is_empty() && tool_type != "function" {
         return None;
     }
-    let mut name = first_non_empty(&[&tool.g("function.name").str(), &tool.g("name").str()]);
+    let mut name = first_non_blank(&[&tool.g("function.name").str(), &tool.g("name").str()]);
     if name.is_empty() {
         return None;
     }
     if for_antigravity {
         name = common::antigravity_tool_name_to_upstream(&name);
     }
-    let mut out = tmpl(r#"{"type":"function","name":""}"#);
+    let mut out = cpa_json::parse_str(r#"{"type":"function","name":""}"#);
     cpa_json::set(&mut out, "name", name);
     let desc = first_existing([tool.g("function.description"), tool.g("description")]);
     if desc.exists() {

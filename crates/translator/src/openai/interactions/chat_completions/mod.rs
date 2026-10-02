@@ -9,6 +9,7 @@ mod interactions_openai_response;
 mod openai_interactions_request;
 mod openai_interactions_response;
 
+use crate::common::{first_existing, first_non_blank, unix_nano_now};
 use cpa_core::format::Format;
 use cpa_json::{Res, Value};
 
@@ -40,21 +41,6 @@ pub fn register(r: &mut Registry) {
 }
 
 // Helpers shared by the four files (Go: package-level funcs).
-
-/// Parses a JSON template literal.
-fn tmpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
-/// First value that is not blank after trimming; the original (untrimmed) string is returned.
-fn first_non_empty(values: &[&str]) -> String {
-    values.iter().find(|v| !v.trim().is_empty()).map(|v| (*v).to_string()).unwrap_or_default()
-}
-
-/// First lookup result that exists, or a missing result.
-fn first_existing<'a>(values: impl IntoIterator<Item = Res<'a>>) -> Res<'a> {
-    values.into_iter().find(Res::exists).unwrap_or(Res::NONE)
-}
 
 /// Sets `path` to a copy of `value` when it exists (Go: `copyNumber`, a raw copy of any value).
 fn copy_number(out: &mut Value, path: &str, value: &Res<'_>) {
@@ -88,7 +74,7 @@ fn is_antigravity_model(model: &str) -> bool {
 
 /// `{"type":<step_type>,"content":[{"type":"text","text":<text>}]}`.
 fn interactions_text_step(step_type: &str, text: &str) -> Value {
-    let mut step = tmpl(r#"{"type":"","content":[{"type":"text","text":""}]}"#);
+    let mut step = cpa_json::parse_str(r#"{"type":"","content":[{"type":"text","text":""}]}"#);
     cpa_json::set(&mut step, "type", step_type);
     cpa_json::set(&mut step, "content.0.text", text);
     step
@@ -105,7 +91,7 @@ fn openai_reasoning_texts(reasoning: &Res<'_>) -> Vec<String> {
     reasoning
         .array()
         .iter()
-        .map(|item| first_non_empty(&[&item.g("text").str(), &item.g("content").str()]))
+        .map(|item| first_non_blank(&[&item.g("text").str(), &item.g("content").str()]))
         .filter(|text| !text.is_empty())
         .collect()
 }
@@ -132,6 +118,3 @@ fn sse_payload(raw: &[u8]) -> Vec<u8> {
     data_lines.join(&b'\n')
 }
 
-fn unix_nanos() -> i64 {
-    chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-}

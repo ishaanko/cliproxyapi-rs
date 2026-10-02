@@ -1,6 +1,7 @@
 //! OpenAI Chat Completions request to Claude Messages request
 //! (Go: claude/openai/chat-completions/claude_openai_request.go).
 
+use crate::common::first_existing;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::registry::lookup_model_info;
@@ -511,11 +512,6 @@ fn convert_tool_result_content(content: &Res<'_>) -> Value {
         return cpa_json::parse(&common::join_raw_array(&[p]));
     }
     Value::String(content.raw())
-}
-
-/// The first result that exists, or a missing result.
-fn first_existing<'a>(values: impl IntoIterator<Item = Res<'a>>) -> Res<'a> {
-    values.into_iter().find(Res::exists).unwrap_or(Res::NONE)
 }
 
 /// The structured output instruction (Go: `common.BuildClaudeStructuredOutputInstruction`) with

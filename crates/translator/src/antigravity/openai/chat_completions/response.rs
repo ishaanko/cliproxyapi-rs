@@ -1,8 +1,8 @@
 //! Antigravity response -> OpenAI Chat Completions response (Go: antigravity_openai_response.go).
 
+use crate::antigravity::function_names::restore_response_function_names;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::util;
 use cpa_json::{json, J, Res, Value};
@@ -172,7 +172,7 @@ pub fn convert_antigravity_response_to_openai(
 
                 let mut function_call_template = json!({"id": "", "index": 0, "type": "function", "function": {"name": "", "arguments": ""}});
                 let fc_name = util::restore_sanitized_tool_name(name_map, &function_call.g("name").str());
-                let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+                let nanos = crate::common::unix_nano_now();
                 let counter = FUNCTION_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1;
                 cpa_json::set(&mut function_call_template, "id", format!("{fc_name}-{nanos}-{counter}"));
                 cpa_json::set(&mut function_call_template, "index", function_call_index);
@@ -260,6 +260,20 @@ fn set_usage_metadata(template: &mut Value, usage: &Res<'_>) {
 
 /// Go: `ConvertAntigravityResponseToOpenAINonStream`: unwraps `response`, restores tool names and
 /// delegates to the Gemini -> OpenAI converter. A body without `response` yields an empty body.
+/// Bytes of a chunk with function names restored (unchanged chunks are returned as sent).
+fn restore_function_names(raw_bytes: &[u8], original_request_raw_json: &[u8]) -> Vec<u8> {
+    let name_map = util::disambiguated_tool_name_map(original_request_raw_json);
+    if name_map.is_empty() {
+        return raw_bytes.to_vec();
+    }
+    let mut raw = cpa_json::parse(raw_bytes);
+    if restore_response_function_names(&mut raw, &name_map, &["functionCall", "functionResponse"]) {
+        cpa_json::to_vec(&raw)
+    } else {
+        raw_bytes.to_vec()
+    }
+}
+
 pub fn convert_antigravity_response_to_openai_non_stream(
     ctx: &Ctx,
     model: &str,
@@ -276,33 +290,3 @@ pub fn convert_antigravity_response_to_openai_non_stream(
     Some(vec![])
 }
 
-/// Restores the client's tool names in functionCall/functionResponse parts of every candidate.
-fn restore_function_names(raw_bytes: &[u8], original_request_raw_json: &[u8]) -> Vec<u8> {
-    let name_map = util::disambiguated_tool_name_map(original_request_raw_json);
-    if name_map.is_empty() {
-        return raw_bytes.to_vec();
-    }
-    let mut raw = cpa_json::parse(raw_bytes);
-    let mut changed = false;
-    let candidates = raw.g("candidates").array().len();
-    for candidate_index in 0..candidates {
-        let parts = raw.g(&format!("candidates.{candidate_index}.content.parts")).array().len();
-        for part_index in 0..parts {
-            for field in ["functionCall", "functionResponse"] {
-                let path = format!("candidates.{candidate_index}.content.parts.{part_index}.{field}.name");
-                let name_result = raw.g(&path);
-                let name = name_result.str();
-                if name.is_empty() {
-                    continue;
-                }
-                let restored = util::restore_sanitized_tool_name(&name_map, &name);
-                if name_result.is_string() && restored == name {
-                    continue;
-                }
-                cpa_json::set(&mut raw, &path, restored);
-                changed = true;
-            }
-        }
-    }
-    if changed { cpa_json::to_vec(&raw) } else { raw_bytes.to_vec() }
-}

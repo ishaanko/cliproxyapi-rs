@@ -27,6 +27,7 @@ mod openai_tools;
 mod raw;
 mod request;
 mod responses;
+mod util;
 
 pub use antigravity_tools::*;
 pub use apply_patch::*;
@@ -43,6 +44,7 @@ pub use openai_tools::*;
 pub use raw::*;
 pub use request::*;
 pub use responses::*;
+pub use util::*;
 
 #[cfg(test)]
 mod tests;

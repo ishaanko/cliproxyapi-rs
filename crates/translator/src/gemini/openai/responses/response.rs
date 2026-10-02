@@ -5,6 +5,7 @@
 //! each upstream chunk may open/close reasoning, message, web search and function call items.
 //! Go's nested closures over `st` and `out` are methods of `Stream`.
 
+use crate::common::{parse_create_time, unix_nano_now, unix_now};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -41,19 +42,6 @@ pub(super) fn next_response_id_counter() -> u64 {
 
 pub(super) fn next_func_call_id_counter() -> u64 {
     FUNC_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1
-}
-
-pub(super) fn unix_nanos_now() -> u128 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
-
-pub(super) fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
-}
-
-/// Unix seconds of an RFC 3339 `createTime`, if it parses.
-pub(super) fn parse_create_time(value: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(value).ok().map(|t| t.timestamp())
 }
 
 #[derive(Debug, Clone)]
@@ -798,7 +786,7 @@ impl Stream<'_> {
         if !self.st.started {
             self.st.response_id = root.g("responseId").str();
             if self.st.response_id.is_empty() {
-                self.st.response_id = format!("resp_{:x}_{}", unix_nanos_now(), next_response_id_counter());
+                self.st.response_id = format!("resp_{:x}_{}", unix_nano_now(), next_response_id_counter());
             }
             if !self.st.response_id.starts_with("resp_") {
                 self.st.response_id = format!("resp_{}", self.st.response_id);
@@ -1333,7 +1321,7 @@ impl Stream<'_> {
             self.st.func_call_ids.insert(idx, evidence_upstream_id);
         }
         if self.st.func_call_ids.get(&idx).is_none_or(|id| id.is_empty()) {
-            self.st.func_call_ids.insert(idx, format!("call_{}_{}", unix_nanos_now(), next_func_call_id_counter()));
+            self.st.func_call_ids.insert(idx, format!("call_{}_{}", unix_nano_now(), next_func_call_id_counter()));
         }
         self.st.func_names.insert(idx, name.clone());
         self.st.func_namespaces.insert(idx, namespace.clone());

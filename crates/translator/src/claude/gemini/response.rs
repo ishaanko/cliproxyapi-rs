@@ -1,5 +1,6 @@
 //! Claude Messages response -> Gemini response (Go: claude_gemini_response.go).
 
+use crate::common::{trim_space, unix_now};
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, SecondsFormat};
@@ -85,18 +86,6 @@ fn format_create_time(secs: i64) -> String {
         .unwrap_or_default()
 }
 
-fn now_unix() -> i64 {
-    chrono::Utc::now().timestamp()
-}
-
-/// Go `bytes.TrimSpace`.
-fn trim_space(b: &[u8]) -> &[u8] {
-    match std::str::from_utf8(b) {
-        Ok(s) => s.trim().as_bytes(),
-        Err(_) => b.trim_ascii(),
-    }
-}
-
 /// Usage mapping shared by stream and non-stream: the Gemini usage fields written at `prefix`
 /// ("usageMetadata." for a full response, "" for a standalone object).
 fn set_usage(target: &mut Value, prefix: &str, usage: &Res<'_>) {
@@ -154,7 +143,7 @@ pub fn convert_claude_response_to_gemini(
         cpa_json::set(&mut template, "responseId", st.response_id.as_str());
     }
     if st.created_at == 0 {
-        st.created_at = now_unix();
+        st.created_at = unix_now();
     }
     cpa_json::set(&mut template, "createTime", format_create_time(st.created_at));
 
@@ -304,7 +293,7 @@ pub fn convert_claude_response_to_gemini_non_stream(
                     response_id = message.g("id").str();
                     st.response_id = response_id.clone();
                     st.model = message.g("model").str();
-                    created_at = now_unix();
+                    created_at = unix_now();
                     st.created_at = created_at;
                 }
             }

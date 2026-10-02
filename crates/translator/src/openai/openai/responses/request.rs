@@ -15,10 +15,6 @@ type SetContent = fn(&mut Value, &Res<'_>, &RawSrc<'_>);
 
 const REASONING_UNAVAILABLE: &str = "[reasoning unavailable]";
 
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
 /// Message assembly state while walking the Responses `input` items.
 struct Conv {
     messages: Vec<Value>,
@@ -78,7 +74,7 @@ impl Conv {
             }
         }
         if !merged_into_assistant {
-            let mut assistant = tpl(r#"{"role":"assistant","tool_calls":[]}"#);
+            let mut assistant = cpa_json::parse_str(r#"{"role":"assistant","tool_calls":[]}"#);
             cpa_json::set(&mut assistant, "tool_calls", Value::Array(self.pending_tool_calls.clone()));
             if !reasoning_content.is_empty() {
                 cpa_json::set(&mut assistant, "reasoning_content", reasoning_content.clone());
@@ -120,7 +116,7 @@ impl Conv {
         if is_usable_reasoning(&reasoning_content) {
             self.latest_reasoning_content = reasoning_content.clone();
         }
-        let mut message = tpl(r#"{"role":"assistant","content":"","reasoning_content":""}"#);
+        let mut message = cpa_json::parse_str(r#"{"role":"assistant","content":"","reasoning_content":""}"#);
         cpa_json::set(&mut message, "reasoning_content", reasoning_content);
         self.append_regular_message(message);
     }
@@ -147,7 +143,7 @@ impl Conv {
         if !self.awaiting_tool_outputs.remove(call_id) {
             self.append_standalone_tool_output_as_user(&output, set_content, &output_src);
         } else {
-            let mut tool_message = tpl(r#"{"role":"tool","tool_call_id":"","content":""}"#);
+            let mut tool_message = cpa_json::parse_str(r#"{"role":"tool","tool_call_id":"","content":""}"#);
             cpa_json::set(&mut tool_message, "tool_call_id", call_id);
             if output.exists() {
                 set_content(&mut tool_message, &output, &output_src);
@@ -157,7 +153,7 @@ impl Conv {
     }
 
     fn append_standalone_tool_output_as_user(&mut self, output: &Res<'_>, set_content: SetContent, output_src: &RawSrc<'_>) {
-        let mut user_message = tpl(r#"{"role":"user","content":""}"#);
+        let mut user_message = cpa_json::parse_str(r#"{"role":"user","content":""}"#);
         if output.exists() {
             set_content(&mut user_message, output, output_src);
         }
@@ -180,7 +176,7 @@ impl Conv {
 /// request: instructions become a system message, input items become messages, and tools, tool
 /// choice and generation parameters are mapped.
 pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &str, input_bytes: &[u8], stream: bool) -> Vec<u8> {
-    let mut out = tpl(r#"{"model":"","messages":[],"stream":false}"#);
+    let mut out = cpa_json::parse_str(r#"{"model":"","messages":[],"stream":false}"#);
 
     let root = cpa_json::parse(input_bytes);
     let tool_index = ToolIndex::new(&root);
@@ -217,7 +213,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
 
     let instructions = root.g("instructions");
     if instructions.exists() {
-        let mut system_message = tpl(r#"{"role":"system","content":""}"#);
+        let mut system_message = cpa_json::parse_str(r#"{"role":"system","content":""}"#);
         cpa_json::set(&mut system_message, "content", root_src.child("instructions").string(&instructions));
         conv.messages.push(system_message);
     }
@@ -317,7 +313,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
                         conv.append_pending_reasoning_message();
                         conv.latest_reasoning_content.clear();
                     }
-                    let mut message = tpl(r#"{"role":"","content":[]}"#);
+                    let mut message = cpa_json::parse_str(r#"{"role":"","content":[]}"#);
                     cpa_json::set(&mut message, "role", role.clone());
 
                     let content = item.g("content");
@@ -364,7 +360,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
                     }
                     // Consecutive function calls are buffered and emitted as one assistant message.
                     // Go marshals tool calls through map[string]any: sorted keys.
-                    let mut tool_call = tpl(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
+                    let mut tool_call = cpa_json::parse_str(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
 
                     let call_id = common::extract_responses_call_id(item);
                     if !call_id.is_empty() {
@@ -407,7 +403,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
                     // Codex freeform tool call replay: wrap the raw input to match the
                     // {"input": string} function shape used for converted custom tool definitions.
                     let call_id = common::extract_responses_call_id(item);
-                    let mut tool_call = tpl(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
+                    let mut tool_call = cpa_json::parse_str(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
                     cpa_json::set(&mut tool_call, "id", call_id.clone());
                     let mut function_name = item.g("name").str();
                     let namespace = item.g("namespace").str();
@@ -436,7 +432,7 @@ pub fn convert_openai_responses_request_to_openai_chat_completions(model_name: &
         conv.flush_pending_tool_calls();
         conv.append_pending_reasoning_message();
     } else if input.is_string() {
-        let mut msg = tpl("{}");
+        let mut msg = cpa_json::parse_str("{}");
         cpa_json::set(&mut msg, "role", "user");
         cpa_json::set(&mut msg, "content", input.str());
         conv.messages.push(msg);
@@ -495,14 +491,14 @@ fn convert_message_content_part(content_item: &Res<'_>) -> Option<Value> {
     }
     match content_type.as_str() {
         "input_text" | "output_text" => {
-            let mut part = tpl(r#"{"type":"text","text":""}"#);
+            let mut part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
             cpa_json::set(&mut part, "text", content_item.g("text").str());
             Some(part)
         }
         "input_video" | "video_url" => {
             // Malformed video parts are preserved for upstream validation instead of silently
             // turning a video request into a text-only request.
-            let mut part = tpl(r#"{"type":"video_url","video_url":{}}"#);
+            let mut part = cpa_json::parse_str(r#"{"type":"video_url","video_url":{}}"#);
             let video_url = content_item.g("video_url");
             if video_url.is_object() {
                 cpa_json::set(&mut part, "video_url", video_url.value());
@@ -516,7 +512,7 @@ fn convert_message_content_part(content_item: &Res<'_>) -> Option<Value> {
             Some(part)
         }
         "input_image" => {
-            let mut part = tpl(r#"{"type":"image_url","image_url":{"url":""}}"#);
+            let mut part = cpa_json::parse_str(r#"{"type":"image_url","image_url":{"url":""}}"#);
             cpa_json::set(&mut part, "image_url.url", content_item.g("image_url").str());
             if let Some(detail) = normalize_chat_image_detail(&content_item.g("detail")).filter(|d| !d.is_empty()) {
                 cpa_json::set(&mut part, "image_url.detail", detail);
@@ -563,7 +559,7 @@ fn convert_tool_choice_with_index(tool_choice: &Res<'_>, tool_index: &ToolIndex)
         tool_index.namespace_name(&namespace, &name)
     };
 
-    let mut converted = tpl(r#"{"type":"function","function":{"name":""}}"#);
+    let mut converted = cpa_json::parse_str(r#"{"type":"function","function":{"name":""}}"#);
     cpa_json::set(&mut converted, "function.name", name);
     converted
 }
@@ -573,12 +569,12 @@ fn convert_text_format_to_chat_response_format(text_format: &Res<'_>) -> Option<
     let format_type = text_format.g("type").str();
     match format_type.as_str() {
         "text" | "json_object" => {
-            let mut response_format = tpl(r#"{"type":""}"#);
+            let mut response_format = cpa_json::parse_str(r#"{"type":""}"#);
             cpa_json::set(&mut response_format, "type", format_type);
             Some(response_format)
         }
         "json_schema" => {
-            let mut response_format = tpl(r#"{"type":"json_schema","json_schema":{}}"#);
+            let mut response_format = cpa_json::parse_str(r#"{"type":"json_schema","json_schema":{}}"#);
             for field in ["name", "description", "strict"] {
                 let value = text_format.g(field);
                 if value.exists() {
@@ -642,7 +638,7 @@ fn set_custom_tool_call_output_content(tool_message: &mut Value, output: &Res<'_
 fn chat_tool_output_content_part(item: &Res<'_>, src: &RawSrc<'_>) -> Value {
     match item.g("type").str().as_str() {
         "text" | "input_text" | "output_text" => {
-            let mut part = tpl(r#"{"type":"text","text":""}"#);
+            let mut part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
             cpa_json::set(&mut part, "text", item.g("text").str());
             part
         }
@@ -650,7 +646,7 @@ fn chat_tool_output_content_part(item: &Res<'_>, src: &RawSrc<'_>) -> Value {
             let Some((image_url, detail)) = chat_tool_output_image_fields(item) else {
                 return chat_tool_output_fallback_part(item, src);
             };
-            let mut part = tpl(r#"{"type":"image_url","image_url":{"url":""}}"#);
+            let mut part = cpa_json::parse_str(r#"{"type":"image_url","image_url":{"url":""}}"#);
             cpa_json::set(&mut part, "image_url.url", image_url);
             if !detail.is_empty() {
                 cpa_json::set(&mut part, "image_url.detail", detail);
@@ -730,7 +726,7 @@ fn chat_tool_output_fallback_part(item: &Res<'_>, src: &RawSrc<'_>) -> Value {
     if item.is_string() || text.is_empty() {
         text = item.str();
     }
-    let mut part = tpl(r#"{"type":"text","text":""}"#);
+    let mut part = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
     cpa_json::set(&mut part, "text", text);
     part
 }

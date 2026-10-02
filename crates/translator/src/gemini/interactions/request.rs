@@ -4,7 +4,7 @@ use cpa_core::util::go_json_canonicalize;
 use cpa_json::{json, Map, Res, Value, J};
 
 use super::shared::{
-    first_non_empty_string, gemini_content, gemini_file_data_part_json, gemini_inline_data_part_json,
+    first_trimmed, gemini_content, gemini_file_data_part_json, gemini_inline_data_part_json,
     gemini_inline_data_to_interactions_content, gemini_part_to_interactions_steps, gemini_text_part_json,
     interactions_content_part_to_gemini_part,
 };
@@ -717,7 +717,7 @@ fn append_interactions_step_to_gemini(ctx: &mut InputContext, item: &Value, defa
     }
     let step_type = item.g("type").str();
     let signature_of = |item: &Value| {
-        first_non_empty_string(&[
+        first_trimmed(&[
             &item.g("signature").str(),
             &item.g("thought_signature").str(),
             &item.g("thoughtSignature").str(),

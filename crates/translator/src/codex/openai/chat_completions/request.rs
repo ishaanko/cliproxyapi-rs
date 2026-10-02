@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use cpa_core::applypatch;
 use cpa_json::{J, Res, Value, json};
 
-use crate::codex::util::{build_short_name_map, truncate_bytes};
+use crate::codex::util::build_short_name_map;
 use crate::common::raw_in;
 
 /// One assistant tool call awaiting its `tool` message.
@@ -552,25 +552,9 @@ fn sanitize_tool_name(name: &str) -> String {
         .collect()
 }
 
-/// Sanitizes, then applies the 64 byte shortening rule: keeps the `mcp__` prefix and last
-/// segment when possible, otherwise truncates.
+/// Sanitizes, then applies the shared 64 byte shortening rule.
 pub(super) fn shorten_name_if_needed(name: &str) -> String {
-    const LIMIT: usize = 64;
-    let sanitized = sanitize_tool_name(name);
-    if sanitized.len() <= LIMIT {
-        return sanitized;
-    }
-    if sanitized.starts_with("mcp__")
-        && let Some(idx) = sanitized.rfind("__")
-        && idx > 0
-    {
-        let candidate = format!("mcp__{}", &sanitized[idx + 2..]);
-        if candidate.len() > LIMIT {
-            return truncate_bytes(&candidate, LIMIT);
-        }
-        return candidate;
-    }
-    truncate_bytes(&sanitized, LIMIT)
+    crate::codex::util::shorten_name_if_needed(&sanitize_tool_name(name))
 }
 
 /// Unique shortened names for the request's tool names (original -> short).

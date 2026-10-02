@@ -3,11 +3,10 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
 use cpa_json::{json, Res, Value, J};
 
 use super::shared::{
-    first_non_empty_interaction_string, gemini_text_part_json, interactions_content_part_to_gemini_part,
+    first_non_blank, gemini_text_part_json, interactions_content_part_to_gemini_part,
 };
 use crate::common::{contains_json_ref, interactions_usage, set_gemini_function_response_result};
 use crate::gemini::claude::set_function_response_from_text;
@@ -81,11 +80,11 @@ pub fn convert_interactions_response_to_gemini_non_stream(
     let root = cpa_json::parse(raw);
     let nested = root.g("interaction");
     let interaction = if nested.exists() { nested.value() } else { root.clone() };
-    let fallback_id = format!("response_{}", Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let fallback_id = format!("response_{}", crate::common::unix_nano_now());
     let st = ToGeminiState {
-        id: first_non_empty_interaction_string(&[&interaction.g("id").str(), &root.g("id").str(), &fallback_id]),
-        model: first_non_empty_interaction_string(&[&interaction.g("model").str(), &root.g("model").str(), model_name]),
-        service_tier: first_non_empty_interaction_string(&[
+        id: first_non_blank(&[&interaction.g("id").str(), &root.g("id").str(), &fallback_id]),
+        model: first_non_blank(&[&interaction.g("model").str(), &root.g("model").str(), model_name]),
+        service_tier: first_non_blank(&[
             &interaction.g("service_tier").str(),
             &root.g("service_tier").str(),
         ]),
@@ -142,8 +141,8 @@ fn convert_interactions_event_to_gemini(model_name: &str, raw: &[u8], st: &mut T
     match root.g("event_type").str().as_str() {
         "interaction.created" => {
             let interaction = root.g("interaction");
-            st.id = first_non_empty_interaction_string(&[&st.id, &interaction.g("id").str()]);
-            st.model = first_non_empty_interaction_string(&[&st.model, &interaction.g("model").str(), model_name]);
+            st.id = first_non_blank(&[&st.id, &interaction.g("id").str()]);
+            st.model = first_non_blank(&[&st.model, &interaction.g("model").str(), model_name]);
         }
         "step.start" => remember_step(&root, st),
         "step.delta" => {
@@ -153,10 +152,10 @@ fn convert_interactions_event_to_gemini(model_name: &str, raw: &[u8], st: &mut T
         }
         "interaction.completed" | "finish" => {
             let interaction = root.g("interaction");
-            st.id = first_non_empty_interaction_string(&[&st.id, &interaction.g("id").str()]);
-            st.model = first_non_empty_interaction_string(&[&st.model, &interaction.g("model").str(), model_name]);
+            st.id = first_non_blank(&[&st.id, &interaction.g("id").str()]);
+            st.model = first_non_blank(&[&st.model, &interaction.g("model").str(), model_name]);
             st.service_tier =
-                first_non_empty_interaction_string(&[&st.service_tier, &interaction.g("service_tier").str()]);
+                first_non_blank(&[&st.service_tier, &interaction.g("service_tier").str()]);
             let chunk = build_gemini_chunk(st, model_name, vec![], "STOP", &interactions_usage(&Res::of(&root)), true);
             return vec![cpa_json::to_vec(&chunk)];
         }
@@ -169,7 +168,7 @@ fn convert_interactions_event_to_gemini(model_name: &str, raw: &[u8], st: &mut T
             if msg.is_empty() {
                 msg = "upstream error occurred".to_string();
             }
-            let code_val = first_non_empty_interaction_string(&[
+            let code_val = first_non_blank(&[
                 &err_node.g("code").str(),
                 &root.g("code").str(),
                 &err_node.g("status").str(),
@@ -211,11 +210,11 @@ fn remember_step(root: &Value, st: &mut ToGeminiState) {
     st.step_names.insert(index, step.g("name").str());
     st.step_ids.insert(
         index,
-        first_non_empty_interaction_string(&[&step.g("call_id").str(), &step.g("id").str()]),
+        first_non_blank(&[&step.g("call_id").str(), &step.g("id").str()]),
     );
     st.step_signatures.insert(
         index,
-        first_non_empty_interaction_string(&[
+        first_non_blank(&[
             &step.g("signature").str(),
             &step.g("thoughtSignature").str(),
             &step.g("thought_signature").str(),
@@ -233,7 +232,7 @@ fn step_delta_to_gemini_chunk(model_name: &str, root: &Value, st: &mut ToGeminiS
             cpa_json::set(
                 &mut part,
                 "functionCall.name",
-                first_non_empty_interaction_string(&[&stored_name, &root.g("step.name").str()]),
+                first_non_blank(&[&stored_name, &root.g("step.name").str()]),
             );
             if let Some(id) = st.step_ids.get(&index).filter(|id| !id.is_empty()) {
                 cpa_json::set(&mut part, "functionCall.id", id.as_str());
@@ -248,21 +247,21 @@ fn step_delta_to_gemini_chunk(model_name: &str, root: &Value, st: &mut ToGeminiS
             Some(build_gemini_chunk(st, model_name, vec![part], "", &Res::NONE, false))
         }
         "text" => {
-            let text = first_non_empty_interaction_string(&[&delta.g("text").str(), &delta.g("content.text").str()]);
+            let text = first_non_blank(&[&delta.g("text").str(), &delta.g("content.text").str()]);
             if text.is_empty() {
                 return None;
             }
             Some(build_gemini_chunk(st, model_name, vec![gemini_text_part_json(&text, false)], "", &Res::NONE, false))
         }
         "thought_summary" => {
-            let text = first_non_empty_interaction_string(&[&delta.g("content.text").str(), &delta.g("text").str()]);
+            let text = first_non_blank(&[&delta.g("content.text").str(), &delta.g("text").str()]);
             if text.is_empty() {
                 return None;
             }
             Some(build_gemini_chunk(st, model_name, vec![gemini_text_part_json(&text, true)], "", &Res::NONE, false))
         }
         "thought_signature" => {
-            let signature = first_non_empty_interaction_string(&[
+            let signature = first_non_blank(&[
                 &delta.g("signature").str(),
                 &delta.g("thought_signature").str(),
                 &delta.g("thoughtSignature").str(),
@@ -323,11 +322,11 @@ fn first_existing<'a>(root: &'a Value, paths: &[&str]) -> Res<'a> {
 fn function_call_step_to_gemini_part(step: &Value) -> Value {
     let mut part = json!({ "functionCall": { "name": "", "args": {} } });
     cpa_json::set(&mut part, "functionCall.name", step.g("name").str());
-    let id = first_non_empty_interaction_string(&[&step.g("call_id").str(), &step.g("id").str()]);
+    let id = first_non_blank(&[&step.g("call_id").str(), &step.g("id").str()]);
     if !id.is_empty() {
         cpa_json::set(&mut part, "functionCall.id", id);
     }
-    let signature = first_non_empty_interaction_string(&[
+    let signature = first_non_blank(&[
         &step.g("signature").str(),
         &step.g("thoughtSignature").str(),
         &step.g("thought_signature").str(),
@@ -342,7 +341,7 @@ fn function_call_step_to_gemini_part(step: &Value) -> Value {
 fn function_response_step_to_gemini_part(step: &Value, src: &[u8], path: &str) -> Value {
     let mut part = json!({ "functionResponse": { "name": "", "response": {} } });
     cpa_json::set(&mut part, "functionResponse.name", step.g("name").str());
-    let id = first_non_empty_interaction_string(&[&step.g("call_id").str(), &step.g("id").str()]);
+    let id = first_non_blank(&[&step.g("call_id").str(), &step.g("id").str()]);
     if !id.is_empty() {
         cpa_json::set(&mut part, "functionResponse.id", id);
     }
@@ -410,7 +409,7 @@ fn build_gemini_chunk(
     if !finish_reason.is_empty() {
         cpa_json::set(&mut out, "candidates.0.finishReason", finish_reason);
     }
-    let model = first_non_empty_interaction_string(&[&st.model, model_name]);
+    let model = first_non_blank(&[&st.model, model_name]);
     if !model.is_empty() {
         cpa_json::set(&mut out, "modelVersion", model);
     }

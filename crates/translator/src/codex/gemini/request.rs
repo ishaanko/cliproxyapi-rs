@@ -7,9 +7,9 @@ use cpa_core::util::walk;
 use cpa_json::{J, Res, Value, json};
 
 use crate::codex::util::{
-    build_short_name_map, file_name_from_mime, input_audio_format_from_mime, shorten_name_if_needed,
+    build_short_name_map, file_name_from_mime, shorten_name_if_needed,
 };
-use crate::common::{is_gemini_thought_part, raw_in};
+use crate::common::{input_audio_format_from_mime, is_gemini_thought_part, raw_in};
 use cpa_json::raw_children;
 
 /// Go: ConvertGeminiRequestToCodex. Maps system instruction, contents (text, media, function

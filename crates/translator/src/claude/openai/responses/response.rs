@@ -1,6 +1,7 @@
 //! Claude Messages responses to OpenAI Responses events and objects
 //! (Go: claude/openai/responses/claude_openai-responses_response.go).
 
+use crate::common::unix_now;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cpa_core::applypatch;
@@ -205,14 +206,6 @@ fn emit_event(event: &str, payload: &Value) -> Vec<u8> {
     common::sse_event_data(event, &cpa_json::to_vec(payload))
 }
 
-fn now_unix() -> i64 {
-    chrono::Utc::now().timestamp()
-}
-
-fn template(json: &str) -> Value {
-    cpa_json::parse_str(json)
-}
-
 /// Rejects a patch tool input snapshot unless it parses as a consistent complete patch: equivalent
 /// JSON spellings are fine, but one complete input never silently replaces another.
 fn validate_apply_patch_snapshots(previous: &str, current: &str) -> Result<(), String> {
@@ -372,7 +365,7 @@ impl State {
         item.emitted = true;
         item.status = status.to_string();
         let mut done =
-            template(r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{}}"#);
+            cpa_json::parse_str(r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{}}"#);
         cpa_json::set(&mut done, "sequence_number", seq);
         cpa_json::set(&mut done, "output_index", item.output_index);
         let mut rendered = item.render();
@@ -444,7 +437,7 @@ impl State {
         let mut item;
         let item_id;
         if is_custom {
-            item = template(
+            item = cpa_json::parse_str(
                 r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"in_progress","input":"","call_id":"","name":""}}"#,
             );
             item_id = format!("ctc_{call_id}");
@@ -465,7 +458,7 @@ impl State {
                 );
             }
         } else {
-            item = template(
+            item = cpa_json::parse_str(
                 r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"in_progress","arguments":"","call_id":"","name":""}}"#,
             );
             item_id = format!("fc_{call_id}");
@@ -510,7 +503,7 @@ impl State {
         }
         let seq = self.next_seq();
         let output_index = self.function_output_index(idx);
-        let mut msg = template(
+        let mut msg = cpa_json::parse_str(
             r#"{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}"#,
         );
         cpa_json::set(&mut msg, "sequence_number", seq);
@@ -576,7 +569,7 @@ impl State {
                         &common::apply_patch_input_done(patch_call, &input, seq),
                     ));
                 } else {
-                    let mut input_done = template(
+                    let mut input_done = cpa_json::parse_str(
                         r#"{"type":"response.custom_tool_call_input.done","sequence_number":0,"item_id":"","output_index":0,"input":""}"#,
                     );
                     cpa_json::set(&mut input_done, "sequence_number", seq);
@@ -587,7 +580,7 @@ impl State {
                 }
             }
 
-            let mut item_done = template(
+            let mut item_done = cpa_json::parse_str(
                 r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}}"#,
             );
             let seq = self.next_seq();
@@ -601,7 +594,7 @@ impl State {
             out.push(emit_event("response.output_item.done", &item_done));
         } else {
             if self.func_args_done.insert(idx) {
-                let mut fc_done = template(
+                let mut fc_done = cpa_json::parse_str(
                     r#"{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}"#,
                 );
                 let seq = self.next_seq();
@@ -612,7 +605,7 @@ impl State {
                 out.push(emit_event("response.function_call_arguments.done", &fc_done));
             }
 
-            let mut item_done = template(
+            let mut item_done = cpa_json::parse_str(
                 r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}}"#,
             );
             let seq = self.next_seq();
@@ -636,7 +629,7 @@ impl State {
         self.reasoning_deltas_done = true;
         let full = self.reasoning_buf.clone();
         let mut out = Vec::new();
-        let mut text_done = template(
+        let mut text_done = cpa_json::parse_str(
             r#"{"type":"response.reasoning_summary_text.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"text":""}"#,
         );
         let seq = self.next_seq();
@@ -645,7 +638,7 @@ impl State {
         cpa_json::set(&mut text_done, "output_index", self.reasoning_index);
         cpa_json::set(&mut text_done, "text", full.as_str());
         out.push(emit_event("response.reasoning_summary_text.done", &text_done));
-        let mut part_done = template(
+        let mut part_done = cpa_json::parse_str(
             r#"{"type":"response.reasoning_summary_part.done","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
         );
         let seq = self.next_seq();
@@ -664,7 +657,7 @@ impl State {
         let mut out = self.finalize_reasoning_deltas();
 
         let full = std::mem::take(&mut self.reasoning_buf);
-        let mut item_done = template(
+        let mut item_done = cpa_json::parse_str(
             r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"completed","encrypted_content":"","summary":[]}}"#,
         );
         let seq = self.next_seq();
@@ -673,7 +666,7 @@ impl State {
         cpa_json::set(&mut item_done, "item.id", self.reasoning_item_id.as_str());
         cpa_json::set(&mut item_done, "item.status", status);
         cpa_json::set(&mut item_done, "item.encrypted_content", self.reasoning_signature.as_str());
-        let mut summary = template(r#"{"type":"summary_text","text":""}"#);
+        let mut summary = cpa_json::parse_str(r#"{"type":"summary_text","text":""}"#);
         cpa_json::set(&mut summary, "text", full.as_str());
         cpa_json::set(&mut item_done, "item.summary", Value::Array(vec![summary]));
         out.push(emit_event("response.output_item.done", &item_done));
@@ -698,7 +691,7 @@ impl State {
         let status = output_status(&self.stop_reason);
         let mut out = Vec::new();
 
-        let mut done = template(
+        let mut done = cpa_json::parse_str(
             r#"{"type":"response.output_text.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"text":"","logprobs":[]}"#,
         );
         let seq = self.next_seq();
@@ -708,7 +701,7 @@ impl State {
         cpa_json::set(&mut done, "text", full_text.as_str());
         out.push(emit_event("response.output_text.done", &done));
 
-        let mut part_done = template(
+        let mut part_done = cpa_json::parse_str(
             r#"{"type":"response.content_part.done","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}"#,
         );
         let seq = self.next_seq();
@@ -721,7 +714,7 @@ impl State {
         }
         out.push(emit_event("response.content_part.done", &part_done));
 
-        let mut fin = template(
+        let mut fin = cpa_json::parse_str(
             r#"{"type":"response.output_item.done","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}}"#,
         );
         let seq = self.next_seq();
@@ -874,11 +867,11 @@ impl State {
                 let msg = root.g("message");
                 if msg.exists() {
                     self.response_id = msg.g("id").str();
-                    self.created_at = now_unix();
+                    self.created_at = unix_now();
                     self.reset_for_message();
                     self.usage.merge(&msg.g("usage"));
 
-                    let mut created = template(
+                    let mut created = cpa_json::parse_str(
                         r#"{"type":"response.created","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress","background":false,"error":null,"output":[]}}"#,
                     );
                     let seq = self.next_seq();
@@ -894,7 +887,7 @@ impl State {
                     }
                     out.push(emit_event("response.created", &created));
 
-                    let mut inprog = template(
+                    let mut inprog = cpa_json::parse_str(
                         r#"{"type":"response.in_progress","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"in_progress","output":[]}}"#,
                     );
                     let seq = self.next_seq();
@@ -955,7 +948,7 @@ impl State {
                             self.current_msg_id = format!("msg_{}_{}", self.response_id, self.message_items.len());
                         }
                         if !self.message_open {
-                            let mut item = template(
+                            let mut item = cpa_json::parse_str(
                                 r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"message","status":"in_progress","content":[],"role":"assistant"}}"#,
                             );
                             let seq = self.next_seq();
@@ -966,7 +959,7 @@ impl State {
                             self.message_open = true;
                         }
                         if !self.content_part_open {
-                            let mut part = template(
+                            let mut part = cpa_json::parse_str(
                                 r#"{"type":"response.content_part.added","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""}}"#,
                             );
                             let seq = self.next_seq();
@@ -989,7 +982,7 @@ impl State {
                             let slot = self.start_web_search(idx, &cb.g("id").str());
                             let item = &self.web_search_items[slot];
                             let (output_index, tool_use_id) = (item.output_index, item.tool_use_id.clone());
-                            let mut added = template(
+                            let mut added = cpa_json::parse_str(
                                 r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"web_search_call","status":"in_progress","action":{"type":"search","query":""}}}"#,
                             );
                             let seq = self.next_seq();
@@ -1025,7 +1018,7 @@ impl State {
                         self.reasoning_buf.clear();
                         self.reasoning_signature = claude_reasoning_carrier(&cb);
                         self.reasoning_item_id = format!("rs_{}_{idx}", self.response_id);
-                        let mut item = template(
+                        let mut item = cpa_json::parse_str(
                             r#"{"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"id":"","type":"reasoning","status":"in_progress","encrypted_content":"","summary":[]}}"#,
                         );
                         let seq = self.next_seq();
@@ -1035,7 +1028,7 @@ impl State {
                         cpa_json::set(&mut item, "item.encrypted_content", self.reasoning_signature.as_str());
                         out.push(emit_event("response.output_item.added", &item));
                         // A summary part placeholder.
-                        let mut part = template(
+                        let mut part = cpa_json::parse_str(
                             r#"{"type":"response.reasoning_summary_part.added","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
                         );
                         let seq = self.next_seq();
@@ -1057,7 +1050,7 @@ impl State {
                     "text_delta" => {
                         let t = d.g("text");
                         if t.exists() {
-                            let mut msg = template(
+                            let mut msg = cpa_json::parse_str(
                                 r#"{"type":"response.output_text.delta","sequence_number":0,"item_id":"","output_index":0,"content_index":0,"delta":"","logprobs":[]}"#,
                             );
                             let seq = self.next_seq();
@@ -1091,7 +1084,7 @@ impl State {
                             let t = d.g("thinking");
                             if t.exists() {
                                 self.reasoning_buf.push_str(&t.str());
-                                let mut msg = template(
+                                let mut msg = cpa_json::parse_str(
                                     r#"{"type":"response.reasoning_summary_text.delta","sequence_number":0,"item_id":"","output_index":0,"summary_index":0,"delta":""}"#,
                                 );
                                 let seq = self.next_seq();
@@ -1166,7 +1159,7 @@ impl State {
                 }
 
                 let (event_type, response_status, details) = terminal_state(&self.stop_reason);
-                let mut completed = template(
+                let mut completed = cpa_json::parse_str(
                     r#"{"type":"","sequence_number":0,"response":{"id":"","object":"response","created_at":0,"status":"","background":false,"error":null}}"#,
                 );
                 cpa_json::set(&mut completed, "type", event_type);
@@ -1186,22 +1179,22 @@ impl State {
                 }
 
                 // response.output from the aggregated state, placed by output index.
-                let mut outputs = template(r#"{"arr":[]}"#);
+                let mut outputs = cpa_json::parse_str(r#"{"arr":[]}"#);
                 for reasoning in &self.reasoning_items {
                     let status = if reasoning.status.is_empty() { "completed" } else { reasoning.status.as_str() };
-                    let mut item = template(
+                    let mut item = cpa_json::parse_str(
                         r#"{"id":"","type":"reasoning","status":"completed","encrypted_content":"","summary":[]}"#,
                     );
                     cpa_json::set(&mut item, "id", reasoning.id.as_str());
                     cpa_json::set(&mut item, "status", status);
                     cpa_json::set(&mut item, "encrypted_content", reasoning.signature.as_str());
-                    let mut summary = template(r#"{"type":"summary_text","text":""}"#);
+                    let mut summary = cpa_json::parse_str(r#"{"type":"summary_text","text":""}"#);
                     cpa_json::set(&mut summary, "text", reasoning.text.as_str());
                     cpa_json::set(&mut item, "summary", Value::Array(vec![summary]));
                     cpa_json::set(&mut outputs, &format!("arr.{}", reasoning.output_index), item);
                 }
                 for message in &self.message_items {
-                    let mut item = template(
+                    let mut item = cpa_json::parse_str(
                         r#"{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}"#,
                     );
                     cpa_json::set(&mut item, "id", message.id.as_str());
@@ -1238,7 +1231,7 @@ impl State {
                     }
                     let output_index = self.func_output_indices.get(&idx).copied().unwrap_or(0);
                     let item = if is_custom {
-                        let mut item = template(
+                        let mut item = cpa_json::parse_str(
                             r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#,
                         );
                         cpa_json::set(&mut item, "id", format!("ctc_{call_id}"));
@@ -1251,7 +1244,7 @@ impl State {
                         cpa_json::set(&mut item, "call_id", call_id.as_str());
                         self.apply_function_call_namespace_fields(item, &name, "")
                     } else {
-                        let mut item = template(
+                        let mut item = cpa_json::parse_str(
                             r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#,
                         );
                         cpa_json::set(&mut item, "id", format!("fc_{call_id}"));
@@ -1544,7 +1537,7 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
         .map(|line| &line[DATA_TAG.len()..])
         .collect();
 
-    let mut out = template(
+    let mut out = cpa_json::parse_str(
         r#"{"id":"","object":"response","created_at":0,"status":"completed","background":false,"error":null,"incomplete_details":null,"output":[],"usage":{"input_tokens":0,"input_tokens_details":{"cached_tokens":0},"output_tokens":0,"output_tokens_details":{},"total_tokens":0}}"#,
     );
 
@@ -1573,7 +1566,7 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
                 let msg = root.g("message");
                 if msg.exists() {
                     response_id = msg.g("id").str();
-                    created_at = now_unix();
+                    created_at = unix_now();
                     usage_tokens.merge(&msg.g("usage"));
                 }
             }
@@ -1788,13 +1781,13 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
         let item_status = if response_status == "incomplete" && i == last { "incomplete" } else { "completed" };
         let item = match output_item.item_type.as_str() {
             "reasoning" => {
-                let mut item = template(
+                let mut item = cpa_json::parse_str(
                     r#"{"id":"","type":"reasoning","status":"completed","encrypted_content":"","summary":[]}"#,
                 );
                 cpa_json::set(&mut item, "id", output_item.id.as_str());
                 cpa_json::set(&mut item, "status", item_status);
                 cpa_json::set(&mut item, "encrypted_content", output_item.signature.as_str());
-                let mut summary = template(r#"{"type":"summary_text","text":""}"#);
+                let mut summary = cpa_json::parse_str(r#"{"type":"summary_text","text":""}"#);
                 cpa_json::set(&mut summary, "text", output_item.text.as_str());
                 cpa_json::set(&mut item, "summary", Value::Array(vec![summary]));
                 Some(item)
@@ -1809,7 +1802,7 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
                 Some(item)
             }
             "message" => {
-                let mut item = template(
+                let mut item = cpa_json::parse_str(
                     r#"{"id":"","type":"message","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":""}],"role":"assistant"}"#,
                 );
                 cpa_json::set(&mut item, "id", output_item.id.as_str());
@@ -1821,7 +1814,7 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
                 Some(item)
             }
             "custom_tool_call" => {
-                let mut item = template(
+                let mut item = cpa_json::parse_str(
                     r#"{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}"#,
                 );
                 cpa_json::set(&mut item, "id", output_item.id.as_str());
@@ -1855,7 +1848,7 @@ fn non_stream(st: &mut State, req_bytes: &[u8], raw: &[u8]) -> Option<Vec<u8>> {
                 if args.is_empty() && item_status == "completed" {
                     args = "{}".to_string();
                 }
-                let mut item = template(
+                let mut item = cpa_json::parse_str(
                     r#"{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}"#,
                 );
                 cpa_json::set(&mut item, "id", output_item.id.as_str());

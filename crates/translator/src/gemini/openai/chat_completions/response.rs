@@ -1,10 +1,10 @@
 //! Gemini response to OpenAI Chat Completions response
 //! (Go: gemini/openai/chat-completions/gemini_openai_response.go).
 
+use crate::common::{args_raw, parse_create_time, unix_nano_now};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use chrono::{DateTime, Utc};
 use cpa_core::util::{restore_sanitized_tool_name, sanitized_tool_name_map};
 use cpa_json::{json, Res, Value, J};
 
@@ -24,18 +24,8 @@ struct ChatParams {
 static FUNCTION_CALL_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn function_call_id(name: &str) -> String {
-    let nanos = Utc::now().timestamp_nanos_opt().unwrap_or(0);
+    let nanos = unix_nano_now();
     format!("{name}-{nanos}-{}", FUNCTION_CALL_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1)
-}
-
-/// Unix seconds of an RFC 3339 timestamp (Go: time.Parse(RFC3339Nano, s).Unix()).
-fn parse_create_time(s: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(s).ok().map(|t| t.timestamp())
-}
-
-/// Source text of `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(part_raw: Option<&&str>, args: &Res<'_>) -> String {
-    crate::common::raw_in(part_raw, "functionCall.args").map(str::to_string).unwrap_or_else(|| args.raw())
 }
 
 fn inline_data_of<'a>(part: &'a Res<'_>) -> Res<'a> {

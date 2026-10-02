@@ -1,5 +1,6 @@
 //! Claude request to Gemini request (Go: gemini/claude/gemini_claude_request.go).
 
+use crate::common::text_part;
 use std::collections::HashMap;
 
 use cpa_core::registry::lookup_model_info;
@@ -28,10 +29,6 @@ pub fn convert_claude_request_to_gemini(model_name: &str, raw: &[u8], stream: bo
 /// signatures or the bypass sentinel) for configured compatibility endpoints.
 pub fn convert_claude_request_to_gemini_with_compat(model_name: &str, raw: &[u8], stream: bool) -> Vec<u8> {
     convert(model_name, raw, stream, true)
-}
-
-fn text_part(text: &str) -> Value {
-    json!({ "text": text })
 }
 
 fn content_with_parts(role: &str, parts: Vec<Value>) -> Value {

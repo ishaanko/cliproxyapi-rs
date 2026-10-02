@@ -1,6 +1,7 @@
 //! Gemini response -> single OpenAI Responses object (Go:
 //! gemini_openai-responses_response.go, non-streaming half).
 
+use crate::common::{parse_create_time, unix_nano_now, unix_now};
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::util::{restore_sanitized_tool_name, responses_tool_reverse_identity_map, sanitized_tool_name_map, unwrap_responses_custom_tool_input, ResponsesToolIdentity};
@@ -9,8 +10,8 @@ use cpa_json::{json, Value, J};
 use super::lenient::gjson_valid;
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::response::{
-    echo_request_fields, next_func_call_id_counter, next_response_id_counter, parse_create_time, pick_request_json, set_usage,
-    unix_nanos_now, unix_now, unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
+    echo_request_fields, next_func_call_id_counter, next_response_id_counter, pick_request_json, set_usage,
+    unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
 };
 use super::signature_carrier::{encode_gemini_responses_carrier, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_STANDALONE, CARRIER_TEXT};
 use super::web_search::{
@@ -133,7 +134,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
     // id: prefer provider responseId, otherwise synthesize; normalized to resp_ prefix.
     let mut id = root.g("responseId").str();
     if id.is_empty() {
-        id = format!("resp_{:x}_{}", unix_nanos_now(), next_response_id_counter());
+        id = format!("resp_{:x}_{}", unix_nano_now(), next_response_id_counter());
     }
     if !id.starts_with("resp_") {
         id = format!("resp_{id}");
@@ -318,7 +319,7 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                     }
                 }
 
-                let mut call_id = format!("call_{:x}_{}", unix_nanos_now(), next_func_call_id_counter());
+                let mut call_id = format!("call_{:x}_{}", unix_nano_now(), next_func_call_id_counter());
                 if identity.apply_patch && !evidence_upstream_id.is_empty() {
                     call_id = evidence_upstream_id;
                 }

@@ -1,5 +1,6 @@
 //! Interactions request -> Antigravity request (Go: interactions_antigravity_request.go).
 
+use crate::common::first_trimmed;
 use std::collections::HashMap;
 
 use cpa_core::util;
@@ -293,12 +294,8 @@ fn append_input(items: &mut Vec<Value>, input: &Res<'_>, raw: &[u8]) {
     *items = ctx.items;
 }
 
-fn first_non_empty_string(values: &[String]) -> String {
-    values.iter().map(|v| v.trim()).find(|v| !v.is_empty()).unwrap_or_default().to_string()
-}
-
 fn step_signature(step: &Res<'_>) -> String {
-    first_non_empty_string(&[step.g("signature").str(), step.g("thought_signature").str(), step.g("thoughtSignature").str()])
+    first_trimmed(&[step.g("signature").str(), step.g("thought_signature").str(), step.g("thoughtSignature").str()])
 }
 
 fn append_step(ctx: &mut InputContext, step: &Res<'_>, default_role: &str, raw: &[u8], path: &str) {

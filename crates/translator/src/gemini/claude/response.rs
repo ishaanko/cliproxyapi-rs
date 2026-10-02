@@ -1,5 +1,6 @@
 //! Gemini response to Claude response (Go: gemini/claude/gemini_claude_response.go).
 
+use crate::common::args_raw;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -49,13 +50,6 @@ fn start_event(index: i64, block: Value) -> Value {
 fn part_signature<'a>(part: &'a Res<'_>) -> Res<'a> {
     let sig = part.g("thoughtSignature");
     if sig.exists() { sig } else { part.g("thought_signature") }
-}
-
-/// Source text of a part's `functionCall.args` (Go's `Raw`), falling back to the compact form.
-fn args_raw(part_raw: Option<&&str>, args: &Res<'_>) -> String {
-    crate::common::raw_in(part_raw, "functionCall.args")
-        .map(str::to_string)
-        .unwrap_or_else(|| args.raw())
 }
 
 /// Translates one Gemini streaming chunk into Claude SSE events (one output buffer per call).

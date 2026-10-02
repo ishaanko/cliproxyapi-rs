@@ -11,6 +11,7 @@ pub(crate) mod raw_text;
 mod request;
 mod responses_to_interactions;
 
+use crate::common::{first_existing, first_non_blank, unix_nano_now};
 use interactions_to_responses::finalize_tool_input;
 
 use cpa_core::format::Format;
@@ -45,21 +46,6 @@ pub fn register(r: &mut Registry) {
 
 // Helpers shared by the files of this package.
 
-/// Parses a JSON template literal.
-fn tmpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
-/// First value that is not blank after trimming; the original (untrimmed) string is returned.
-fn first_non_empty(values: &[&str]) -> String {
-    values.iter().find(|v| !v.trim().is_empty()).map(|v| (*v).to_string()).unwrap_or_default()
-}
-
-/// First lookup result that exists, or a missing result.
-fn first_existing<'a>(values: impl IntoIterator<Item = Res<'a>>) -> Res<'a> {
-    values.into_iter().find(Res::exists).unwrap_or(Res::NONE)
-}
-
 /// Sets the array at `path` to `items`; no-op for an empty list (Go: `SetRawArrayItems`).
 fn set_items(out: &mut Value, path: &str, items: Vec<Value>) {
     if !items.is_empty() {
@@ -87,7 +73,7 @@ fn json_string_value(value: &Res<'_>, fallback: &str) -> String {
 /// as strings, other values as-is, `default_raw` JSON when missing.
 fn set_json_value(out: &mut Value, path: &str, value: &Res<'_>, default_raw: &str) {
     if !value.exists() {
-        cpa_json::set(out, path, tmpl(default_raw));
+        cpa_json::set(out, path, cpa_json::parse_str(default_raw));
         return;
     }
     if let Some(s) = value.as_str() {
@@ -125,9 +111,6 @@ fn sse_payload(raw: &[u8]) -> Vec<u8> {
 
 /// The model name for a response: the caller's, else the model in the payload.
 fn response_model(model_name: &str, root: &Value) -> String {
-    first_non_empty(&[model_name, &root.g("model").str(), &root.g("response.model").str(), &root.g("interaction.model").str()])
+    first_non_blank(&[model_name, &root.g("model").str(), &root.g("response.model").str(), &root.g("interaction.model").str()])
 }
 
-fn unix_nanos() -> i64 {
-    chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-}

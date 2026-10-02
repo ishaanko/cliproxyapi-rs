@@ -32,12 +32,8 @@ pub fn convert_claude_request_to_openai_with_compat(model_name: &str, input: &[u
     convert(model_name, input, stream, true)
 }
 
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
 fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking_blocks: bool) -> Vec<u8> {
-    let mut out = tpl(r#"{"model":"","messages":[]}"#);
+    let mut out = cpa_json::parse_str(r#"{"model":"","messages":[]}"#);
     let root = cpa_json::parse(input_bytes);
 
     cpa_json::set(&mut out, "model", model_name);
@@ -113,7 +109,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
     if system.exists() {
         if let Some(text) = system.as_str() {
             if !text.is_empty() && !is_claude_code_attribution_system_text(text) {
-                let mut item = tpl(r#"{"type":"text","text":""}"#);
+                let mut item = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
                 cpa_json::set(&mut item, "text", text);
                 system_content_items.push(item);
             }
@@ -126,7 +122,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
         }
     }
     if !system_content_items.is_empty() {
-        let mut system_message = tpl(r#"{"role":"system","content":[]}"#);
+        let mut system_message = cpa_json::parse_str(r#"{"role":"system","content":[]}"#);
         cpa_json::set(&mut system_message, "content", Value::Array(system_content_items));
         message_items.push(system_message);
     }
@@ -143,7 +139,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
             let mut content_result = message.g("content");
             if role == "system" {
                 if let Some(reminder_text) = common::claude_message_system_reminder_text(&content_result) {
-                    let mut msg = tpl(r#"{"role":"user","content":[{"type":"text","text":""}]}"#);
+                    let mut msg = cpa_json::parse_str(r#"{"role":"user","content":[{"type":"text","text":""}]}"#);
                     cpa_json::set(&mut msg, "content.0.text", reminder_text);
                     if !pending_tool_use_ids.is_empty() {
                         pending_system_reminders.push(msg);
@@ -208,7 +204,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                                     }
                                 }
                                 // Go marshals tool calls through map[string]any: sorted keys.
-                                let mut tool_call = tpl(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
+                                let mut tool_call = cpa_json::parse_str(r#"{"function":{"arguments":"","name":""},"id":"","type":"function"}"#);
                                 cpa_json::set(&mut tool_call, "id", tool_use_id);
                                 cpa_json::set(&mut tool_call, "function.name", tool_name);
                                 let input = part.g("input");
@@ -224,7 +220,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                         }
                         "tool_result" => {
                             let tool_use_id = part.g("tool_use_id").str();
-                            let mut tool_result = tpl(r#"{"role":"tool","tool_call_id":"","content":""}"#);
+                            let mut tool_result = cpa_json::parse_str(r#"{"role":"tool","tool_call_id":"","content":""}"#);
                             cpa_json::set(&mut tool_result, "tool_call_id", tool_use_id.clone());
                             if let Some(tool_name) = tool_name_by_id.get(&tool_use_id).filter(|n| !n.is_empty()) {
                                 cpa_json::set(&mut tool_result, "name", tool_name.clone());
@@ -259,7 +255,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                 // OpenAI tool messages cannot carry images: replay them as a user message.
                 if !relayed_tool_images.is_empty() {
                     let mut relay_items: Vec<Value> = Vec::with_capacity(relayed_tool_images.len() + 1);
-                    let mut notice = tpl(r#"{"type":"text","text":""}"#);
+                    let mut notice = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
                     cpa_json::set(&mut notice, "text", TOOL_RESULT_IMAGE_RELAY_NOTICE);
                     relay_items.push(notice);
                     relay_items.append(&mut relayed_tool_images);
@@ -269,7 +265,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                         relay_items.append(&mut content_items);
                         content_items = relay_items;
                     } else {
-                        let mut relay = tpl(r#"{"role":"user"}"#);
+                        let mut relay = cpa_json::parse_str(r#"{"role":"user"}"#);
                         cpa_json::set(&mut relay, "content", Value::Array(relay_items));
                         message_items.push(relay);
                     }
@@ -279,7 +275,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
 
                 if role == "assistant" {
                     if has_content || has_reasoning || has_tool_calls {
-                        let mut msg = tpl(r#"{"role":"assistant"}"#);
+                        let mut msg = cpa_json::parse_str(r#"{"role":"assistant"}"#);
                         if has_content {
                             cpa_json::set(&mut msg, "content", Value::Array(content_items));
                         } else {
@@ -296,13 +292,13 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                     }
                 } else if has_content {
                     // Tool-result-only messages were already emitted above.
-                    let mut msg = tpl(r#"{"role":""}"#);
+                    let mut msg = cpa_json::parse_str(r#"{"role":""}"#);
                     cpa_json::set(&mut msg, "role", role);
                     cpa_json::set(&mut msg, "content", Value::Array(content_items));
                     message_items.push(msg);
                 }
             } else if content_result.is_string() {
-                let mut msg = tpl(r#"{"role":"","content":""}"#);
+                let mut msg = cpa_json::parse_str(r#"{"role":"","content":""}"#);
                 cpa_json::set(&mut msg, "role", role);
                 cpa_json::set(&mut msg, "content", content_result.str());
                 message_items.push(msg);
@@ -323,7 +319,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
     if tools.is_array() {
         let mut tool_items: Vec<Value> = Vec::new();
         for tool in tools.array() {
-            let mut openai_tool = tpl(r#"{"type":"function","function":{"name":"","description":""}}"#);
+            let mut openai_tool = cpa_json::parse_str(r#"{"type":"function","function":{"name":"","description":""}}"#);
             cpa_json::set(&mut openai_tool, "function.name", tool.g("name").str());
             cpa_json::set(&mut openai_tool, "function.description", tool.g("description").str());
 
@@ -338,7 +334,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                 };
                 cpa_json::set(&mut openai_tool, "function.parameters", schema);
             } else {
-                cpa_json::set(&mut openai_tool, "function.parameters", tpl(r#"{"type":"object","properties":{}}"#));
+                cpa_json::set(&mut openai_tool, "function.parameters", cpa_json::parse_str(r#"{"type":"object","properties":{}}"#));
             }
             tool_items.push(openai_tool);
         }
@@ -369,7 +365,7 @@ fn convert(model_name: &str, input_bytes: &[u8], stream: bool, preserve_thinking
                 if tool_name.is_empty() {
                     cpa_json::set(&mut out, "tool_choice", "none");
                 } else {
-                    let mut choice = tpl(r#"{"type":"function","function":{"name":""}}"#);
+                    let mut choice = cpa_json::parse_str(r#"{"type":"function","function":{"name":""}}"#);
                     cpa_json::set(&mut choice, "function.name", tool_name);
                     cpa_json::set(&mut out, "tool_choice", choice);
                 }
@@ -467,7 +463,7 @@ fn convert_claude_content_part(part: &Res<'_>) -> Option<Value> {
             if text.trim().is_empty() || is_claude_code_attribution_system_text(&text) {
                 return None;
             }
-            let mut content = tpl(r#"{"type":"text","text":""}"#);
+            let mut content = cpa_json::parse_str(r#"{"type":"text","text":""}"#);
             cpa_json::set(&mut content, "text", text);
             Some(content)
         }
@@ -496,7 +492,7 @@ fn convert_claude_content_part(part: &Res<'_>) -> Option<Value> {
             if image_url.is_empty() {
                 return None;
             }
-            let mut content = tpl(r#"{"type":"image_url","image_url":{"url":""}}"#);
+            let mut content = cpa_json::parse_str(r#"{"type":"image_url","image_url":{"url":""}}"#);
             cpa_json::set(&mut content, "image_url.url", image_url);
             Some(content)
         }

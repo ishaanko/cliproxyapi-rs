@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use cpa_core::cache;
 use cpa_core::signature::{self, b64, SignatureProvider};
@@ -93,10 +92,6 @@ pub struct Params {
 }
 
 static TOOL_USE_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-fn unix_nanos() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
-}
 
 /// `args_raw` is the upstream text of `functionCall.args` (Go: `args.Raw`), hashed as sent.
 fn claude_tool_use_id(model: &str, function_call: &Res<'_>, fallback: &str, args_raw: Option<&str>) -> String {
@@ -441,7 +436,7 @@ fn convert_part(em: &mut Emitter<'_>, part: &Res<'_>, raw_args: Option<&str>) {
             em.p.response_index += 1;
         }
 
-        let fallback_id = format!("{fc_name}-{}-{}", unix_nanos(), TOOL_USE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
+        let fallback_id = format!("{fc_name}-{}-{}", common::unix_nano_now(), TOOL_USE_ID_COUNTER.fetch_add(1, Ordering::SeqCst) + 1);
         let mut data = json!({"type": "content_block_start", "index": em.p.response_index, "content_block": {"type": "tool_use", "id": "", "name": "", "input": {}}});
         cpa_json::set(&mut data, "content_block.id", claude_tool_use_id(em.model, &function_call, &fallback_id, raw_args));
         cpa_json::set(&mut data, "content_block.name", fc_name);

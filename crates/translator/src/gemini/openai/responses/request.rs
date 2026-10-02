@@ -4,6 +4,7 @@
 //! are `Res` values (gjson results); each is turned into Gemini contents following the Go state
 //! machine: pending function calls, deferred developer messages, reasoning/signature carriers.
 
+use crate::common::text_part;
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::signature::{
@@ -495,10 +496,6 @@ pub fn convert_openai_responses_request_to_gemini(model_name: &str, input_raw_js
         result = sanitize_gemini_request_thought_signatures(&result, "contents");
     }
     strip_trailing_openai_responses_model_prefill(&result)
-}
-
-fn text_part(text: &str) -> Value {
-    json!({"text": text})
 }
 
 fn gemini_content(role: &str, parts: Vec<Value>) -> Value {

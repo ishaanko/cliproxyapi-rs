@@ -25,10 +25,6 @@ struct ToolCallAccumulator {
     arguments: String,
 }
 
-fn tpl(s: &str) -> Value {
-    cpa_json::parse_str(s)
-}
-
 /// Converts one OpenAI streaming line into Gemini JSON responses.
 pub fn convert_openai_response_to_gemini(
     _ctx: &Ctx,
@@ -56,7 +52,7 @@ pub fn convert_openai_response_to_gemini(
     if choices.array().is_empty() {
         let usage = root.g("usage");
         if usage.exists() {
-            let mut template = tpl(r#"{"candidates":[],"usageMetadata":{}}"#);
+            let mut template = cpa_json::parse_str(r#"{"candidates":[],"usageMetadata":{}}"#);
             let model = root.g("model");
             if model.exists() {
                 cpa_json::set(&mut template, "model", model.str());
@@ -71,7 +67,7 @@ pub fn convert_openai_response_to_gemini(
 
     for choice in choices.array() {
         // Base Gemini response without finishReason; set when known.
-        let mut template = tpl(r#"{"candidates":[{"content":{"parts":[],"role":"model"},"index":0}]}"#);
+        let mut template = cpa_json::parse_str(r#"{"candidates":[{"content":{"parts":[],"role":"model"},"index":0}]}"#);
         let model = root.g("model");
         if model.exists() {
             cpa_json::set(&mut template, "model", model.str());
@@ -446,7 +442,7 @@ pub fn convert_openai_response_to_gemini_non_stream(
 ) -> Option<Vec<u8>> {
     let root = cpa_json::parse(raw);
 
-    let mut out = tpl(r#"{"candidates":[{"content":{"parts":[],"role":"model"},"index":0}]}"#);
+    let mut out = cpa_json::parse_str(r#"{"candidates":[{"content":{"parts":[],"role":"model"},"index":0}]}"#);
     let model = root.g("model");
     if model.exists() {
         cpa_json::set(&mut out, "model", model.str());
