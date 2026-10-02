@@ -1,0 +1,217 @@
+@import "@fontsource-variable/geist/wght.css";
+@import "@fontsource-variable/geist-mono/wght.css";
+@import "tailwindcss";
+
+/* Dark only. True black canvas, white primary text, hairline borders. */
+@theme {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: #000000;
+  --color-raised: #0a0a0a;
+  --color-hover: #0f0f0f;
+  --color-active: #151515;
+  --color-line: #1a1a1a;
+  --color-line-strong: #2a2a2a;
+  --color-fg: #ffffff;
+  --color-fg-2: #cfcfcf;
+  --color-muted: #8b8b8b;
+  --color-faint: #5a5a5a;
+  --color-accent: #6ea8ff;
+  --color-ok: #4cc38a;
+  --color-warn: #e5a83b;
+  --color-bad: #f2625d;
+
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13px;
+  --animate-none: none;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+    background: #000;
+    color: #fff;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.45;
+    letter-spacing: -0.003em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    margin: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  #root {
+    height: 100dvh;
+  }
+  ::selection {
+    background: rgba(110, 168, 255, 0.32);
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+  }
+  :focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: 1px;
+    border-radius: 3px;
+  }
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+  /* Slim dark scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a2a transparent;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0;
+  }
+
+  /* Tables: hairline rows, sticky header, hover and keyboard-selected states */
+  .tbl {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .tbl th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #000;
+    text-align: left;
+    font-weight: 450;
+    font-size: 12px;
+    color: var(--color-muted);
+    padding: 0 12px;
+    height: 32px;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+  }
+  .tbl td {
+    padding: 0 12px;
+    height: 38px;
+    border-bottom: 1px solid var(--color-line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 0;
+  }
+  .tbl td.fit,
+  .tbl th.fit {
+    max-width: none;
+    width: 1%;
+  }
+  .tbl tbody tr:hover td {
+    background: var(--color-hover);
+  }
+  .tbl tbody tr[data-active="true"] td {
+    background: var(--color-active);
+  }
+  .tbl tbody tr[data-active="true"] td:first-child {
+    box-shadow: inset 2px 0 0 #fff;
+  }
+  .tbl tr.clickable {
+    cursor: pointer;
+  }
+  .tbl th:first-child,
+  .tbl td:first-child {
+    padding-left: 20px;
+  }
+  .tbl th:last-child,
+  .tbl td:last-child {
+    padding-right: 20px;
+  }
+  .tbl-compact td {
+    height: 32px;
+    max-width: none;
+  }
+  .tbl-compact th:first-child,
+  .tbl-compact td:first-child {
+    padding-left: 0;
+  }
+  .tbl-compact th:last-child,
+  .tbl-compact td:last-child {
+    padding-right: 0;
+  }
+
+  /* One-shot entrance transitions only. Nothing loops. */
+  .enter-fade {
+    animation: enter-fade 120ms ease-out both;
+  }
+  .enter-slide {
+    animation: enter-slide 160ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+  .enter-pop {
+    animation: enter-pop 130ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+}
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes enter-slide {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+@keyframes enter-pop {
+  from {
+    transform: translateY(4px) scale(0.99);
+    opacity: 0;
+  }
+}
+
+dialog {
+  color: inherit;
+}
+dialog.modal[open] {
+  animation: enter-pop 130ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+dialog.sheet[open] {
+  animation: enter-slide 170ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .enter-fade,
+  .enter-slide,
+  .enter-pop {
+    animation: none;
+  }
+}
