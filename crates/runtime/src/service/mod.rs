@@ -27,6 +27,7 @@
 pub mod antigravity;
 pub mod listing;
 pub mod models;
+mod persist;
 mod lifecycle;
 pub mod sync;
 pub mod synth;
@@ -38,6 +39,7 @@ pub use listing::{
     is_anthropic_models_request, openai_models_response, resolve_claude_model_id_prefix, route_models_request,
 };
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
+pub use persist::{StoreBackend, StorePersister};
 pub use lifecycle::{ExecutorFactory, ManagerPort, Service, ServiceBuilder, ServiceError};
 pub use sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 pub use synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_dir, synthesize_auth_file, synthesize_config_auths};
