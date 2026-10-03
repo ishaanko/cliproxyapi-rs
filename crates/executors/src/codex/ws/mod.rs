@@ -7,6 +7,7 @@
 
 mod codec;
 mod conn;
+mod duplex;
 mod errors;
 mod session;
 mod stream;

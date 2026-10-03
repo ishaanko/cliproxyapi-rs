@@ -131,6 +131,11 @@ impl CodexExecutor {
         }
         let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsStream)?;
         let mut call = connect_and_send(&opts, &plan, true).await?;
+        if let Some(input) = opts.ws_input.clone()
+            && (cfg.codex.response_steering || cfg.codex_response_steering)
+        {
+            return Ok(self.stream_duplex(cfg, auth, req, opts, input, call, plan));
+        }
         let headers = std::mem::take(&mut call.handshake_headers);
 
         let buffering = cfg.codex.stream_bootstrap_buffering;

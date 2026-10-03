@@ -68,6 +68,7 @@ fn metadata_flag(metadata: &Metadata, key: &str) -> bool {
 }
 
 /// The Codex provider executor.
+#[derive(Clone)]
 pub struct CodexExecutor {
     cfg: ConfigRx,
     /// Execution-local view without OAuth-only configuration (API-key credentials).

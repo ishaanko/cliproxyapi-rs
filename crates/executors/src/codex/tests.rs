@@ -733,3 +733,112 @@ async fn websocket_requires_the_downstream_flag_and_a_websocket_credential() {
     assert_eq!(recorded.lock().len(), 2);
     assert_eq!(mock.connections.load(Ordering::SeqCst), 0);
 }
+
+// ---------------------------------------------------------------- duplex steering
+
+fn created(id: &str, parent: &str) -> String {
+    format!(r#"{{"type":"response.created","response":{{"id":"{id}","previous_response_id":"{parent}"}}}}"#)
+}
+
+fn completed(id: &str) -> String {
+    format!(r#"{{"type":"response.completed","response":{{"id":"{id}","status":"completed","output":[]}}}}"#)
+}
+
+fn steering_executor() -> (CodexExecutor, watch::Sender<Arc<Config>>) {
+    let mut cfg = Config::default();
+    cfg.codex.response_steering = true;
+    executor(cfg)
+}
+
+/// Opens a duplex stream whose downstream frames are pushed through the returned sender.
+async fn duplex_stream(exec: &CodexExecutor, mock: &WsMock) -> (StreamResult, tokio::sync::mpsc::Sender<Result<Vec<u8>, ExecError>>) {
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let mut opts = ws_opts("duplex-session");
+    opts.ws_input = Some(cpa_runtime::executor::WebsocketInput::new(rx));
+    let (req, _) = request(HELLO_ITEMS, true);
+    let result = exec.execute_stream(&api_key_auth(&mock.url, true), req, opts).await.expect("duplex stream");
+    (result, tx)
+}
+
+async fn next_chunk(result: &mut StreamResult) -> Result<String, ExecError> {
+    let chunk = tokio::time::timeout(Duration::from_secs(5), result.chunks.recv()).await.expect("chunk in time");
+    chunk.expect("stream still open").map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+/// A completion does not end the stream: steering and explicit creates reach the same socket,
+/// acknowledgements pass through untouched and automatic successors are relayed.
+#[tokio::test]
+async fn duplex_stream_outlives_completion_and_forwards_steering_and_creates() {
+    let accepted = r#"{"type":"response.steer.accepted","steer":{"id":"s1","previous_response_id":"r1"},"sequence_number":7}"#;
+    let mock = ws_server(
+        vec![
+            frames(&[&created("r1", ""), &completed("r1")]),
+            frames(&[accepted, &created("r2", "r1"), &completed("r2")]),
+            frames(&[&created("r3", "r2"), &completed("r3")]),
+        ],
+        None,
+    )
+    .await;
+    let (exec, _keep) = steering_executor();
+    let (mut result, input) = duplex_stream(&exec, &mock).await;
+
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r1""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+
+    let steer = br#"{"type":"response.steer","previous_response_id":"r1","input":"Use the tool result"}"#;
+    input.send(Ok(steer.to_vec())).await.unwrap();
+    // The acknowledgement is relayed byte for byte, then the automatic successor follows.
+    assert_eq!(next_chunk(&mut result).await.unwrap(), accepted);
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r2""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+
+    // Local validation answers without touching the upstream.
+    input.send(Ok(b"not json".to_vec())).await.unwrap();
+    assert_eq!(
+        next_chunk(&mut result).await.unwrap(),
+        r#"{"error":{"message":"invalid websocket request JSON","type":"invalid_request_error"},"status":400,"type":"error"}"#
+    );
+    input.send(Ok(br#"{"type":"response.bogus"}"#.to_vec())).await.unwrap();
+    assert!(next_chunk(&mut result).await.unwrap().contains("unsupported websocket request type: response.bogus"));
+
+    // An explicit continuation is prepared like any create and keeps its parent id.
+    let create = br#"{"type":"response.create","previous_response_id":"r2","input":[{"type":"function_call_output","call_id":"c1","output":"ok"}]}"#;
+    input.send(Ok(create.to_vec())).await.unwrap();
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r3""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+
+    let received = mock.received.lock().clone();
+    assert_eq!(received.len(), 3, "{received:?}");
+    assert_eq!(received[1].as_bytes(), steer, "steering bypasses every create translation");
+    let forwarded: Value = serde_json::from_str(&received[2]).unwrap();
+    assert_eq!(forwarded["type"], "response.create");
+    assert_eq!(forwarded["previous_response_id"], "r2");
+    assert_eq!(forwarded["input"][0]["call_id"], "c1");
+    assert_eq!(forwarded["model"], "gpt-5.6-terra");
+    assert_eq!(mock.connections.load(Ordering::SeqCst), 1);
+
+    // Dropping the downstream ends the stream and releases the socket.
+    drop(input);
+    drop(result);
+    for _ in 0..100 {
+        if mock.closed.load(Ordering::SeqCst) == 1 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("upstream socket was not closed");
+}
+
+/// A response created with no pending create and no retained parent settings cannot be
+/// attributed to any request: the stream fails as a request-scoped connection error.
+#[tokio::test]
+async fn duplex_unattributable_automatic_response_is_a_request_scoped_failure() {
+    let mock = ws_server(vec![frames(&[&created("r1", ""), &completed("r1"), &created("r9", "ghost")])], None).await;
+    let (exec, _keep) = steering_executor();
+    let (mut result, _input) = duplex_stream(&exec, &mock).await;
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r1""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+    let err = next_chunk(&mut result).await.unwrap_err();
+    assert!(err.message.contains("automatic successor has no retained parent settings"), "{}", err.message);
+    assert!(err.is_request_scoped());
+}

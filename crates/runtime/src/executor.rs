@@ -90,6 +90,55 @@ pub struct Options {
     /// Upstream request/response capture of the inbound request (Go: the gin context carried
     /// by `ctx`). Empty outside inbound requests.
     pub api_log: crate::apilog::ApiLogHandle,
+    /// Frames of the single downstream websocket reader, set while a client is on a Responses
+    /// websocket with response steering enabled (Go: `WithWebsocketInput`).
+    pub ws_input: Option<WebsocketInput>,
+    /// Live account-state check of a bound websocket connection: may reject further frames but
+    /// never selects another credential (Go: `WithWebsocketAuthCheck`).
+    pub ws_auth_check: Option<WebsocketAuthCheck>,
+}
+
+/// A frame from the downstream websocket reader; an error terminates the connection (Go:
+/// `WebsocketInput`).
+pub type WebsocketFrame = Result<Vec<u8>, ExecError>;
+
+/// Shared receiver of [`WebsocketFrame`]s. Clones read the same queue: the handler reads it
+/// between turns and the executor of a steering stream reads it during one, never both at once.
+#[derive(Clone)]
+pub struct WebsocketInput(Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<WebsocketFrame>>>);
+
+impl WebsocketInput {
+    pub fn new(rx: tokio::sync::mpsc::Receiver<WebsocketFrame>) -> Self {
+        WebsocketInput(Arc::new(tokio::sync::Mutex::new(rx)))
+    }
+
+    /// Next frame; `None` once the reader ended.
+    pub async fn recv(&self) -> Option<WebsocketFrame> {
+        self.0.lock().await.recv().await
+    }
+}
+
+impl std::fmt::Debug for WebsocketInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WebsocketInput")
+    }
+}
+
+/// `check(auth_id)` is false once the credential was disabled or removed.
+#[derive(Clone)]
+pub struct WebsocketAuthCheck(pub Arc<dyn Fn(&str) -> bool + Send + Sync>);
+
+impl std::fmt::Debug for WebsocketAuthCheck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WebsocketAuthCheck")
+    }
+}
+
+impl Options {
+    /// Go: `WebsocketAuthEnabled` (true without a check).
+    pub fn websocket_auth_enabled(&self, auth_id: &str) -> bool {
+        self.ws_auth_check.as_ref().is_none_or(|check| (check.0)(auth_id))
+    }
 }
 
 /// Callback invoked with `(auth_id, auth_index)` when a credential is selected.
@@ -116,6 +165,8 @@ impl Options {
             proxy_url: String::new(),
             selected_auth: None,
             api_log: Default::default(),
+            ws_input: None,
+            ws_auth_check: None,
         }
     }
 
