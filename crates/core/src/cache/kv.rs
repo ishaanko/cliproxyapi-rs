@@ -88,23 +88,205 @@ pub(crate) fn scoped_kv_key(prefix: &str, a: &str, b: &str) -> String {
     format!("{prefix}:{}:{}", hash_key_part(a.trim()), hash_key_part(b.trim()))
 }
 
-/// Compact JSON text of `raw` as Go's `json.Marshal` emits a `json.RawMessage` (whitespace
-/// dropped, key order and number text kept, `<`, `>`, `&`, U+2028 and U+2029 escaped).
+/// Compact JSON text of `raw` as Go's `json.Marshal` emits a `json.RawMessage` (`json.Compact`
+/// with HTML escaping): the bytes are validated and insignificant whitespace dropped, while
+/// escapes, key order, duplicate keys, number text and lone surrogate escapes stay byte for byte;
+/// only `<`, `>`, `&`, U+2028 and U+2029 inside strings are rewritten to `\u` escapes. Input that
+/// is not valid UTF-8 is an error.
 pub(crate) fn compact_raw_json(raw: &[u8]) -> KvResult<String> {
-    let value: serde_json::Value = serde_json::from_slice(raw).map_err(KvError::new)?;
-    let text = serde_json::to_string(&value).map_err(KvError::new)?;
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '<' => out.push_str("\\u003c"),
-            '>' => out.push_str("\\u003e"),
-            '&' => out.push_str("\\u0026"),
-            '\u{2028}' => out.push_str("\\u2028"),
-            '\u{2029}' => out.push_str("\\u2029"),
-            c => out.push(c),
+    compact_json_bytes(raw).ok_or_else(|| KvError::new("invalid JSON in raw message"))
+}
+
+/// Parser state of [`compact_json_bytes`].
+#[derive(Clone, Copy, PartialEq)]
+enum Expect {
+    Value,
+    ValueOrEnd,
+    KeyOrEnd,
+    Key,
+    Colon,
+    AfterValue,
+}
+
+/// Go's `json.Nesting` limit.
+const MAX_JSON_DEPTH: usize = 10_000;
+
+fn compact_json_bytes(src: &[u8]) -> Option<String> {
+    let mut out: Vec<u8> = Vec::with_capacity(src.len());
+    let mut stack: Vec<u8> = Vec::new();
+    let mut expect = Expect::Value;
+    let mut i = 0;
+    while i < src.len() {
+        let c = src[i];
+        if matches!(c, b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+            continue;
+        }
+        match expect {
+            Expect::KeyOrEnd if c == b'}' => {
+                stack.pop();
+                out.push(c);
+                expect = Expect::AfterValue;
+                i += 1;
+            }
+            Expect::ValueOrEnd if c == b']' => {
+                stack.pop();
+                out.push(c);
+                expect = Expect::AfterValue;
+                i += 1;
+            }
+            Expect::Value | Expect::ValueOrEnd => match c {
+                b'{' | b'[' => {
+                    if stack.len() >= MAX_JSON_DEPTH {
+                        return None;
+                    }
+                    stack.push(c);
+                    out.push(c);
+                    expect = if c == b'{' { Expect::KeyOrEnd } else { Expect::ValueOrEnd };
+                    i += 1;
+                }
+                b'"' => {
+                    i = compact_json_string(src, i, &mut out)?;
+                    expect = Expect::AfterValue;
+                }
+                b'-' | b'0'..=b'9' => {
+                    i = compact_json_number(src, i, &mut out)?;
+                    expect = Expect::AfterValue;
+                }
+                b't' | b'f' | b'n' => {
+                    let lit: &[u8] = match c {
+                        b't' => b"true",
+                        b'f' => b"false",
+                        _ => b"null",
+                    };
+                    if !src[i..].starts_with(lit) {
+                        return None;
+                    }
+                    out.extend_from_slice(lit);
+                    i += lit.len();
+                    expect = Expect::AfterValue;
+                }
+                _ => return None,
+            },
+            Expect::KeyOrEnd | Expect::Key => {
+                if c != b'"' {
+                    return None;
+                }
+                i = compact_json_string(src, i, &mut out)?;
+                expect = Expect::Colon;
+            }
+            Expect::Colon => {
+                if c != b':' {
+                    return None;
+                }
+                out.push(c);
+                expect = Expect::Value;
+                i += 1;
+            }
+            Expect::AfterValue => match (stack.last().copied(), c) {
+                (Some(b'{'), b',') => {
+                    out.push(c);
+                    expect = Expect::Key;
+                    i += 1;
+                }
+                (Some(b'['), b',') => {
+                    out.push(c);
+                    expect = Expect::Value;
+                    i += 1;
+                }
+                (Some(b'{'), b'}') | (Some(b'['), b']') => {
+                    stack.pop();
+                    out.push(c);
+                    i += 1;
+                }
+                _ => return None,
+            },
         }
     }
-    Ok(out)
+    if !stack.is_empty() || expect != Expect::AfterValue {
+        return None;
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Copies the string starting at `src[start]` (a quote) into `out`, returning the index after its
+/// closing quote.
+fn compact_json_string(src: &[u8], start: usize, out: &mut Vec<u8>) -> Option<usize> {
+    out.push(b'"');
+    let mut i = start + 1;
+    while i < src.len() {
+        let c = src[i];
+        match c {
+            b'"' => {
+                out.push(b'"');
+                return Some(i + 1);
+            }
+            0..=0x1f => return None,
+            b'\\' => {
+                let esc = *src.get(i + 1)?;
+                match esc {
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => {
+                        out.extend_from_slice(&[b'\\', esc]);
+                        i += 2;
+                    }
+                    b'u' => {
+                        let hex = src.get(i + 2..i + 6)?;
+                        if !hex.iter().all(u8::is_ascii_hexdigit) {
+                            return None;
+                        }
+                        out.extend_from_slice(&src[i..i + 6]);
+                        i += 6;
+                    }
+                    _ => return None,
+                }
+            }
+            b'<' | b'>' | b'&' => {
+                out.extend_from_slice(format!("\\u00{c:02x}").as_bytes());
+                i += 1;
+            }
+            0xE2 if src.get(i + 1) == Some(&0x80) && src.get(i + 2).is_some_and(|b| b & !1 == 0xA8) => {
+                out.extend_from_slice(if src[i + 2] == 0xA8 { b"\\u2028" } else { b"\\u2029" });
+                i += 3;
+            }
+            _ => {
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// Copies the number starting at `src[start]` into `out`, returning the index after it.
+fn compact_json_number(src: &[u8], start: usize, out: &mut Vec<u8>) -> Option<usize> {
+    let digits = |mut i: usize| {
+        let begin = i;
+        while src.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        (i > begin).then_some(i)
+    };
+    let mut i = start;
+    if src[i] == b'-' {
+        i += 1;
+    }
+    match src.get(i)? {
+        b'0' => i += 1,
+        b'1'..=b'9' => i = digits(i)?,
+        _ => return None,
+    }
+    if src.get(i) == Some(&b'.') {
+        i = digits(i + 1)?;
+    }
+    if matches!(src.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(src.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        i = digits(i)?;
+    }
+    out.extend_from_slice(&src[start..i]);
+    Some(i)
 }
 
 /// Home value of a `[][]byte`: a JSON array of base64 strings (how Go's `json.Marshal` stores
@@ -153,4 +335,26 @@ pub(crate) fn read_or_reserve(
         }
     }
     Err(KvError::new(format!("could not reserve absent {label} state")))
+}
+
+#[cfg(test)]
+mod compact_tests {
+    use super::compact_raw_json;
+
+    // Go `json.Compact` + HTML escaping: bytes survive, only whitespace goes.
+    #[test]
+    fn compaction_keeps_escapes_duplicate_keys_numbers_and_lone_surrogates() {
+        let raw = " {\"b\" : 1.50e+2 , \"a\":[ true,null ,\"x\\/\\ud800\\n\"],\"b\":\"<&>\u{2028}\u{2029}\" } ".as_bytes();
+        assert_eq!(
+            compact_raw_json(raw).unwrap(),
+            "{\"b\":1.50e+2,\"a\":[true,null,\"x\\/\\ud800\\n\"],\"b\":\"\\u003c\\u0026\\u003e\\u2028\\u2029\"}"
+        );
+    }
+
+    #[test]
+    fn invalid_json_is_rejected() {
+        for bad in ["", "{", "[1,]", "{\"a\"}", "01", "\"a\nb\"", "{} x", "tru", "\"\\q\""] {
+            assert!(compact_raw_json(bad.as_bytes()).is_err(), "{bad:?}");
+        }
+    }
 }

@@ -33,6 +33,11 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 pub struct Kill(CancellationToken);
 
 impl Kill {
+    /// A switch that also dies when `self` does (a lifetime nested in a supervisor).
+    pub fn child(&self) -> Kill {
+        Kill(self.0.child_token())
+    }
+
     pub fn kill(&self) {
         self.0.cancel();
     }

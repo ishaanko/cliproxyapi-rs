@@ -391,6 +391,10 @@ impl cpa_runtime::service::HomeHooks for ServerHomeHooks {
     fn deactivate(&self, client: &Arc<cpa_home::Client>) {
         self.0.deactivate(client);
     }
+
+    fn stop(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(self.0.stop())
+    }
 }
 
 /// Local management password, whether the idle-shutdown keep-alive endpoint is enabled, and
@@ -587,6 +591,7 @@ async fn serve_proxy(
             }
         } => {}
     }
+    service.shutdown_home().await;
     service.shutdown();
     0
 }
