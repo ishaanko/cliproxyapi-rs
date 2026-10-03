@@ -18,7 +18,7 @@ use super::models::{
 use super::util::canonical_model_key;
 
 /// Go: `homeForceMappingAliasResult`: Home told us to rewrite responses back to the alias.
-fn home_force_mapping_alias_result(auth: &Auth, requested: &str) -> AliasResult {
+pub(super) fn home_force_mapping_alias_result(auth: &Auth, requested: &str) -> AliasResult {
     if !auth.attr(HOME_FORCE_MAPPING_ATTRIBUTE).eq_ignore_ascii_case("true") {
         return AliasResult::default();
     }

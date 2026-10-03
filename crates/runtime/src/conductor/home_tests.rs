@@ -834,3 +834,354 @@ async fn home_unauthorized_streams_are_not_refreshed_or_replayed() {
     assert_eq!(h.exec.call_ids().len(), 1);
     assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
 }
+
+// ---- retained routes, alias changes and release acknowledgement (Go: home_force_mapping_test.go) ----
+
+/// Dispatcher answering through a closure `(model, call number) -> reply`.
+struct DynHome {
+    reply: Box<dyn Fn(&str, usize) -> Value + Send + Sync>,
+    models: Mutex<Vec<String>>,
+    /// Observed by the closure of tests that check ordering against release acknowledgements.
+    on_call: Box<dyn Fn(usize) + Send + Sync>,
+}
+
+impl DynHome {
+    fn new(reply: impl Fn(&str, usize) -> Value + Send + Sync + 'static) -> Arc<Self> {
+        Self::with_hook(reply, |_| {})
+    }
+
+    fn with_hook(reply: impl Fn(&str, usize) -> Value + Send + Sync + 'static, on_call: impl Fn(usize) + Send + Sync + 'static) -> Arc<Self> {
+        Arc::new(DynHome { reply: Box::new(reply), models: Mutex::new(vec![]), on_call: Box::new(on_call) })
+    }
+
+    fn models(&self) -> Vec<String> {
+        self.models.lock().clone()
+    }
+}
+
+#[async_trait]
+impl HomeAuthDispatcher for DynHome {
+    fn heartbeat_ok(&self) -> bool {
+        true
+    }
+
+    async fn rpop_auth(&self, params: &DispatchParams<'_>) -> Result<Vec<u8>, HomeError> {
+        let call = {
+            let mut models = self.models.lock();
+            models.push(params.model.to_string());
+            models.len()
+        };
+        (self.on_call)(call);
+        Ok(serde_json::to_vec(&(self.reply)(params.model, call)).unwrap())
+    }
+
+    fn abort_ambiguous_dispatch(&self) {}
+}
+
+/// Retaining executor: echoes the model it was called with and records it.
+struct Echo {
+    id: &'static str,
+    models: Mutex<Vec<String>>,
+}
+
+impl Echo {
+    fn new(id: &'static str) -> Arc<Self> {
+        Arc::new(Echo { id, models: Mutex::new(vec![]) })
+    }
+
+    fn models(&self) -> Vec<String> {
+        self.models.lock().clone()
+    }
+}
+
+#[async_trait]
+impl Executor for Echo {
+    fn identifier(&self) -> &str {
+        self.id
+    }
+
+    async fn execute(&self, _: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+        self.models.lock().push(req.model.clone());
+        if let Some(l) = &opts.lifecycle {
+            l.retain();
+        }
+        Ok(Response { payload: Bytes::from(serde_json::to_vec(&json!({"model": req.model})).unwrap()), ..Default::default() })
+    }
+
+    async fn execute_stream(&self, _: &Auth, _: Request, _: Options) -> Result<StreamResult, ExecError> {
+        Err(ExecError::new(500, "unused"))
+    }
+
+    async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        Ok(auth.clone())
+    }
+
+    async fn count_tokens(&self, _: &Auth, _: Request, _: Options) -> Result<Response, ExecError> {
+        Err(ExecError::new(500, "unused"))
+    }
+}
+
+fn dyn_manager(home: Arc<DynHome>, registry: Registry, edit: impl FnOnce(&mut Config)) -> Manager {
+    let model_registry: &'static ModelRegistry = Box::leak(Box::new(ModelRegistry::new()));
+    let mgr = Manager::with_parts(Arc::new(SystemClock), model_registry);
+    let mut cfg = Config::default();
+    cfg.home.enabled = true;
+    edit(&mut cfg);
+    mgr.set_config(Arc::new(cfg));
+    mgr.publish_home_dispatch(home, registry, 1);
+    mgr
+}
+
+fn session_opts(session: &str, pinned: &str) -> Options {
+    let mut o = Options::new(Format::OpenAIResponse);
+    o.metadata.insert(meta::EXECUTION_SESSION_ID.into(), json!(session));
+    o.metadata.insert(meta::PINNED_AUTH_ID.into(), json!(pinned));
+    o.metadata.insert("downstream_websocket".into(), json!(true));
+    o
+}
+
+fn ws_auth(id: &str, provider: &str, extra_attrs: Value) -> Value {
+    let mut attrs = json!({"websockets": "true"});
+    if let (Value::Object(base), Value::Object(more)) = (&mut attrs, extra_attrs) {
+        base.extend(more);
+    }
+    json!({"id": id, "provider": provider, "status": "active", "attributes": attrs})
+}
+
+async fn run_on(mgr: &Manager, provider: &str, model: &str, opts: Options) -> Result<Response, ExecError> {
+    mgr.execute(&[provider.to_string()], request(model), opts).await
+}
+
+// Go: TestHomeForceMappingAliasResult*.
+#[test]
+fn force_mapping_alias_result_requires_flag_and_matching_alias() {
+    use super::home_selection::{HOME_FORCE_MAPPING_ATTRIBUTE, HOME_ORIGINAL_ALIAS_ATTRIBUTE, HOME_UPSTREAM_MODEL_ATTRIBUTE};
+    let mut auth = Auth::default();
+    auth.provider = "xai".into();
+    auth.attributes.insert(HOME_UPSTREAM_MODEL_ATTRIBUTE.into(), "grok-4.5".into());
+    auth.attributes.insert(HOME_ORIGINAL_ALIAS_ATTRIBUTE.into(), "grok-latest".into());
+    let none = super::routing::home_force_mapping_alias_result(&auth, "grok-latest");
+    assert!(!none.force_mapping && none.original_alias.is_empty());
+
+    auth.attributes.insert(HOME_FORCE_MAPPING_ATTRIBUTE.into(), "true".into());
+    let r = super::routing::home_force_mapping_alias_result(&auth, "grok-latest");
+    assert_eq!((r.upstream_model.as_str(), r.force_mapping, r.original_alias.as_str()), ("grok-4.5", true, "grok-latest"));
+    assert!(super::routing::home_force_mapping_alias_result(&auth, " GROK-LATEST ").force_mapping);
+    assert!(super::routing::home_force_mapping_alias_result(&auth, "grok-latest(high)").force_mapping);
+    for other in ["grok-latest(custom)", "grok-other"] {
+        let r = super::routing::home_force_mapping_alias_result(&auth, other);
+        assert!(!r.force_mapping && r.original_alias.is_empty(), "{other}");
+    }
+}
+
+// Go: TestHomeAuthSelectionRouteRetainsRequestedResponseAliasAcrossWebsocketReuse.
+#[tokio::test]
+async fn auth_selection_route_keeps_the_requested_response_alias_across_websocket_reuse() {
+    let home = DynHome::new(|_, _| {
+        json!({
+            "model": "target-model", "force_mapping": true, "original_alias": "route-model",
+            "auth_index": "route-auth", "auth": ws_auth("route-auth", "force-mapping", json!({})),
+            "concurrency": {"accounted": true, "credential_id": "route-auth", "model": "target-model"},
+        })
+    });
+    let mgr = dyn_manager(home.clone(), Registry::new(), |_| {});
+    mgr.register_executor(Echo::new("force-mapping"));
+    for _ in 0..2 {
+        let mut opts = session_opts("auth-selection-route", "route-auth");
+        opts.metadata.insert(meta::AUTH_SELECTION_MODEL.into(), json!("route-model"));
+        opts.metadata.insert(meta::REQUESTED_MODEL.into(), json!("client-alias"));
+        let resp = run_on(&mgr, "force-mapping", "execution-model", opts).await.unwrap();
+        assert_eq!(resp.payload, r#"{"model":"client-alias"}"#);
+    }
+    assert_eq!(home.models(), ["route-model"]);
+    mgr.close_execution_session("auth-selection-route").await;
+}
+
+/// Counts of releases seen by the registry sink.
+fn counting_registry() -> (Registry, Arc<Mutex<Vec<ReleaseGroup>>>) {
+    let registry = Registry::new();
+    let groups = Arc::new(Mutex::new(Vec::new()));
+    let sink = groups.clone();
+    registry.set_release_sink(Some(Arc::new(move |g, _| {
+        sink.lock().push(g);
+        None
+    })));
+    (registry, groups)
+}
+
+// Go: TestHomeForceMappingAliasChangeEndsAndFlushesBeforeRedispatch.
+#[tokio::test]
+async fn force_mapping_alias_change_releases_before_the_second_dispatch() {
+    let (registry, groups) = counting_registry();
+    let seen = groups.clone();
+    let released_before_second = Arc::new(AtomicBool::new(false));
+    let flag = released_before_second.clone();
+    let home = DynHome::with_hook(
+        |_, _| {
+            json!({
+                "model": "upstream-a", "auth_index": "fm-auth",
+                "auth": ws_auth("fm-auth", "force-mapping", json!({"home_force_mapping": "true", "home_original_alias": "alias-a"})),
+                "concurrency": {"accounted": true, "credential_id": "fm-auth", "model": "upstream-a"},
+            })
+        },
+        move |call| {
+            if call == 2 {
+                flag.store(seen.lock().len() == 1, Ordering::SeqCst);
+            }
+        },
+    );
+    let mgr = dyn_manager(home.clone(), registry, |_| {});
+    mgr.register_executor(Echo::new("force-mapping"));
+    for model in ["alias-a", "alias-b"] {
+        run_on(&mgr, "force-mapping", model, session_opts("fm-alias-change", "fm-auth")).await.unwrap();
+    }
+    assert_eq!(home.models().len(), 2);
+    assert!(released_before_second.load(Ordering::SeqCst), "previous selection must be released before the second dispatch");
+    mgr.close_execution_session("fm-alias-change").await;
+}
+
+// Go: TestHomeNonForceAliasSessionReuseAndTargetChangeReleasesAccountedModel.
+#[tokio::test]
+async fn non_force_alias_reuses_the_session_and_releases_the_accounted_model_on_target_change() {
+    let (registry, groups) = counting_registry();
+    let seen = groups.clone();
+    let released_before_second = Arc::new(AtomicBool::new(false));
+    let flag = released_before_second.clone();
+    let home = DynHome::with_hook(
+        |model, _| {
+            let target = if super::home_concurrency::canonical_concurrency_model_key(model) == "alias-b" { "target-b" } else { "target-a" };
+            json!({
+                "model": target, "auth_index": "nf-auth",
+                "auth": ws_auth("nf-auth", "force-mapping", json!({})),
+                "concurrency": {"accounted": true, "credential_id": "nf-auth", "model": target},
+            })
+        },
+        move |call| {
+            if call == 2 {
+                flag.store(seen.lock().len() == 1, Ordering::SeqCst);
+            }
+        },
+    );
+    let mgr = dyn_manager(home.clone(), registry, |_| {});
+    mgr.register_executor(Echo::new("force-mapping"));
+    for model in ["alias-a(high)", "alias-a", "alias-b"] {
+        run_on(&mgr, "force-mapping", model, session_opts("nf-session", "nf-auth")).await.unwrap();
+    }
+    assert_eq!(home.models().len(), 2, "same-route reuse then target change");
+    assert!(released_before_second.load(Ordering::SeqCst));
+    mgr.close_execution_session("nf-session").await;
+    let want = [
+        ReleaseGroup { credential_id: "nf-auth".into(), model: "target-a".into() },
+        ReleaseGroup { credential_id: "nf-auth".into(), model: "target-b".into() },
+    ];
+    assert_eq!(*groups.lock(), want);
+}
+
+// Go: TestHomeRetainedPrefixedRouteRewritesSuffixAndResponse.
+#[tokio::test]
+async fn retained_prefixed_route_rewrites_suffix_and_response() {
+    let home = DynHome::new(|_, _| {
+        let mut auth = ws_auth("pfx-auth", "prefixed-retained-route", json!({}));
+        auth["prefix"] = json!("team");
+        json!({
+            "model": "target-a", "force_mapping": true, "original_alias": "alias-a",
+            "auth_index": "pfx-auth", "auth": auth,
+            "concurrency": {"accounted": true, "credential_id": "pfx-auth", "model": "target-a"},
+        })
+    });
+    let mgr = dyn_manager(home.clone(), Registry::new(), |_| {});
+    let echo = Echo::new("prefixed-retained-route");
+    mgr.register_executor(echo.clone());
+    for model in ["team/alias-a", "team/alias-a(high)"] {
+        let resp = run_on(&mgr, "prefixed-retained-route", model, session_opts("pfx-session", "pfx-auth")).await.unwrap();
+        assert_eq!(resp.payload, format!(r#"{{"model":"{model}"}}"#).as_str());
+    }
+    assert_eq!(home.models(), ["team/alias-a"]);
+    assert_eq!(echo.models(), ["target-a", "target-a(high)"]);
+    mgr.close_execution_session("pfx-session").await;
+}
+
+fn ack_route_reply(model: &str) -> Value {
+    let target = if super::home_concurrency::canonical_concurrency_model_key(model) == "alias-a" { "target-a" } else { "target-custom" };
+    json!({
+        "model": target, "force_mapping": true, "original_alias": model,
+        "auth_index": "retained-route-auth", "auth": ws_auth("retained-route-auth", "retained-route", json!({})),
+        "concurrency": {"accounted": true, "credential_id": "retained-route-auth", "model": target},
+    })
+}
+
+// Go: TestHomeRetainedRouteRewritesReasoningSuffixAndWaitsForReleaseACK.
+#[tokio::test]
+async fn retained_route_rewrites_reasoning_suffix_and_waits_for_the_release_ack() {
+    use cpa_home::concurrency_release::ReleaseFlusher;
+    let registry = Registry::new();
+    let flusher = ReleaseFlusher::with_timings(Duration::from_millis(1), Duration::from_millis(10));
+    let acks = Arc::new(AtomicUsize::new(0));
+    let counter = acks.clone();
+    flusher.set_sender(Some(Arc::new(move |_frame| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    })));
+    let f = flusher.clone();
+    registry.set_release_sink(Some(Arc::new(move |g, s| f.mark_dirty(g, s))));
+    let cancel: cpa_home::client::Cancel = Arc::new(Default::default());
+    let (run_flusher, run_cancel) = (flusher.clone(), cancel.clone());
+    let task = tokio::spawn(async move { run_flusher.run(&run_cancel).await });
+
+    let acked_before_second = Arc::new(AtomicBool::new(false));
+    let (flag, seen) = (acked_before_second.clone(), acks.clone());
+    let home = DynHome::with_hook(
+        |model, _| ack_route_reply(model),
+        move |call| {
+            if call == 2 {
+                flag.store(seen.load(Ordering::SeqCst) == 1, Ordering::SeqCst);
+            }
+        },
+    );
+    let mgr = dyn_manager(home.clone(), registry, |_| {});
+    let echo = Echo::new("retained-route");
+    mgr.register_executor(echo.clone());
+    for model in ["alias-a", "alias-a(high)", "alias-a", "alias-a(custom)"] {
+        let resp = run_on(&mgr, "retained-route", model, session_opts("retained-route-ack", "retained-route-auth")).await.unwrap();
+        assert_eq!(resp.payload, format!(r#"{{"model":"{model}"}}"#).as_str());
+    }
+    assert_eq!(home.models().len(), 2, "a custom suffix must redispatch");
+    assert!(acked_before_second.load(Ordering::SeqCst), "release must be acknowledged before the second dispatch");
+    assert_eq!(echo.models(), ["target-a", "target-a(high)", "target-a", "target-custom"]);
+
+    mgr.close_execution_session("retained-route-ack").await;
+    for _ in 0..1000 {
+        if acks.load(Ordering::SeqCst) == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+    assert_eq!(acks.load(Ordering::SeqCst), 2);
+    cancel.kill();
+    let _ = task.await;
+}
+
+// Go: TestHomeRedispatchStopsWhenReleaseAcknowledgementFails.
+#[tokio::test]
+async fn redispatch_stops_when_the_release_acknowledgement_fails() {
+    use cpa_home::concurrency_release::ReleaseFlusher;
+    let registry = Registry::new();
+    let flusher = ReleaseFlusher::with_timings(Duration::from_millis(1), Duration::from_millis(1));
+    flusher.set_sender(Some(Arc::new(|_| Box::pin(async { Err(HomeError::Io("deadline exceeded".into())) }))));
+    let f = flusher.clone();
+    registry.set_release_sink(Some(Arc::new(move |g, s| f.mark_dirty(g, s))));
+    let cancel: cpa_home::client::Cancel = Arc::new(Default::default());
+    let (run_flusher, run_cancel) = (flusher.clone(), cancel.clone());
+    let task = tokio::spawn(async move { run_flusher.run(&run_cancel).await });
+
+    let home = DynHome::new(|model, _| ack_route_reply(model));
+    let mgr = dyn_manager(home.clone(), registry, |c| {
+        c.credential_concurrency.cpa_cancel_bound = cpa_config::GoDuration::from_millis(20);
+    });
+    mgr.register_executor(Echo::new("retained-route"));
+    run_on(&mgr, "retained-route", "alias-a", session_opts("release-failure", "retained-route-auth")).await.unwrap();
+    assert!(run_on(&mgr, "retained-route", "alias-a(custom)", session_opts("release-failure", "retained-route-auth")).await.is_err());
+    assert_eq!(home.models().len(), 1, "no second dispatch after a release failure");
+    cancel.kill();
+    let _ = task.await;
+}
