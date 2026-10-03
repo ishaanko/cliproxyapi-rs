@@ -69,9 +69,31 @@ pub mod b64_list {
 /// Raw JSON value kept verbatim (Go `json.RawMessage`).
 pub type Raw = Option<Box<serde_json::value::RawValue>>;
 
-/// `time.Time`: unset is `0001-01-01T00:00:00Z`.
+/// `time.Time`: unset is `0001-01-01T00:00:00Z` (`None` here); other values are RFC 3339 with
+/// nanosecond precision trimmed like Go.
 pub mod gotime {
-    pub use cpa_auth::types::go_time::{deserialize, serialize};
+    use chrono::{DateTime, NaiveDate, SecondsFormat, Utc};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    fn zero_time() -> DateTime<Utc> {
+        NaiveDate::from_ymd_opt(1, 1, 1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|dt| dt.and_utc())
+            .unwrap_or(DateTime::<Utc>::MIN_UTC)
+    }
+
+    pub fn serialize<S: Serializer>(t: &Option<DateTime<Utc>>, s: S) -> Result<S::Ok, S::Error> {
+        let t = t.unwrap_or_else(zero_time);
+        s.serialize_str(&t.to_rfc3339_opts(SecondsFormat::AutoSi, true))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<DateTime<Utc>>, D::Error> {
+        let Some(raw) = Option::<String>::deserialize(d)? else { return Ok(None) };
+        let parsed = DateTime::parse_from_rfc3339(raw.trim())
+            .map(|t| t.with_timezone(&Utc))
+            .map_err(serde::de::Error::custom)?;
+        Ok(if parsed == zero_time() { None } else { Some(parsed) })
+    }
 }
 
 pub fn is_false(v: &bool) -> bool {
