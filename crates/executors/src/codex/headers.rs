@@ -323,11 +323,21 @@ pub fn apply_model_header_overrides(headers: &mut HeaderMap, base_model: &str) {
 pub struct WireHeaders(pub Vec<(String, String)>);
 
 impl WireHeaders {
+    /// Codex headers: Go's direct map assignments keep their exact case.
     pub fn from_map(headers: &HeaderMap) -> Self {
+        Self::build(headers, wire_name)
+    }
+
+    /// Headers set through `http.Header.Set` only (xAI): every name is canonical `Title-Case`.
+    pub fn canonical(headers: &HeaderMap) -> Self {
+        Self::build(headers, canonical_name)
+    }
+
+    fn build(headers: &HeaderMap, name_of: impl Fn(&str) -> String) -> Self {
         let mut out = Vec::with_capacity(headers.len());
         for (name, value) in headers {
             let Ok(value) = value.to_str() else { continue };
-            out.push((wire_name(name.as_str()), value.to_string()));
+            out.push((name_of(name.as_str()), value.to_string()));
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         WireHeaders(out)
@@ -340,6 +350,11 @@ fn wire_name(lower: &str) -> String {
         "chatgpt-account-id" => return "ChatGPT-Account-ID".to_string(),
         _ => {}
     }
+    canonical_name(lower)
+}
+
+/// Go's `textproto.CanonicalMIMEHeaderKey` for an already lowercase name.
+fn canonical_name(lower: &str) -> String {
     let mut out = String::with_capacity(lower.len());
     let mut upper = true;
     for c in lower.chars() {

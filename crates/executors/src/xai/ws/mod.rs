@@ -8,20 +8,13 @@
 //! connection forgets earlier responses, [`ids`] keeps the client-visible response chain
 //! monotone by dropping unknown `previous_response_id`s and replaying the recorded transcript.
 //!
-//! The transport pieces (`conn`, `session`, `transport`) are the Codex port's, copied because
-//! that port keeps them private; `codec` is compiled from the Codex source file unchanged.
+//! The transport pieces (`conn`, `session`, `transport`, `codec`) are the Codex port's: Go shares
+//! `codexWebsocketSession` between the two executors, each keeping its own session store.
 
 mod compact;
-mod conn;
 mod errors;
 mod ids;
-mod session;
 mod stream;
-mod transport;
-
-// The frame codec is shared with the Codex websocket port without editing its module tree.
-#[path = "../../codex/ws/codec.rs"]
-mod codec;
 
 use std::sync::Arc;
 
@@ -35,48 +28,44 @@ use http::header::{AUTHORIZATION, CONTENT_TYPE};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::{OwnedMutexGuard, mpsc};
 
-use self::conn::{Read, WsConn};
 use self::errors::{map_write_error, should_retry_send};
 use self::ids::RequestIdMapper;
-use self::session::Session;
-use self::transport::DialFailure;
 use super::XaiExecutor;
 use super::request::{
     IDENTIFIER, PreparedRequest, apply_custom_headers, creds, execution_session_id, prepare_responses_request,
 };
 use super::response::status_err_for_body;
-use crate::codex::{META_DOWNSTREAM_WEBSOCKET, META_REQUIRED_UPSTREAM_WEBSOCKET, upstream_websocket_replay_required};
+use crate::codex::ws::conn::{Read, WsConn};
+use crate::codex::ws::close_after_bind_failure;
+use crate::codex::ws::session::{self, Provider, Session};
+use crate::codex::ws::transport::{self, DialFailure};
+use crate::codex::{META_DOWNSTREAM_WEBSOCKET, META_REQUIRED_UPSTREAM_WEBSOCKET, WireHeaders, upstream_websocket_replay_required};
 use crate::helps::logging::{UpstreamRequestLog, websocket_upgrade_request_url};
 use crate::helps::proxy::{effective_proxy_setting, effective_proxy_url};
 use crate::helps::session::ensure_session_id;
 use crate::helps::status::status_err;
 use crate::helps::usage::UsageReporter;
 
-pub use self::session::{
-    close_execution_session, close_sessions_for_auth_id as close_xai_websocket_sessions_for_auth_id,
-    upstream_disconnect_receiver,
-};
-
-/// Handshake headers as written on the wire: canonical `Title-Case` names like Go's `http.Header`.
-#[derive(Debug, Clone, Default)]
-pub struct WireHeaders(pub Vec<(String, String)>);
-
-impl WireHeaders {
-    fn from_map(headers: &HeaderMap) -> Self {
-        let mut out = Vec::with_capacity(headers.len());
-        for (name, value) in headers {
-            let Ok(value) = value.to_str() else { continue };
-            let mut canonical = String::with_capacity(name.as_str().len());
-            let mut upper = true;
-            for c in name.as_str().chars() {
-                canonical.push(if upper { c.to_ascii_uppercase() } else { c });
-                upper = c == '-';
-            }
-            out.push((canonical, value.to_string()));
-        }
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        WireHeaders(out)
+/// Releases a stored session, its connection and its id state (client session ended). The
+/// special id `*` closes every session (Go: CloseAllExecutionSessionsID).
+pub fn close_execution_session(session_id: &str) {
+    let trimmed = session_id.trim();
+    if !trimmed.is_empty() && trimmed != "*" {
+        ids::delete_state(trimmed);
     }
+    session::close_execution_session_in(Provider::Xai, session_id);
+}
+
+/// Closes every session whose connection belongs to `auth_id` (credential removed).
+pub fn close_xai_websocket_sessions_for_auth_id(auth_id: &str, reason: &str) {
+    for id in session::close_sessions_for_auth_id_in(Provider::Xai, auth_id, reason) {
+        ids::delete_state(&id);
+    }
+}
+
+/// Receiver of the disconnect notification of an execution session (created on demand).
+pub fn upstream_disconnect_receiver(session_id: &str) -> Option<tokio::sync::watch::Receiver<Option<String>>> {
+    session::upstream_disconnect_receiver_in(Provider::Xai, session_id)
 }
 
 fn metadata_flag(opts: &Options, key: &str) -> bool {
@@ -285,12 +274,12 @@ struct Attached {
 }
 
 async fn attach_session(execution_session_id: &str) -> Attached {
-    match Session::get_or_create(execution_session_id) {
+    match Session::get_or_create(Provider::Xai, execution_session_id) {
         Some(sess) => {
             let guard = Arc::clone(&sess.req_mu).lock_owned().await;
             Attached { sess, ephemeral: false, guard: Some(guard) }
         }
-        None => Attached { sess: Session::ephemeral(), ephemeral: true, guard: None },
+        None => Attached { sess: Session::ephemeral(Provider::Xai), ephemeral: true, guard: None },
     }
 }
 
@@ -347,7 +336,7 @@ impl XaiExecutor {
         });
         let plan = WsPlan {
             ws_url,
-            wire: WireHeaders::from_map(&headers),
+            wire: WireHeaders::canonical(&headers),
             headers,
             auth_id: auth.id.clone(),
             proxy_url,
@@ -403,6 +392,11 @@ impl XaiExecutor {
                 }
             }
         };
+        if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &conn) {
+            drop(guard);
+            close_after_bind_failure(&sess, &conn);
+            return Err(ExecError::new(0, message));
+        }
         if let Some(headers) = &handshake {
             log.record_api_websocket_handshake(cfg, 101, headers);
         }
@@ -444,6 +438,10 @@ impl XaiExecutor {
                     return Err(dial_failure_error(&failure));
                 }
             };
+            if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &retry_conn) {
+                close_after_bind_failure(&sess, &retry_conn);
+                return Err(ExecError::new(0, message));
+            }
             call.rebind(retry_conn);
             call.handshake_headers = retry_handshake.clone().unwrap_or_default();
             let retry_frame = build_request_body(&plan.prepared.body);
@@ -487,7 +485,7 @@ impl XaiExecutor {
             if requires_upstream_websocket(opts) {
                 return Err(upstream_websocket_replay_required());
             }
-            let _session_guard = match Session::get_or_create(&execution_session) {
+            let _session_guard = match Session::get_or_create(Provider::Xai, &execution_session) {
                 Some(sess) => Some(Arc::clone(&sess.req_mu).lock_owned().await),
                 None => None,
             };
@@ -534,18 +532,7 @@ impl XaiExecutor {
             && (request_type != "response.append" || mapper.as_ref().is_some_and(|m| m.replayed_compacted_transcript));
         let warmup = generate_false(&frame);
 
-        let (auth_type, auth_value) = auth.account_info();
-        let log_info = UpstreamRequestLog {
-            url: ws_url.clone(),
-            method: "WEBSOCKET".to_string(),
-            headers: plan.headers.clone(),
-            body: frame.clone(),
-            provider: IDENTIFIER.to_string(),
-            auth_id: auth.id.clone(),
-            auth_label: auth.label.clone(),
-            auth_type: auth_type.to_string(),
-            auth_value,
-        };
+        let log_info = UpstreamRequestLog::from_auth(IDENTIFIER, Some(auth), "WEBSOCKET", &ws_url, &plan.headers, &frame);
         opts.api_log.record_api_websocket_request(cfg, &log_info);
         log_request_sent(execution_session, &plan.auth_id, &ws_url, &frame);
 

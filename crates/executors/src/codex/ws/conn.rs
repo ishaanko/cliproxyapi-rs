@@ -17,9 +17,6 @@ use super::transport::Dialed;
 /// A connection with no frame for this long is dropped (Go: codexResponsesWebsocketIdleTimeout).
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
-/// Read error text for a binary frame (Go: the executors reject binary messages).
-pub const UNEXPECTED_BINARY: &str = "codex websockets executor: unexpected binary message";
-
 /// Close code for "message too big".
 pub const CLOSE_MESSAGE_TOO_BIG: u16 = 1009;
 
@@ -65,6 +62,8 @@ impl fmt::Display for CloseInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadError {
     Close(CloseInfo),
+    /// A binary frame; carries the executor's error text.
+    UnexpectedBinary(&'static str),
     Other(String),
 }
 
@@ -72,6 +71,7 @@ impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ReadError::Close(c) => c.fmt(f),
+            ReadError::UnexpectedBinary(s) => f.write_str(s),
             ReadError::Other(s) => f.write_str(s),
         }
     }
@@ -164,7 +164,7 @@ async fn run(mut reader: WsReader, conn: Arc<WsConn>, session: Arc<Session>, mut
                 continue;
             }
             Ok(Ok(Incoming::Binary)) => {
-                session.deliver_terminal(&conn, ReadError::Other(UNEXPECTED_BINARY.to_string()), "unexpected_binary").await;
+                session.deliver_terminal(&conn, ReadError::UnexpectedBinary(session.provider.unexpected_binary()), "unexpected_binary").await;
                 break;
             }
             Ok(Ok(Incoming::Close { code, reason })) => {

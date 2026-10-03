@@ -111,35 +111,55 @@ fn channel_auth(channel_id: &str) -> Auth {
     auth
 }
 
-/// Wires the relay's connect and disconnect callbacks to the service's credential pool.
+/// One relay lifecycle event, applied in arrival order (Go: the `authUpdates` queue).
+enum SocketEvent {
+    Connected(String),
+    Disconnected(String),
+}
+
+/// Applies one socket event to the credential pool.
+async fn apply_socket_event(service: &Service, event: SocketEvent) {
+    match event {
+        SocketEvent::Connected(channel_id) => {
+            // An active, enabled credential for the channel already exists.
+            if let Some(existing) = service.manager().get(&channel_id)
+                && !existing.disabled
+                && existing.status == Status::Active
+            {
+                return;
+            }
+            tracing::info!("websocket provider connected: {channel_id}");
+            let auth = channel_auth(&channel_id);
+            service
+                .apply_runtime_auth_update(AuthUpdate { action: AuthUpdateAction::Add, id: channel_id, auth: Some(auth) })
+                .await;
+        }
+        SocketEvent::Disconnected(channel_id) => {
+            service
+                .apply_runtime_auth_update(AuthUpdate { action: AuthUpdateAction::Delete, id: channel_id, auth: None })
+                .await;
+        }
+    }
+}
+
+/// Wires the relay's connect and disconnect callbacks to the service's credential pool. Both
+/// callbacks feed one queue drained by a single task, so a quick connect+drop applies Add before
+/// Delete. Must be called inside a tokio runtime.
 pub fn install_relay_hooks(service: &Arc<Service>) {
-    let on_connect = Arc::clone(service);
-    let on_disconnect = Arc::clone(service);
+    let (tx, mut rx) = mpsc::unbounded_channel::<SocketEvent>();
+    let worker = Arc::clone(service);
+    tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            apply_socket_event(&worker, event).await;
+        }
+    });
+    let on_connect = tx.clone();
     wsrelay::global().set_hooks(
         Some(move |channel_id: &str| {
             if channel_id.is_empty() || !channel_id.to_lowercase().starts_with("aistudio-") {
                 return;
             }
-            let service = Arc::clone(&on_connect);
-            let channel_id = channel_id.to_string();
-            tokio::spawn(async move {
-                // An active, enabled credential for the channel already exists.
-                if let Some(existing) = service.manager().get(&channel_id)
-                    && !existing.disabled
-                    && existing.status == Status::Active
-                {
-                    return;
-                }
-                tracing::info!("websocket provider connected: {channel_id}");
-                let auth = channel_auth(&channel_id);
-                service
-                    .apply_runtime_auth_update(AuthUpdate {
-                        action: AuthUpdateAction::Add,
-                        id: channel_id,
-                        auth: Some(auth),
-                    })
-                    .await;
-            });
+            let _ = on_connect.send(SocketEvent::Connected(channel_id.to_string()));
         }),
         Some(move |channel_id: &str, cause: &str| {
             if channel_id.is_empty() {
@@ -154,13 +174,7 @@ pub fn install_relay_hooks(service: &Arc<Service>) {
             } else {
                 tracing::warn!("websocket provider disconnected: {channel_id} ({cause})");
             }
-            let service = Arc::clone(&on_disconnect);
-            let channel_id = channel_id.to_string();
-            tokio::spawn(async move {
-                service
-                    .apply_runtime_auth_update(AuthUpdate { action: AuthUpdateAction::Delete, id: channel_id, auth: None })
-                    .await;
-            });
+            let _ = tx.send(SocketEvent::Disconnected(channel_id.to_string()));
         }),
     );
 }

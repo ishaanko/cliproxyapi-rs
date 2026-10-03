@@ -220,7 +220,7 @@ impl CodexExecutor {
         opts: &Options,
         endpoint: &str,
         stream: bool,
-    ) -> Result<(String, HeaderMap, Vec<u8>), ExecError> {
+    ) -> Result<(String, HeaderMap, Vec<u8>, String), ExecError> {
         let cfg = self.config();
         let (body, content_type, model) = prepare_direct_body(req, opts, stream)?;
         let (api_key, configured_base) = codex_creds(auth);
@@ -241,7 +241,15 @@ impl CodexExecutor {
         if !content_type.is_empty() {
             set_header(&mut headers, "Content-Type", &content_type);
         }
-        Ok((url, headers, body))
+        Ok((url, headers, body, model))
+    }
+
+    /// The reporter of a direct image call, keyed by the image model (Go: reporter built after the
+    /// body is prepared, with the OpenAI reasoning-effort format).
+    fn image_reporter(&self, auth: &Auth, opts: &Options, model: &str, body: &[u8]) -> UsageReporter {
+        let reporter = UsageReporter::new("codex", "CodexExecutor", model, Some(auth), Some(opts));
+        reporter.set_translated_reasoning_effort(body, "openai");
+        reporter
     }
 
     /// Reads a whole response body into the request log (`RecordAPIResponseError` on failure,
@@ -264,16 +272,25 @@ impl CodexExecutor {
     pub(super) async fn execute_openai_image(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
         let endpoint = direct_endpoint(&req, &opts);
         let cfg = self.config();
-        let (url, headers, body) = self.build_direct_image_request(auth, &req, &opts, endpoint, false)?;
-        let resp = self.send_http(&cfg, auth, &opts, &url, headers, body).await?;
-        let status = resp.status().as_u16();
-        let resp_headers = resp.headers().clone();
-        let data = self.read_logged_body(&cfg, &opts, resp).await?;
-        if !(200..300).contains(&status) {
-            return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
+        let (url, headers, body, model) = self.build_direct_image_request(auth, &req, &opts, endpoint, false)?;
+        let reporter = self.image_reporter(auth, &opts, &model, &body);
+        let result = async {
+            let resp = self.send_http(&cfg, auth, &opts, &url, headers, body, &reporter).await?;
+            let status = resp.status().as_u16();
+            let resp_headers = resp.headers().clone();
+            let data = self.read_logged_body(&cfg, &opts, resp).await?;
+            reporter.mark_first_response_byte();
+            if !(200..300).contains(&status) {
+                return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
+            }
+            let detail = parse_openai_usage(&data);
+            reporter.publish(detail.clone());
+            reporter.ensure_published();
+            Ok(Response { payload: data, metadata: usage_metadata(&detail), headers: resp_headers })
         }
-        let detail = parse_openai_usage(&data);
-        Ok(Response { payload: data, metadata: usage_metadata(&detail), headers: resp_headers })
+        .await;
+        reporter.track_failure(&result);
+        result
     }
 
     /// `executeDirectOpenAIImageStream`: the upstream SSE bytes are relayed as read; usage is
@@ -281,13 +298,24 @@ impl CodexExecutor {
     pub(super) async fn execute_openai_image_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
         let endpoint = direct_endpoint(&req, &opts);
         let cfg = self.config();
-        let (url, headers, body) = self.build_direct_image_request(auth, &req, &opts, endpoint, true)?;
-        let mut resp = self.send_http(&cfg, auth, &opts, &url, headers, body).await?;
+        let (url, headers, body, model) = self.build_direct_image_request(auth, &req, &opts, endpoint, true)?;
+        let reporter = self.image_reporter(auth, &opts, &model, &body);
+        let mut resp = match self.send_http(&cfg, auth, &opts, &url, headers, body, &reporter).await {
+            Ok(resp) => resp,
+            Err(err) => {
+                reporter.publish_failure(&err);
+                return Err(err);
+            }
+        };
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = self.read_logged_body(&cfg, &opts, resp).await?;
-            return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
+            let err = match self.read_logged_body(&cfg, &opts, resp).await {
+                Ok(data) => new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling),
+                Err(err) => err,
+            };
+            reporter.publish_failure(&err);
+            return Err(err);
         }
         let api_log = opts.api_log.clone();
         let (tx, rx) = mpsc::channel(16);
@@ -301,6 +329,7 @@ impl CodexExecutor {
                 };
                 match next {
                     Ok(Some(chunk)) => {
+                        reporter.mark_first_response_byte();
                         api_log.append_api_response_chunk(&cfg, &chunk);
                         for line in chunk.split(|b| *b == b'\n') {
                             usage.observe_openai_stream(line.trim_ascii());
@@ -313,11 +342,15 @@ impl CodexExecutor {
                     Err(err) => {
                         let err = crate::helps::status::transport_error(&err);
                         api_log.record_api_response_error(&cfg, &err.message);
+                        reporter.publish_failure(&err);
                         let _ = tx.send(Err(err)).await;
                         break;
                     }
                 }
             }
+            // Go publishes in a defer: also when the client went away.
+            reporter.publish_buffer(&usage);
+            reporter.ensure_published();
             if let Some(detail) = usage.detail() {
                 let _ = usage_tx.send(UsageReporter::usage_metadata(&detail));
             }

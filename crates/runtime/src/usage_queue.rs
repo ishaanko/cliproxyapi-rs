@@ -43,13 +43,11 @@ fn rfc3339_nano(t: chrono::DateTime<chrono::Utc>) -> String {
     if digits.is_empty() { format!("{head}{tail}") } else { format!("{head}.{digits}{tail}") }
 }
 
-/// The queue payload of one record, with Go's field order. Fields the tracker does not collect
-/// (cache-creation tokens, response service tier) carry their defaults.
+/// The queue payload of one record, with Go's field order. Tokens, the canonical breakdown,
+/// the served model and tier and the reasoning effort come from the executor's report carried by
+/// the record (see `usage_report`); records built without one are rebuilt from their counters.
 pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
-    let t = &r.tokens;
-    let cache_read = t.cached_tokens;
-    let uncached = (t.input_tokens - cache_read).max(0);
-    let non_reasoning = (t.output_tokens - t.reasoning_tokens).max(0);
+    let d = r.detail();
     let non_empty = |s: &str, default: &str| {
         if s.trim().is_empty() {
             default.to_string()
@@ -89,14 +87,14 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     put(
         "tokens",
         json!({
-            "input_tokens": t.input_tokens,
-            "output_tokens": t.output_tokens,
-            "reasoning_tokens": t.reasoning_tokens,
-            "cached_tokens": t.cached_tokens,
-            "cache_read_tokens": cache_read,
+            "input_tokens": d.input_tokens,
+            "output_tokens": d.output_tokens,
+            "reasoning_tokens": d.reasoning_tokens,
+            "cached_tokens": d.cached_tokens,
+            "cache_read_tokens": d.cache_read_tokens,
             "cache_read_tokens_present": true,
-            "cache_creation_tokens": 0,
-            "total_tokens": t.total_tokens,
+            "cache_creation_tokens": d.cache_creation_tokens,
+            "total_tokens": d.total_tokens,
         }),
     );
     put("failed", failed.into());
@@ -107,26 +105,7 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
         put("response_headers", response_headers_json(&x.response_headers));
     }
     put("accounting_version", 2.into());
-    put(
-        "token_breakdown",
-        json!({
-            "schema_version": 2,
-            "quality": "complete",
-            "total_tokens": t.total_tokens,
-            "input": {
-                "total_tokens": t.input_tokens,
-                "uncached_tokens": uncached,
-                "cache_read_tokens": cache_read,
-                "cache_write_tokens": 0,
-            },
-            "output": {
-                "total_tokens": t.output_tokens,
-                "non_reasoning_tokens": non_reasoning,
-                "reasoning_tokens": t.reasoning_tokens,
-            },
-            "unclassified_tokens": 0,
-        }),
-    );
+    put("token_breakdown", serde_json::to_value(d.token_breakdown).unwrap_or_default());
     put("provider", non_empty(&r.provider, "unknown").into());
     put("executor_type", non_empty(&r.executor_type, "unknown").into());
     put("model", model.into());
@@ -135,7 +114,8 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     put("auth_type", non_empty(&r.auth_type, "unknown").into());
     put("api_key", r.api_key.trim().into());
     put("request_id", r.request_id.clone().into());
-    put("execution_id", uuid::Uuid::new_v4().to_string().into());
+    let execution_id = if x.execution_id.trim().is_empty() { uuid::Uuid::new_v4().to_string() } else { x.execution_id.trim().to_string() };
+    put("execution_id", execution_id.into());
     let trace_id = if x.trace_id.is_empty() { r.request_id.as_str() } else { x.trace_id.as_str() };
     if !trace_id.is_empty() {
         put("trace_id", trace_id.into());
@@ -156,11 +136,13 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
         put("is_compaction", true.into());
     }
     put("reasoning_effort", x.reasoning_effort.clone().unwrap_or_default().into());
-    put("service_tier", x.service_tier.clone().unwrap_or_else(|| "auto".into()).into());
-    // The model the upstream reported; the tracker only knows the upstream model, so that stands
-    // in for it (omitted when empty, like Go's `omitempty`).
-    if !failed && !r.model.trim().is_empty() {
-        put("response_model", r.model.trim().into());
+    // Go: the record's tier, else the context's, which defaults to "default".
+    put("service_tier", x.service_tier.clone().unwrap_or_else(|| "default".into()).into());
+    if !x.response_service_tier.is_empty() {
+        put("response_service_tier", x.response_service_tier.clone().into());
+    }
+    if !x.response_model.is_empty() {
+        put("response_model", x.response_model.clone().into());
     }
     serde_json::to_vec(&Value::Object(m)).unwrap_or_default()
 }
@@ -179,6 +161,8 @@ pub fn install(tracker: &UsageTracker) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::usage_accounting::{Detail, ensure_token_breakdown_for_provider};
+    use crate::usage_report::Record;
 
     fn payload(r: &UsageRecord) -> Value {
         serde_json::from_slice(&queue_payload(r)).expect("payload is JSON")
@@ -189,7 +173,7 @@ mod tests {
     fn request_facts_flow_into_the_payload() {
         let mut r = UsageRecord::default();
         let p = payload(&r);
-        assert_eq!((p["generate"].clone(), p["service_tier"].clone(), p["reasoning_effort"].clone()), (true.into(), "auto".into(), "".into()));
+        assert_eq!((p["generate"].clone(), p["service_tier"].clone(), p["reasoning_effort"].clone()), (true.into(), "default".into(), "".into()));
         assert!(p.get("access_token_sha256").is_none() && p.get("node_kind").is_none() && p.get("is_fork").is_none());
 
         r.extra.generate = Some(false);
@@ -220,5 +204,91 @@ mod tests {
         assert!(trimmed.contains(".12") && !trimmed.contains(".120"), "{trimmed}");
         assert!(at(123_456_789).contains(".123456789"));
         assert!(!at(0).contains('.'));
+    }
+
+    fn report(provider: &str, executor_type: &str, detail: Detail) -> UsageRecord {
+        let detail = ensure_token_breakdown_for_provider(detail, provider, executor_type);
+        Record {
+            request_id: "exec-1".into(),
+            trace_id: String::new(),
+            provider: provider.into(),
+            base_url: String::new(),
+            executor_type: executor_type.into(),
+            model: "m".into(),
+            alias: String::new(),
+            api_key: String::new(),
+            session_id: String::new(),
+            parent_session_id: String::new(),
+            auth_id: String::new(),
+            auth_index: "0".into(),
+            access_token_sha256: String::new(),
+            auth_type: "apikey".into(),
+            source: "user@example.com".into(),
+            reasoning_effort: "medium".into(),
+            service_tier: "auto".into(),
+            response_service_tier: "default".into(),
+            response_model: "served-m".into(),
+            generate: true,
+            stream: false,
+            requested_at: chrono::Utc::now(),
+            latency: std::time::Duration::from_millis(5),
+            ttft: std::time::Duration::ZERO,
+            failed: false,
+            fail: Default::default(),
+            detail,
+        }
+        .to_usage_record()
+    }
+
+    // Go: TestUsageQueuePluginPayloadIncludesStableFieldsAndSuccess (report-sourced fields).
+    #[test]
+    fn report_fields_reach_the_payload() {
+        let r = report("openai", "KimiExecutor", Detail { input_tokens: 10, output_tokens: 20, total_tokens: 30, ..Default::default() });
+        let p = payload(&r);
+        assert_eq!(p["response_model"], "served-m");
+        assert_eq!(p["response_service_tier"], "default");
+        assert_eq!((p["service_tier"].clone(), p["reasoning_effort"].clone()), ("auto".into(), "medium".into()));
+        assert_eq!((p["execution_id"].clone(), p["source"].clone()), ("exec-1".into(), "user@example.com".into()));
+        assert_eq!((p["token_breakdown"]["quality"].clone(), p["token_breakdown"]["total_tokens"].clone()), ("complete".into(), 30.into()));
+        assert_eq!(p["tokens"]["cache_read_tokens_present"], true);
+    }
+
+    // Response model and tier are omitted when the upstream reported none.
+    #[test]
+    fn unreported_response_model_and_tier_are_omitted() {
+        let mut r = UsageRecord::default();
+        r.model = "m".into();
+        let p = payload(&r);
+        assert!(p.get("response_model").is_none() && p.get("response_service_tier").is_none());
+    }
+
+    // Go: TestUsageQueuePluginNormalizesDirectSDKUsageByProvider, plus Claude's independent buckets.
+    #[test]
+    fn breakdown_semantics_follow_the_provider() {
+        let detail = Detail { input_tokens: 100, output_tokens: 30, reasoning_tokens: 12, ..Default::default() };
+        for (provider, total) in [("openai", 130), ("gemini", 142)] {
+            let mut r = UsageRecord { provider: provider.into(), model: "direct-sdk-model".into(), ..Default::default() };
+            r.extra.detail = detail.clone();
+            r.tokens.total_tokens = 0;
+            let p = payload(&r);
+            assert_eq!(p["tokens"]["total_tokens"], total, "{provider}");
+            assert_eq!((p["token_breakdown"]["quality"].clone(), p["token_breakdown"]["total_tokens"].clone()), ("complete".into(), total.into()));
+        }
+        // Claude: cache reads and writes sit next to (not inside) the input tokens.
+        let claude = Detail { input_tokens: 30, output_tokens: 5, cache_read_tokens: 7, cache_creation_tokens: 13, cached_tokens: 7, ..Default::default() };
+        let p = payload(&report("claude", "ClaudeExecutor", claude));
+        let (t, b) = (&p["tokens"], &p["token_breakdown"]);
+        assert_eq!((t["cache_read_tokens"].clone(), t["cache_creation_tokens"].clone(), t["total_tokens"].clone()), (7.into(), 13.into(), 55.into()));
+        assert_eq!((b["input"]["total_tokens"].clone(), b["input"]["uncached_tokens"].clone(), b["input"]["cache_write_tokens"].clone()), (50.into(), 30.into(), 13.into()));
+    }
+
+    // Go: TestUsageQueuePluginPreservesLegacyCachedOnlyUsage.
+    #[test]
+    fn legacy_cached_only_usage_is_unclassified_cache_read() {
+        let mut r = UsageRecord { provider: "openai".into(), model: "gpt-5.4".into(), ..Default::default() };
+        r.extra.detail = Detail { cached_tokens: 13, ..Default::default() };
+        let p = payload(&r);
+        assert_eq!((p["tokens"]["cache_read_tokens"].clone(), p["tokens"]["total_tokens"].clone()), (13.into(), 13.into()));
+        assert_eq!((p["token_breakdown"]["quality"].clone(), p["token_breakdown"]["unclassified_tokens"].clone()), ("unclassified".into(), 13.into()));
     }
 }
