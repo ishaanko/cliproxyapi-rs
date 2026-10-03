@@ -24,6 +24,7 @@ cpa-management = { path = "../management" }
 cpa-executors = { path = "../executors" }
 cpa-store = { path = "../store" }
 cpa-discovery = { path = "../discovery" }
+cpa-managementasset = { path = "../managementasset" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
