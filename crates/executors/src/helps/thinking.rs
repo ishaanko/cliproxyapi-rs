@@ -64,10 +64,14 @@ pub fn translated_request_summary_config(
         return target_summary;
     }
 
+    // Each extraction parses a whole payload, so the original is read only when it can matter
+    // (nothing in the translated source) and not at all when it is the same payload.
     let current = extract_translated_summary_config(current_source_payload, &from_format, &to_format);
-    let original = extract_translated_summary_config(original_source_payload, &from_format, &to_format);
     if current.mode == SummaryMode::Unspecified {
-        return original;
+        if current_source_payload == original_source_payload {
+            return current;
+        }
+        return extract_translated_summary_config(original_source_payload, &from_format, &to_format);
     }
 
     let has_transformer = match (Format::parse(&from_format), Format::parse(&to_format)) {
