@@ -381,15 +381,13 @@ impl Pipeline {
                     break;
                 }
                 Initial::Failed(err) => {
-                    if retries >= max_retries || !bootstrap_eligible(err.status) {
-                        bootstrap_err = Some(exec_error_message(&err));
-                        break;
-                    }
-                    retries += 1;
-                    let Some((retry_req, retry_opts)) = retry_src.clone() else {
+                    // `retry_src` exists exactly when `max_retries > 0`.
+                    let src = retry_src.as_ref().filter(|_| retries < max_retries && bootstrap_eligible(err.status));
+                    let Some((retry_req, retry_opts)) = src.cloned() else {
                         bootstrap_err = Some(exec_error_message(&err));
                         break;
                     };
+                    retries += 1;
                     match Box::pin(self.state.manager.execute_stream(&providers, retry_req, retry_opts)).await {
                         Err(retry_err) => {
                             // No credential left to retry with: keep the original upstream failure.

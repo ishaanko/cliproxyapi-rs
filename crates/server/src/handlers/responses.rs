@@ -34,7 +34,7 @@ pub async fn responses(State(st): State<AppState>, info: ReqInfo, body: Bytes) -
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
-    let root = crate::bodyview::mini_root(&raw, &[("model", Want::Value), ("stream", Want::Value)]).unwrap_or_else(|| cpa_json::parse(&raw));
+    let root = crate::bodyview::fields_or_parse(&raw, &[("model", Want::Value), ("stream", Want::Value)]);
     let model = root.g("model").str();
     if matches!(root.g("stream").v(), Some(Value::Bool(true))) {
         stream_responses(&st, &info, &model, raw).await

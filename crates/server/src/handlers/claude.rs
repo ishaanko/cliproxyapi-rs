@@ -18,16 +18,11 @@ use cpa_runtime::service::resolve_claude_model_id_prefix;
 use crate::req::ReqInfo;
 use crate::state::AppState;
 
-#[cfg(test)]
-fn rewrite_claude_dd_model_in_body(raw: Bytes) -> Bytes {
-    rewrite_claude_dd_model_with_root(raw).0
-}
-
 /// `rewriteClaudeDDModelInBody`: decodes cloaked `claude-fable-5-dd-<reversed>` model ids. Also
 /// returns the parsed (rewritten) body, so the handler does not parse a large request twice.
 fn rewrite_claude_dd_model_with_root(raw: Bytes) -> (Bytes, Value) {
-    use crate::bodyview::{Want, mini_root};
-    let fields = mini_root(&raw, &[("model", Want::Value), ("stream", Want::Value)]).unwrap_or_else(|| cpa_json::parse(&raw));
+    use crate::bodyview::{Want, fields_or_parse};
+    let fields = fields_or_parse(&raw, &[("model", Want::Value), ("stream", Want::Value)]);
     let model = fields.g("model").str();
     let resolved = resolve_claude_model_id_prefix(&model);
     if resolved == model {
@@ -140,10 +135,10 @@ mod tests {
     #[test]
     fn cloaked_model_ids_are_rewritten_in_the_body() {
         let body = Bytes::from_static(br#"{"model":"claude-fable-5-dd-5-tpg(high)","max_tokens":1}"#);
-        let out = rewrite_claude_dd_model_in_body(body);
+        let out = rewrite_claude_dd_model_with_root(body).0;
         assert_eq!(&out[..], br#"{"model":"gpt-5(high)","max_tokens":1}"#);
         let plain = Bytes::from_static(br#"{ "model": "claude-opus" }"#);
-        assert_eq!(rewrite_claude_dd_model_in_body(plain.clone()), plain);
+        assert_eq!(rewrite_claude_dd_model_with_root(plain.clone()).0, plain);
     }
 
     #[test]

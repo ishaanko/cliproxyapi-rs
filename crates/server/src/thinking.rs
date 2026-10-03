@@ -276,19 +276,53 @@ fn usable(config: Option<Config>) -> Option<Config> {
     config.filter(|c| !effort_from_config(c).is_empty() || *c == Config::None)
 }
 
+// Members of the request that `extract_reasoning_effort` reads, as nested `Want::Sub` selections so
+// a large `input` or `request` is scanned, not parsed.
+const EFFORT: &[(&str, Want)] = &[("effort", Want::Value)];
+const CLAUDE_THINKING: &[(&str, Want)] = &[("type", Want::Value), ("budget_tokens", Want::Value)];
+const KIMI_THINKING: &[(&str, Want)] = &[("type", Want::Value), ("effort", Want::Value)];
+const GEMINI_THINKING: &[(&str, Want)] = &[
+    ("thinkingLevel", Want::Value),
+    ("thinking_level", Want::Value),
+    ("thinkingBudget", Want::Value),
+    ("thinking_budget", Want::Value),
+];
+const GEMINI_GENERATION: &[(&str, Want)] = &[("thinkingConfig", Want::Sub(GEMINI_THINKING))];
+const ANTIGRAVITY_REQUEST: &[(&str, Want)] = &[("generationConfig", Want::Sub(GEMINI_GENERATION))];
+const INTERACTIONS_GENERATION: &[(&str, Want)] = &[
+    ("thinking_level", Want::Value),
+    ("thinkingLevel", Want::Value),
+    ("thinking_budget", Want::Value),
+    ("thinkingBudget", Want::Value),
+    ("thinking_config", Want::Sub(GEMINI_THINKING)),
+    ("thinkingConfig", Want::Sub(GEMINI_THINKING)),
+];
+// Responses `input` items: only `configuration_update` entries matter.
+const INPUT_ITEM: &[(&str, Want)] = &[("type", Want::Value), ("reasoning", Want::Sub(EFFORT))];
+
 /// Top-level members the request metadata reads for `provider` (`service_tier`, `generate` and
 /// whatever [`extract_reasoning_effort`] looks at), for [`crate::bodyview::mini_root`].
 pub fn metadata_keys(provider: &str) -> &'static [(&'static str, Want)] {
-    use Want::Value;
+    use Want::{Items, Sub, Value};
     match provider.trim().to_lowercase().as_str() {
-        "claude" | "kimi" | "kimi-ai" | "kimi.ai" | "kimi.com" => {
-            &[("service_tier", Value), ("generate", Value), ("thinking", Value), ("output_config", Value)]
+        "claude" => &[("service_tier", Value), ("generate", Value), ("thinking", Sub(CLAUDE_THINKING)), ("output_config", Sub(EFFORT))],
+        // Kimi falls back to the OpenAI `reasoning_effort` (Go: extractKimiConfig).
+        "kimi" | "kimi-ai" | "kimi.ai" | "kimi.com" => {
+            &[("service_tier", Value), ("generate", Value), ("thinking", Sub(KIMI_THINKING)), ("reasoning_effort", Value)]
         }
-        "gemini" => &[("service_tier", Value), ("generate", Value), ("generationConfig", Value)],
-        "antigravity" => &[("service_tier", Value), ("generate", Value), ("request", Value)],
-        "interactions" => &[("service_tier", Value), ("generate", Value), ("generation_config", Value)],
-        "openai" => &[("service_tier", Value), ("generate", Value), ("reasoning_effort", Value), ("reasoning", Value), ("input", Value)],
-        "codex" | "xai" | "openai-response" => &[("service_tier", Value), ("generate", Value), ("reasoning", Value), ("input", Value)],
+        "gemini" => &[("service_tier", Value), ("generate", Value), ("generationConfig", Sub(GEMINI_GENERATION))],
+        "antigravity" => &[("service_tier", Value), ("generate", Value), ("request", Sub(ANTIGRAVITY_REQUEST))],
+        "interactions" => &[("service_tier", Value), ("generate", Value), ("generation_config", Sub(INTERACTIONS_GENERATION))],
+        "openai" => &[
+            ("service_tier", Value),
+            ("generate", Value),
+            ("reasoning_effort", Value),
+            ("reasoning", Sub(EFFORT)),
+            ("input", Items(INPUT_ITEM)),
+        ],
+        "codex" | "xai" | "openai-response" => {
+            &[("service_tier", Value), ("generate", Value), ("reasoning", Sub(EFFORT)), ("input", Items(INPUT_ITEM))]
+        }
         _ => &[("service_tier", Value), ("generate", Value)],
     }
 }
@@ -315,12 +349,12 @@ pub fn extract_reasoning_effort(root: Option<&Value>, provider: &str, model: &st
         return String::new();
     };
     let mut config = match provider.as_str() {
-        "codex" | "xai" | "openai-response" => codex_usage_config(&root),
-        other => thinking_config(&root, other),
+        "codex" | "xai" | "openai-response" => codex_usage_config(root),
+        other => thinking_config(root, other),
     };
     config = usable(config);
     if config.is_none() && (provider == "openai-response" || provider == "openai") {
-        config = usable(codex_usage_config(&root));
+        config = usable(codex_usage_config(root));
     }
     config.map(|c| effort_from_config(&c)).unwrap_or_default()
 }
@@ -348,5 +382,33 @@ mod tests {
         let resp = br#"{"reasoning":{"effort":"low"}}"#;
         assert_eq!(effort(resp, "openai-response", "m"), "low");
         assert_eq!(effort(b"{}", "openai", "m"), "");
+    }
+
+    /// The reduced metadata root must give the same answer as the full body for every provider.
+    #[test]
+    fn reduced_root_matches_full_parse() {
+        let cases: &[(&str, &[u8])] = &[
+            ("kimi", br#"{"reasoning_effort":"high","messages":[1]}"#),
+            ("kimi", br#"{"thinking":{"type":"enabled","effort":"low"},"reasoning_effort":"high"}"#),
+            ("antigravity", br#"{"request":{"contents":[1,2],"generationConfig":{"thinkingConfig":{"thinkingBudget":2000}}}}"#),
+            ("gemini", br#"{"contents":[],"generationConfig":{"thinkingConfig":{"thinking_level":"high"}}}"#),
+            ("interactions", br#"{"generation_config":{"thinking_config":{"thinkingLevel":"low"}},"input":"x"}"#),
+            ("claude", br#"{"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},"messages":[]}"#),
+            ("codex", br#"{"input":[{"type":"message","content":[{"text":"a"}]},{"type":"configuration_update","reasoning":{"effort":"High"}}]}"#),
+            ("openai-response", br#"{"input":[{"type":"message"}],"reasoning":{"effort":"low"}}"#),
+            ("openai", br#"{"input":"text","reasoning_effort":"medium"}"#),
+        ];
+        for (provider, body) in cases {
+            let reduced = crate::bodyview::mini_root(body, metadata_keys(provider));
+            let full = cpa_json::parse(body);
+            assert_eq!(
+                extract_reasoning_effort(reduced.as_ref(), provider, "m"),
+                extract_reasoning_effort(Some(&full), provider, "m"),
+                "{provider}: {}",
+                String::from_utf8_lossy(body)
+            );
+        }
+        let kimi = crate::bodyview::mini_root(br#"{"reasoning_effort":"high"}"#, metadata_keys("kimi"));
+        assert_eq!(extract_reasoning_effort(kimi.as_ref(), "kimi", "m"), "high");
     }
 }

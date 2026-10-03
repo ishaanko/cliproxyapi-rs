@@ -34,10 +34,10 @@ fn should_treat_as_responses_format(root: &Value) -> bool {
 /// The top-level members the chat handler reads (`model`, `stream`, and whether the Responses-style
 /// members exist), without building the tree of a large conversation.
 fn request_fields(raw: &[u8]) -> Value {
-    use crate::bodyview::{Want, mini_root};
+    use crate::bodyview::{Want, fields_or_parse};
     const KEYS: &[(&str, Want)] =
         &[("model", Want::Value), ("stream", Want::Value), ("messages", Want::Exists), ("input", Want::Exists), ("instructions", Want::Exists)];
-    mini_root(raw, KEYS).unwrap_or_else(|| cpa_json::parse(raw))
+    fields_or_parse(raw, KEYS)
 }
 
 /// `POST /v1/chat/completions`.
