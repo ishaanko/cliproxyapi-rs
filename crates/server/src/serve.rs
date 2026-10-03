@@ -51,6 +51,11 @@ impl TlsListener {
                         continue;
                     }
                 };
+                // Go's net/http sets TCP_NODELAY on accepted sockets; without it small SSE writes
+                // stall behind Nagle and the client's delayed ACK (~40 ms per chunk).
+                let _ = tcp.set_nodelay(true);
+                // Go's net/http sets TCP_NODELAY; without it Nagle delays small SSE writes.
+                let _ = tcp.set_nodelay(true);
                 let (acceptor, tx) = (acceptor.clone(), tx.clone());
                 tokio::spawn(async move {
                     match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
@@ -139,6 +144,9 @@ pub async fn serve(cfg: &Config, app: Router) -> Result<(), String> {
             .map_err(|e| format!("failed to start HTTP server: {e}"))
     } else {
         tracing::debug!("Starting API server on {addr}");
+        let listener = listener.tap_io(|tcp| {
+            let _ = tcp.set_nodelay(true);
+        });
         axum::serve(listener, service)
             .await
             .map_err(|e| format!("failed to start HTTP server: {e}"))
