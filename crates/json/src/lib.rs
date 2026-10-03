@@ -943,28 +943,55 @@ pub fn get<'a>(v: &'a Value, path: &str) -> Res<'a> {
     if path.is_empty() {
         return Res::NONE;
     }
-    if is_plain_get_path(path) {
-        return Res(eval_plain(v, path));
+    match eval_plain(v, path) {
+        Some(found) => Res(found.map(Cow::Borrowed)),
+        None => Res(eval(v, &parse_comps(path))),
     }
-    Res(eval(v, &parse_comps(path)))
 }
 
-/// True for paths made only of literal `.`-separated keys/indexes (no escapes, wildcards,
-/// `#`, modifiers, queries or `|`), which can be walked without compiling components.
-fn is_plain_get_path(path: &str) -> bool {
-    !path.bytes().any(|b| matches!(b, b'\\' | b'*' | b'?' | b'|' | b'#' | b'(' | b')' | b'"' | b'@'))
-}
+/// Byte classes for path walking: 0 literal, 1 `.` separator, 2 syntax that needs the full
+/// path compiler (escapes, wildcards, `#`, modifiers, queries, `|`).
+const PATH_CLASS: [u8; 256] = {
+    let mut t = [0u8; 256];
+    t[b'.' as usize] = 1;
+    let special = b"\\*?|#()\"@";
+    let mut i = 0;
+    while i < special.len() {
+        t[special[i] as usize] = 2;
+        i += 1;
+    }
+    t
+};
 
-/// [`get`] for plain paths: no allocation besides the lookups themselves.
-fn eval_plain<'a>(mut v: &'a Value, path: &str) -> Option<Cow<'a, Value>> {
-    for seg in path.split('.') {
-        v = match v {
-            Value::Object(m) => m.get(seg)?,
-            Value::Array(a) => a.get(seg.parse::<usize>().ok()?)?,
-            _ => return None,
+/// [`get`] for plain paths (literal `.`-separated keys and indexes), walked in one pass without
+/// compiling components. `None` when the path needs the full compiler; `Some(None)` is a miss.
+fn eval_plain<'a>(mut v: &'a Value, path: &str) -> Option<Option<&'a Value>> {
+    let bytes = path.as_bytes();
+    let (mut start, mut i) = (0, 0);
+    loop {
+        while i < bytes.len() {
+            match PATH_CLASS[usize::from(bytes[i])] {
+                0 => i += 1,
+                1 => break,
+                _ => return None,
+            }
+        }
+        // `.` and the specials are ASCII, so `start..i` sits on char boundaries.
+        let seg = &path[start..i];
+        let next = match v {
+            Value::Object(m) => m.get(seg),
+            Value::Array(a) => seg.parse::<usize>().ok().and_then(|n| a.get(n)),
+            _ => None,
         };
+        // A miss ends the walk (the compiled path would miss at the same component).
+        let Some(found) = next else { return Some(None) };
+        v = found;
+        if i >= bytes.len() {
+            return Some(Some(v));
+        }
+        i += 1;
+        start = i;
     }
-    Some(Cow::Borrowed(v))
 }
 
 fn eval<'a>(v: &'a Value, comps: &[Comp]) -> Option<Cow<'a, Value>> {
@@ -1306,3 +1333,6 @@ mod fast_tests;
 
 #[cfg(test)]
 mod memo_tests;
+
+#[cfg(test)]
+mod path_tests;
