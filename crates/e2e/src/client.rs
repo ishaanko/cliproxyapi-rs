@@ -263,6 +263,12 @@ impl Client {
     pub fn new(port: u16) -> Result<Self> {
         let http = reqwest::Client::builder()
             .no_proxy()
+            // No automatic decompression: it would add `Accept-Encoding`, which the server may
+            // forward upstream, and the goldens were recorded without one.
+            .no_gzip()
+            .no_brotli()
+            .no_zstd()
+            .no_deflate()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(30))
             .build()?;

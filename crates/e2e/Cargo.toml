@@ -20,7 +20,10 @@ regex.workspace = true
 once_cell.workspace = true
 bytes.workspace = true
 axum = { version = "0.8", features = ["ws"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+# gzip/brotli/zstd/deflate are declared only so `Client::new` can switch them off: reqwest adds
+# `Accept-Encoding` iff any is enabled, and cargo feature unification with cpa-server's reqwest
+# would otherwise decide whether the harness client advertises encodings (the Go goldens have none).
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "gzip", "brotli", "zstd", "deflate"] }
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }

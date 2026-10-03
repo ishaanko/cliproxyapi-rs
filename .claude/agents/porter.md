@@ -17,4 +17,4 @@ Rules:
 - Commit your work on your branch with conventional commit messages (`feat(translator): ...`). Never add Co-Authored-By trailers. Do not push.
 - Final report: what is done, conformance numbers, known gaps, any edits outside ownership.
 - Put scratch files, throwaway Go oracles and extra cargo target dirs under your worktree's gitignored `target/scratch/` (big disk), never in `/tmp` (small tmpfs shared with other work). For a throwaway copy of the Go repo, `cp -r` it there. Delete scratch when done.
-- E2E runs use fixed shared ports. Always wrap them in the shared lock: `flock /home/ishaan/box/cliproxyapirust/tmp/e2e.lock cargo run --release -p cpa-e2e -- check --server $PWD/target/release/cliproxy`.
+- E2E runs use fixed shared ports. Always run them through `tools/e2e.sh [--filter X]`: it builds `cpa-server` and `cpa-e2e` in separate cargo invocations (so feature unification cannot change the shipped binary's behavior) and runs `check` under the shared lock (`/home/ishaan/box/cliproxyapirust/tmp/e2e.lock`).
