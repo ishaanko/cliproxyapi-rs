@@ -19,22 +19,16 @@ pub enum ProxySetting {
     Proxy(String),
 }
 
-/// `proxyutil.Parse`: classifies a proxy string, rejecting unsupported schemes.
+/// `proxyutil.Parse`: classifies a proxy string, rejecting unsupported schemes (the Go
+/// `net/url` acceptance rules live in `cpa_misc::proxyutil`).
 pub fn parse_proxy(raw: &str) -> Result<ProxySetting, String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(ProxySetting::Inherit);
-    }
-    if trimmed.eq_ignore_ascii_case("direct") || trimmed.eq_ignore_ascii_case("none") {
-        return Ok(ProxySetting::Direct);
-    }
-    let url = url::Url::parse(trimmed).map_err(|_| "parse proxy URL failed".to_string())?;
-    if url.host_str().unwrap_or("").is_empty() {
-        return Err("proxy URL missing scheme/host".into());
-    }
-    match url.scheme() {
-        "socks5" | "socks5h" | "http" | "https" => Ok(ProxySetting::Proxy(trimmed.to_string())),
-        other => Err(format!("unsupported proxy scheme: {other}")),
+    match cpa_misc::proxyutil::parse(raw) {
+        Ok(setting) => Ok(match setting.mode {
+            cpa_misc::proxyutil::Mode::Direct => ProxySetting::Direct,
+            cpa_misc::proxyutil::Mode::Proxy => ProxySetting::Proxy(setting.raw),
+            _ => ProxySetting::Inherit,
+        }),
+        Err((_, err)) => Err(err.to_string()),
     }
 }
 
@@ -97,5 +91,7 @@ mod tests {
         ));
         assert!(parse_proxy("ftp://h:1").is_err());
         assert!(parse_proxy("justahost").is_err());
+        // Go's url.Parse rejects a malformed escape in the userinfo.
+        assert_eq!(parse_proxy("http://user:secret%@h:1").unwrap_err(), "parse proxy URL failed");
     }
 }

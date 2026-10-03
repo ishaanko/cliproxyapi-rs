@@ -606,6 +606,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "chrono",
+ "cpa-misc",
  "hex",
  "notify",
  "parking_lot",

@@ -7,6 +7,7 @@ license.workspace = true
 # Port of internal/auth/**, sdk/auth and the Auth data model of sdk/cliproxy/auth:
 # credential file formats, file store + watcher, OAuth flows and token refresh per provider.
 [dependencies]
+cpa-misc = { path = "../misc" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
