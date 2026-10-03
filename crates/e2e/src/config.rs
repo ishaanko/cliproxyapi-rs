@@ -107,6 +107,9 @@ pub struct ConfigSpec {
     pub usage_statistics: bool,
     /// `request-log`: write a log file for every request (otherwise only error requests).
     pub request_log: bool,
+    /// `commercial-mode`: disables the request log files even with `request-log` on (only the
+    /// forced error logs remain).
+    pub commercial_mode: bool,
     pub claude: Vec<KeyEntry>,
     pub codex: Vec<KeyEntry>,
     pub gemini: Vec<KeyEntry>,
@@ -158,6 +161,7 @@ impl ConfigSpec {
             force_model_prefix: false,
             usage_statistics: false,
             request_log: false,
+            commercial_mode: false,
             claude: keys("anthropic", "claude"),
             codex: keys("codex", "codex"),
             gemini: keys("gemini", "gemini"),
@@ -373,6 +377,9 @@ impl ConfigSpec {
         if self.request_log {
             m.insert("request-log".into(), json!(true));
         }
+        if self.commercial_mode {
+            m.insert("commercial-mode".into(), json!(true));
+        }
         m.insert("disable-cooling".into(), json!(self.disable_cooling));
         if let Some(t) = self.transient_cooldown_seconds {
             m.insert("transient-error-cooldown-seconds".into(), json!(t));
@@ -442,6 +449,9 @@ impl ConfigSpec {
         });
         if self.request_log {
             out["observability"]["logs"] = json!({"request-log": true});
+        }
+        if self.commercial_mode {
+            out["server"]["commercial-mode"] = json!(true);
         }
         if !multimedia.is_empty() {
             out["multimedia"] = Value::Object(multimedia);
