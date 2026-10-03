@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a5d8cf4a792bfdd25/target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a4ea26e497b070e8e/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `184fb97acc94e420`
-- scenarios: 911 total, 911 passed, 0 failed
+- goldens digest: `9f1ccf5e6415a14c`
+- scenarios: 953 total, 952 passed, 1 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -760,6 +760,48 @@
 | `mgmt.oauth_status` | PASS | OAuth session endpoints without a started login |  |
 | `mgmt.plugins` | PASS | plugin endpoints with plugins disabled |  |
 | `mgmt.unknown_route` | PASS | unknown management paths |  |
+| `plugins.mgmt.list_simple` | PASS | GET /plugins with the all-capability example loaded |  |
+| `plugins.mgmt.list_many` | PASS | GET /plugins with several capability plugins |  |
+| `plugins.mgmt.config_edit` | PASS | plugin config GET, PUT, PATCH and enabled toggle |  |
+| `plugins.mgmt.delete` | PASS | DELETE removes the plugin file and its config |  |
+| `plugins.mgmt.quota_without_provider` | PASS | plugin quota endpoints without a quota provider |  |
+| `plugins.mgmt.auth_url_plugin_provider` | PASS | login URL of a plugin auth provider (v0 and v8 routes) and the pending session |  |
+| `plugins.resource.management_api` | PASS | plugin resource served without authentication, and unknown resources |  |
+| `plugins.resource.host_callback` | PASS | plugin resource that calls the host logger |  |
+| `plugins.resource.host_auth_files` | PASS | plugin resource over the host auth file callbacks |  |
+| `plugins.resource.host_model_callback` | PASS | plugin resource that runs a model request through the host |  |
+| `plugins.models.static_models` | PASS | models registered by a model plugin show up in the listings |  |
+| `plugins.models.executor_models` | PASS | an executor plugin registers its provider models |  |
+| `plugins.models.auth_models` | PASS | a plugin credential gets the models of its provider; the credential is listed |  |
+| `plugins.auth.parse_file` | PASS | a credential file owned by a plugin auth provider is parsed by the plugin |  |
+| `plugins.access.frontend_auth` | PASS | a frontend auth provider joins the client key check |  |
+| `plugins.access.frontend_auth_exclusive` | PASS | an exclusive frontend auth provider replaces the other providers |  |
+| `plugins.translate.request_normalizer_chat` | PASS | request_normalizer plugin on a chat request routed to the compat upstream |  |
+| `plugins.translate.request_normalizer_claude` | PASS | request_normalizer plugin on a Claude request routed to the Claude upstream |  |
+| `plugins.translate.request_translator_chat` | PASS | request_translator plugin on a chat request routed to the compat upstream |  |
+| `plugins.translate.request_translator_claude` | PASS | request_translator plugin on a Claude request routed to the Claude upstream |  |
+| `plugins.translate.response_normalizer_chat` | PASS | response_normalizer plugin on a chat request routed to the compat upstream |  |
+| `plugins.translate.response_normalizer_claude` | PASS | response_normalizer plugin on a Claude request routed to the Claude upstream |  |
+| `plugins.translate.response_translator_chat` | PASS | response_translator plugin on a chat request routed to the compat upstream |  |
+| `plugins.translate.response_translator_claude` | PASS | response_translator plugin on a Claude request routed to the Claude upstream |  |
+| `plugins.translate.thinking_chat` | PASS | thinking plugin on a chat request routed to the compat upstream |  |
+| `plugins.translate.thinking_claude` | PASS | thinking plugin on a Claude request routed to the Claude upstream |  |
+| `plugins.translate.response_normalizer_stream` | PASS | response normalizer on a streaming chat |  |
+| `plugins.translate.codex_service_tier` | PASS | service tier normalizer on a Codex request |  |
+| `plugins.translate.two_plugins` | PASS | request and response normalizers together |  |
+| `plugins.exec.executor` | PASS | a plugin executor serves its own model (plain and streaming) |  |
+| `plugins.exec.executor_with_auth` | FAIL | a plugin executor serving a request with a plugin credential | /steps/0/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:1>" != actual "<ts14>-1988c85074e44736-<uuid:1>" |
+| `plugins.exec.executor_claude_entry` | PASS | a Claude-dialect request routed to the plugin executor |  |
+| `plugins.exec.thinking_suffix` | PASS | a thinking suffix on a plugin model reaches the plugin thinking applier |  |
+| `plugins.exec.scheduler_delegate` | PASS | a scheduler plugin delegating to the fill-first selector |  |
+| `plugins.exec.scheduler_round_robin` | PASS | a scheduler plugin delegating to the round-robin selector |  |
+| `plugins.exec.scheduler_deny` | PASS | a scheduler plugin that rejects every pick |  |
+| `plugins.exec.usage_plugin` | PASS | a usage plugin observing a request |  |
+| `plugins.router.codex_web_search` | PASS | a model router sends Claude web_search requests to the plugin executor, which runs them through the host on Codex |  |
+| `plugins.router.default_provider` | PASS | a model router pinning web_search requests to a built-in provider |  |
+| `plugins.lifecycle.reject_keyword` | PASS | request interceptor terminating a request with a custom response |  |
+| `plugins.lifecycle.slot_release` | PASS | completion events release the interceptor's concurrency slots |  |
+| `plugins.lifecycle.reject_keyword_stream` | PASS | request interceptor terminating a streaming request |  |
 | `redis.auth.commands` | PASS | NOAUTH gate, AUTH argument handling and unknown commands |  |
 | `redis.auth.ip_ban` | PASS | five failed attempts ban the client on the Redis path too |  |
 | `redis.auth.noauth_counts_failures` | PASS | unauthenticated commands count as failed attempts |  |
@@ -918,3 +960,10 @@
 | `media.search.unknown_model` | PASS | model without a matching credential |  |
 | `media.search.missing_auth` | PASS | alpha search needs a client key |  |
 | `media.search.wrong_method` | PASS | GET is not routed |  |
+
+## Failures
+
+### `plugins.exec.executor_with_auth`
+
+- /steps/0/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:1>" != actual "<ts14>-1988c85074e44736-<uuid:1>"
+- /steps/1/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:2>" != actual "<ts14>-1988c85074e44736-<uuid:2>"

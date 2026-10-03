@@ -8,7 +8,7 @@
 //!
 //! Not covered: the Codex client catalog (`/v1/models?client_version=`) and Home-mode lists.
 
-use cpa_core::registry::{ModelInfo, ModelRegistry};
+use cpa_core::registry::ModelRegistry;
 use serde_json::{Map, Value, json};
 
 /// Which payload `/v1/models` should produce (Go: the branches of `unifiedModelsHandler`).
@@ -35,7 +35,7 @@ pub fn route_models_request(
     anthropic_version: Option<&str>,
     user_agent: Option<&str>,
 ) -> ModelsRoute {
-    if user_agent.is_some_and(|ua| ua.to_lowercase().contains("grok-shell")) {
+    if user_agent.is_some_and(|ua| cpa_misc::grokbuild::is_grok_shell_user_agent(ua)) {
         return ModelsRoute::Grok;
     }
     if let Some(version) = client_version {
@@ -143,37 +143,17 @@ pub fn claude_models_response(registry: &ModelRegistry, disable_cloaking: bool) 
 
 /// Go `grokbuild.BuildResponse` over the registry's available models.
 pub fn grok_models_response(registry: &ModelRegistry) -> Value {
-    let data: Vec<Value> = registry
+    let models: Vec<cpa_misc::grokbuild::ModelInfo> = registry
         .get_available_model_infos()
         .iter()
-        .map(grok_model_entry)
+        .map(|info| cpa_misc::grokbuild::ModelInfo {
+            id: info.id.clone(),
+            display_name: info.display_name.clone(),
+            context_length: info.context_length,
+            reasoning_levels: info.thinking.iter().flat_map(|t| t.levels.iter().cloned()).collect(),
+        })
         .collect();
-    json!({"object": "list", "data": data})
-}
-
-fn grok_model_entry(info: &ModelInfo) -> Value {
-    let name = if info.display_name.is_empty() { &info.id } else { &info.display_name };
-    let mut entry = Map::new();
-    entry.insert("id".into(), json!(info.id));
-    entry.insert("model".into(), json!(info.id));
-    entry.insert("name".into(), json!(name));
-    if info.context_length > 0 {
-        entry.insert("context_window".into(), json!(info.context_length));
-    }
-    entry.insert("api_backend".into(), json!("responses"));
-    entry.insert("supported_in_api".into(), json!(true));
-    let efforts: Vec<Value> = info
-        .thinking
-        .iter()
-        .flat_map(|t| t.levels.iter())
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| json!({"value": l}))
-        .collect();
-    if !efforts.is_empty() {
-        entry.insert("reasoning_efforts".into(), Value::Array(efforts));
-    }
-    Value::Object(entry)
+    serde_json::to_value(cpa_misc::grokbuild::build_response(&models)).unwrap_or(Value::Null)
 }
 
 /// Go `GeminiModels`' per-model normalization: `models/` name prefix, display name and
@@ -275,5 +255,47 @@ mod tests {
         assert_eq!(out["first_id"], "claude-c");
         assert_eq!(out["last_id"], "claude-z");
         assert_eq!(out["has_more"], false);
+    }
+
+    #[test]
+    fn claude_list_edge_cases_from_go_tests() {
+        let model = |id: &str, name: &str| {
+            let mut m = Map::new();
+            m.insert("id".into(), json!(id));
+            m.insert("display_name".into(), json!(name));
+            m
+        };
+        // Cloaking disabled keeps ids; the extra fields of an entry survive the rewrite.
+        let out = build_claude_models_response(vec![model("gpt-4o", "GPT-4o")], true);
+        assert_eq!(out["data"][0]["id"], "gpt-4o");
+        assert_eq!((&out["first_id"], &out["last_id"]), (&json!("gpt-4o"), &json!("gpt-4o")));
+        let mut with_tokens = model("claude-z", "Zebra");
+        with_tokens.insert("max_tokens".into(), json!(64000));
+        assert_eq!(build_claude_models_response(vec![with_tokens], false)["data"][0]["max_tokens"], 64000);
+        // Empty input yields empty ids.
+        let out = build_claude_models_response(Vec::new(), false);
+        assert_eq!(out["data"], json!([]));
+        assert_eq!((&out["first_id"], &out["last_id"]), (&json!(""), &json!("")));
+    }
+
+    #[test]
+    fn claude_id_prefix_cases_from_go_tests() {
+        for (id, want) in [
+            ("my-claude-custom", "claude-fable-5-dd-motsuc-edualc-ym"),
+            ("gemini-2.5-pro", "claude-fable-5-dd-orp-5.2-inimeg"),
+        ] {
+            assert_eq!(ensure_claude_model_id_prefix(id), want);
+        }
+        for (id, want) in [
+            ("", ""),
+            ("claude-sonnet-4-6", "claude-sonnet-4-6"),
+            ("gpt-4o", "gpt-4o"),
+            ("claude-fable-5-dd-o4-tpg", "gpt-4o"),
+            ("claude-fable-5-dd-orp-5.2-inimeg", "gemini-2.5-pro"),
+        ] {
+            assert_eq!(resolve_claude_model_id_prefix(id), want, "{id}");
+        }
+        let round_trip = ensure_claude_model_id_prefix("custom-model-x");
+        assert_eq!(resolve_claude_model_id_prefix(&round_trip), "custom-model-x");
     }
 }

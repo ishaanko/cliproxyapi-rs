@@ -65,10 +65,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_template_keys() {
-        let keys = vec![" your-api-key-1 ".to_string(), "real".to_string(), "your-api-key-1".to_string()];
-        assert_eq!(example_api_keys(&keys), vec!["your-api-key-1"]);
-        assert!(!has_example_api_keys(&["real".to_string()]));
+    fn example_api_keys_detects_only_template_values() {
+        let keys: Vec<String> = [
+            " real-key ",
+            " your-api-key-1 ",
+            "your-api-key",
+            "change-me",
+            "your-api-key-2",
+            "your-api-key-2",
+            "your-api-key-3",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(example_api_keys(&keys), vec!["your-api-key-1", "your-api-key-2", "your-api-key-3"]);
+    }
+
+    #[test]
+    fn example_api_keys_ignores_similar_values() {
+        let keys: Vec<String> = ["your-api-key", "change-me", "changeme", "your-api-key-4", "my-your-api-key-1"]
+            .map(String::from)
+            .to_vec();
+        assert!(example_api_keys(&keys).is_empty());
+        assert!(!has_example_api_keys(&keys));
+    }
+
+    #[test]
+    fn warning_page_includes_management_button() {
+        let body = warning_page_html(&["your-api-key-1".to_string()], "/management.html?safe-mode=configure");
+        for want in [
+            "Example API key detected",
+            "your-api-key-1",
+            "Open Management",
+            r#"href="/management.html?safe-mode=configure""#,
+            "Proxy API endpoints are disabled",
+        ] {
+            assert!(body.contains(want), "warning page missing {want:?}: {body}");
+        }
+        assert!(!body.contains(r#"class="path""#), "warning page should not include a local config path");
     }
 
     #[test]

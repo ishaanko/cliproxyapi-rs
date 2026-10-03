@@ -17,6 +17,7 @@ tls-fingerprint = ["dep:cpa-tlsfp", "cpa-auth/tls-fingerprint"]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
+cpa-misc = { path = "../misc" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-tlsfp = { path = "../tlsfp", optional = true }
 cpa-translator = { path = "../translator" }

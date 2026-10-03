@@ -103,6 +103,9 @@ pub struct AuthSync {
     file_auths_by_path: HashMap<String, BTreeSet<String>>,
     /// Normalized file path -> content hash of the last processed version.
     file_hashes: HashMap<String, String>,
+    /// Whether the last `file_changed` got past the hash check and synthesized without error
+    /// (Go then persists the file to the remote store, even when no auth changed).
+    last_synced: bool,
 }
 
 impl AuthSync {
@@ -113,7 +116,13 @@ impl AuthSync {
             current: BTreeMap::new(),
             file_auths_by_path: HashMap::new(),
             file_hashes: HashMap::new(),
+            last_synced: false,
         }
+    }
+
+    /// True when the last `file_changed` call should be pushed to a remote store.
+    pub fn last_synced(&self) -> bool {
+        self.last_synced
     }
 
     /// Go `Watcher.SetConfig` / the config assignment of `reloadConfig`.
@@ -230,6 +239,7 @@ impl AuthSync {
     /// Go `addOrUpdateClient`: a file was created or written. Unchanged content, empty and
     /// unparsable files produce no updates.
     pub fn file_changed(&mut self, path: &Path) -> Vec<AuthUpdate> {
+        self.last_synced = false;
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let data = match fs::read(path) {
             Ok(data) => data,
@@ -256,7 +266,10 @@ impl AuthSync {
         let old_ids = self.file_auths_by_path.get(&key).cloned().unwrap_or_default();
 
         let generated: Vec<Auth> = match synthesize_auth_files(&self.context(), &path.to_string_lossy(), &data) {
-            Ok(auths) => auths.into_iter().filter(|a| !a.id.trim().is_empty()).collect(),
+            Ok(auths) => {
+                self.last_synced = true;
+                auths.into_iter().filter(|a| !a.id.trim().is_empty()).collect()
+            }
             Err(err) => {
                 tracing::warn!("skipping auth file {name}: {err}");
                 Vec::new()

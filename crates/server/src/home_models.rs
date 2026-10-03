@@ -336,23 +336,16 @@ fn gemini_model_matches(entry: &HomeModelEntry, action: &str) -> bool {
 
 /// `grokModelsFromHomeEntries` + `grokbuild.BuildResponse`; Home carries no reasoning levels.
 fn grok_response(entries: &[HomeModelEntry]) -> Value {
-    let data: Vec<Value> = entries
+    let models: Vec<cpa_misc::grokbuild::ModelInfo> = entries
         .iter()
-        .map(|entry| {
-            let name = if entry.display_name.is_empty() { &entry.id } else { &entry.display_name };
-            let mut model = Entry::new();
-            model.insert("id".into(), json!(entry.id));
-            model.insert("model".into(), json!(entry.id));
-            model.insert("name".into(), json!(name));
-            if entry.context_length > 0 {
-                model.insert("context_window".into(), json!(entry.context_length));
-            }
-            model.insert("api_backend".into(), json!("responses"));
-            model.insert("supported_in_api".into(), json!(true));
-            Value::Object(model)
+        .map(|entry| cpa_misc::grokbuild::ModelInfo {
+            id: entry.id.clone(),
+            display_name: entry.display_name.clone(),
+            context_length: entry.context_length,
+            reasoning_levels: Vec::new(),
         })
         .collect();
-    json!({"object": "list", "data": data})
+    serde_json::to_value(cpa_misc::grokbuild::build_response(&models)).unwrap_or(Value::Null)
 }
 
 // ------------------------------------------------------------------ capabilities

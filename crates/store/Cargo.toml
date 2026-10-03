@@ -1,0 +1,37 @@
+[package]
+name = "cpa-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Port of internal/store: Postgres, git and S3-compatible object-store backends for config and
+# credential persistence (PGSTORE_*, GITSTORE_*, OBJECTSTORE_*), each mirroring into a local spool
+# directory that the file watcher and file-based flows keep using.
+[dependencies]
+cpa-json.workspace = true
+cpa-auth = { path = "../auth" }
+cpa-config = { path = "../config" }
+cpa-core = { path = "../core" }
+cpa-runtime = { path = "../runtime" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+parking_lot.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tokio-postgres = { version = "0.7", features = ["with-serde_json-1", "with-chrono-0_4"] }
+tokio-postgres-rustls = "0.13"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-native-certs = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots"] }
+hmac = "0.12"
+quick-xml = "0.37"
+percent-encoding = "2"
+url = "2"
+git2 = { version = "0.20", default-features = false, features = ["https", "vendored-openssl"] }
+
+[dev-dependencies]
+tempfile = "3"

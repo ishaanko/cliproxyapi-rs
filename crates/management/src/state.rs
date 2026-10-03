@@ -106,6 +106,9 @@ pub struct ManagementState {
     pub(crate) registry: Arc<dyn AuthRegistry>,
     /// Auth-file store rooted at `auth-dir`.
     pub store: Arc<FileTokenStore>,
+    /// The registered token store credential deletes go through (Go: `sdkAuth.GetTokenStore()`);
+    /// a remote-backed store when one is configured, else `store`.
+    pub(crate) token_store: Arc<dyn Store>,
     /// OAuth session registry; must be the one `login` was built with.
     pub oauth: Arc<OAuthSessions>,
     /// Starts OAuth logins and persists their credentials.
@@ -152,6 +155,7 @@ impl ManagementState {
             config,
             registry: manager.clone(),
             manager,
+            token_store: store.clone(),
             store,
             oauth,
             login,
@@ -169,6 +173,12 @@ impl ManagementState {
     /// Replaces the credential registry the handlers talk to (tests).
     pub fn with_registry(mut self, registry: Arc<dyn AuthRegistry>) -> Self {
         self.registry = registry;
+        self
+    }
+
+    /// Routes credential deletes through the remote-backed token store (git, Postgres, object).
+    pub fn with_token_store(mut self, store: Arc<dyn Store>) -> Self {
+        self.token_store = store;
         self
     }
 

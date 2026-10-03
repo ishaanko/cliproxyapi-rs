@@ -12,6 +12,7 @@ default = ["tls-fingerprint"]
 tls-fingerprint = ["dep:cpa-tlsfp"]
 
 [dependencies]
+cpa-misc = { path = "../misc" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

@@ -11,6 +11,8 @@ cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-translator = { path = "../translator" }
 cpa-config = { path = "../config" }
+cpa-misc = { path = "../misc" }
+cpa-discovery = { path = "../discovery" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }
 cpa-pluginapi = { path = "../pluginapi" }
@@ -31,6 +33,10 @@ sha2.workspace = true
 hex.workspace = true
 uuid.workspace = true
 rand.workspace = true
+axum = "0.8"
+url = "2"
+flate2 = "1"
+pprof = { version = "0.15", default-features = false, features = ["protobuf-codec"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
