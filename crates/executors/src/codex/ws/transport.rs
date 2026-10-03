@@ -39,6 +39,8 @@ pub struct Dialed {
 #[derive(Debug, Default)]
 pub struct DialFailure {
     pub status: Option<u16>,
+    /// Response headers of a rejected upgrade (empty for transport failures).
+    pub headers: HeaderMap,
     pub body: Vec<u8>,
     pub error: String,
 }
@@ -374,7 +376,7 @@ async fn dial_inner(url: &str, headers: &WireHeaders, proxy: &ProxySetting) -> R
         && response_headers.get("sec-websocket-accept").and_then(|v| v.to_str().ok()) == Some(accept_key(&key).as_str());
     if !valid {
         let body = read_error_body(&mut reader, &response_headers).await;
-        return Err(DialFailure { status: Some(status), body, error: "websocket: bad handshake".to_string() });
+        return Err(DialFailure { status: Some(status), headers: response_headers, body, error: "websocket: bad handshake".to_string() });
     }
     let extensions = response_headers.get("sec-websocket-extensions").and_then(|v| v.to_str().ok()).unwrap_or_default();
     let deflate = Deflate::from_response_header(extensions).map_err(DialFailure::transport)?;
