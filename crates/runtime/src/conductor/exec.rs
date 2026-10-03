@@ -568,8 +568,9 @@ impl Manager {
                 restore_model.is_some(),
             );
 
-            let usage = UsageCollector::new();
-            exec_opts.usage_collector = Some(usage.clone());
+            // Token counting is not generation traffic: nothing collects usage for it.
+            let usage = (kind == Kind::Execute).then(UsageCollector::new);
+            exec_opts.usage_collector.clone_from(&usage);
             let started = Instant::now();
             let mut res =
                 call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
@@ -595,12 +596,6 @@ impl Manager {
                     }
                 }
             }
-            if let Err(err) = &res
-                && claude_cancelled(&auth, err)
-            {
-                return AuthAttempt::Return(err.clone().into());
-            }
-
             let mut result = ExecResult {
                 auth_id: auth.id.clone(),
                 provider: provider.to_string(),
@@ -619,9 +614,17 @@ impl Manager {
                 stream: false,
                 upstream_model: upstream_model.clone(),
                 requested_model: requested_model_alias(&exec_opts, route_model),
-                reports: usage.take(),
+                reports: usage.as_ref().map(UsageCollector::take).unwrap_or_default(),
                 ..Default::default()
             };
+            if let Err(err) = &res
+                && claude_cancelled(&auth, err)
+            {
+                // No result mark, but the reporter's failure record still counts (as in Go).
+                result.error = Some(result_error_from_error(err));
+                self.record_usage_only(&result, Some(&auth), facts);
+                return AuthAttempt::Return(err.clone().into());
+            }
             match res {
                 Err(err) => {
                     result.error = Some(result_error_from_error(&err));
@@ -679,11 +682,14 @@ impl Manager {
                 }
                 Ok(mut resp) => {
                     result.response_headers = resp.headers.clone();
-                    facts.tokens = tokens_from_response(
-                        exec_opts.response_format_or_source(),
-                        &resp.payload,
-                        &resp.metadata,
-                    );
+                    // Executor reports carry exact tokens; only scan the payload without them.
+                    if facts.reports.is_empty() {
+                        facts.tokens = tokens_from_response(
+                            exec_opts.response_format_or_source(),
+                            &resp.payload,
+                            &resp.metadata,
+                        );
+                    }
                     self.mark_result_inner(result, (kind == Kind::Execute).then_some(facts));
                     let attempt_alias = resolve_attempt_alias_result(
                         &cfg,

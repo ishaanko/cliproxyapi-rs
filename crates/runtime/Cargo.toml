@@ -24,6 +24,7 @@ tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
+memchr = "2"
 chrono.workspace = true
 async-trait = "0.1"
 http = "1"

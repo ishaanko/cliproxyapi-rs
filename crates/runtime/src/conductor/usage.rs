@@ -18,6 +18,7 @@ use cpa_json::J;
 use cpa_translator::Format;
 use serde_json::Value;
 
+use super::Manager;
 use super::cooldown::ExecResult;
 use crate::executor::{Metadata, meta};
 use super::session::{bound_session_identity, normalize_to_canonical_uuid};
@@ -247,36 +248,74 @@ pub fn build_usage_record(
     }
 }
 
+impl Manager {
+    /// Records the usage events of `facts.reports` and nothing else: no auth state, hook or
+    /// affinity update. Used where the attempt's result is deliberately not marked (Claude OAuth
+    /// cancellations, a client that hung up) or was marked earlier (per-response records of a
+    /// long stream). Nothing is recorded without reports, so no response-derived fallback.
+    pub(crate) fn record_usage_only(&self, result: &ExecResult, auth: Option<&Auth>, facts: UsageFacts) {
+        if !facts.reports.is_empty() {
+            self.record_usage(result, auth, Some(facts), self.now());
+        }
+    }
+}
+
 /// Builds the usage records of one finished attempt: one per executor report, or a single one
-/// from the response-derived `facts.tokens` when the executor reported none.
+/// from the response-derived `facts.tokens` when the executor reported none. Consumes the
+/// reports; `base` is reused for the last one.
 pub fn build_usage_records(
     result: &ExecResult,
     auth: Option<&Auth>,
-    facts: &UsageFacts,
+    mut facts: UsageFacts,
     now: DateTime<Utc>,
 ) -> Vec<UsageRecord> {
-    let base = build_usage_record(result, auth, facts, now);
-    if facts.reports.is_empty() {
+    let base = build_usage_record(result, auth, &facts, now);
+    let mut reports = std::mem::take(&mut facts.reports);
+    let Some(last) = reports.pop() else {
         return vec![base];
+    };
+    let mut out = Vec::with_capacity(reports.len() + 1);
+    for r in reports {
+        out.push(overlay_report(base.clone(), r, &facts));
     }
-    facts.reports.iter().map(|r| overlay_report(base.clone(), r, facts)).collect()
+    out.push(overlay_report(base, last, &facts));
+    out
 }
 
 /// `base` (conductor facts) with everything the executor's report knows better: timing, model,
-/// outcome, tokens, served model and tier, reasoning effort, credential fingerprint and source.
-fn overlay_report(mut rec: UsageRecord, r: &Record, facts: &UsageFacts) -> UsageRecord {
-    let rep = r.to_usage_record();
+/// requested-model alias, outcome, tokens, served model and tier, reasoning effort, credential
+/// fingerprint and source.
+fn overlay_report(mut rec: UsageRecord, r: Record, facts: &UsageFacts) -> UsageRecord {
+    let rep = r.into_usage_record();
     rec.timestamp = rep.timestamp;
     rec.latency_ms = rep.latency_ms;
     rec.ttft_ms = rep.ttft_ms;
+    // The report's model and alias are a pair: the alias is the requested model (the suffix
+    // carrying `gpt-5(high)`), empty when it equals the model. The base alias alone would be
+    // empty whenever the conductor's requested and upstream models agree.
     if !rep.model.is_empty() {
         rec.model = rep.model;
+        rec.alias = rep.alias;
+    }
+    if !rep.provider.is_empty() {
+        rec.provider = rep.provider;
     }
     if !rep.executor_type.is_empty() {
         rec.executor_type = rep.executor_type;
     }
-    rec.failed = rep.failed;
-    rec.fail = rep.fail;
+    // Go: failed = record.Failed || !resolveSuccess(ctx). A stream's attempt result can fail
+    // after earlier reports already succeeded (per-response records), so only unary attempts
+    // keep the attempt-level failure.
+    let rep_has_fail = rep.fail.status_code != 0 || !rep.fail.body.is_empty();
+    if facts.stream {
+        rec.failed = rep.failed;
+        rec.fail = rep.fail;
+    } else {
+        rec.failed |= rep.failed;
+        if rep_has_fail {
+            rec.fail = rep.fail;
+        }
+    }
     rec.stream = rep.stream || facts.stream;
     rec.tokens = rep.tokens;
     let (x, rx) = (&mut rec.extra, rep.extra);
@@ -475,7 +514,7 @@ impl StreamUsage {
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    hay.windows(needle.len()).any(|w| w == needle)
+    memchr::memmem::find(hay, needle).is_some()
 }
 
 fn trim(b: &[u8]) -> &[u8] {
@@ -622,3 +661,7 @@ mod tests {
         assert_eq!((rec.model.as_str(), rec.alias.as_str()), ("up", "alias"));
     }
 }
+
+#[cfg(test)]
+#[path = "usage_tests.rs"]
+mod report_tests;

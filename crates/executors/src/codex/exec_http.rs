@@ -148,10 +148,10 @@ impl CodexExecutor {
 
     /// Error for a non-2xx response; also drops stale reasoning replay state. The streaming
     /// path fails on a body read error (`strict`), the others keep the bytes read so far.
-    async fn http_status_error(&self, cfg: &Config, opts: &Options, scope: &ReplayScope, resp: reqwest::Response, strict: bool) -> ExecError {
+    async fn http_status_error(&self, cfg: &Config, opts: &Options, scope: &ReplayScope, resp: reqwest::Response, strict: bool, reporter: &UsageReporter) -> ExecError {
         let status = resp.status().as_u16();
         let content_type = header_value(resp.headers(), "Content-Type");
-        let (data, read_err) = read_all_lenient(resp, None).await;
+        let (data, read_err) = read_all_lenient(resp, Some(reporter)).await;
         if let (true, Some(read_err)) = (strict, read_err) {
             opts.api_log.record_api_response_error(cfg, &read_err);
             return ExecError::new(0, read_err);
@@ -186,7 +186,7 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(&cfg, auth, &req, &opts, &prepared, true, "/responses");
         let resp = self.send_http(&cfg, auth, &opts, &url, headers, body, reporter).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, false).await);
+            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, false, reporter).await);
         }
         let resp_headers = resp.headers().clone();
         let (data, read_err) = read_all_lenient(resp, Some(reporter)).await;
@@ -259,14 +259,11 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(cfg, auth, &req, &opts, &prepared, false, "/responses/compact");
         let resp = self.send_http(cfg, auth, &opts, &url, headers, body, reporter).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(cfg, &opts, &prepared.replay_scope, resp, false).await);
+            return Err(self.http_status_error(cfg, &opts, &prepared.replay_scope, resp, false, reporter).await);
         }
         let resp_headers = resp.headers().clone();
-        let data = match resp.bytes().await {
-            Ok(data) => {
-                reporter.mark_first_response_byte();
-                data
-            }
+        let data = match read_all_marking(resp, reporter).await {
+            Ok(data) => data,
             Err(e) => {
                 let err = crate::helps::status::transport_error(&e);
                 opts.api_log.record_api_response_error(cfg, &error_text(&err));
@@ -316,7 +313,7 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(&cfg, auth, &req, &opts, &prepared, true, "/responses");
         let resp = self.send_http(&cfg, auth, &opts, &url, headers, body, reporter).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, true).await);
+            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, true, reporter).await);
         }
         let upstream_headers = resp.headers().clone();
         let buffering = cfg.codex.stream_bootstrap_buffering;
@@ -427,6 +424,19 @@ impl CodexExecutor {
         });
         Ok(result)
     }
+}
+
+/// Reads a body to the end, marking TTFT when the first non-empty chunk arrives (Go: the
+/// `TrackHTTPClient` body wrapper marks the first byte of any body).
+pub(super) async fn read_all_marking(mut resp: reqwest::Response, reporter: &UsageReporter) -> Result<Vec<u8>, reqwest::Error> {
+    let mut data = Vec::new();
+    while let Some(chunk) = resp.chunk().await? {
+        if data.is_empty() && !chunk.is_empty() {
+            reporter.mark_first_response_byte();
+        }
+        data.extend_from_slice(&chunk);
+    }
+    Ok(data)
 }
 
 /// Reads a body to the end (Go `io.ReadAll`): on a read error the bytes received so far are

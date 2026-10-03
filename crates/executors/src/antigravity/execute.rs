@@ -57,8 +57,8 @@ fn aggregates_stream(base_model: &str) -> bool {
 
 pub(crate) fn usage_metadata_of(reporter: &UsageReporter) -> Metadata {
     let mut md = Metadata::new();
-    if let Some(record) = reporter.record() {
-        md.insert("usage".into(), UsageReporter::usage_metadata(&record.detail));
+    if let Some(detail) = reporter.published_detail() {
+        md.insert("usage".into(), UsageReporter::usage_metadata(&detail));
     }
     md
 }
