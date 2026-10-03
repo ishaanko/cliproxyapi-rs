@@ -130,6 +130,20 @@ fn observers_inert(line: &[u8]) -> bool {
     complete && types == 1 && recognized && !carries
 }
 
+/// The line with OAuth tool aliases and the substituted model restored, `None` when neither
+/// applies (the usual case) so the caller keeps using the line itself.
+fn restore_line(
+    p: &Prepared,
+    line: &[u8],
+    restore_error: impl Fn(super::tool_remap::ClaudeMcpAliasRestoreError) -> ExecError,
+) -> Result<Option<Vec<u8>>, StreamEnd> {
+    if p.tool_reverse_map.is_empty() && p.restore_model.is_none() {
+        return Ok(None);
+    }
+    let restored = restore_claude_oauth_tool_names_from_stream_line(line, &p.tool_reverse_map).map_err(restore_error)?;
+    Ok(Some(p.restore_response_model(restored)))
+}
+
 /// Why a stream pump stopped early.
 enum StreamEnd {
     /// The client went away on an OAuth credential (Go: `claudeOAuthCancellationError`): recorded
@@ -202,11 +216,11 @@ async fn run_stream(
                 reporter.observe_response_model(&line);
                 usage.observe_claude_stream(&line);
             }
-            let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
-            let restored = p.restore_response_model(restored);
-            event.extend_from_slice(&restored);
+            let restored = restore_line(p, &line, restore_error)?;
+            let restored: &[u8] = restored.as_deref().unwrap_or(&line);
+            event.extend_from_slice(restored);
             event.push(b'\n');
-            if trim_space(&restored).is_empty() {
+            if trim_space(restored).is_empty() {
                 if !event.is_empty() && tx.send(Ok(Bytes::from(std::mem::take(&mut event)))).await.is_err() {
                     return client_gone(p);
                 }
@@ -249,8 +263,8 @@ async fn run_stream(
             reporter.observe_response_model(&line);
             usage.observe_claude_stream(&line);
         }
-        let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
-        let restored = p.restore_response_model(restored);
+        let restored = restore_line(p, &line, restore_error)?;
+        let restored: &[u8] = restored.as_deref().unwrap_or(&line);
         let mut chunks = cpa_translator::translate_stream(
             &Ctx::default(),
             to,
@@ -258,7 +272,7 @@ async fn run_stream(
             &p.req.model,
             original_request,
             &p.body_for_translation,
-            &restored,
+            restored,
             &mut param,
         );
         if response_format == Format::OpenAIResponse && apply_patch_translation_error(&param).is_none() {
