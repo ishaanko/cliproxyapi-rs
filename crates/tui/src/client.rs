@@ -186,9 +186,9 @@ impl Client {
         Ok(())
     }
 
-    /// `ToggleAuthFile`: enable or disable.
+    /// `ToggleAuthFile`: enable or disable. Object keys are written sorted like Go's map marshaling.
     pub async fn toggle_auth_file(&self, name: &str, disabled: bool) -> Result<()> {
-        let body = json!({"name": name, "disabled": disabled}).to_string();
+        let body = json!({"disabled": disabled, "name": name}).to_string();
         self.patch("/v0/management/auth-files/status", body).await.map(drop)
     }
 
@@ -197,7 +197,13 @@ impl Client {
         if let Value::Object(map) = &mut fields {
             map.insert("name".into(), Value::String(name.to_string()));
         }
-        self.patch("/v0/management/auth-files/fields", fields.to_string()).await.map(drop)
+        // Go marshals the map with sorted keys.
+        let sorted: std::collections::BTreeMap<String, Value> = match fields {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => Default::default(),
+        };
+        let body = serde_json::to_string(&sorted).map_err(|e| e.to_string())?;
+        self.patch("/v0/management/auth-files/fields", body).await.map(drop)
     }
 
     /// `RefreshAuthFile`: force-refresh one credential.
@@ -285,7 +291,7 @@ impl Client {
     /// `AddAPIKey`. The Go client sends `old=null`, which the server rejects as "missing fields"
     /// (it needs both `old` and `new`); with `old == new` the server appends an unknown key.
     pub async fn add_api_key(&self, key: &str) -> Result<()> {
-        let body = json!({"old": key, "new": key}).to_string();
+        let body = json!({"new": key, "old": key}).to_string();
         self.patch("/v0/management/api-keys", body).await.map(drop)
     }
 
