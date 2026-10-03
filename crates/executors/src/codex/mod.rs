@@ -158,8 +158,10 @@ impl Executor for CodexExecutor {
     /// Go: CodexExecutor.HttpRequest.
     async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
         self.prepare_request(&mut req, auth).await?;
-        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
-        http_request::execute(&client, req).await
+        let cfg = self.config();
+        let fallback = crate::helps::proxy::new_proxy_aware_http_client("", Some(&cfg), Some(auth), None);
+        let client = crate::helps::tls_fingerprint::new_utls_http_client("", Some(&cfg), Some(auth), fallback);
+        client.execute(req).await.map_err(|e| e.exec_error())
     }
 }
 

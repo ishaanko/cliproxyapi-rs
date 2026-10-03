@@ -211,7 +211,7 @@ impl Executor for ClaudeExecutor {
     /// Go: ClaudeExecutor.HttpRequest.
     async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
         self.prepare_request(&mut req, auth).await?;
-        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
-        http_request::execute(&client, req).await
+        let client = http::claude_http_client("", &self.config(), auth);
+        client.execute(req).await.map_err(|e| e.exec_error())
     }
 }
