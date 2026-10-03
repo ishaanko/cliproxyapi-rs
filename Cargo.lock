@@ -910,6 +910,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpa-tools"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "cpa-auth",
+ "cpa-config",
+ "cpa-core",
+ "cpa-executors",
+ "cpa-json",
+ "cpa-misc",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cpa-translator"
 version = "0.1.0"
 dependencies = [
