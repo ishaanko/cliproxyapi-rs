@@ -135,17 +135,13 @@ impl GitHubRateLimiter {
             }
             return Ok(());
         }
-        if remaining_zero {
-            if let Ok(reset) = headers.get("X-RateLimit-Reset").trim().parse::<i64>() {
-                if reset > 0 {
-                    if let Some(reset_at) = Utc.timestamp_opt(reset, 0).single() {
-                        if retry_at.is_none_or(|current| reset_at > current) {
+        if remaining_zero
+            && let Ok(reset) = headers.get("X-RateLimit-Reset").trim().parse::<i64>()
+                && reset > 0
+                    && let Some(reset_at) = Utc.timestamp_opt(reset, 0).single()
+                        && retry_at.is_none_or(|current| reset_at > current) {
                             retry_at = Some(reset_at);
                         }
-                    }
-                }
-            }
-        }
         let mut effective = retry_at.filter(|at| *at > now);
         if effective.is_none() {
             if !rate_limited {
@@ -159,11 +155,10 @@ impl GitHubRateLimiter {
                 entry.failures += 1;
             }
         }
-        if let Some(at) = effective {
-            if entry.retry_at.is_none_or(|current| at > current) {
+        if let Some(at) = effective
+            && entry.retry_at.is_none_or(|current| at > current) {
                 entry.retry_at = Some(at);
             }
-        }
         entry.status = if rate_limited { status } else { 429 };
         state.entries.insert(key.to_string(), entry);
         if rate_limited {
@@ -223,11 +218,10 @@ pub(crate) fn github_rate_limit_key(
 /// `Retry-After` as delta seconds or an HTTP date; `None` when absent or invalid.
 fn github_retry_after(value: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let value = value.trim();
-    if let Ok(seconds) = value.parse::<i64>() {
-        if seconds >= 0 && seconds <= i64::MAX / 1_000_000_000 {
+    if let Ok(seconds) = value.parse::<i64>()
+        && (0..=i64::MAX / 1_000_000_000).contains(&seconds) {
             return Duration::try_seconds(seconds).and_then(|d| now.checked_add_signed(d));
         }
-    }
     httpdate::parse_http_date(value).ok().map(DateTime::<Utc>::from)
 }
 

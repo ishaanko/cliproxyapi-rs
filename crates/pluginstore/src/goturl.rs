@@ -349,12 +349,11 @@ fn parse_host(host: &str) -> Result<String, String> {
 fn split_host_port(host: &str) -> (&str, &str) {
     let mut hostname = host;
     let mut port = "";
-    if let Some(colon) = host.rfind(':') {
-        if valid_optional_port(&host[colon..]) {
+    if let Some(colon) = host.rfind(':')
+        && valid_optional_port(&host[colon..]) {
             hostname = &host[..colon];
             port = &host[colon + 1..];
         }
-    }
     if hostname.starts_with('[') && hostname.ends_with(']') {
         hostname = &hostname[1..hostname.len() - 1];
     }

@@ -553,13 +553,7 @@ fn env_value_required(env: Env<'_>, env_name: &str, field: &str) -> Result<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
-
-    pub(crate) fn env_fn(pairs: &[(&str, &str)]) -> EnvFn {
-        let map: HashMap<String, String> =
-            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        Arc::new(move |name| map.get(name).cloned().unwrap_or_default())
-    }
+    use crate::testutil::env_fn;
 
     fn bearer_rule(match_url: &str, apply_to: &[&str]) -> AuthConfig {
         AuthConfig {

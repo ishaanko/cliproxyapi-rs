@@ -144,11 +144,10 @@ impl Client {
     pub(crate) fn auth_headers(&self, request_url: &str, kind: &str) -> Result<(Headers, bool)> {
         validate_plugin_store_request_url(&self.auth, request_url, kind)?;
         validate_resolved_auth_expiry(&self.resolved_auth, self.resolved_auth_expires_at, Utc::now(), request_url, kind)?;
-        if let Some(prepared) = &self.prepared_auth {
-            if prepared.request_url == request_url && prepared.kind == kind {
+        if let Some(prepared) = &self.prepared_auth
+            && prepared.request_url == request_url && prepared.kind == kind {
                 return Ok((prepared.headers.clone(), prepared.authenticated));
             }
-        }
         let mut headers = Headers::new();
         let authenticated = apply_plugin_store_auth_for_client(
             self.env(),
@@ -276,12 +275,11 @@ async fn read_body(body: &mut dyn BodyReader, limit: Option<usize>) -> std::io::
     let mut data = Vec::new();
     while let Some(chunk) = body.chunk().await? {
         data.extend_from_slice(&chunk);
-        if let Some(limit) = limit {
-            if data.len() >= limit {
+        if let Some(limit) = limit
+            && data.len() >= limit {
                 data.truncate(limit);
                 break;
             }
-        }
     }
     Ok(data)
 }
@@ -322,15 +320,14 @@ async fn read_response(
 /// from the URL.
 pub(crate) fn plugin_store_request_error(request_url: &str, cause: &str) -> Error {
     let mut safe_url = "plugin store url".to_string();
-    if let Ok(mut parsed) = GoUrl::parse(request_url.trim()) {
-        if !parsed.scheme.is_empty() && !parsed.host.is_empty() {
+    if let Ok(mut parsed) = GoUrl::parse(request_url.trim())
+        && !parsed.scheme.is_empty() && !parsed.host.is_empty() {
             parsed.has_user = false;
             parsed.raw_query.clear();
             parsed.force_query = false;
             parsed.fragment.clear();
             safe_url = parsed.render();
         }
-    }
     errf!("request {safe_url} failed: {cause}")
 }
 

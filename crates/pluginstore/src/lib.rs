@@ -31,3 +31,5 @@ pub use registry::*;
 
 #[cfg(test)]
 mod testutil;
+#[cfg(test)]
+mod tests;

@@ -409,18 +409,16 @@ fn add_installed_version_statuses(
             skipped: true,
             ..Default::default()
         };
-        if let Ok(files) = plugin_file_infos(root, &id) {
-            if let Some(file) = files.iter().find(|file| file.version.trim() == status.version) {
+        if let Ok(files) = plugin_file_infos(root, &id)
+            && let Some(file) = files.iter().find(|file| file.version.trim() == status.version) {
                 status.path = file.path.trim().to_string();
             }
-        }
-        if let Ok(Some(manifest)) = store_manifest_from_plugin_config(&id, item) {
-            if plugin_versions_equal(&status.version, &manifest.version) {
+        if let Ok(Some(manifest)) = store_manifest_from_plugin_config(&id, item)
+            && plugin_versions_equal(&status.version, &manifest.version) {
                 status.release_tag = manifest.release_tag.trim().to_string();
                 status.repository = manifest.repository.trim().to_string();
                 status.install_type = manifest.install_type();
             }
-        }
         report.plugins.push(status);
     }
 }
@@ -560,8 +558,8 @@ fn delete_plugin_artifact(
     let Some(first) = paths.first().cloned() else {
         return (String::new(), false, None);
     };
-    if let Some(runtime) = runtime {
-        if runtime.plugin_busy(id) {
+    if let Some(runtime) = runtime
+        && runtime.plugin_busy(id) {
             if let Some(err) = ctx.err() {
                 return (first, false, Some(err));
             }
@@ -573,7 +571,6 @@ fn delete_plugin_artifact(
                 return (first, false, Some(Error::LoadedPluginLocked));
             }
         }
-    }
     let mut deleted = false;
     for path in &paths {
         if let Some(err) = ctx.err() {
@@ -680,8 +677,8 @@ fn plugin_file_from_path(file_path: &str, required_extension: &str) -> Option<Pl
     let name = &base[..base.len().checked_sub(extension.len())?];
     let mut id = name.to_string();
     let mut version = String::new();
-    if let Some(version_index) = name.rfind("-v") {
-        if version_index > 0 {
+    if let Some(version_index) = name.rfind("-v")
+        && version_index > 0 {
             let candidate_id = &name[..version_index];
             let candidate_version = &name[version_index + 2..];
             if valid_plugin_file_id(candidate_id) && valid_plugin_file_version(candidate_version) {
@@ -689,7 +686,6 @@ fn plugin_file_from_path(file_path: &str, required_extension: &str) -> Option<Pl
                 version = candidate_version.to_string();
             }
         }
-    }
     if !valid_plugin_file_id(&id) {
         return None;
     }

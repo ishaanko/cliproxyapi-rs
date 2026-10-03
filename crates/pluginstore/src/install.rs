@@ -309,11 +309,10 @@ pub fn install_archive(archive_data: &[u8], plugin: &Plugin, options: &InstallOp
     }
     // Re-check immediately before replacing an existing file: the same version may
     // have been loaded while the archive was being downloaded and verified.
-    if overwritten {
-        if let Some(before_write) = &options.before_write {
+    if overwritten
+        && let Some(before_write) = &options.before_write {
             before_write().map_err(|err| err.wrap("prepare plugin write"))?;
         }
-    }
     if overwritten && loaded_plugin_install_blocked(&options) {
         return Err(Error::LoadedPluginLocked);
     }
@@ -447,11 +446,10 @@ fn write_file_atomic(target_path: &Path, data: &[u8], mode: u32) -> Result<()> {
     drop(temp);
     if let Err(rename_err) = std::fs::rename(&temp_path, target_path) {
         if cfg!(windows) {
-            if let Err(err) = std::fs::remove_file(target_path) {
-                if err.kind() != std::io::ErrorKind::NotFound {
+            if let Err(err) = std::fs::remove_file(target_path)
+                && err.kind() != std::io::ErrorKind::NotFound {
                     return Err(errf!("remove old plugin file: {err}"));
                 }
-            }
             return match std::fs::rename(&temp_path, target_path) {
                 Ok(()) => {
                     guard.armed = false;
@@ -474,13 +472,11 @@ struct TempGuard {
 
 impl Drop for TempGuard {
     fn drop(&mut self) {
-        if self.armed {
-            if let Err(err) = std::fs::remove_file(&self.path) {
-                if err.kind() != std::io::ErrorKind::NotFound {
+        if self.armed
+            && let Err(err) = std::fs::remove_file(&self.path)
+                && err.kind() != std::io::ErrorKind::NotFound {
                     tracing::debug!(error = %err, "failed to remove temp plugin file");
                 }
-            }
-        }
     }
 }
 
