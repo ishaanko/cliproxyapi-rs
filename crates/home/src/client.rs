@@ -1224,7 +1224,7 @@ impl Client {
         &self,
         channel: &str,
         payload: &str,
-        on_config: &mut dyn FnMut(&[u8]) -> Result<(), HomeError>,
+        on_config: &mut (dyn FnMut(&[u8]) -> Result<(), HomeError> + Send),
     ) -> Result<(), HomeError> {
         let payload = payload.trim();
         if payload.is_empty() {
@@ -1251,8 +1251,8 @@ impl Client {
     pub async fn run_config_subscriber_lifetime(
         &self,
         cancel: &Cancel,
-        on_config: &mut dyn FnMut(&[u8]) -> Result<(), HomeError>,
-        on_ready: &mut dyn FnMut(),
+        on_config: &mut (dyn FnMut(&[u8]) -> Result<(), HomeError> + Send),
+        on_ready: &mut (dyn FnMut() + Send),
     ) -> Result<(), HomeError> {
         if !self.enabled() {
             return Err(HomeError::Disabled);
