@@ -12,6 +12,8 @@ use crate::run::{Cell, Record, Results};
 #[derive(Clone, Copy)]
 struct Agg {
     median: f64,
+    /// Largest value over runs; for req/s this is the least disturbed run on a noisy host.
+    max: f64,
     /// (max - min) / 2 as a fraction of the median.
     spread: f64,
 }
@@ -24,7 +26,7 @@ fn aggregate(mut v: Vec<f64>) -> Option<Agg> {
     let n = v.len();
     let median = if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 };
     let spread = if median > 0.0 { (v[n - 1] - v[0]) / 2.0 / median } else { 0.0 };
-    Some(Agg { median, spread })
+    Some(Agg { median, max: v[n - 1], spread })
 }
 
 struct Data<'a>(&'a [Record]);
@@ -87,6 +89,18 @@ fn plain(a: Option<Agg>, fmt: impl Fn(f64) -> String) -> String {
     a.map(|a| fmt(a.median)).unwrap_or_else(|| "-".into())
 }
 
+/// Ratio of the best (max) values.
+fn best_ratio(rust: Option<Agg>, go: Option<Agg>) -> String {
+    match (rust, go) {
+        (Some(r), Some(g)) if g.max > 0.0 => format!("{:.2}x", r.max / g.max),
+        _ => "-".into(),
+    }
+}
+
+fn best(a: Option<Agg>, fmt: impl Fn(f64) -> String) -> String {
+    a.map(|a| fmt(a.max)).unwrap_or_else(|| "-".into())
+}
+
 fn ratio(rust: Option<Agg>, go: Option<Agg>) -> String {
     match (rust, go) {
         (Some(r), Some(g)) if g.median > 0.0 => format!("{:.2}x", r.median / g.median),
@@ -126,7 +140,7 @@ fn machine(out: &mut String, r: &Results) {
     let _ = writeln!(out, "- Rust: {} at {} (`cargo build --release`)", m.rustc, m.rust_commit);
     let _ = writeln!(
         out,
-        "- {} runs per cell, {}s warmup + {}s measured per throughput cell, concurrency {:?}; cells show the median over runs with ±(half the min-max range)",
+        "- {} runs per cell, {}s warmup + {}s measured per throughput cell, concurrency {:?}; cells show the median over runs with ±(half the min-max range); `best` is the highest run, the least disturbed one on a shared host",
         m.runs, m.warmup_s, m.measure_s, m.conc
     );
     let _ = writeln!(
@@ -158,10 +172,17 @@ fn throughput(out: &mut String, d: &Data) {
             with_spread(go, thousands),
             with_spread(rust, thousands),
             ratio(rust, go),
+            best(go, thousands),
+            best(rust, thousands),
+            best_ratio(rust, go),
             plain(direct, thousands),
         ]);
     }
-    table(out, &["Scenario", "Conc", "Go req/s", "Rust req/s", "Rust/Go", "Direct req/s"], rows);
+    table(
+        out,
+        &["Scenario", "Conc", "Go req/s", "Rust req/s", "Rust/Go", "Go best", "Rust best", "Best ratio", "Direct req/s"],
+        rows,
+    );
 }
 
 fn latency(out: &mut String, d: &Data) {
@@ -206,7 +227,7 @@ fn streaming(out: &mut String, d: &Data) {
         let c99 = f(|x| x.chunk.map(|p| p.p99));
         let get = |s: &str, g: &dyn Fn(&Cell) -> Option<f64>| d.agg(s, "stream", &sc, c, g);
         let added = |s: &str, g: &dyn Fn(&Cell) -> Option<f64>| match (get(s, g), get("direct", g)) {
-            (Some(a), Some(b)) => format!("+{}", ms(a.median - b.median)),
+            (Some(a), Some(b)) => format!("{:+.2}", (a.median - b.median) / 1000.0),
             _ => "-".into(),
         };
         rows.push(vec![
@@ -346,12 +367,14 @@ fn summary(out: &mut String, r: &Results, d: &Data) {
             plain(g("go", rps), thousands),
             plain(g("rust", rps), thousands),
             ratio(g("rust", rps), g("go", rps)),
+            format!("{} / {}", best(g("go", rps), thousands), best(g("rust", rps), thousands)),
+            best_ratio(g("rust", rps), g("go", rps)),
             format!("{} / {}", plain(g("go", p50), ms), plain(g("rust", p50), ms)),
             format!("{} / {}", plain(g("go", p99), ms), plain(g("rust", p99), ms)),
             ratio(g("rust", cpu), g("go", cpu)),
         ]);
     }
-    table(out, &["Scenario", "Go req/s", "Rust req/s", "Rust/Go", "p50 ms Go / Rust", "p99 ms Go / Rust", "CPU per request Rust/Go"], rows);
+    table(out, &["Scenario", "Go req/s", "Rust req/s", "Rust/Go", "Best run req/s Go / Rust", "Best ratio", "p50 ms Go / Rust", "p99 ms Go / Rust", "CPU per request Rust/Go"], rows);
     let idle = |s| d.rec_agg(s, |x| x.idle_rss_kb.map(|v| v as f64));
     let startup = |s| d.rec_agg(s, |x| x.startup_ms);
     let _ = writeln!(

@@ -133,15 +133,18 @@ pub async fn start_server(bin: &Path, dir: &Path, cpus: Option<&str>) -> Result<
         if proc.exited()? {
             bail!("server {} exited early", bin.display());
         }
-        let last = match crate::load::once(&target).await {
-            Ok((200, body)) if String::from_utf8_lossy(&body).contains("\"id\"") => return Ok((proc, t0.elapsed())),
-            Ok((status, _)) => format!("status {status}"),
-            Err(e) => e.to_string(),
+        // A short per-probe timeout: a SYN sent before the listener exists can hang for a 1 s TCP
+        // retransmit, which would show up as a 1 s startup.
+        let last = match tokio::time::timeout(Duration::from_millis(10), crate::load::once(&target)).await {
+            Ok(Ok((200, body))) if String::from_utf8_lossy(&body).contains("\"id\"") => return Ok((proc, t0.elapsed())),
+            Ok(Ok((status, _))) => format!("status {status}"),
+            Ok(Err(e)) => e.to_string(),
+            Err(_) => "probe timed out".into(),
         };
         if t0.elapsed() > Duration::from_secs(60) {
             bail!("server {} not healthy after 60s ({last})", bin.display());
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
     }
 }
 
