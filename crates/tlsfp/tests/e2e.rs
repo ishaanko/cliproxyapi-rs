@@ -309,6 +309,10 @@ async fn chrome_h2_connection_preface_matches_go_http2_transport() {
         .collect();
     // Go: ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=4MiB, MAX_FRAME_SIZE=1MiB, MAX_HEADER_LIST_SIZE=10MiB.
     assert_eq!(settings, [(2, 0), (4, 4 << 20), (5, 1 << 20), (6, 10 << 20)]);
+    // Go then raises the connection window by 1 GiB.
+    let wu = &raw[33 + len..];
+    assert_eq!(&wu[..9], [0, 0, 4, 8, 0, 0, 0, 0, 0], "connection WINDOW_UPDATE frame");
+    assert_eq!(u32::from_be_bytes([wu[9], wu[10], wu[11], wu[12]]), 1 << 30);
 }
 
 /// A CONNECT proxy that tunnels to `target` and records the request line.

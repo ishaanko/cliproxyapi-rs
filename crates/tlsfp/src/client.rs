@@ -396,7 +396,7 @@ impl FingerprintClient {
     async fn send_h2(&self, tls: Tls, p: Prepared) -> Result<(http::Response<Incoming>, Option<AbortOnDrop>), Error> {
         let (mut sender, conn) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
             .initial_stream_window_size(4 << 20)
-            .initial_connection_window_size(1 << 30)
+            .initial_connection_window_size((1 << 30) + 65535)
             .max_frame_size(1 << 20)
             .max_header_list_size(10 << 20)
             .handshake(TokioIo::new(tls))
@@ -519,13 +519,17 @@ impl Prepared {
     fn into_h2_request(self) -> Result<http::Request<Full<Bytes>>, Error> {
         let mut b = http::Request::builder().method(self.method).uri(self.uri);
         let map = b.headers_mut().ok_or_else(|| Error::Request("invalid request".into()))?;
-        for (n, v) in self.headers {
-            if n == CONNECTION {
-                continue;
+        // Go's http2 transport writes the caller's headers first, then content-length,
+        // accept-encoding and user-agent (`Go-http-client/2.0` when none was set).
+        let trailing = [CONTENT_LENGTH, ACCEPT_ENCODING, USER_AGENT];
+        for (n, v) in self.headers.iter().filter(|(n, _)| *n != CONNECTION && !trailing.contains(n)) {
+            map.append(n.clone(), v.clone());
+        }
+        for name in trailing {
+            for (_, v) in self.headers.iter().filter(|(n, _)| *n == name) {
+                let v = if name == USER_AGENT && self.ua_defaulted { HeaderValue::from_static("Go-http-client/2.0") } else { v.clone() };
+                map.append(name.clone(), v);
             }
-            // Go's http2 transport identifies as `Go-http-client/2.0` when no agent is set.
-            let v = if n == USER_AGENT && self.ua_defaulted { HeaderValue::from_static("Go-http-client/2.0") } else { v };
-            map.append(n, v);
         }
         b.body(Full::new(self.body)).map_err(|e| Error::Request(e.to_string()))
     }
