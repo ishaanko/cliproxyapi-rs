@@ -641,3 +641,41 @@ fn lifecycle_config_defaults_and_validation() {
     bad.release_max_backoff = GoDuration::from_millis(1);
     assert!(c.set_lifecycle_config(bad).is_err());
 }
+
+// ---- wire contract fixtures (Go: in_flight_contract_test.go, concurrency release fixture) ----
+
+const IN_FLIGHT_FIXTURE: &str = include_str!("fixtures/credential_in_flight_contract.json");
+const RELEASE_FIXTURE: &str = include_str!("fixtures/concurrency_release.json");
+
+#[test]
+fn in_flight_frames_match_the_go_wire_contract() {
+    use cpa_home::requests::{InFlightAccountedStatus, InFlightFrameKind, InFlightSnapshotFrame};
+    let doc: Value = serde_json::from_str(IN_FLIGHT_FIXTURE).unwrap();
+    let part: InFlightSnapshotFrame = serde_json::from_value(doc["part"].clone()).unwrap();
+    assert_eq!((part.kind, part.part_index, part.part_count), (InFlightFrameKind::Part, Some(0), Some(1)));
+    assert_eq!(part.aggregates[0].status, InFlightAccountedStatus::Accounted);
+    assert_eq!(part.aggregates[1].status, InFlightAccountedStatus::Unaccounted);
+    let overflow: InFlightSnapshotFrame = serde_json::from_value(doc["overflow"].clone()).unwrap();
+    assert_eq!((overflow.kind, overflow.aggregate_group_count), (InFlightFrameKind::Overflow, 100_001));
+    // Re-encoding keeps Go's field order and omits what `omitempty` omits (the fixture spells out
+    // the false/empty values Go would drop).
+    let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+    let encoded = serde_json::to_value(&part).unwrap();
+    assert_eq!(
+        keys(&encoded),
+        ["kind", "revision", "observed_at", "barrier_revision", "part_index", "part_count", "aggregates", "details"]
+    );
+    assert_eq!(keys(&encoded["aggregates"][0]), ["credential_id", "model", "status", "count"]);
+    assert_eq!(keys(&encoded["details"][0]), ["request_id", "credential_id", "model", "request_kind", "started_at"]);
+    assert_eq!(
+        keys(&serde_json::to_value(&overflow).unwrap()),
+        ["kind", "revision", "observed_at", "barrier_revision", "aggregate_group_count"]
+    );
+    assert_eq!(encoded["aggregates"][1]["status"], "unaccounted");
+}
+
+#[test]
+fn concurrency_release_frame_matches_the_fixture_bytes() {
+    let frame = ConcurrencyReleaseFrame { credential_id: "cred-1".into(), model: "gpt".into(), release_seq: 1 };
+    assert_eq!(serde_json::to_string(&frame).unwrap(), RELEASE_FIXTURE.trim());
+}

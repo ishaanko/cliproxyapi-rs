@@ -107,15 +107,6 @@ impl AttemptCancels {
         }
     }
 
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.state.lock().cancels.len()
-    }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// One attempt's cancellation scope: cancelled when the selection ends or on [`release`].

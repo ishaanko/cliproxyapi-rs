@@ -99,12 +99,11 @@ struct Mock {
     steps: Mutex<HashMap<String, VecDeque<Step>>>,
     /// (auth id, model, home_upstream_model attribute, lifecycle present)
     calls: Mutex<Vec<(String, String, String, bool)>>,
-    held: Mutex<Vec<mpsc::Sender<Result<Bytes, ExecError>>>>,
 }
 
 impl Mock {
     fn new() -> Arc<Self> {
-        Arc::new(Mock { steps: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), held: Mutex::new(vec![]) })
+        Arc::new(Mock { steps: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]) })
     }
 
     fn script(&self, auth_id: &str, steps: Vec<Step>) {
@@ -736,6 +735,21 @@ async fn session_ids_and_headers_are_sent_to_home() {
     assert_eq!(req["headers"]["x-custom"], "v");
     assert_eq!(req["node_kind"], "fork");
     assert!(req["session_id"].as_str().is_some_and(|s| !s.is_empty()), "{req}");
+}
+
+#[tokio::test]
+async fn go_dispatch_fixtures_decode() {
+    let accounted = include_str!("../../tests/fixtures/home/concurrency_dispatch_accounted.json").replace("codex", "mock");
+    let h = Harness::new(vec![Ok(accounted.into_bytes())]);
+    h.run("gpt").await.unwrap();
+    assert_eq!(h.exec.call_ids(), ["cred-1"]);
+    assert_eq!(h.release_count(), 1);
+
+    let busy = include_str!("../../tests/fixtures/home/concurrency_dispatch_busy.json");
+    let h = Harness::with_config(vec![Ok(busy.as_bytes().to_vec())], |c| c.request_retry = 0);
+    let err = h.run("gpt").await.unwrap_err();
+    assert_eq!((err.status, err.retry_after), (429, Some(Duration::from_millis(750))));
+    assert_eq!(err.home, Some(crate::executor::HomeErrKind::ConcurrencyBusy));
 }
 
 #[tokio::test]
