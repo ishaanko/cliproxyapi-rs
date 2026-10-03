@@ -476,7 +476,7 @@ fn wrap_stream(
     remaining: Option<mpsc::Receiver<Chunk>>,
     executor_usage: Option<tokio::sync::oneshot::Receiver<Value>>,
 ) -> StreamResult {
-    let (tx, rx) = mpsc::channel::<Chunk>(1);
+    let (tx, rx) = mpsc::channel::<Chunk>(32);
     tokio::spawn(async move {
         let WrapCtx {
             manager,

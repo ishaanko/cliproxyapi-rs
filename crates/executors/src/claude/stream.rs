@@ -56,7 +56,7 @@ impl ClaudeExecutor {
         };
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let (tx, rx) = mpsc::channel::<Result<Bytes, ExecError>>(1);
+        let (tx, rx) = mpsc::channel::<Result<Bytes, ExecError>>(32);
         let (usage_tx, usage_rx) = oneshot::channel();
         let original_request = apply_patch_original_request(&prepared.req, &opts);
         let task_headers = resp_headers.clone();
