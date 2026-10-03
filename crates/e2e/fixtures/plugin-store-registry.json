@@ -1,0 +1,133 @@
+{
+  "schema_version": 2,
+  "plugins": [
+    {
+      "id": "zcode",
+      "name": "ZCode",
+      "description": "Connects BigModel Coding Plan to CPA with ZCode client fingerprint headers, dynamic model discovery, model mapping, and Anthropic-format streaming.",
+      "author": "rensumo",
+      "version": "0.1.0",
+      "repository": "https://github.com/rensumo/cpa-plugin-zcode",
+      "homepage": "https://github.com/rensumo/cpa-plugin-zcode",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "Executor",
+        "BigModel",
+        "ZCode",
+        "Anthropic",
+        "Streaming"
+      ]
+    },
+    {
+      "id": "cpa-groq",
+      "name": "Groq Whisper (cpa-groq)",
+      "description": "Adds Groq Whisper speech-to-text (whisper-large-v3 and -turbo) as executor models: send audio as Gemini generateContent inline_data, get the transcript back.",
+      "author": "batuhan4",
+      "repository": "https://github.com/Batuhan4/cpa-groq",
+      "homepage": "https://github.com/Batuhan4/cpa-groq",
+      "license": "MIT",
+      "tags": [
+        "Provider",
+        "Executor",
+        "Speech-to-Text",
+        "Groq",
+        "Whisper"
+      ]
+    },
+    {
+      "id": "clinepassbridge",
+      "name": "ClinePassBridge",
+      "logo": "https://raw.githubusercontent.com/xiao-qiu-qiu/ClinePassBridge/main/logo.png",
+      "description": "让 Cline Pass 订阅无缝接入 CPA，支持一键获取模型与手动映射，规避原生非流式空响应错误，轻松查看实际命中的上游。 / Seamlessly connect Cline Pass subscriptions to CPA, fetch models in one click or map them manually, avoid native non-streaming empty-response errors, and see the actual upstream provider.",
+      "author": "xiao-qiu-qiu",
+      "repository": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
+      "homepage": "https://github.com/xiao-qiu-qiu/ClinePassBridge",
+      "license": "MIT",
+      "tags": [
+        "Cline",
+        "Cline Pass",
+        "Provider",
+        "Streaming",
+        "Logs"
+      ]
+    },
+    {
+      "id": "jshandler",
+      "name": "JS Handler",
+      "description": "A CLIProxyAPI plugin that executes external JavaScript scripts to intercept and modify requests, responses, and streaming chunks using the Goja VM engine.",
+      "author": "easyatm",
+      "version": "1.0.1",
+      "repository": "https://github.com/router-for-me/cpa-plugin-jshandler",
+      "logo": "https://avatars.githubusercontent.com/u/233033915?s=64&v=4",
+      "homepage": "https://github.com/router-for-me/cpa-plugin-jshandler",
+      "license": "MIT",
+      "tags": [
+        "Interceptor"
+      ]
+    },
+    {
+      "id": "censorship",
+      "name": "Censorship",
+      "description": "Filters selected text in CLIProxyAPI request bodies with strict format and role scopes, supporting block, strip, and zero-width obfuscation modes. Use it to reject or transform configured terms before upstream execution; it never inspects or changes model responses.",
+      "author": "DoingDog",
+      "repository": "https://github.com/DoingDog/cpa-plugin-censorship",
+      "logo": "https://raw.githubusercontent.com/DoingDog/cpa-plugin-censorship/main/logo.png",
+      "homepage": "https://github.com/DoingDog/cpa-plugin-censorship",
+      "license": "Unlicense"
+    },
+    {
+      "id": "direct-sample",
+      "name": "Direct Sample",
+      "description": "Fixture plugin installed from direct artifacts.",
+      "author": "e2e",
+      "version": "1.2.0",
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://downloads.example.test/direct-sample-1.2.0-linux-amd64.so",
+            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "size": 1024
+          }
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.1.0",
+          "install": {
+            "type": "direct",
+            "artifacts": [
+              {
+                "goos": "linux",
+                "goarch": "amd64",
+                "url": "https://downloads.example.test/direct-sample-1.1.0-linux-amd64.so",
+                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+              }
+            ]
+          }
+        }
+      ],
+      "homepage": "https://example.test/direct-sample",
+      "license": "MIT",
+      "tags": [
+        "Fixture"
+      ]
+    },
+    {
+      "id": "private-sample",
+      "name": "Private Sample",
+      "description": "Fixture plugin whose releases need store auth.",
+      "author": "e2e",
+      "version": "0.3.0",
+      "repository": "https://github.com/example-org/private-sample",
+      "auth_required": true,
+      "tags": [
+        "Fixture",
+        "Auth"
+      ]
+    }
+  ]
+}

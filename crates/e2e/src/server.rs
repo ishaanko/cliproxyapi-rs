@@ -57,7 +57,14 @@ impl ServerProc {
         let config_path = dir.join("config.yaml");
         std::fs::write(&config_path, spec.render(layout, port, &auth_dir))?;
         let log = std::fs::File::create(dir.join("server.log"))?;
-        let child = Command::new(bin)
+        let mut cmd = Command::new(bin);
+        if spec.plugin_store_mock {
+            // The mock's CA is the only trust root the server needs for the store hosts.
+            let ca = dir.join("store-mock-ca.pem");
+            std::fs::write(&ca, crate::mock::store::CA_PEM)?;
+            cmd.env("SSL_CERT_FILE", &ca);
+        }
+        let child = cmd
             .arg("--config")
             .arg(&config_path)
             // Use embedded model catalogs; never fetch remote model updates.
