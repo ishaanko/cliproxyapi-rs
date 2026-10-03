@@ -81,14 +81,14 @@ impl Manager {
         if let Some(aff) = self.selector().affinity() {
             aff.on_result(&result);
         }
-        self.record_usage(&result, snapshot.as_ref(), facts.as_ref(), now);
+        self.record_usage(&result, snapshot.as_ref(), facts, now);
     }
 
     pub(crate) fn record_usage(
         &self,
         result: &ExecResult,
         snapshot: Option<&Auth>,
-        facts: Option<&UsageFacts>,
+        facts: Option<UsageFacts>,
         now: DateTime<Utc>,
     ) {
         let tracker = self.usage.read().clone();
@@ -146,7 +146,7 @@ impl Manager {
             hook.on_result(&result);
         }
         self.publish_error_event(&result, snapshot.as_ref(), now);
-        self.record_usage(&result, snapshot.as_ref(), facts.as_ref(), now);
+        self.record_usage(&result, snapshot.as_ref(), facts, now);
     }
 
     // ---- Registry projection ----

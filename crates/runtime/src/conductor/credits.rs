@@ -378,11 +378,13 @@ impl Manager {
                         }
                     }
                     Ok(mut resp) => {
-                        facts.tokens = tokens_from_response(
-                            credits_opts.response_format_or_source(),
-                            &resp.payload,
-                            &resp.metadata,
-                        );
+                        if facts.reports.is_empty() {
+                            facts.tokens = tokens_from_response(
+                                credits_opts.response_format_or_source(),
+                                &resp.payload,
+                                &resp.metadata,
+                            );
+                        }
                         result.response_headers = resp.headers.clone();
                         self.mark_result_inner(result, Some(facts));
                         let attempt = resolve_attempt_alias_result(
