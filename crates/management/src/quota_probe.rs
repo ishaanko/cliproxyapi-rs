@@ -101,8 +101,15 @@ pub(crate) async fn execute(st: &ManagementState, auth: &Auth, probe: &Map<Strin
         .unwrap_or(0);
 
     let doc = cpa_json::parse(&bytes);
-    if let Some(mapping) = probe.get("mapping").and_then(Value::as_object) {
-        return Some(match map_probe_response(&doc, mapping) {
+    Some(probe_result(&doc, probe.get("mapping").and_then(Value::as_object), server_offset_ms))
+}
+
+/// The normalized quota of a probe answer: through the declared `mapping`, else from the
+/// answer's own normalized shape. `server_offset_ms` fills `serverTimeOffsetMs` when the answer
+/// does not carry one.
+fn probe_result(doc: &Value, mapping: Option<&Map<String, Value>>, server_offset_ms: i64) -> Result<QuotaFetchResponse, String> {
+    if let Some(mapping) = mapping {
+        return match map_probe_response(doc, mapping) {
             Ok(mut mapped) => {
                 if mapped.server_time_offset_ms == 0 {
                     mapped.server_time_offset_ms = server_offset_ms;
@@ -110,9 +117,9 @@ pub(crate) async fn execute(st: &ManagementState, auth: &Auth, probe: &Map<Strin
                 Ok(mapped)
             }
             Err(e) => Err(format!("probe response mapping failed: {e}")),
-        });
+        };
     }
-    if let Value::Object(raw) = &doc {
+    if let Value::Object(raw) = doc {
         // Optional plugin data must not invalidate core quota fields.
         let mut core = raw.clone();
         core.retain(|k, _| !k.eq_ignore_ascii_case("summary"));
@@ -148,16 +155,16 @@ pub(crate) async fn execute(st: &ManagementState, auth: &Auth, probe: &Map<Strin
                 }
             }
             quota.groups = filtered;
-            quota.summary = filter_usable_quota_summary(&doc);
+            quota.summary = filter_usable_quota_summary(doc);
             if has_plan || !quota.groups.is_empty() || !quota.summary.is_empty() {
                 if quota.server_time_offset_ms == 0 {
                     quota.server_time_offset_ms = server_offset_ms;
                 }
-                return Some(Ok(quota));
+                return Ok(quota);
             }
         }
     }
-    Some(Err("upstream probe response does not match normalized quota shape or declared mapping".into()))
+    Err("upstream probe response does not match normalized quota shape or declared mapping".into())
 }
 
 fn text(m: &Map<String, Value>, key: &str) -> String {
@@ -355,4 +362,104 @@ fn map_probe_response(doc: &Value, mapping: &Map<String, Value>) -> Result<Quota
         return Err("response mapping did not match any valid quota fields in upstream response".into());
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn run(doc: Value, mapping: Option<Value>) -> Result<QuotaFetchResponse, String> {
+        probe_result(&doc, mapping.as_ref().and_then(Value::as_object), 0)
+    }
+
+    #[test]
+    fn normalized_answers_pass_through() {
+        let got = run(
+            json!({"subscription": {"plan": "ProbePro"}, "groups": [{"displayName": "API Limits", "buckets": [{"window": "monthly", "remainingFraction": 0.65, "resetTime": "2026-10-01T00:00:00Z"}]}]}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(got.subscription.unwrap().plan, "ProbePro");
+        assert_eq!(got.groups.len(), 1);
+        assert_eq!(got.groups[0].buckets[0].remaining_fraction, 0.65);
+    }
+
+    #[test]
+    fn summary_only_answers_are_accepted() {
+        let got = run(json!({"summary": [{"key": "balance", "label": "Balance", "value": 42, "unit": "credits"}]}), None).unwrap();
+        assert_eq!((got.summary[0].key.as_str(), got.summary[0].value, got.summary[0].unit.as_str()), ("balance", 42.0, "credits"));
+        let mapped = run(json!({"summary": [{"key": "balance", "label": "Balance", "value": 42}]}), Some(json!({"plan": "missing.plan"}))).unwrap();
+        assert_eq!(mapped.summary.len(), 1);
+    }
+
+    #[test]
+    fn a_malformed_optional_summary_is_ignored_and_the_key_matches_any_case() {
+        let got = run(json!({"subscription": {"plan": "ProbePro"}, "Summary": "usage text"}), None).unwrap();
+        assert!(got.summary.is_empty());
+        assert_eq!(got.subscription.unwrap().plan, "ProbePro");
+    }
+
+    #[test]
+    fn summary_entries_need_string_identifiers_and_a_numeric_value() {
+        let got = filter_usable_quota_summary(&json!({"summary": [{"key": 123, "label": true, "value": 1}, {"key": "balance", "label": "Balance", "value": 0}, {"key": "k", "label": "L"}]}));
+        assert_eq!(got.len(), 1);
+        assert_eq!((got[0].key.as_str(), got[0].value), ("balance", 0.0));
+    }
+
+    #[test]
+    fn currency_formats_need_a_valid_code_and_optional_metadata_must_be_strings() {
+        let got = filter_usable_quota_summary(&json!({"summary": [
+            {"key": "invalid", "label": "Invalid", "value": 1, "format": "currency", "currency": "US"},
+            {"key": "valid", "label": "Valid", "value": 2, "format": "currency", "currency": "usd"},
+            {"key": "odd", "label": "Odd", "value": 42, "unit": 123, "format": true, "currency": ["USD"]},
+        ]}));
+        assert_eq!(got.len(), 3);
+        assert_eq!((got[0].format.as_str(), got[0].currency.as_str()), ("", ""));
+        assert_eq!((got[1].format.as_str(), got[1].currency.as_str()), ("currency", "USD"));
+        assert_eq!((got[2].unit.as_str(), got[2].format.as_str(), got[2].currency.as_str()), ("", "", ""));
+    }
+
+    #[test]
+    fn a_summary_without_a_value_fails_the_probe() {
+        assert!(run(json!({"summary": [{"key": "balance", "label": "Balance"}]}), None).is_err());
+    }
+
+    #[test]
+    fn malformed_normalized_groups_fail_the_probe() {
+        assert!(run(json!({"groups": [{}]}), None).is_err());
+        assert!(run(json!({"groups": [{"buckets": [{}]}]}), None).is_err());
+    }
+
+    #[test]
+    fn exhausted_quota_is_a_valid_answer() {
+        let got = run(json!({"groups": [{"displayName": "Daily", "buckets": [{"window": "daily", "remainingFraction": 0}]}]}), None).unwrap();
+        assert_eq!(got.groups[0].buckets[0].remaining_fraction, 0.0);
+    }
+
+    #[test]
+    fn mapping_derives_fractions_from_amounts() {
+        let doc = json!({
+            "user": {"tier": "Enterprise"},
+            "Summary": [{"key": "credits_used", "label": "Credits used", "value": 40}],
+            "packages": [{"period": "monthly", "used": 40, "total": 200, "remain": 160, "expires": "2026-10-15T00:00:00Z"}],
+        });
+        let mapping = json!({
+            "plan": "user.tier",
+            "groups": [{"display_name": "Resource Packages", "buckets_path": "packages", "window_key": "period", "remaining_amount_key": "remain", "total_amount_key": "total", "reset_time_key": "expires"}],
+        });
+        let got = probe_result(&doc, mapping.as_object(), 7).unwrap();
+        assert_eq!(got.subscription.unwrap().plan, "Enterprise");
+        assert_eq!(got.summary[0].key, "credits_used");
+        let bucket = &got.groups[0].buckets[0];
+        assert_eq!((bucket.window.as_str(), bucket.reset_time.as_str(), bucket.remaining_fraction), ("monthly", "2026-10-15T00:00:00Z", 0.8));
+        assert_eq!(got.server_time_offset_ms, 7);
+    }
+
+    #[test]
+    fn mapping_rejects_non_numeric_fractions_and_empty_results() {
+        let mapping = json!({"groups": [{"display_name": "API Limits", "buckets": [{"remaining_fraction": "quota.remaining"}]}]});
+        assert!(run(json!({"quota": {"remaining": "unknown", "total": "unlimited"}}), Some(mapping)).is_err());
+        assert!(run(json!({"x": 1}), Some(json!({"plan": "missing"}))).is_err());
+    }
 }
