@@ -96,7 +96,7 @@ impl ClaudeExecutor {
             base_url = DEFAULT_BASE_URL.to_string();
         }
         // Every custom or third-party base URL keeps local estimation, OAuth or API key alike.
-        if should_use_claude_upstream_token_count(&api_key, &base_url) {
+        if self.embedding.is_some() || should_use_claude_upstream_token_count(&api_key, &base_url) {
             return self.count_tokens_upstream(cfg, auth, req, opts).await;
         }
 
@@ -135,7 +135,7 @@ impl ClaudeExecutor {
         opts: Options,
     ) -> Result<Response, ExecError> {
         let base_model = parse_suffix(&req.model).model_name;
-        let upstream_model = base_model.clone();
+        let upstream_model = self.upstream_model(&base_model);
 
         let (api_key, mut base_url) = claude_creds(auth);
         if base_url.is_empty() {
@@ -248,7 +248,14 @@ impl ClaudeExecutor {
         opts.api_log.record_api_response_metadata(cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
             let data = match resp.bytes().await {
-                Ok(b) => b,
+                Ok(b) => match super::decode::decode_body(b) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        opts.api_log.record_api_response_error(cfg, &e);
+                        let msg = format!("failed to decode error response body: {e}");
+                        return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, msg.as_bytes(), cfg.claude.model_level_cooling));
+                    }
+                },
                 Err(e) => {
                     let msg = crate::helps::status::transport_message(&e);
                     opts.api_log.record_api_response_error(cfg, &msg);
@@ -258,10 +265,9 @@ impl ClaudeExecutor {
             opts.api_log.append_api_response_chunk(cfg, &data);
             return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &data, cfg.claude.model_level_cooling));
         }
-        let data = match resp.bytes().await {
+        let data = match resp.bytes().await.map_err(|e| crate::helps::status::transport_message(&e)).and_then(super::decode::decode_body) {
             Ok(b) => b,
-            Err(e) => {
-                let msg = crate::helps::status::transport_message(&e);
+            Err(msg) => {
                 opts.api_log.record_api_response_error(cfg, &msg);
                 return Err(ExecError::new(0, msg));
             }

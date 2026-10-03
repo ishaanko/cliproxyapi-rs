@@ -23,6 +23,7 @@ pub mod auth;
 pub mod body;
 pub mod cache_control;
 pub mod cloaking;
+pub mod decode;
 pub mod diagnostics;
 pub mod execute;
 pub mod fast_error;
@@ -57,6 +58,19 @@ pub struct ClaudeExecutor {
     cfg: ConfigRx,
     /// Reads configuration without OAuth-only provider settings (Go: `ForAPIKey`).
     api_key_scope: bool,
+    /// Set when another provider embeds this executor (Kimi's Anthropic-compatible path).
+    embedding: Option<Embedding>,
+}
+
+/// How an embedding provider customizes the Claude executor (Go: the `requestLogProvider` and
+/// `upstreamModelNormalizer` fields of `ClaudeExecutor`). An embedded executor is only reached
+/// through its owner, whose token counting always asks the upstream (Go: `countTokensUpstream`).
+#[derive(Clone, Copy)]
+pub struct Embedding {
+    /// Provider label of the upstream request log.
+    pub request_log_provider: &'static str,
+    /// Maps the client model to the model sent upstream; the client model is restored in responses.
+    pub upstream_model: fn(&str) -> String,
 }
 
 impl ClaudeExecutor {
@@ -68,7 +82,18 @@ impl ClaudeExecutor {
 
     /// Provider label of the upstream request log (Go: upstreamRequestLogProvider).
     fn upstream_request_log_provider(&self) -> &str {
-        "claude"
+        match &self.embedding {
+            Some(e) if !e.request_log_provider.trim().is_empty() => e.request_log_provider,
+            _ => "claude",
+        }
+    }
+
+    /// Go: upstreamModel.
+    fn upstream_model(&self, base_model: &str) -> String {
+        match &self.embedding {
+            Some(e) => (e.upstream_model)(base_model),
+            None => base_model.to_string(),
+        }
     }
 
     /// Records the outbound request on the inbound request's api log (Go:
@@ -101,9 +126,15 @@ impl ClaudeExecutor {
     }
 }
 
+/// The Claude executor Kimi embeds (Go: `ClaudeExecutor{requestLogProvider: "kimi",
+/// upstreamModelNormalizer: normalizeKimiUpstreamModel}`).
+pub fn new_embedded(cfg: ConfigRx, embedding: Embedding) -> DynExecutor {
+    Arc::new(ClaudeExecutor { cfg, api_key_scope: false, embedding: Some(embedding) })
+}
+
 /// Builds the Claude executor over the live config handle.
 pub fn new(cfg: ConfigRx) -> DynExecutor {
-    Arc::new(ClaudeExecutor { cfg, api_key_scope: false })
+    Arc::new(ClaudeExecutor { cfg, api_key_scope: false, embedding: None })
 }
 
 #[async_trait]
@@ -140,7 +171,7 @@ impl Executor for ClaudeExecutor {
     }
 
     fn for_api_key(&self) -> Option<DynExecutor> {
-        Some(Arc::new(ClaudeExecutor { cfg: self.cfg.clone(), api_key_scope: true }))
+        Some(Arc::new(ClaudeExecutor { cfg: self.cfg.clone(), api_key_scope: true, embedding: self.embedding }))
     }
 
     fn should_prepare_request_auth(&self, auth: &Auth) -> bool {

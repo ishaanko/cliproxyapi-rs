@@ -47,7 +47,11 @@ pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     executors.push(antigravity::new(cfg.clone()));
     executors.push(openai_compat::new(cfg.clone()));
     executors.push(xai::new(cfg.clone()));
-    executors.push(kimi::new(cfg.clone()));
+    let kimi_claude = claude::new_embedded(
+        cfg.clone(),
+        claude::Embedding { request_log_provider: "kimi", upstream_model: kimi::normalize_kimi_upstream_model },
+    );
+    executors.push(kimi::new_with_claude(cfg.clone(), Some(kimi_claude)));
     executors.push(devin::new(cfg.clone()));
     executors.push(meta::new(cfg.clone()));
     executors

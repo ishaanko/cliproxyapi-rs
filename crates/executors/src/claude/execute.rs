@@ -81,7 +81,22 @@ pub(super) struct Prepared {
     pub diagnostics_state: ClaudeDiagnosticsRequestState,
     pub fast_request: bool,
     pub replay_scope: ClaudeThinkingReplayScope,
+    /// Client model to write back into responses (embedded executors only; see
+    /// `Prepared::restore_response_model`).
+    pub restore_model: Option<String>,
+    /// OAuth credentials record client cancellations as stream failures.
+    pub oauth_cancellation: bool,
     pub req: Request,
+}
+
+impl Prepared {
+    /// Go: ClaudeExecutor.restoreResponseModel.
+    pub fn restore_response_model(&self, payload: Vec<u8>) -> Vec<u8> {
+        match &self.restore_model {
+            Some(model) => super::body::restore_claude_response_model(&payload, model),
+            None => payload,
+        }
+    }
 }
 
 /// Signature sanitizer for thinking blocks coming from other providers, then the web-search
@@ -157,7 +172,10 @@ impl ClaudeExecutor {
         reporter: &UsageReporter,
     ) -> Result<Prepared, ExecError> {
         let base_model = parse_suffix(&req.model).model_name;
-        let upstream_model = base_model.clone();
+        let upstream_model = self.upstream_model(&base_model);
+        if upstream_model != base_model {
+            reporter.set_upstream_model(&upstream_model);
+        }
 
         let (api_key, mut base_url) = claude_creds(auth);
         if base_url.is_empty() {
@@ -446,6 +464,8 @@ impl ClaudeExecutor {
             diagnostics_state,
             fast_request,
             replay_scope,
+            oauth_cancellation: fp.oauth_cancellation,
+            restore_model: (self.embedding.is_some() && !req.model.trim().is_empty()).then(|| req.model.clone()),
             req,
         })
     }
@@ -505,7 +525,15 @@ impl ClaudeExecutor {
         }
         let resp_headers = resp.headers().clone();
         let body = match resp.bytes().await {
-            Ok(b) => b,
+            Ok(b) => match super::decode::decode_body(b) {
+                Ok(b) => b,
+                Err(e) => {
+                    opts.api_log.record_api_response_error(cfg, &e);
+                    let msg = format!("failed to decode error response body: {e}");
+                    let err = classify_claude_upstream_error_with_cooling(status, &resp_headers, msg.as_bytes(), model_level_cooling);
+                    return Err(wrap_claude_fast_request_error(p.fast_request, status, err));
+                }
+            },
             Err(e) => {
                 let msg = crate::helps::status::transport_message(&e);
                 opts.api_log.record_api_response_error(cfg, &msg);
@@ -539,10 +567,9 @@ impl ClaudeExecutor {
         let resp = self.send_upstream(cfg, auth, opts, p).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = match resp.bytes().await {
+        let data = match resp.bytes().await.map_err(|e| crate::helps::status::transport_message(&e)).and_then(super::decode::decode_body) {
             Ok(b) => b,
-            Err(e) => {
-                let msg = crate::helps::status::transport_message(&e);
+            Err(msg) => {
                 opts.api_log.record_api_response_error(cfg, &msg);
                 return Err(wrap_claude_fast_request_error(p.fast_request, status, ExecError::new(0, msg)));
             }
@@ -589,6 +616,7 @@ impl ClaudeExecutor {
                 wrap_claude_fast_request_error(p.fast_request, status, err)
             })?;
         }
+        data = p.restore_response_model(data);
         cache_claude_thinking_replay_response(&p.replay_scope, &data);
         let mut param = Param::default();
         let original_request = apply_patch_original_request(&p.req, opts);

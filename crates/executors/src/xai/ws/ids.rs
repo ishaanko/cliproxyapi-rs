@@ -376,7 +376,7 @@ mod tests {
     fn unknown_upstream_previous_id_replays_the_transcript() {
         let session = "ids-test-replay";
         delete_state(session);
-        let mut mapper = RequestIdMapper::new(session, br#"{"previous_response_id":"resp_gone","input":[{"role":"user"}]}"#).unwrap();
+        let mapper = RequestIdMapper::new(session, br#"{"previous_response_id":"resp_gone","input":[{"role":"user"}]}"#).unwrap();
         mapper.state.replace_transcript_with_items(vec![serde_json::json!({"type":"compaction"})]);
         mapper.state.map_downstream_to_upstream("resp_gone", "");
         let mut mapper = RequestIdMapper::new(session, br#"{"previous_response_id":"resp_gone","input":[{"role":"user"}]}"#).unwrap();
