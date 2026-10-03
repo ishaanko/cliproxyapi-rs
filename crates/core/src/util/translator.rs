@@ -140,7 +140,7 @@ pub fn canonical_tool_name(name: &str) -> String {
 }
 
 fn parse_valid(raw: &[u8]) -> Option<Value> {
-    (!raw.is_empty() && cpa_json::valid(raw)).then(|| cpa_json::parse(raw))
+    if raw.is_empty() { None } else { cpa_json::parse_valid(raw) }
 }
 
 /// canonical-name -> original-name map from a Claude request's `tools[].name` (or
