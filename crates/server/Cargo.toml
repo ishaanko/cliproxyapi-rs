@@ -23,6 +23,7 @@ tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
+cpa-misc = { path = "../misc" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
 cpa-home = { path = "../home" }

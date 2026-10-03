@@ -1032,6 +1032,7 @@ dependencies = [
  "cpa-core",
  "cpa-home",
  "cpa-json",
+ "cpa-misc",
  "cpa-runtime",
  "cpa-tlsfp",
  "cpa-translator",
@@ -1198,19 +1199,15 @@ name = "cpa-misc"
 version = "0.1.0"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "cpa-json",
  "futures-util",
  "http",
- "rcgen",
  "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
- "tokio-rustls",
  "tracing",
- "webpki-roots",
 ]
 
 [[package]]
@@ -1228,6 +1225,7 @@ dependencies = [
  "cpa-discovery",
  "cpa-home",
  "cpa-json",
+ "cpa-misc",
  "cpa-translator",
  "flate2",
  "futures-core",
@@ -1269,6 +1267,7 @@ dependencies = [
  "cpa-live",
  "cpa-management",
  "cpa-managementasset",
+ "cpa-misc",
  "cpa-runtime",
  "cpa-store",
  "cpa-translator",

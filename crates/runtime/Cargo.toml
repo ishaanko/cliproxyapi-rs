@@ -11,6 +11,7 @@ cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-translator = { path = "../translator" }
 cpa-config = { path = "../config" }
+cpa-misc = { path = "../misc" }
 cpa-discovery = { path = "../discovery" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }

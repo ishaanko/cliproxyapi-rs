@@ -48,23 +48,11 @@ fn usage_metadata(detail: &crate::helps::usage::accounting::Detail) -> Metadata 
 
 /// `Codex` sends keepalives as events Grok clients cannot parse; they become SSE comments.
 fn is_grok_client(headers: &HeaderMap) -> bool {
-    let ua = header_value(headers, "User-Agent").to_lowercase();
-    ua.contains("grok-pager") || ua.contains("grok-shell")
+    cpa_misc::grokbuild::is_grok_client_user_agent(&header_value(headers, "User-Agent"))
 }
 
 fn grok_keepalive_line(line: &[u8], is_grok: bool) -> Option<Vec<u8>> {
-    if !is_grok {
-        return None;
-    }
-    let trimmed = crate::helps::text::trim_space(line);
-    let keepalive = if let Some(name) = trimmed.strip_prefix(b"event:") {
-        crate::helps::text::trim_space(name) == b"keepalive"
-    } else if let Some(data) = trimmed.strip_prefix(b"data:") {
-        cpa_json::parse(crate::helps::text::trim_space(data)).g("type").str() == "keepalive"
-    } else {
-        false
-    };
-    keepalive.then(|| b": keepalive\n\n".to_vec())
+    (is_grok && cpa_misc::grokbuild::is_keepalive_sse_line(line)).then(cpa_misc::grokbuild::keepalive_sse_comment)
 }
 
 impl CodexExecutor {

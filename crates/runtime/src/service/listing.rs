@@ -8,7 +8,7 @@
 //!
 //! Not covered: the Codex client catalog (`/v1/models?client_version=`) and Home-mode lists.
 
-use cpa_core::registry::{ModelInfo, ModelRegistry};
+use cpa_core::registry::ModelRegistry;
 use serde_json::{Map, Value, json};
 
 /// Which payload `/v1/models` should produce (Go: the branches of `unifiedModelsHandler`).
@@ -35,7 +35,7 @@ pub fn route_models_request(
     anthropic_version: Option<&str>,
     user_agent: Option<&str>,
 ) -> ModelsRoute {
-    if user_agent.is_some_and(|ua| ua.to_lowercase().contains("grok-shell")) {
+    if user_agent.is_some_and(|ua| cpa_misc::grokbuild::is_grok_shell_user_agent(ua)) {
         return ModelsRoute::Grok;
     }
     if let Some(version) = client_version {
@@ -143,37 +143,17 @@ pub fn claude_models_response(registry: &ModelRegistry, disable_cloaking: bool) 
 
 /// Go `grokbuild.BuildResponse` over the registry's available models.
 pub fn grok_models_response(registry: &ModelRegistry) -> Value {
-    let data: Vec<Value> = registry
+    let models: Vec<cpa_misc::grokbuild::ModelInfo> = registry
         .get_available_model_infos()
         .iter()
-        .map(grok_model_entry)
+        .map(|info| cpa_misc::grokbuild::ModelInfo {
+            id: info.id.clone(),
+            display_name: info.display_name.clone(),
+            context_length: info.context_length,
+            reasoning_levels: info.thinking.iter().flat_map(|t| t.levels.iter().cloned()).collect(),
+        })
         .collect();
-    json!({"object": "list", "data": data})
-}
-
-fn grok_model_entry(info: &ModelInfo) -> Value {
-    let name = if info.display_name.is_empty() { &info.id } else { &info.display_name };
-    let mut entry = Map::new();
-    entry.insert("id".into(), json!(info.id));
-    entry.insert("model".into(), json!(info.id));
-    entry.insert("name".into(), json!(name));
-    if info.context_length > 0 {
-        entry.insert("context_window".into(), json!(info.context_length));
-    }
-    entry.insert("api_backend".into(), json!("responses"));
-    entry.insert("supported_in_api".into(), json!(true));
-    let efforts: Vec<Value> = info
-        .thinking
-        .iter()
-        .flat_map(|t| t.levels.iter())
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|l| json!({"value": l}))
-        .collect();
-    if !efforts.is_empty() {
-        entry.insert("reasoning_efforts".into(), Value::Array(efforts));
-    }
-    Value::Object(entry)
+    serde_json::to_value(cpa_misc::grokbuild::build_response(&models)).unwrap_or(Value::Null)
 }
 
 /// Go `GeminiModels`' per-model normalization: `models/` name prefix, display name and

@@ -1,6 +1,7 @@
 //! Grok Shell client support (Go: internal/client/grokbuild): the `/v1/models` envelope Grok
 //! clients expect and the keepalive SSE rewrite for the codex stream.
 
+use cpa_json::J;
 use http::HeaderMap;
 use serde::Serialize;
 
@@ -100,10 +101,7 @@ pub fn is_grok_client_headers(headers: &HeaderMap) -> bool {
 
 /// True when a JSON payload has `"type":"keepalive"` (gjson `type` string).
 pub fn is_keepalive_payload(payload: &[u8]) -> bool {
-    serde_json::from_slice::<serde_json::Value>(payload)
-        .ok()
-        .and_then(|v| v.get("type").and_then(|t| t.as_str().map(|s| s == "keepalive")))
-        .unwrap_or(false)
+    cpa_json::parse(payload).g("type").str() == "keepalive"
 }
 
 /// True when an SSE line is a keepalive `event:` or `data:` frame.
