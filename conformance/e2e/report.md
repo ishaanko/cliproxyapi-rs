@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a4ea26e497b070e8e/target/release/cliproxy`
+- server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `9f1ccf5e6415a14c`
-- scenarios: 953 total, 952 passed, 1 failed
+- goldens digest: `f3bc77fc3193d5b7`
+- scenarios: 954 total, 954 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -776,6 +776,7 @@
 | `plugins.auth.parse_file` | PASS | a credential file owned by a plugin auth provider is parsed by the plugin |  |
 | `plugins.access.frontend_auth` | PASS | a frontend auth provider joins the client key check |  |
 | `plugins.access.frontend_auth_exclusive` | PASS | an exclusive frontend auth provider replaces the other providers |  |
+| `plugins.access.frontend_auth_exclusive_realtime` | PASS | an exclusive frontend auth provider guards the realtime routes |  |
 | `plugins.translate.request_normalizer_chat` | PASS | request_normalizer plugin on a chat request routed to the compat upstream |  |
 | `plugins.translate.request_normalizer_claude` | PASS | request_normalizer plugin on a Claude request routed to the Claude upstream |  |
 | `plugins.translate.request_translator_chat` | PASS | request_translator plugin on a chat request routed to the compat upstream |  |
@@ -790,7 +791,7 @@
 | `plugins.translate.codex_service_tier` | PASS | service tier normalizer on a Codex request |  |
 | `plugins.translate.two_plugins` | PASS | request and response normalizers together |  |
 | `plugins.exec.executor` | PASS | a plugin executor serves its own model (plain and streaming) |  |
-| `plugins.exec.executor_with_auth` | FAIL | a plugin executor serving a request with a plugin credential | /steps/0/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:1>" != actual "<ts14>-1988c85074e44736-<uuid:1>" |
+| `plugins.exec.executor_with_auth` | PASS | a plugin executor serving a request with a plugin credential |  |
 | `plugins.exec.executor_claude_entry` | PASS | a Claude-dialect request routed to the plugin executor |  |
 | `plugins.exec.thinking_suffix` | PASS | a thinking suffix on a plugin model reaches the plugin thinking applier |  |
 | `plugins.exec.scheduler_delegate` | PASS | a scheduler plugin delegating to the fill-first selector |  |
@@ -960,10 +961,3 @@
 | `media.search.unknown_model` | PASS | model without a matching credential |  |
 | `media.search.missing_auth` | PASS | alpha search needs a client key |  |
 | `media.search.wrong_method` | PASS | GET is not routed |  |
-
-## Failures
-
-### `plugins.exec.executor_with_auth`
-
-- /steps/0/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:1>" != actual "<ts14>-1988c85074e44736-<uuid:1>"
-- /steps/1/response/headers/x-cpa-trace-id: golden "<ts14>-ddb50d4c1c421ed9-<uuid:2>" != actual "<ts14>-1988c85074e44736-<uuid:2>"
