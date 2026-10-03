@@ -173,6 +173,10 @@ fn consume_bytes(b: &[u8]) -> Option<(&[u8], usize)> {
     Some((&b[n..end], end))
 }
 
+/// Group nesting limit when skipping unknown fields. Go allows 10000 (goroutine stacks grow); the
+/// limit is lower here so hostile input cannot overflow the thread stack.
+const MAX_GROUP_DEPTH: i32 = 100;
+
 /// `ConsumeFieldValue`: length of the value of a field of type `typ`; groups recurse.
 fn consume_field_value(num: u32, typ: u8, b: &[u8], depth: i32) -> Option<usize> {
     match typ {
@@ -250,7 +254,7 @@ pub fn parse_raw_models_proto(mut b: &[u8]) -> Result<Vec<RawModel>, String> {
                 results.push(model);
             }
         } else {
-            let skip = consume_field_value(num, typ, b, 10_000).ok_or("failed to skip field")?;
+            let skip = consume_field_value(num, typ, b, MAX_GROUP_DEPTH).ok_or("failed to skip field")?;
             b = &b[skip..];
         }
     }
@@ -280,7 +284,7 @@ fn parse_single_model_config(mut b: &[u8]) -> RawModel {
         };
         let skip = match consumed {
             Some(len) => len,
-            None => match consume_field_value(num, typ, b, 10_000) {
+            None => match consume_field_value(num, typ, b, MAX_GROUP_DEPTH) {
                 Some(len) => len,
                 None => break,
             },

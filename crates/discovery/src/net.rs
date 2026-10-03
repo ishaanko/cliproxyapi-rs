@@ -93,7 +93,7 @@ impl Conn {
                 let ifindex = msg
                     .cmsgs()
                     .ok()
-                    .and_then(|mut it| it.find_map(|c| if let ControlMessageOwned::Ipv6PacketInfo(info) = c { Some(info.ipi6_ifindex as u32) } else { None }))
+                    .and_then(|mut it| it.find_map(|c| if let ControlMessageOwned::Ipv6PacketInfo(info) = c { Some(info.ipi6_ifindex) } else { None }))
                     .unwrap_or(0);
                 (msg.bytes, msg.address, ifindex)
             })

@@ -89,6 +89,7 @@ pub enum ParseError {
 
 /// Normalizes a proxy configuration value into inherit, direct, or proxy modes. On error the
 /// setting (with `Mode::Invalid`) is returned alongside it, as Go does.
+#[allow(clippy::result_large_err)] // Go returns the setting next to the error
 pub fn parse(raw: &str) -> Result<Setting, (Setting, ParseError)> {
     let trimmed = raw.trim();
     let mut setting = Setting { raw: trimmed.to_string(), mode: Mode::Inherit, url: None };
@@ -236,9 +237,7 @@ fn parse_go_url(raw: &str) -> Option<ProxyUrl> {
         return None;
     }
     let (main, fragment) = raw.split_once('#').unwrap_or((raw, ""));
-    if unescape_ok(fragment).is_none() {
-        return None;
-    }
+    unescape_ok(fragment)?;
     // getScheme
     let mut scheme = String::new();
     let mut rest = main;

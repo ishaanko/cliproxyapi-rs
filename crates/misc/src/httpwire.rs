@@ -245,7 +245,7 @@ fn is_http_method_prefix(p: &[u8]) -> bool {
     true
 }
 
-fn header_value<'a>(line: &'a [u8]) -> &'a [u8] {
+fn header_value(line: &[u8]) -> &[u8] {
     match line.iter().position(|&b| b == b':') {
         Some(colon) => &line[colon + 1..],
         None => &[],
@@ -280,6 +280,7 @@ fn request_uses_chunked_encoding(lines: &[&[u8]]) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)] // mirrors Go's chunk states
 enum ChunkState {
     ReadingSize,
     ReadingData,

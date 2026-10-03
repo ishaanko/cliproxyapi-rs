@@ -18,7 +18,7 @@ pub const CLASS_INET: u16 = 1;
 pub const CLASS_TOP_BIT: u16 = 1 << 15;
 
 const MAX_DOMAIN_NAME_WIRE_OCTETS: i64 = 255;
-const MAX_COMPRESSION_POINTERS: usize = (MAX_DOMAIN_NAME_WIRE_OCTETS as usize + 1) / 2 - 2;
+const MAX_COMPRESSION_POINTERS: usize = (MAX_DOMAIN_NAME_WIRE_OCTETS as usize + 1).div_ceil(2) - 2;
 const MAX_COMPRESSION_OFFSET: usize = 2 << 13;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -369,7 +369,7 @@ fn pack_rr(rr: &Rr, buf: &mut Vec<u8>, mut comp: Option<&mut HashMap<String, u16
             buf.extend_from_slice(&weight.to_be_bytes());
             buf.extend_from_slice(&port.to_be_bytes());
             // miekg never compresses SRV targets (but records them for later names).
-            pack_name(target, buf, comp.as_deref_mut(), false)?;
+            pack_name(target, buf, comp, false)?;
         }
         RData::Txt(strings) => {
             // Go quirk: an empty TXT list writes a zero byte without advancing, so rdata is empty.

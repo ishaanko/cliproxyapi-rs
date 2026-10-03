@@ -186,14 +186,14 @@ fn cooldown_store_merges_concurrent_instances() {
     let updated_at = Utc::now() - Duration::minutes(1);
     let record_a = record("account-a", "model-a", updated_at);
     let record_b = record("account-b", "model-b", updated_at);
-    a.save(&[record_a.clone()]).unwrap();
-    b.save(&[record_b.clone()]).unwrap();
+    a.save(std::slice::from_ref(&record_a)).unwrap();
+    b.save(std::slice::from_ref(&record_b)).unwrap();
     assert_eq!(stale.load().unwrap().len(), 2);
 
     // A stale instance that no longer lists account-a must not delete a newer row.
     let newer_a = record("account-a", "model-a", updated_at + Duration::hours(1));
     a.save(&[newer_a]).unwrap();
-    stale.save(&[record_b.clone()]).unwrap();
+    stale.save(std::slice::from_ref(&record_b)).unwrap();
     let resurrect_store = new_instance();
     let resurrect = resurrect_store.cooldown_store();
     let active = resurrect.load().unwrap();
