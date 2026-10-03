@@ -795,7 +795,8 @@ async fn download(st: &AppState, video_id: &str, content_url: &str, passthrough:
     let cfg = st.cfg();
     let auth = VIDEO_AUTH_BINDINGS.get(video_id).and_then(|id| st.manager.get(&id));
     let client = cpa_executors::helps::proxy::new_proxy_aware_http_client("", Some(&cfg), auth.as_ref(), None);
-    let resp = client.get(content_url).send().await.map_err(|err| {
+    // Go's default transport identifies itself as Go-http-client.
+    let resp = client.get(content_url).header(header::USER_AGENT, "Go-http-client/1.1").send().await.map_err(|err| {
         let status = if err.is_timeout() { 504 } else { 502 };
         openai_error_reply(&ErrorMessage::new(status, err.to_string()), passthrough)
     })?;

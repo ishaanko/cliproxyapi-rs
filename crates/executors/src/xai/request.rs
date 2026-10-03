@@ -216,6 +216,8 @@ pub fn default_headers(token: &str, stream: bool, session_id: &str) -> Result<He
     }
     h.insert(ACCEPT, HeaderValue::from_static(if stream { "text/event-stream" } else { "application/json" }));
     h.insert(CONNECTION, HeaderValue::from_static("Keep-Alive"));
+    // Go sets no User-Agent, so its transport sends the default one.
+    h.insert(USER_AGENT, HeaderValue::from_static("Go-http-client/1.1"));
     if !session_id.is_empty() {
         set_named(&mut h, "x-grok-conv-id", session_id)?;
     }

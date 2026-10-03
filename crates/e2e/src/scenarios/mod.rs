@@ -8,6 +8,7 @@ mod interactions;
 mod management;
 mod errors;
 mod matrix;
+mod media;
 mod profiles;
 mod rich;
 mod routing;
@@ -29,5 +30,6 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(access::scenarios());
     v.extend(websocket::scenarios());
     v.extend(management::scenarios(mock_port));
+    v.extend(media::scenarios());
     v
 }
