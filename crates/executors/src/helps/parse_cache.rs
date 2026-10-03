@@ -20,7 +20,7 @@
 //! ([`cpa_json::tree_cost`]), a thread keeps at most [`MAX_THREAD_BYTES`] and all threads together
 //! [`GLOBAL_BUDGET`]; past either, the new entry is not kept (its
 //! callers then parse as before, with `cpa_json`'s own memo still catching large repeats). Bodies
-//! below [`TRACK_LEN`] are not costed (three of them are far below any budget).
+//! below [`TRACK_LEN`] are not costed (one of them is far below any budget).
 //! Large bodies stay cached here rather than deferring to that memo, which hands out deep clones:
 //! twenty reads of a 440 KB body took 4 ms here, 20 ms through the memo and 28 ms uncached.
 

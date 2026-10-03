@@ -35,11 +35,11 @@ use std::time::Duration;
 const REGION: usize = 16 << 30;
 /// The region is made readable/writable this much at a time.
 const COMMIT_CHUNK: usize = 64 << 20;
-const PAGE: usize = 4096;
+pub(crate) const PAGE: usize = 4096;
 const NPAGES: usize = REGION / PAGE;
 /// Requests larger than this (and smaller than [`MAX_SIZE`]) are served from the region.
-const MIN_SIZE: usize = 8 * 1024;
-const MAX_SIZE: usize = 1 << 31;
+pub(crate) const MIN_SIZE: usize = 8 * 1024;
+pub(crate) const MAX_SIZE: usize = 1 << 31;
 /// A free slot that sat unused for this many sweeps has its pages returned to the OS. A tick
 /// counter instead of a clock: stamping a slot on every free must stay cheap.
 const AGE_TICKS: u32 = 2;
@@ -52,7 +52,7 @@ const NIL: u32 = u32::MAX;
 /// Classes up to 32 KiB step by one page; above that 8 per power of two. Slot sizes are page
 /// multiples.
 const SMALL_CLASSES: usize = 6;
-const NCLASS: usize = SMALL_CLASSES + (31 - 15) * 8;
+pub(crate) const NCLASS: usize = SMALL_CLASSES + (31 - 15) * 8;
 
 /// Start of the region, 0 until [`init`] finished (and forever if it failed or was disabled).
 static BASE: AtomicUsize = AtomicUsize::new(0);
@@ -80,7 +80,7 @@ struct Lists {
 static FREE: [Mutex<Lists>; NCLASS] = [const { Mutex::new(Lists { warm: NIL, cold: NIL }) }; NCLASS];
 
 /// Slot size and class index for a request of `size` bytes (`MIN_SIZE` < `size` < `MAX_SIZE`).
-fn class_of(size: usize) -> (usize, usize) {
+pub(crate) fn class_of(size: usize) -> (usize, usize) {
     let n = size - 1;
     let hb = (usize::BITS - 1 - n.leading_zeros()) as usize;
     let shift = hb - 3;
@@ -89,7 +89,7 @@ fn class_of(size: usize) -> (usize, usize) {
 }
 
 /// Class of a slot size produced by [`class_of`] (so sizes that round to the same slot share it).
-fn class_index(cap: usize) -> usize {
+pub(crate) fn class_index(cap: usize) -> usize {
     if cap <= 32 * 1024 {
         return cap / PAGE - 3;
     }
@@ -99,7 +99,7 @@ fn class_index(cap: usize) -> usize {
 }
 
 /// Slot size of class `idx`.
-fn class_size(idx: usize) -> usize {
+pub(crate) fn class_size(idx: usize) -> usize {
     if idx < SMALL_CLASSES {
         return (idx + 3) * PAGE;
     }
@@ -190,24 +190,45 @@ fn ensure_committed(base: usize, end: usize) -> bool {
     ok
 }
 
-/// Returns the pages of every slot on the detached chain starting at `head` to the OS and moves
-/// the chain to the cold stack of class `idx`.
-fn release_chain(base: usize, idx: usize, head: u32) {
+/// Returns the pages of every slot on the detached warm chain starting at `head` to the OS and
+/// moves the released ones to the cold stack of class `idx`. A slot whose pages the kernel
+/// refuses to drop (`madvise` fails on locked memory) is not zero, so it goes back on the warm
+/// stack with a fresh stamp and is retried after another [`AGE_TICKS`].
+fn release_chain(base: usize, idx: usize, head: u32, now: u32) {
     let cap = class_size(idx);
     let meta = meta();
-    let (mut page, mut tail, mut count) = (head, head, 0usize);
+    // Chains built in place through the side table: released (cold) and refused (warm).
+    let (mut cold_head, mut cold_tail, mut released) = (NIL, NIL, 0usize);
+    let (mut warm_head, mut warm_tail) = (NIL, NIL);
+    let mut page = head;
     while page != NIL {
+        let next = meta[page as usize].load(Ordering::Relaxed);
         // SAFETY: the slot belongs to the detached chain, so nobody else touches it.
-        unsafe { libc::madvise((base + page as usize * PAGE) as *mut libc::c_void, cap, libc::MADV_DONTNEED) };
-        tail = page;
-        page = meta[page as usize].load(Ordering::Relaxed);
-        count += 1;
+        let ok = unsafe { libc::madvise((base + page as usize * PAGE) as *mut libc::c_void, cap, libc::MADV_DONTNEED) } == 0;
+        let (chain_head, chain_tail) = if ok { (&mut cold_head, &mut cold_tail) } else { (&mut warm_head, &mut warm_tail) };
+        if ok {
+            released += 1;
+        } else {
+            meta[NPAGES + page as usize].store(now, Ordering::Relaxed);
+        }
+        meta[page as usize].store(*chain_head, Ordering::Relaxed);
+        if *chain_head == NIL {
+            *chain_tail = page;
+        }
+        *chain_head = page;
+        page = next;
     }
     let mut lists = lock(idx);
-    meta[tail as usize].store(lists.cold, Ordering::Relaxed);
-    lists.cold = head;
+    if cold_head != NIL {
+        meta[cold_tail as usize].store(lists.cold, Ordering::Relaxed);
+        lists.cold = cold_head;
+    }
+    if warm_head != NIL {
+        meta[warm_tail as usize].store(lists.warm, Ordering::Relaxed);
+        lists.warm = warm_head;
+    }
     drop(lists);
-    WARM_SLOTS.fetch_sub(count, Ordering::Relaxed);
+    WARM_SLOTS.fetch_sub(released, Ordering::Relaxed);
 }
 
 fn sweep_loop() {
@@ -239,13 +260,13 @@ fn sweep_loop() {
                 cur
             };
             if old != NIL {
-                release_chain(base, idx, old);
+                release_chain(base, idx, old, now);
             }
         }
     }
 }
 
-fn in_region(ptr: *mut u8) -> bool {
+pub(crate) fn in_region(ptr: *mut u8) -> bool {
     let base = base();
     base != 0 && (ptr as usize).wrapping_sub(base) < REGION
 }
@@ -290,11 +311,10 @@ fn region_free(ptr: *mut u8, size: usize) {
     let page = (ptr as usize - base()) / PAGE;
     let meta = meta();
     meta[NPAGES + page].store(TICK.load(Ordering::Relaxed), Ordering::Relaxed);
+    WARM_SLOTS.fetch_add(1, Ordering::Relaxed);
     let mut lists = lock(idx);
     meta[page].store(lists.warm, Ordering::Relaxed);
     lists.warm = page as u32;
-    drop(lists);
-    WARM_SLOTS.fetch_add(1, Ordering::Relaxed);
 }
 
 /// The wrapped allocator, with large blocks served from the region.
@@ -361,57 +381,5 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for Tiered<A> {
             }
         }
         new
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::alloc::System;
-
-    #[test]
-    fn classes_round_trip_and_cover_requests() {
-        for size in [MIN_SIZE + 1, 9_000, 12_289, 16_385, 20_000, 32_768, 32_769, 70_000, 100_000, 1 << 20, (2 << 20) + 5, 3_000_000, (1 << 30) + 1, MAX_SIZE - 1] {
-            let (idx, cap) = class_of(size);
-            assert!(cap >= size && cap - size <= size / 8 + PAGE, "{size} -> {cap}");
-            assert_eq!(cap % PAGE, 0);
-            assert!(idx < NCLASS);
-            assert_eq!(class_size(idx), cap, "{size}");
-            assert_eq!(class_index(cap), idx);
-            // Sizes that round to one slot share its class.
-            assert_eq!(class_of(cap).0, idx);
-        }
-        let all: std::collections::HashSet<usize> = (0..NCLASS).map(class_size).collect();
-        assert_eq!(all.len(), NCLASS, "class sizes are distinct");
-    }
-
-    #[test]
-    fn blocks_keep_their_contents_across_realloc_and_reuse() {
-        init();
-        let a = Tiered(System);
-        let layout = Layout::from_size_align(2_200_000, 8).unwrap();
-        // SAFETY: layouts are non-zero and passed back unchanged.
-        unsafe {
-            let p = a.alloc(layout);
-            assert!(!p.is_null() && in_region(p));
-            std::ptr::write_bytes(p, 0xab, layout.size());
-            // Same class: stays in place. Larger class: moves, contents follow.
-            assert_eq!(a.realloc(p, layout, 2_250_000), p);
-            let grown = a.realloc(p, Layout::from_size_align(2_250_000, 8).unwrap(), 9_000_000);
-            assert!(in_region(grown));
-            assert!(std::slice::from_raw_parts(grown, 2_200_000).iter().all(|&b| b == 0xab));
-            // Shrinking below the threshold hands the block back to the wrapped allocator.
-            let small = a.realloc(grown, Layout::from_size_align(9_000_000, 8).unwrap(), 1000);
-            assert!(!in_region(small));
-            assert!(std::slice::from_raw_parts(small, 1000).iter().all(|&b| b == 0xab));
-            a.dealloc(small, Layout::from_size_align(1000, 8).unwrap());
-            // A recycled slot is cleared when zeroed memory is requested.
-            let q = a.alloc(layout);
-            std::ptr::write_bytes(q, 0xcd, layout.size());
-            a.dealloc(q, layout);
-            let z = a.alloc_zeroed(layout);
-            assert!(std::slice::from_raw_parts(z, layout.size()).iter().all(|&b| b == 0));
-            a.dealloc(z, layout);
-        }
     }
 }
