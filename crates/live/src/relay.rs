@@ -543,11 +543,9 @@ impl SessionInner {
                 tracing::warn!(media_session_id = %self.id, peer = peer.name(), call_id = %self.call_id(), state = %name, "codex live WebRTC peer failed");
                 self.fail(&format!("{}_failed", peer.reason_prefix()), &format!("{} PeerConnection failed", peer.reason_prefix()));
             }
-            RTCPeerConnectionState::Closed => {
-                if !*self.done.borrow() {
-                    self.log_peer(peer, &name, "codex live WebRTC peer closed by remote");
-                    self.fail(&format!("{}_closed", peer.reason_prefix()), &format!("{} PeerConnection closed", peer.reason_prefix()));
-                }
+            RTCPeerConnectionState::Closed if !*self.done.borrow() => {
+                self.log_peer(peer, &name, "codex live WebRTC peer closed by remote");
+                self.fail(&format!("{}_closed", peer.reason_prefix()), &format!("{} PeerConnection closed", peer.reason_prefix()));
             }
             _ => {}
         }

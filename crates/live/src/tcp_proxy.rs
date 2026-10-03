@@ -511,7 +511,7 @@ fn validate_stun_binding_request(payload: &[u8], expected_user: &str, password: 
     if cookie != MAGIC_COOKIE {
         return Err("decode initial ICE-TCP STUN message: incorrect magic cookie".into());
     }
-    if length % 4 != 0 || payload.len() < STUN_MESSAGE_HEADER_SIZE + length {
+    if !length.is_multiple_of(4) || payload.len() < STUN_MESSAGE_HEADER_SIZE + length {
         return Err("decode initial ICE-TCP STUN message: bad message length".into());
     }
     if payload.len() != STUN_MESSAGE_HEADER_SIZE + length {

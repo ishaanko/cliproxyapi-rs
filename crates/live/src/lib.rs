@@ -49,6 +49,9 @@ pub const DEFAULT_SIDEBAND_API_BASE_URL: &str = "wss://api.openai.com/v1";
 /// Upstream call bootstrap URL (Go: `upstreamCallURL`).
 pub const UPSTREAM_CALL_URL: &str = "https://chatgpt.com/backend-api/codex/realtime/calls?intent=quicksilver&architecture=avas";
 
+/// Callback receiving the auth index of the credential selected for a request.
+pub type TraceFn = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// A local ephemeral key presented by the caller.
 #[derive(Debug, Clone, Default)]
 pub struct ClientSecretCaller {
@@ -67,7 +70,7 @@ pub struct Caller {
     pub provider: String,
     pub client_secret: Option<ClientSecretCaller>,
     /// Receives the auth index of the credential selected for the request (trace header).
-    pub trace: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub trace: Option<TraceFn>,
     pub log: Option<Arc<dyn UpstreamLog>>,
 }
 
@@ -123,6 +126,16 @@ pub(crate) struct Inner {
     pub(crate) sideband_base: RwLock<String>,
     media: Mutex<MediaState>,
     limiter: Arc<MediaLimiter>,
+}
+
+impl Drop for Inner {
+    /// Last handle gone (server stopped): end every call, like Go's `Handler.Close`.
+    fn drop(&mut self) {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.sessions.close_all("server_stopped");
+        }
+        self.secrets.close();
+    }
 }
 
 /// Codex live handler shared by every route.
