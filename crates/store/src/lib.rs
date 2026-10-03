@@ -4,6 +4,7 @@
 
 mod common;
 pub mod object;
+pub mod gitstore;
 mod pgconn;
 pub mod postgres;
 mod postgres_cooldown;
@@ -14,4 +15,5 @@ mod select;
 pub use common::copy_config_template;
 pub use object::{ObjectStoreConfig, ObjectTokenStore};
 pub use select::{OpenedStore, open_from_env};
+pub use gitstore::GitTokenStore;
 pub use postgres::{PostgresStore, PostgresStoreConfig};
