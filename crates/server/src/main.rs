@@ -509,7 +509,9 @@ async fn serve_proxy(
         idle_shutdown = Some(rx);
     }
 
-    let login = cpa_auth::Manager::new(store.clone()).with_sessions(sessions.clone());
+    // Logins and management deletes go through the registered token store (Go: GetTokenStore).
+    let token_store: Arc<dyn cpa_auth::Store> = service.token_store();
+    let login = cpa_auth::Manager::new(token_store.clone()).with_sessions(sessions.clone());
     let reload_service = service.clone();
     let mut management = ManagementState::new(
         &config_path,
@@ -521,6 +523,7 @@ async fn serve_proxy(
         usage,
         logging::resolve_log_directory(&cfg),
     )
+    .with_token_store(token_store)
     .with_build_info(cpa_management::BuildInfo {
         version: build.version.clone(),
         commit: build.commit.clone(),

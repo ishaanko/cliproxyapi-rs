@@ -388,6 +388,11 @@ impl Service {
         self.inner.store.clone()
     }
 
+    /// The registered token store: the remote backend when configured, else the auth-dir store.
+    pub fn token_store(&self) -> Arc<dyn Store> {
+        self.inner.manager_store()
+    }
+
     pub fn registry(&self) -> &'static ModelRegistry {
         self.inner.registry
     }
