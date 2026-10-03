@@ -1,9 +1,7 @@
 //! Shared HTTP plumbing: proxy resolution (`sdk/proxyutil` + `util.SetProxy`) and a default client.
 //!
-//! Gap vs Go: Claude's OAuth/inference plane uses a uTLS (Firefox ClientHello) transport and an
-//! Axios-ordered header set. reqwest + rustls cannot fingerprint the TLS ClientHello, so Claude
-//! OAuth calls here use plain rustls. Header values are kept; header order and `compress`
-//! content-encoding are not reproduced.
+//! These clients use plain rustls. Claude's OAuth control plane layers the fingerprinted
+//! transport of `claude_transport` on top of them.
 
 use std::time::Duration;
 

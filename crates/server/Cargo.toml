@@ -13,16 +13,22 @@ name = "cpa_server"
 name = "cliproxy"
 path = "src/main.rs"
 
+[features]
+# TLS fingerprints for api.anthropic.com, chatgpt.com and the Claude OAuth plane (BoringSSL; needs
+# cmake, a C++ compiler and libclang). Disable with `--no-default-features` for plain rustls.
+default = ["tls-fingerprint"]
+tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
+
 [dependencies]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }
-cpa-executors = { path = "../executors" }
+cpa-executors = { path = "../executors", default-features = false }
 cpa-live = { path = "../live" }
 serde.workspace = true
 serde_json.workspace = true

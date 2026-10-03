@@ -1,8 +1,10 @@
-//! HTTP transport for Claude upstreams (Go: helps.NewUtlsHTTPClient without the TLS fingerprint).
+//! HTTP transport for Claude upstreams (Go: helps.NewUtlsHTTPClient).
 //!
-//! Anthropic is reached over HTTP/1.1 like the native Node client. Unlike the shared executor
-//! client this one decodes every `Content-Encoding` the Claude wire profile advertises
-//! (`gzip, deflate, br, zstd`). TLS fingerprinting is not reproduced (reqwest + rustls).
+//! First-party `https://api.anthropic.com` requests use the Claude Code TLS fingerprint and wire
+//! header order (`helps::tls_fingerprint`); any other URL (custom base URLs, test servers) goes
+//! through a reqwest client over HTTP/1.1 like the native Node client. Unlike the shared executor
+//! client the standard one decodes every `Content-Encoding` the Claude wire profile advertises
+//! (`gzip, deflate, br, zstd`).
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -14,6 +16,7 @@ use cpa_runtime::executor::ExecError;
 use http::HeaderMap;
 
 use crate::helps::proxy::{BoundedLru, DEFAULT_TRANSPORT_CACHE_CAPACITY, effective_proxy_url};
+use crate::helps::tls_fingerprint::{UtlsClient, new_utls_http_client};
 
 static CLIENTS: LazyLock<BoundedLru<String, reqwest::Client>> =
     LazyLock::new(|| BoundedLru::new(DEFAULT_TRANSPORT_CACHE_CAPACITY));
@@ -39,9 +42,15 @@ fn build_client(setting: &ProxySetting) -> Result<reqwest::Client, reqwest::Erro
     builder.build()
 }
 
-/// Cached client for the execution's effective proxy (request override, credential, global).
+/// Client for the execution's effective proxy (request override, credential, global): the TLS
+/// fingerprinted transports for first-party hosts, the cached standard client for the rest.
 /// No total timeout: streams run as long as the upstream keeps sending.
-pub fn claude_http_client(request_proxy: &str, cfg: &Config, auth: &Auth) -> reqwest::Client {
+pub fn claude_http_client(request_proxy: &str, cfg: &Config, auth: &Auth) -> UtlsClient {
+    let fallback = standard_client(request_proxy, cfg, auth);
+    new_utls_http_client(request_proxy, Some(cfg), Some(auth), fallback)
+}
+
+fn standard_client(request_proxy: &str, cfg: &Config, auth: &Auth) -> reqwest::Client {
     let proxy_url = effective_proxy_url(request_proxy, Some(auth), Some(cfg));
     let (setting, key) = match parse_proxy(&proxy_url) {
         Ok(ProxySetting::Inherit) => (ProxySetting::Inherit, String::new()),
@@ -62,9 +71,9 @@ pub fn claude_http_client(request_proxy: &str, cfg: &Config, auth: &Auth) -> req
 }
 
 /// POSTs a Messages / count_tokens body with the assembled headers
-/// (Go: doClaudeUpstreamRequest; wire casing and header order are not reproduced).
+/// (Go: doClaudeUpstreamRequest; first-party requests get the native wire casing and order).
 pub async fn send_messages(
-    client: &reqwest::Client,
+    client: &UtlsClient,
     url: &str,
     headers: &HeaderMap,
     body: &[u8],
@@ -75,5 +84,5 @@ pub async fn send_messages(
         .body(body.to_vec())
         .send()
         .await
-        .map_err(|e| crate::helps::status::transport_error(&e))
+        .map_err(|e| e.exec_error())
 }
