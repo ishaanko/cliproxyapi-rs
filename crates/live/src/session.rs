@@ -267,3 +267,86 @@ impl SessionStore {
         self.inner.state.lock().sessions.get(call_id).map(|e| e.session.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use async_trait::async_trait;
+
+    use super::*;
+    use crate::media::MediaError;
+
+    #[derive(Default)]
+    struct FakeMedia {
+        closed: AtomicBool,
+        reason: Mutex<String>,
+    }
+
+    #[async_trait]
+    impl MediaRelaySession for FakeMedia {
+        async fn accept_upstream_answer(&self, _answer: &str) -> Result<String, MediaError> {
+            Ok(String::new())
+        }
+        fn set_call_id(&self, _call_id: &str) {}
+        fn set_close_handler(&self, _handler: Box<dyn Fn(&str) + Send + Sync>) {}
+        fn close_with_reason(&self, reason: &str) {
+            self.closed.store(true, Ordering::SeqCst);
+            *self.reason.lock() = reason.to_string();
+        }
+    }
+
+    #[tokio::test]
+    async fn claims_and_expires_sessions() {
+        let store = SessionStore::default();
+        store.set_lifetime(Duration::from_millis(20));
+        store.put("call-claim", LiveSession { auth_id: "auth-1".into(), ..Default::default() });
+        let (session, claim) = store.claim("call-claim");
+        assert_eq!(claim, Claim::Acquired);
+        assert_eq!(store.claim("call-claim").1, Claim::Busy);
+        store.release(&session);
+        assert_eq!(store.claim("call-claim").1, Claim::Acquired);
+        store.release(&session);
+        for _ in 0..100 {
+            if store.peek("call-claim").is_none() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("released live session did not expire");
+    }
+
+    #[tokio::test]
+    async fn close_all_releases_media_and_resources() {
+        let store = SessionStore::default();
+        let media = Arc::new(FakeMedia::default());
+        let stored = store.put("call-close-all", LiveSession { media: Some(media.clone()), ..Default::default() });
+        let resource_closed = Arc::new(AtomicBool::new(false));
+        let flag = resource_closed.clone();
+        stored.resources.as_ref().unwrap().add(vec![Box::new(move || flag.store(true, Ordering::SeqCst))]);
+        store.close_all("test_shutdown");
+        assert!(media.closed.load(Ordering::SeqCst));
+        assert_eq!(*media.reason.lock(), "test_shutdown");
+        assert!(resource_closed.load(Ordering::SeqCst));
+        assert!(store.peek("call-close-all").is_none());
+    }
+
+    #[tokio::test]
+    async fn replacing_a_session_closes_the_previous_media() {
+        let store = SessionStore::default();
+        let first = Arc::new(FakeMedia::default());
+        store.put("call-1", LiveSession { media: Some(first.clone()), ..Default::default() });
+        store.put("call-1", LiveSession::default());
+        assert!(first.closed.load(Ordering::SeqCst));
+        assert_eq!(*first.reason.lock(), "session_replaced");
+    }
+
+    #[tokio::test]
+    async fn invalid_call_id_is_not_stored() {
+        let store = SessionStore::default();
+        let media = Arc::new(FakeMedia::default());
+        let stored = store.put("bad id!", LiveSession { media: Some(media.clone()), ..Default::default() });
+        assert!(stored.call_id.is_empty());
+        assert_eq!(*media.reason.lock(), "invalid_call_id");
+    }
+}

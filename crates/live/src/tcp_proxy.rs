@@ -17,7 +17,7 @@ use rtc::ice::network_type::NetworkType;
 use rtc::ice::tcp_type::TcpType;
 use rtc::sdp::description::session::SessionDescription;
 use sha1::Sha1;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Semaphore, watch};
 
@@ -334,10 +334,12 @@ impl TcpCandidateTunnel {
         self.listener_addr
     }
 
+    #[cfg(test)]
     pub fn target(&self) -> SocketAddr {
         self.shared.target
     }
 
+    #[cfg(test)]
     pub fn expected_user(&self) -> &str {
         &self.shared.expected_user
     }
@@ -588,7 +590,6 @@ pub fn proxy_scheme(raw: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
-async fn _write_all<W: AsyncWrite + Unpin>(w: &mut W, data: &[u8]) -> std::io::Result<()> {
-    w.write_all(data).await
-}
+#[cfg(test)]
+#[path = "tcp_proxy_tests.rs"]
+pub(crate) mod tests;

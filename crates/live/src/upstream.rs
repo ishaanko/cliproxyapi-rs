@@ -171,3 +171,18 @@ pub async fn send(
         .map_err(|e| error_chain(&e))?;
     Ok(UpstreamResponse { status: response.status().as_u16(), headers: response.headers().clone(), response })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logging_headers_redact_attestation() {
+        let mut source = HeaderMap::new();
+        source.insert("authorization", HeaderValue::from_static("Bearer oauth-token"));
+        source.insert("x-oai-attestation", HeaderValue::from_static("attestation-token"));
+        let logged = headers_for_logging(&source);
+        assert_eq!(logged.get("x-oai-attestation").unwrap(), "[REDACTED]");
+        assert_eq!(source.get("x-oai-attestation").unwrap(), "attestation-token");
+    }
+}

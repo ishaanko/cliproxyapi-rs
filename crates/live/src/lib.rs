@@ -42,7 +42,7 @@ pub use log::UpstreamLog;
 pub use media::{MediaError, MediaLimiter, MediaRelayFactory, MediaRelaySession, MediaRoute};
 pub use relay::PionMediaRelay;
 pub use reply::Reply;
-pub use session::{LiveSession, SessionStore};
+pub use session::{Claim, LiveSession, SessionStore};
 
 /// Default sideband and hangup API base (Go: `defaultSidebandAPIBaseURL`).
 pub const DEFAULT_SIDEBAND_API_BASE_URL: &str = "wss://api.openai.com/v1";
@@ -279,4 +279,34 @@ pub(crate) fn proxy_url_for_auth(cfg: &Config, auth: &Auth) -> String {
         return auth.proxy_url.trim().to_string();
     }
     cfg.proxy_url.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selection_headers_drop_local_client_secret() {
+        let mut parts = RequestParts::default();
+        parts.headers.insert("authorization", "Bearer ek_secret".parse().unwrap());
+        parts.headers.insert("openai-safety-identifier", "safe-user".parse().unwrap());
+        let plain = live_selection_headers(&parts, &Caller::default());
+        assert!(plain.get("authorization").is_some());
+        let caller = Caller { client_secret: Some(ClientSecretCaller::default()), ..Caller::default() };
+        let headers = live_selection_headers(&parts, &caller);
+        assert!(headers.get("authorization").is_none());
+        assert_eq!(headers.get("openai-safety-identifier").unwrap(), "safe-user");
+    }
+
+    #[test]
+    fn proxy_prefers_the_credential_override() {
+        let mut cfg = Config::default();
+        cfg.proxy_url = "http://global.example:8080".into();
+        let mut auth = Auth::new("a", "codex");
+        assert_eq!(proxy_url_for_auth(&cfg, &auth), "http://global.example:8080");
+        auth.proxy_url = "socks5://credential.example:1080".into();
+        assert_eq!(proxy_url_for_auth(&cfg, &auth), "socks5://credential.example:1080");
+        auth.proxy_url = "direct".into();
+        assert_eq!(proxy_url_for_auth(&cfg, &auth), "direct");
+    }
 }

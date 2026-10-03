@@ -341,3 +341,59 @@ impl Handler {
         reply
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn store_rejects_expired_token() {
+        let store = ClientSecretStore::default();
+        let now = std::sync::Arc::new(Mutex::new(UNIX_EPOCH + Duration::from_secs(1_700_000_000)));
+        let clock = now.clone();
+        store.set_clock(Arc::new(move || *clock.lock()));
+        let (token, _, _) = store
+            .create(r#"{"type":"realtime","model":"gpt-live-1-codex"}"#, Duration::from_secs(60), "issuer", "test")
+            .ok()
+            .unwrap();
+        assert!(store.authenticate(&token).is_ok());
+        *now.lock() += Duration::from_secs(60);
+        assert!(store.authenticate(&token).is_err(), "expired token accepted");
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn store_caps_entries_per_issuer() {
+        let store = ClientSecretStore::default();
+        for _ in 0..MAX_ENTRIES_PER_ISSUER {
+            assert!(store.create("{}", DEFAULT_LIFETIME, "issuer", "p").is_ok());
+        }
+        assert!(matches!(store.create("{}", DEFAULT_LIFETIME, "issuer", "p"), Err(CreateError::Capacity)));
+        assert!(store.create("{}", DEFAULT_LIFETIME, "other", "p").is_ok());
+    }
+
+    #[test]
+    fn normalize_handles_whitespace_null_and_rejects_arrays() {
+        let (client, upstream) = normalize_client_secret_session("  null \n").ok().unwrap();
+        assert_eq!(util::model_from_json(client.as_bytes()), "gpt-realtime");
+        assert_eq!(util::model_from_json(upstream.as_bytes()), util::DEFAULT_LIVE_MODEL);
+        assert!(matches!(normalize_client_secret_session("[]"), Err(SessionError::Invalid(_))));
+        match normalize_client_secret_session(r#"{"type":"transcription","model":"x"}"#) {
+            Err(SessionError::Unsupported(m)) => {
+                assert_eq!(m, r#"Realtime session type is not supported by the Codex OAuth upstream: "transcription""#)
+            }
+            _ => panic!("expected unsupported"),
+        }
+    }
+
+    #[test]
+    fn lifetime_bounds() {
+        let at = |seconds| ExpiresAfter { anchor: "created_at".into(), seconds };
+        assert_eq!(client_secret_lifetime(None), Ok(DEFAULT_LIFETIME));
+        assert_eq!(client_secret_lifetime(Some(&at(60))), Ok(Duration::from_secs(60)));
+        assert_eq!(client_secret_lifetime(Some(&at(9))).unwrap_err(), "expires_after.seconds must be between 10 and 7200");
+        assert_eq!(client_secret_lifetime(Some(&at(7201))).unwrap_err(), "expires_after.seconds must be between 10 and 7200");
+        let bad = ExpiresAfter { anchor: "other".into(), seconds: 60 };
+        assert_eq!(client_secret_lifetime(Some(&bad)).unwrap_err(), "expires_after.anchor must be created_at");
+    }
+}

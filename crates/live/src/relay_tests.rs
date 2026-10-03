@@ -21,6 +21,7 @@ use webrtc::peer_connection::{
 };
 
 use super::*;
+use rtc::ice::network_type::NetworkType;
 
 pub(crate) struct TestHandler {
     gathered: watch::Sender<bool>,
@@ -294,4 +295,82 @@ fn public_remote_ip_filter() {
 fn private_candidates_are_stripped_from_the_offer() {
     let sdp = "v=0\r\na=candidate:1 1 udp 1 10.0.0.1 5000 typ host\r\na=candidate:2 1 udp 1 8.8.8.8 5000 typ host\r\na=candidate:3 1 udp 1 abc.local 5000 typ host\r\na=mid:0\r\n";
     assert_eq!(filter_remote_candidates(sdp), "v=0\r\na=candidate:2 1 udp 1 8.8.8.8 5000 typ host\r\na=mid:0\r\n");
+}
+
+#[tokio::test]
+async fn active_tcp_candidate_passes_tunnel_authentication() {
+    use crate::tcp_proxy::tests::RecordingDialer;
+    use crate::tcp_proxy::{bundled_ice_credentials, parse_sdp, prepare_proxied_upstream_answer, read_validated_ice_binding_frame};
+
+    let relay = media_relay(CodexLiveMediaRelayConfig::default());
+    let handler = |gathered| {
+        let (payloads, _) = mpsc::unbounded_channel();
+        let (channels, _) = mpsc::unbounded_channel();
+        Arc::new(TestHandler { gathered, payloads, channels })
+    };
+    let (local_gathered_tx, mut local_gathered) = watch::channel(false);
+    let local = relay.build_peer(PeerKind::ProxyUpstream, Vec::new(), handler(local_gathered_tx)).await.unwrap();
+    local.create_data_channel(REALTIME_DATA_CHANNEL_LABEL, None).await.unwrap();
+    let offer = local.create_offer(None).await.unwrap();
+    local.set_local_description(offer).await.unwrap();
+    local_gathered.wait_for(|g| *g).await.unwrap();
+    let local_offer = local.local_description().await.unwrap().sdp;
+
+    // The "OpenAI" side: ICE-TCP passive on loopback.
+    let (remote_gathered_tx, mut remote_gathered) = watch::channel(false);
+    let remote = PeerConnectionBuilder::new()
+        .with_configuration(RTCConfigurationBuilder::new().build())
+        .with_setting_engine(
+            SettingEngineBuilder::new().with_network_types(vec![NetworkType::Tcp4]).with_include_loopback_candidate(true).build(),
+        )
+        .with_handler(handler(remote_gathered_tx))
+        .with_udp_addrs(Vec::<String>::new())
+        .with_tcp_addrs(vec!["127.0.0.1:0".to_string()])
+        .build()
+        .await
+        .unwrap();
+    remote.set_remote_description(RTCSessionDescription::offer(local_offer.clone()).unwrap()).await.unwrap();
+    let answer = remote.create_answer(None).await.unwrap();
+    remote.set_local_description(answer).await.unwrap();
+    remote_gathered.wait_for(|g| *g).await.unwrap();
+    let remote_answer = remote.local_description().await.unwrap().sdp;
+
+    // Point the passive candidate at a public address so the proxy rules accept it.
+    let mut description = parse_sdp(&remote_answer).unwrap();
+    let mut rewritten = 0;
+    for media in &mut description.media_descriptions {
+        for attribute in &mut media.attributes {
+            let Some(value) = attribute.value.clone().filter(|_| attribute.is_ice_candidate()) else { continue };
+            let mut fields: Vec<String> = value.split_whitespace().map(str::to_string).collect();
+            if fields.len() < 8 || !fields[2].eq_ignore_ascii_case("tcp") || !value.contains("tcptype passive") {
+                continue;
+            }
+            fields[4] = "20.42.0.20".into();
+            fields[5] = "443".into();
+            attribute.value = Some(fields.join(" "));
+            rewritten += 1;
+        }
+    }
+    assert!(rewritten > 0, "answer has no passive TCP candidate: {remote_answer}");
+    let public_answer = description.marshal();
+
+    let (dialer, mut dials) = RecordingDialer::new();
+    let (rewritten_answer, tunnels) = prepare_proxied_upstream_answer(&public_answer, &local_offer, dialer).await.unwrap();
+    local.set_remote_description(RTCSessionDescription::answer(rewritten_answer.clone()).unwrap()).await.unwrap();
+    add_remote_tcp_candidates(local.as_ref(), &rewritten_answer).await.unwrap();
+
+    let dial = tokio::time::timeout(Duration::from_secs(10), dials.recv()).await.expect("active ICE-TCP did not reach the tunnel").unwrap();
+    let mut connection = dial.connection.unwrap();
+    let local_credentials = bundled_ice_credentials(&parse_sdp(&local_offer).unwrap()).unwrap();
+    let remote_credentials = bundled_ice_credentials(&parse_sdp(&public_answer).unwrap()).unwrap();
+    read_validated_ice_binding_frame(
+        &mut connection,
+        &format!("{}:{}", remote_credentials.ufrag, local_credentials.ufrag),
+        &remote_credentials.password,
+    )
+    .await
+    .expect("forwarded STUN request failed validation");
+    crate::tcp_proxy::close_candidate_tunnels(&tunnels);
+    let _ = local.close().await;
+    let _ = remote.close().await;
 }

@@ -462,3 +462,63 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod more_tests {
+    use super::*;
+
+    #[test]
+    fn raw_sdp_is_preserved_without_a_relay() {
+        let body = b"v=0\r\no=raw-offer\r\n";
+        let (prepared, content_type, model) = prepare_call_request(body, "application/sdp").unwrap();
+        assert_eq!((prepared.as_slice(), content_type.as_str(), model.as_str()), (&body[..], "application/sdp", DEFAULT_LIVE_MODEL));
+    }
+
+    #[test]
+    fn relay_wraps_raw_sdp_for_the_codex_backend() {
+        let body = b"v=0\r\no=raw-offer\r\n";
+        assert_eq!(call_request_sdp(body, "application/sdp").unwrap(), "v=0\r\no=raw-offer\r\n");
+        let (prepared, content_type) = replace_call_request_sdp(body, "application/sdp", "v=0\r\no=gateway-offer\r\n").unwrap();
+        assert_eq!(content_type, "application/json");
+        let value: serde_json::Value = serde_json::from_slice(&prepared).unwrap();
+        assert_eq!(value["sdp"], "v=0\r\no=gateway-offer\r\n");
+    }
+
+    #[test]
+    fn multipart_without_sdp_is_rejected() {
+        let body = "--b\r\nContent-Disposition: form-data; name=\"session\"\r\n\r\n{\"model\":\"gpt-live-1-codex\"}\r\n--b--\r\n";
+        assert!(prepare_call_request(body.as_bytes(), "multipart/form-data; boundary=b").is_err());
+    }
+
+    #[test]
+    fn client_secret_session_is_applied_to_sdp_and_json_requests() {
+        let session = r#"{"type":"realtime","model":"gpt-live-1-codex","instructions":"help"}"#;
+        let (body, content_type, model) =
+            apply_client_secret_call_session(b"v=0\r\n".to_vec(), "application/sdp".into(), DEFAULT_LIVE_MODEL.into(), session).unwrap();
+        assert_eq!((content_type.as_str(), model.as_str()), ("application/json", DEFAULT_LIVE_MODEL));
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["sdp"], "v=0\r\n");
+        assert_eq!(value["session"]["instructions"], "help");
+        let (body, _, _) =
+            apply_client_secret_call_session(br#"{"sdp":"x","session":{"model":"other"}}"#.to_vec(), "application/json".into(), "m".into(), session).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["sdp"], "x");
+        assert_eq!(value["session"]["instructions"], "help");
+        assert_eq!(
+            apply_client_secret_call_session(b"x".to_vec(), "image/png".into(), "m".into(), session).unwrap_err(),
+            "Realtime client secrets require an SDP or JSON call request"
+        );
+    }
+
+    #[test]
+    fn credential_names_use_a_safe_identity() {
+        let mut auth = cpa_auth::Auth::new("secret-id", "codex");
+        auth.label = "Voice credential".into();
+        auth.file_name = "/auths/codex-user.json".into();
+        assert_eq!(media_credential_name(&auth, "auth-index"), "Voice credential");
+        auth.label.clear();
+        assert_eq!(media_credential_name(&auth, "auth-index"), "codex-user.json");
+        auth.file_name.clear();
+        assert_eq!(media_credential_name(&auth, "auth-index"), "auth-index");
+    }
+}

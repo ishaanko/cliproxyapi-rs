@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn raw_map_roundtrip() {
         let map = unmarshal_raw_map(br#"{"b": [1, 2], "a": "<x>"}"#).unwrap();
-        assert_eq!(marshal_raw_map(&map), r#"{"a":"<x>","b":[1,2]}"#);
+        assert_eq!(marshal_raw_map(&map), "{\"a\":\"\\u003cx\\u003e\",\"b\":[1,2]}");
         assert_eq!(
             unmarshal_raw_map(b"[1]").unwrap_err(),
             "json: cannot unmarshal array into Go value of type map[string]json.RawMessage"

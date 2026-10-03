@@ -368,3 +368,28 @@ fn sideband_dial_error(path: &str, caller: &Caller, failure: DialFailure) -> Res
     }
     reply.into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sideband_url_shapes() {
+        let base = crate::DEFAULT_SIDEBAND_API_BASE_URL;
+        assert_eq!(build_sideband_url(base, SidebandStyle::Frameless, "rtc_1"), "wss://api.openai.com/v1/live/rtc_1");
+        assert_eq!(build_sideband_url(base, SidebandStyle::RealtimeCalls, "rtc_1"), "wss://api.openai.com/v1/realtime/calls/rtc_1");
+        assert_eq!(
+            build_sideband_url(base, SidebandStyle::RealtimeQuery, "rtc_2"),
+            "wss://api.openai.com/v1/realtime?intent=quicksilver&call_id=rtc_2"
+        );
+    }
+
+    #[test]
+    fn upgrade_detection() {
+        let mut headers = HeaderMap::new();
+        assert!(!is_websocket_upgrade(&headers));
+        headers.insert("connection", HeaderValue::from_static("keep-alive, Upgrade"));
+        headers.insert("upgrade", HeaderValue::from_static("WebSocket"));
+        assert!(is_websocket_upgrade(&headers));
+    }
+}

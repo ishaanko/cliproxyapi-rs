@@ -27,7 +27,7 @@ use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
 use webrtc::peer_connection::{
-    MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidateType,
+    MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType,
     RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, RTCSessionDescription, Registry, SettingEngineBuilder,
     register_default_interceptors,
 };
@@ -780,6 +780,7 @@ impl MediaRelaySession for PionMediaSession {
             }
             answer_to_apply = rewritten;
         }
+        let proxied_candidates = if inner.proxy.is_some() { Some(answer_to_apply.clone()) } else { None };
         let close_tunnels = || {
             let tunnels = std::mem::take(&mut inner.state.lock().tunnels);
             close_candidate_tunnels(&tunnels);
@@ -789,6 +790,12 @@ impl MediaRelaySession for PionMediaSession {
             media_err(format!("set upstream WebRTC answer: {e}"))
         })?;
         if let Err(e) = inner.upstream.set_remote_description(remote).await {
+            close_tunnels();
+            return Err(media_err(format!("set upstream WebRTC answer: {e}")));
+        }
+        if let Some(sdp) = proxied_candidates
+            && let Err(e) = add_remote_tcp_candidates(inner.upstream.as_ref(), &sdp).await
+        {
             close_tunnels();
             return Err(media_err(format!("set upstream WebRTC answer: {e}")));
         }
@@ -831,12 +838,28 @@ impl MediaRelaySession for PionMediaSession {
     }
 }
 
-impl PionMediaSession {
-    /// Whether the upstream leg dials through a proxy (tests).
-    #[cfg(test)]
-    pub(crate) fn proxied(&self) -> bool {
-        self.inner.proxy.is_some()
+/// webrtc-rs only dials a remote ICE-TCP passive candidate when it is added explicitly, not
+/// when it arrives inside a remote description; the rewritten proxied answer's candidates
+/// (loopback tunnels) are therefore added one by one.
+pub(crate) async fn add_remote_tcp_candidates(pc: &dyn PeerConnection, sdp: &str) -> Result<(), String> {
+    let description = crate::tcp_proxy::parse_sdp(sdp)?;
+    for (index, media) in description.media_descriptions.iter().enumerate() {
+        let mid = media.attribute("mid").flatten().unwrap_or("").to_string();
+        for attribute in media.attributes.iter().filter(|a| a.is_ice_candidate()) {
+            let Some(value) = attribute.value.clone() else { continue };
+            let init = RTCIceCandidateInit {
+                candidate: format!("candidate:{value}"),
+                sdp_mid: Some(mid.clone()),
+                sdp_mline_index: Some(index as u16),
+                ..Default::default()
+            };
+            // Duplicates of candidates already in the description are harmless.
+            if let Err(e) = pc.add_ice_candidate(init).await {
+                tracing::debug!("codex live media: add remote TCP candidate: {e}");
+            }
+        }
     }
+    Ok(())
 }
 
 #[cfg(test)]
