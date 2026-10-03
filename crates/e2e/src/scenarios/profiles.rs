@@ -22,6 +22,11 @@ pub fn max_one_credential(s: &mut ConfigSpec) {
     s.max_retry_credentials = 1;
 }
 
+/// Serves the plugin store registry from the mock instead of the public store.
+pub fn plugin_store_mock(s: &mut ConfigSpec) {
+    s.plugin_store_mock = true;
+}
+
 pub fn disable_cooling(s: &mut ConfigSpec) {
     s.disable_cooling = true;
 }

@@ -125,6 +125,12 @@ pub struct ConfigSpec {
     pub multimedia: Vec<(&'static str, Value)>,
     /// Provider-wide `codex:` settings (`response-steering`, ...), legacy layout only.
     pub codex_settings: Vec<(&'static str, Value)>,
+    /// Port of the mock upstream (target of `plugin_store_mock`).
+    pub mock_port: u16,
+    /// Route the server's plugin store traffic to the mock: `proxy-url` points at the mock's
+    /// CONNECT proxy and the server trusts the mock's CA (`SSL_CERT_FILE`), so the official
+    /// registry resolves to the fixed catalog in `crates/e2e/fixtures`.
+    pub plugin_store_mock: bool,
 }
 
 impl ConfigSpec {
@@ -172,6 +178,8 @@ impl ConfigSpec {
             xai: vec![],
             multimedia: vec![],
             codex_settings: vec![],
+            mock_port,
+            plugin_store_mock: false,
         }
     }
 }
@@ -300,6 +308,11 @@ impl ConfigSpec {
             && let Value::Object(root) = &mut value
         {
             root.insert("plugins".into(), self.plugins_value(auth_dir));
+        }
+        if self.plugin_store_mock
+            && let Value::Object(root) = &mut value
+        {
+            root.insert("proxy-url".into(), json!(format!("http://127.0.0.1:{}", self.mock_port)));
         }
         let mut out = String::new();
         emit(&value, 0, &mut out);
