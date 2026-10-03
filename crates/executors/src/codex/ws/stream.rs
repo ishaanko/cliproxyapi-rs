@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::conn::Read;
 use super::errors::{clear_replay_on_error_frame, encode_as_sse, map_read_error, parse_error_frame};
-use super::{WsCall, WsPlan, connect_and_send, is_downstream_websocket};
+use super::{SESSION_READ_CLOSED, WsCall, WsPlan, connect_and_send, is_downstream_websocket, read_error_stage};
 use crate::codex::CodexExecutor;
 use crate::codex::multi_agent_v2::restore_response;
 use crate::codex::reasoning::{cache_replay_from_completed, clear_replay_on_invalid_signature};
@@ -60,6 +60,7 @@ impl WsStream {
         if payload.is_empty() {
             return Step::Skip;
         }
+        self.plan.log_frame(&payload);
         let payload = restore_response(&payload, restore_multi_agent);
         let frame = cpa_json::parse(&payload);
         let modelc = self.plan.model_level_cooling;
@@ -129,7 +130,7 @@ impl CodexExecutor {
             return Err(status_error(400, "streaming not supported for /responses/compact"));
         }
         let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsStream)?;
-        let mut call = connect_and_send(&opts, &plan).await?;
+        let mut call = connect_and_send(&opts, &plan, true).await?;
         let headers = std::mem::take(&mut call.handshake_headers);
 
         let buffering = cfg.codex.stream_bootstrap_buffering;
@@ -161,9 +162,13 @@ impl CodexExecutor {
                     Some(Read::Err(err)) => {
                         let mapped = map_read_error(&err);
                         call.invalidate_with("read_error", &mapped, true);
+                        stream.plan.log_error(read_error_stage(&err), &mapped.message);
                         return Err(mapped);
                     }
-                    None => return Err(ExecError::new(0, "codex websockets executor: session read channel closed")),
+                    None => {
+                        stream.plan.log_error("read", SESSION_READ_CLOSED);
+                        return Err(ExecError::new(0, SESSION_READ_CLOSED));
+                    }
                 };
                 frames_read += 1;
                 let time_reached = !bootstrap_timeout.is_zero() && start.elapsed() >= bootstrap_timeout;
@@ -179,6 +184,7 @@ impl CodexExecutor {
                         call.invalidate_with("upstream_error", &err, true);
                         call.unlock();
                         clear_replay_on_error_frame(&stream.plan.prepared.replay_scope, &frame);
+                        stream.plan.log_error("upstream_error", &err.message);
                         if time_reached {
                             bootstrap_terminal_err = Some(err);
                             break;
@@ -193,6 +199,7 @@ impl CodexExecutor {
                         call.unlock();
                         call.invalidate_with("terminal_failure", &err, !failover);
                         clear_replay_on_invalid_signature(&stream.plan.prepared.replay_scope, err.status, &body);
+                        stream.plan.log_error("upstream_error", &err.message);
                         if failover {
                             call.set_close_reason("bootstrap_overload");
                             return Err(new_bootstrap_overload_err(&body));
@@ -201,6 +208,7 @@ impl CodexExecutor {
                         break;
                     }
                     Step::EmptyIncomplete(err) => {
+                        stream.plan.log_error("upstream_error", &err.message);
                         call.invalidate_with("terminal_empty_incomplete", &err, true);
                         call.unlock();
                         bootstrap_terminal_err = Some(err);
@@ -263,12 +271,15 @@ impl WsStream {
                 Some(Read::Text(payload)) => payload,
                 Some(Read::Err(err)) => {
                     call.set_close_reason("read_error");
-                    let _ = tx.send(Err(map_read_error(&err))).await;
+                    let mapped = map_read_error(&err);
+                    self.plan.log_error(read_error_stage(&err), &mapped.message);
+                    let _ = tx.send(Err(mapped)).await;
                     return;
                 }
                 None => {
                     call.set_close_reason("read_error");
-                    let _ = tx.send(Err(ExecError::new(0, "codex websockets executor: session read channel closed"))).await;
+                    self.plan.log_error("read", SESSION_READ_CLOSED);
+                    let _ = tx.send(Err(ExecError::new(0, SESSION_READ_CLOSED))).await;
                     return;
                 }
             };
@@ -279,6 +290,7 @@ impl WsStream {
                     call.set_close_reason("upstream_error");
                     call.invalidate_with("upstream_error", &err, true);
                     clear_replay_on_error_frame(&self.plan.prepared.replay_scope, &frame);
+                    self.plan.log_error("upstream_error", &err.message);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
@@ -287,10 +299,12 @@ impl WsStream {
                     call.unlock();
                     call.invalidate_with("terminal_failure", &err, true);
                     clear_replay_on_invalid_signature(&self.plan.prepared.replay_scope, err.status, &body);
+                    self.plan.log_error("upstream_error", &err.message);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
                 Step::EmptyIncomplete(err) => {
+                    self.plan.api_log.record_api_response_error(&self.plan.cfg, &err.message);
                     call.invalidate_with("terminal_empty_incomplete", &err, true);
                     call.unlock();
                     call.set_close_reason("terminal_empty_incomplete");

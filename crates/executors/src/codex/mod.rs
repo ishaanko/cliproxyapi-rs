@@ -15,6 +15,7 @@ mod creds;
 mod headers;
 mod exec_http;
 mod input_ids;
+mod logging;
 pub(crate) mod multi_agent_v2;
 mod quota;
 mod reasoning;
