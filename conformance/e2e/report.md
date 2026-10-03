@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a4ea26e497b070e8e/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `e50089bce4159915`
-- scenarios: 669 total, 669 passed, 0 failed
+- goldens digest: `1eaa7b61ff64b91e`
+- scenarios: 753 total, 753 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -645,6 +645,90 @@
 | `ws.handshake.codex_backend_path` | PASS | /backend-api/codex/responses alias |  |
 | `ws.handshake.turn_state_echo` | PASS | x-codex-turn-state is echoed on the upgrade response |  |
 | `ws.handshake.plain_get` | PASS | GET /v1/responses without an upgrade |  |
+| `realtime.secrets.create` | PASS | client secret for a realtime session with an explicit lifetime |  |
+| `realtime.secrets.create_empty` | PASS | empty request object gets the default session |  |
+| `realtime.secrets.create_no_body` | PASS | no body at all |  |
+| `realtime.secrets.model_alias` | PASS | realtime-preview models keep the client name in the response |  |
+| `realtime.secrets.session_type_defaults` | PASS | a session without type or model gets both defaults |  |
+| `realtime.secrets.unsupported_type` | PASS | transcription sessions are not supported |  |
+| `realtime.secrets.invalid_session` | PASS | session must be an object |  |
+| `realtime.secrets.lifetime_too_short` | PASS | expires_after below the minimum |  |
+| `realtime.secrets.lifetime_too_long` | PASS | expires_after above the maximum |  |
+| `realtime.secrets.lifetime_anchor` | PASS | unknown anchor |  |
+| `realtime.secrets.lifetime_type` | PASS | seconds must be an integer |  |
+| `realtime.secrets.array_body` | PASS | request must be an object |  |
+| `realtime.secrets.html_and_unicode` | PASS | response escaping of <, >, & and non-ASCII text |  |
+| `realtime.secrets.number_formats` | PASS | session numbers and nesting survive the canonical re-encoding |  |
+| `realtime.secrets.field_types` | PASS | non-string type and blank model fall back to the defaults |  |
+| `realtime.secrets.duplicate_keys` | PASS | the last duplicate key wins |  |
+| `realtime.secrets.case_insensitive_keys` | PASS | request members match case-insensitively |  |
+| `realtime.secrets.lifetime_float` | PASS | fractional seconds do not decode |  |
+| `realtime.secrets.session_null` | PASS | explicit null session |  |
+| `realtime.secrets.session_string` | PASS | string session |  |
+| `realtime.secrets.null_body` | PASS | JSON null body |  |
+| `realtime.secrets.malformed` | PASS | malformed JSON |  |
+| `realtime.secrets.missing_key` | PASS | no credentials (realtime-shaped error) |  |
+| `realtime.secrets.invalid_key` | PASS | wrong credentials |  |
+| `realtime.secrets.second_key` | PASS | the second configured client key |  |
+| `realtime.secrets.get_not_routed` | PASS | only POST is registered |  |
+| `realtime.sessions.legacy` | PASS | deprecated sessions endpoint embeds the client secret |  |
+| `realtime.sessions.legacy_empty` | PASS | legacy endpoint without a body |  |
+| `realtime.sessions.legacy_array` | PASS | legacy session must be an object |  |
+| `realtime.sessions.legacy_unsupported` | PASS | legacy transcription session |  |
+| `realtime.stubs.transcription_sessions` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.translations_post` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.translations_get` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.translations_client_secrets` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.sip_accept` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.sip_reject` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.sip_refer` | PASS | capability is not supported by the Codex OAuth upstream |  |
+| `realtime.stubs.no_key` | PASS | stub behind standard auth |  |
+| `realtime.stubs.translations_no_key` | PASS | stub behind realtime auth |  |
+| `realtime.auth.call_missing_key` | PASS | call bootstrap without credentials |  |
+| `realtime.auth.call_invalid_key` | PASS | call bootstrap with a wrong key |  |
+| `realtime.auth.unknown_client_secret` | PASS | an ek_ bearer that was never issued |  |
+| `realtime.auth.live_missing_key` | PASS | plain API-key error shape on /v1/live |  |
+| `realtime.auth.live_invalid_key` | PASS | wrong key on /v1/live |  |
+| `realtime.auth.preflight` | PASS | CORS preflight on a realtime route |  |
+| `realtime.auth.sideband_missing_key` | PASS | sideband without credentials |  |
+| `realtime.call.live.no_credential_sdp` | PASS | raw SDP offer without a Codex OAuth credential |  |
+| `realtime.call.live.no_credential_json` | PASS | JSON call request without a Codex OAuth credential |  |
+| `realtime.call.realtime.no_credential_sdp` | PASS | raw SDP offer without a Codex OAuth credential |  |
+| `realtime.call.realtime.no_credential_json` | PASS | JSON call request without a Codex OAuth credential |  |
+| `realtime.call.realtime_calls.no_credential_sdp` | PASS | raw SDP offer without a Codex OAuth credential |  |
+| `realtime.call.realtime_calls.no_credential_json` | PASS | JSON call request without a Codex OAuth credential |  |
+| `realtime.call.multipart_no_credential` | PASS | multipart call request without a Codex OAuth credential |  |
+| `realtime.call.multipart_missing_sdp` | PASS | multipart body without the sdp field |  |
+| `realtime.call.multipart_bad_session` | PASS | multipart session field is not JSON |  |
+| `realtime.call.multipart_no_boundary` | PASS | multipart without a boundary parameter |  |
+| `realtime.call.malformed_json` | PASS | JSON call request that does not parse |  |
+| `realtime.call.malformed_json_live` | PASS | same on the live path |  |
+| `realtime.call.json_array` | PASS | JSON call request that is an array |  |
+| `realtime.call.session_not_object` | PASS | session field that is not an object |  |
+| `realtime.call.json_null` | PASS | JSON null call request |  |
+| `realtime.call.unknown_content_type` | PASS | an unrelated content type |  |
+| `realtime.call.multipart_lf_only` | PASS | multipart with LF-only line endings |  |
+| `realtime.call.multipart_truncated` | PASS | multipart body cut inside a part |  |
+| `realtime.call.multipart_empty` | PASS | multipart content type with an empty body |  |
+| `realtime.call.empty_body` | PASS | no body and no content type |  |
+| `realtime.sideband.not_upgrade` | PASS | sideband GET without an upgrade |  |
+| `realtime.sideband.not_upgrade_calls` | PASS | same on the realtime calls path |  |
+| `realtime.sideband.unknown_call` | PASS | upgrade for a call that does not exist |  |
+| `realtime.sideband.unknown_call_realtime` | PASS | realtime-shaped not found |  |
+| `realtime.sideband.unknown_call_query` | PASS | call id in the query |  |
+| `realtime.sideband.invalid_call_id` | PASS | call id with characters outside the allowed set |  |
+| `realtime.sideband.invalid_call_id_query` | PASS | invalid call id in the query |  |
+| `realtime.direct.not_upgrade` | PASS | standard realtime GET without an upgrade |  |
+| `realtime.direct.not_upgrade_model` | PASS | same with a model query |  |
+| `realtime.direct.no_credential` | PASS | upgrade without a Codex OAuth credential |  |
+| `realtime.hangup.invalid_call_id` | PASS | hangup with an invalid call id |  |
+| `realtime.hangup.unknown_call` | PASS | hangup for a call that does not exist |  |
+| `realtime.hangup.missing_key` | PASS | hangup without credentials |  |
+| `realtime.routing.trailing_slash_post` | PASS | POST with a trailing slash redirects |  |
+| `realtime.routing.trailing_slash_get` | PASS | GET with a trailing slash redirects |  |
+| `realtime.routing.wrong_method_calls` | PASS | GET on the POST-only calls route |  |
+| `realtime.routing.wrong_method_hangup` | PASS | GET on the hangup route |  |
+| `realtime.routing.put_live` | PASS | PUT is not registered on /v1/live |  |
 | `mgmt.auth.missing_key` | PASS | no management key |  |
 | `mgmt.auth.invalid_key` | PASS | wrong management key |  |
 | `mgmt.auth.raw_authorization` | PASS | management key without Bearer |  |
