@@ -4,8 +4,12 @@
 //! SSE frames are assembled by hand (blank-line delimited, `data:` lines accumulated, `event:`
 //! name tracked) so upstream error payloads and truncated streams are classified like Go does.
 
+use std::sync::Arc;
+
 use bytes::Bytes;
+use cpa_config::Config;
 use cpa_json::J;
+use cpa_runtime::apilog::ApiLogHandle;
 use cpa_runtime::executor::{ExecError, StreamResult};
 use cpa_translator::{Format, Param};
 use futures_util::StreamExt;
@@ -27,6 +31,8 @@ use crate::helps::usage::{StreamUsageBuffer, UsageReporter};
 /// Everything the chat stream task needs from the request.
 pub struct ChatStreamParams {
     pub reporter: UsageReporter,
+    pub api_log: ApiLogHandle,
+    pub cfg: Arc<Config>,
     pub from: Format,
     pub to: Format,
     pub response_format: Format,
@@ -99,6 +105,7 @@ impl ChatStream {
         } else {
             err.clone()
         };
+        self.p.api_log.record_api_response_error(&self.p.cfg, &logged.message);
         self.p.reporter.publish_failure(&logged);
         let _ = self.out.send(Err(err)).await;
         self.failed = true;
@@ -176,6 +183,7 @@ impl ChatStream {
                     break;
                 }
             };
+            self.p.api_log.append_api_response_chunk(&self.p.cfg, &line);
             self.p.reporter.observe_response_model(&line);
             self.usage.observe_openai_stream(&line);
             let trimmed = trim_space(&line);
@@ -216,6 +224,7 @@ impl ChatStream {
         }
         if let Some(err) = scan_err {
             let err = ExecError::from(err);
+            self.p.api_log.record_api_response_error(&self.p.cfg, &err.message);
             self.p.reporter.publish_failure(&err);
             let _ = self.out.send(Err(err)).await;
         } else if !self.seen_done {
@@ -223,6 +232,7 @@ impl ChatStream {
             // is a failed stream for them.
             if self.p.response_format == Format::OpenAIResponse {
                 let err = status_err(502, "upstream stream closed before [DONE]");
+                self.p.api_log.record_api_response_error(&self.p.cfg, &err.message);
                 self.p.reporter.publish_failure(&err);
                 let _ = self.out.send(Err(err)).await;
                 return;
@@ -278,7 +288,13 @@ pub fn spawn_chat_stream(resp: reqwest::Response, headers: HeaderMap, p: ChatStr
 }
 
 /// Starts the image passthrough stream: raw SSE bytes are forwarded unchanged.
-pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter: UsageReporter) -> StreamResult {
+pub fn spawn_image_stream(
+    resp: reqwest::Response,
+    headers: HeaderMap,
+    reporter: UsageReporter,
+    api_log: ApiLogHandle,
+    cfg: Arc<Config>,
+) -> StreamResult {
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         let mut observer = StreamResponseModelObserver::new(reporter.clone());
@@ -286,6 +302,7 @@ pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter:
         while let Some(chunk) = body.next().await {
             match chunk {
                 Ok(chunk) => {
+                    api_log.append_api_response_chunk(&cfg, &chunk);
                     observer.feed(&chunk);
                     if tx.send(Ok(chunk)).await.is_err() {
                         break;
@@ -293,6 +310,7 @@ pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter:
                 }
                 Err(err) => {
                     let err = transport_error(&err);
+                    api_log.record_api_response_error(&cfg, &err.message);
                     reporter.publish_failure(&err);
                     let _ = tx.send(Err(err)).await;
                     break;

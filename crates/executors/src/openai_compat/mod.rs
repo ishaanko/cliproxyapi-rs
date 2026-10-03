@@ -7,6 +7,7 @@
 
 mod compat_config;
 mod images;
+pub(crate) mod log;
 pub(crate) mod translate;
 mod stream;
 
@@ -292,6 +293,7 @@ impl OpenAiCompatExecutor {
         let mut headers = Self::base_headers("application/json", &api_key)?;
         Self::apply_custom_headers(&mut headers, auth, opts, session.as_deref());
         tracing::debug!(target: "cpa::upstream", provider = %self.provider, "POST {url}");
+        log::record_request(&opts.api_log, &cfg, &self.provider, Some(auth), "POST", &url, &headers, &translated);
 
         reporter.start_response_ttft();
         let resp = self
@@ -301,11 +303,17 @@ impl OpenAiCompatExecutor {
             .body(translated.clone())
             .send()
             .await
-            .map_err(|e| transport_error(&e))?;
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                err
+            })?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        opts.api_log.record_api_response_metadata(&cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
             let body = read_body(reporter, resp).await.unwrap_or_default();
+            opts.api_log.append_api_response_chunk(&cfg, &body);
             tracing::debug!(
                 "request error, error status: {status}, error message: {}",
                 crate::helps::logging::summarize_error_body(
@@ -315,7 +323,8 @@ impl OpenAiCompatExecutor {
             );
             return Err(openai_compat_status_error(status, &resp_headers, &body));
         }
-        let body = read_body(reporter, resp).await?;
+        let body = read_body(reporter, resp).await.inspect_err(|e| opts.api_log.record_api_response_error(&cfg, &e.message))?;
+        opts.api_log.append_api_response_chunk(&cfg, &body);
         reporter.observe_response_model(&body);
         let mut param = Param::default();
         let original = apply_patch_original_request(req, opts);
@@ -364,6 +373,7 @@ impl OpenAiCompatExecutor {
         let url = format!("{}{endpoint_path}", base_url.trim_end_matches('/'));
         let mut headers = Self::base_headers(&content_type, &api_key)?;
         Self::apply_custom_headers(&mut headers, auth, opts, session.as_deref());
+        log::record_request(&opts.api_log, &cfg, &self.provider, Some(auth), "POST", &url, &headers, &payload);
         reporter.start_response_ttft();
         let resp = self
             .http_client(&cfg, auth, opts)
@@ -372,11 +382,24 @@ impl OpenAiCompatExecutor {
             .body(payload)
             .send()
             .await
-            .map_err(|e| transport_error(&e))?;
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                err
+            })?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let body = read_body(reporter, resp).await?;
+        opts.api_log.record_api_response_metadata(&cfg, status, &resp_headers);
+        let body = read_body(reporter, resp).await.inspect_err(|e| opts.api_log.record_api_response_error(&cfg, &e.message))?;
+        opts.api_log.append_api_response_chunk(&cfg, &body);
         if !(200..300).contains(&status) {
+            tracing::debug!(
+                "request error, error status: {status}, error message: {}",
+                crate::helps::logging::summarize_error_body(
+                    resp_headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                    &body
+                )
+            );
             return Err(openai_compat_status_error(status, &resp_headers, &body));
         }
         reporter.observe_response_model(&body);
@@ -420,6 +443,7 @@ impl OpenAiCompatExecutor {
         headers.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
         headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
         tracing::debug!(target: "cpa::upstream", provider = %self.provider, "POST {url}");
+        log::record_request(&opts.api_log, &cfg, &self.provider, Some(auth), "POST", &url, &headers, &translated);
 
         reporter.start_response_ttft();
         let resp = self
@@ -429,11 +453,24 @@ impl OpenAiCompatExecutor {
             .body(translated.clone())
             .send()
             .await
-            .map_err(|e| transport_error(&e))?;
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                err
+            })?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        opts.api_log.record_api_response_metadata(&cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
             let body = read_body(reporter, resp).await.unwrap_or_default();
+            opts.api_log.append_api_response_chunk(&cfg, &body);
+            tracing::debug!(
+                "request error, error status: {status}, error message: {}",
+                crate::helps::logging::summarize_error_body(
+                    resp_headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                    &body
+                )
+            );
             return Err(openai_compat_status_error(status, &resp_headers, &body));
         }
         let original_payload: Bytes =
@@ -443,6 +480,8 @@ impl OpenAiCompatExecutor {
             resp_headers,
             stream::ChatStreamParams {
                 reporter: reporter.clone(),
+                api_log: opts.api_log.clone(),
+                cfg: cfg.clone(),
                 from,
                 to,
                 response_format,
@@ -484,6 +523,7 @@ impl OpenAiCompatExecutor {
         }
         headers.insert(USER_AGENT, HeaderValue::from_static(USER_AGENT_VALUE));
         Self::apply_custom_headers(&mut headers, auth, opts, session.as_deref());
+        log::record_request(&opts.api_log, &cfg, &self.provider, Some(auth), "POST", &url, &headers, &payload);
         reporter.start_response_ttft();
         let resp = self
             .http_client(&cfg, auth, opts)
@@ -492,14 +532,27 @@ impl OpenAiCompatExecutor {
             .body(payload)
             .send()
             .await
-            .map_err(|e| transport_error(&e))?;
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                err
+            })?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        opts.api_log.record_api_response_metadata(&cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = read_body(reporter, resp).await?;
+            let body = read_body(reporter, resp).await.inspect_err(|e| opts.api_log.record_api_response_error(&cfg, &e.message))?;
+            opts.api_log.append_api_response_chunk(&cfg, &body);
+            tracing::debug!(
+                "request error, error status: {status}, error message: {}",
+                crate::helps::logging::summarize_error_body(
+                    resp_headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default(),
+                    &body
+                )
+            );
             return Err(status_err(status, String::from_utf8_lossy(&body).into_owned()));
         }
-        Ok(stream::spawn_image_stream(resp, resp_headers, reporter.clone()))
+        Ok(stream::spawn_image_stream(resp, resp_headers, reporter.clone(), opts.api_log.clone(), cfg))
     }
 }
 
