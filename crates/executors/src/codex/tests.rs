@@ -734,6 +734,24 @@ async fn websocket_requires_the_downstream_flag_and_a_websocket_credential() {
     assert_eq!(mock.connections.load(Ordering::SeqCst), 0);
 }
 
+/// Every upstream websocket frame is also handed to the plugin observer (Go:
+/// `EmitWebSocketResponseEvent`).
+#[tokio::test]
+async fn websocket_frames_reach_the_plugin_observer() {
+    let mock = ws_server(vec![frames(&[CREATED, DELTA, COMPLETED])], None).await;
+    let (exec, _keep) = executor(Config::default());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let mut opts = ws_opts("observer-session");
+    opts.websocket_response_observer =
+        Some(cpa_runtime::executor::WebSocketResponseObserver(Arc::new(move |e| sink.lock().push((e.event_type, e.provider, e.auth_id)))));
+    let (req, _) = request(HELLO_ITEMS, true);
+    drain(exec.execute_stream(&api_key_auth(&mock.url, true), req, opts).await.unwrap()).await;
+    let events: Vec<String> = seen.lock().iter().map(|e| e.0.clone()).collect();
+    assert_eq!(events, ["response.created", "response.output_text.delta", "response.completed"]);
+    assert!(seen.lock().iter().all(|e| e.1 == "codex" && e.2 == "codex-key-1"));
+}
+
 // ---------------------------------------------------------------- duplex steering
 
 fn created(id: &str, parent: &str) -> String {

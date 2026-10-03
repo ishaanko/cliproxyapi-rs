@@ -554,6 +554,7 @@ impl XaiExecutor {
         Ok(stream::spawn(stream::Start {
             cfg: Arc::clone(cfg),
             api_log: opts.api_log.clone(),
+            observer: crate::helps::websocket_observer::WsFrameObserver::new(opts, Some(auth), IDENTIFIER, &req.model),
             downstream_ws: is_downstream_websocket(opts),
             req_model: req.model.clone(),
             prepared: plan.prepared,

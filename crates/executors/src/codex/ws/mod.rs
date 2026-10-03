@@ -29,6 +29,7 @@ use self::conn::{Read, ReadError, UNEXPECTED_BINARY, WsConn};
 use self::errors::{clear_replay_on_error_frame, map_read_error, map_write_error, parse_error_frame, should_retry_send};
 use self::session::Session;
 use crate::helps::logging::{ApiLogHandle, UpstreamRequestLog};
+use crate::helps::websocket_observer::WsFrameObserver;
 use self::transport::DialFailure;
 use super::headers::{WireHeaders, apply_model_header_overrides, apply_routing_hint, apply_websocket_headers, websocket_cache_headers};
 use super::multi_agent_v2::restore_response;
@@ -66,6 +67,8 @@ pub(super) struct WsPlan {
     pub api_log: ApiLogHandle,
     /// Handshake request details for `api.websocket.request` events (body is the frame).
     pub req_log: UpstreamRequestLog,
+    /// Plugin observer of the upstream frames (`EmitWebSocketResponseEvent`).
+    pub observer: Option<WsFrameObserver>,
 }
 
 impl WsPlan {
@@ -83,6 +86,9 @@ impl WsPlan {
     pub(super) fn log_frame(&self, payload: &[u8]) {
         self.api_log.merge_response_headers(&crate::codex::quota::parse_codex_quota_event_headers(payload));
         self.api_log.append_api_websocket_response(&self.cfg, payload);
+        if let Some(observer) = &self.observer {
+            observer.emit(payload);
+        }
     }
 
     /// `RecordAPIWebsocketUpgradeRejection` for a refused upgrade.
@@ -186,6 +192,7 @@ impl CodexExecutor {
             cfg: Arc::clone(cfg),
             api_log: opts.api_log.clone(),
             req_log,
+            observer: WsFrameObserver::new(opts, Some(auth), "codex", &req.model),
         })
     }
 

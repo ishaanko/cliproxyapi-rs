@@ -46,6 +46,8 @@ const DEFAULT_USAGE: &str =
 pub(super) struct Start {
     pub cfg: Arc<Config>,
     pub api_log: ApiLogHandle,
+    /// Plugin observer of the upstream frames.
+    pub observer: Option<crate::helps::websocket_observer::WsFrameObserver>,
     pub downstream_ws: bool,
     pub req_model: String,
     pub prepared: PreparedRequest,
@@ -70,6 +72,7 @@ enum Flow {
 }
 
 struct WsStream {
+    observer: Option<crate::helps::websocket_observer::WsFrameObserver>,
     cfg: Arc<Config>,
     api_log: ApiLogHandle,
     downstream_ws: bool,
@@ -115,6 +118,7 @@ pub(super) fn spawn(start: Start) -> StreamResult {
     let mut stream = WsStream {
         cfg: start.cfg,
         api_log: start.api_log,
+        observer: start.observer,
         downstream_ws: start.downstream_ws,
         req_model: start.req_model,
         prepared: start.prepared,
@@ -227,6 +231,9 @@ impl WsStream {
     async fn handle_payload(&mut self, payload: Vec<u8>) -> Flow {
         self.reporter.mark_first_response_byte();
         self.api_log.append_api_websocket_response(&self.cfg, &payload);
+        if let Some(observer) = &self.observer {
+            observer.emit(&payload);
+        }
 
         let valid = cpa_json::valid(&payload);
         let frame = cpa_json::parse(&payload);
