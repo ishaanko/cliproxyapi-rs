@@ -21,6 +21,9 @@ use serde_json::{Value, json};
 use tokio::sync::watch;
 use tower::ServiceExt;
 
+/// Serializes tests that touch the process-wide usage queue and usage-statistics flag.
+static USAGE_GLOBALS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 const LOCAL: &str = "127.0.0.1:5000";
 const REMOTE: &str = "203.0.113.5:5000";
 
@@ -925,6 +928,7 @@ async fn credential_status_and_field_patches_update_the_registry() {
 
 #[tokio::test]
 async fn usage_requests_feed_pages_forward_and_honors_the_statistics_gate() {
+    let _globals = USAGE_GLOBALS.lock().await;
     let h = harness();
     for i in 0..5 {
         h.usage.record(record(&format!("m{i}"), i == 2));
@@ -1387,6 +1391,7 @@ async fn v0_unrouted_paths_pass_the_gate_before_the_404() {
 
 #[tokio::test]
 async fn usage_queue_pops_each_event_once() {
+    let _globals = USAGE_GLOBALS.lock().await;
     let h = harness();
     // The queue is process-wide; this is the only test in this binary that enables it.
     cpa_runtime::usage_queue::install(&h.usage);
