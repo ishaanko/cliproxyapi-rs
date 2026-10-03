@@ -1,0 +1,32 @@
+{
+  "id": "realtime.call.unknown_content_type",
+  "desc": "an unrelated content type",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/live",
+        "auth": "Client",
+        "headers": [],
+        "body": "xx"
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "auth_not_found: no auth available"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

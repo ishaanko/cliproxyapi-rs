@@ -6,7 +6,7 @@
 //! usage tracker, optional model catalog) and call [`build_router`] /
 //! [`build_router_with_management`], then [`serve::serve`].
 //!
-//! Not ported: realtime/live endpoints, the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
+//! Not ported: the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
 
 // `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
 #![allow(clippy::result_large_err)]
@@ -26,6 +26,7 @@ pub mod logging;
 pub mod middleware;
 pub mod models;
 pub mod multipart;
+pub mod realtime;
 pub mod reply;
 pub mod req;
 pub mod reqlog;

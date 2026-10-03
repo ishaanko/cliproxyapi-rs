@@ -1,0 +1,25 @@
+{
+  "id": "realtime.routing.trailing_slash_post",
+  "desc": "POST with a trailing slash redirects",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/realtime/",
+        "auth": "Client",
+        "headers": [],
+        "body": {}
+      },
+      "response": {
+        "status": 307,
+        "headers": {
+          "location": "/v1/realtime"
+        },
+        "body": {
+          "type": "empty"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}
