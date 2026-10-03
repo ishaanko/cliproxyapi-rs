@@ -390,7 +390,7 @@ pub struct DiscoveryInterfacesConfig {
     pub exclude: Vec<String>,
 }
 
-/// mDNS / DNS-SD advertising. Parsed and preserved; the feature itself is not implemented.
+/// mDNS / DNS-SD advertising (see `cpa-discovery` and the runtime `service::discovery` manager).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default = "DiscoveryConfig::parse_defaults")]
 pub struct DiscoveryConfig {
