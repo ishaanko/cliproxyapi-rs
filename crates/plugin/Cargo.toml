@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
+# Dynamic plugin host (Go: internal/pluginhost). Loads C-ABI shared libraries with `libloading`
+# and adapts their capabilities to the runtime, translator, server and management hooks.
 [dependencies]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
@@ -13,6 +15,7 @@ cpa-auth = { path = "../auth" }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
 cpa-executors = { path = "../executors" }
+cpa-pluginapi = { path = "../pluginapi" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
