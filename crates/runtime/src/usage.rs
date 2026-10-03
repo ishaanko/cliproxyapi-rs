@@ -68,6 +68,18 @@ pub struct UsageExtra {
     /// Account the usage queue reports as the record's `source` (API key or e-mail); empty
     /// falls back to `UsageRecord::source`.
     pub queue_source: String,
+    /// SHA-256 hex of the access token the attempt used (never the token); empty for API keys.
+    pub access_token_sha256: String,
+    /// Reasoning effort and service tier the request carried (`None` when the request did not set
+    /// them; the queue then reports `""` and `"auto"`).
+    pub reasoning_effort: Option<String>,
+    pub service_tier: Option<String>,
+    /// `false` only when the client explicitly disabled generation.
+    pub generate: Option<bool>,
+    /// Session hierarchy facts (only present with a canonical session).
+    pub node_kind: String,
+    pub is_fork: bool,
+    pub is_compaction: bool,
 }
 
 /// One usage event (field names match the Go usage-queue record).

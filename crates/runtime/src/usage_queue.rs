@@ -33,7 +33,7 @@ fn response_headers_json(headers: &http::HeaderMap) -> Value {
 }
 
 /// The queue payload of one record, with Go's field order. Fields the tracker does not collect
-/// (cache-creation tokens, reasoning effort, service tier) carry their defaults.
+/// (cache-creation tokens, response service tier) carry their defaults.
 pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     let t = &r.tokens;
     let cache_read = t.cached_tokens;
@@ -72,6 +72,9 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     let source = if x.queue_source.is_empty() { &r.source } else { &x.queue_source };
     put("source", source.clone().into());
     put("auth_index", r.auth_index.clone().into());
+    if !x.access_token_sha256.is_empty() {
+        put("access_token_sha256", x.access_token_sha256.clone().into());
+    }
     put("client_ip", x.client_ip.clone().into());
     put("resolved_client_ip", x.resolved_client_ip.clone().into());
     put("x_forwarded_for", x.x_forwarded_for.clone().into());
@@ -90,7 +93,7 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
         }),
     );
     put("failed", r.failed.into());
-    put("generate", true.into());
+    put("generate", x.generate.unwrap_or(true).into());
     put("stream", r.stream.into());
     put("fail", fail);
     if !x.response_headers.is_empty() {
@@ -136,8 +139,17 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     if !x.parent_session_id.is_empty() {
         put("parent_session_id", x.parent_session_id.clone().into());
     }
-    put("reasoning_effort", "".into());
-    put("service_tier", "auto".into());
+    if !x.node_kind.is_empty() {
+        put("node_kind", x.node_kind.clone().into());
+    }
+    if x.is_fork {
+        put("is_fork", true.into());
+    }
+    if x.is_compaction {
+        put("is_compaction", true.into());
+    }
+    put("reasoning_effort", x.reasoning_effort.clone().unwrap_or_default().into());
+    put("service_tier", x.service_tier.clone().unwrap_or_else(|| "auto".into()).into());
     if !r.failed {
         put("response_model", r.model.trim().into());
     }
@@ -153,4 +165,40 @@ pub fn install(tracker: &UsageTracker) {
         }
         cpa_home::queue::enqueue(&queue_payload(record));
     })));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload(r: &UsageRecord) -> Value {
+        serde_json::from_slice(&queue_payload(r)).expect("payload is JSON")
+    }
+
+    // Go: TestUsageQueuePluginPayloadIncludesGenerateFalse / DefaultsGenerateTrue / ServiceTier.
+    #[test]
+    fn request_facts_flow_into_the_payload() {
+        let mut r = UsageRecord::default();
+        let p = payload(&r);
+        assert_eq!((p["generate"].clone(), p["service_tier"].clone(), p["reasoning_effort"].clone()), (true.into(), "auto".into(), "".into()));
+        assert!(p.get("access_token_sha256").is_none() && p.get("node_kind").is_none() && p.get("is_fork").is_none());
+
+        r.extra.generate = Some(false);
+        r.extra.service_tier = Some("priority".into());
+        r.extra.reasoning_effort = Some("high".into());
+        r.extra.access_token_sha256 = "abc".into();
+        r.extra.session_id = "6ae58c5c-b8ab-81a6-ab97-26da30358da1".into();
+        r.extra.node_kind = "fork".into();
+        r.extra.is_fork = true;
+        r.extra.is_compaction = true;
+        let p = payload(&r);
+        assert_eq!((p["generate"].clone(), p["service_tier"].clone(), p["reasoning_effort"].clone()), (false.into(), "priority".into(), "high".into()));
+        assert_eq!(p["access_token_sha256"], "abc");
+        assert_eq!((p["node_kind"].clone(), p["is_fork"].clone(), p["is_compaction"].clone()), ("fork".into(), true.into(), true.into()));
+        // The hash sits right after auth_index and the session hierarchy before reasoning_effort.
+        let keys: Vec<&str> = p.as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
+        let pos = |k: &str| keys.iter().position(|x| *x == k);
+        assert_eq!(pos("access_token_sha256"), pos("auth_index").map(|i| i + 1));
+        assert!(pos("is_compaction") < pos("reasoning_effort") && pos("session_id") < pos("node_kind"));
+    }
 }
