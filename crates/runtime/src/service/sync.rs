@@ -9,7 +9,7 @@
 //! Differences from Go: no revision stamping or queue coalescing. Go stamps each update with a
 //! per-id revision so out-of-order delivery is detected; here the service computes updates and
 //! applies them under one lock (`apply_lock`), so updates reach the manager in the order the
-//! state changed. There are no runtime-only (aistudio websocket) auths, and the auth directory
+//! state changed. Runtime-only (aistudio websocket) auths bypass this state, and the auth directory
 //! used by a reload scan is always the current config's, not the one captured at start.
 //!
 //! The methods that scan or read files are blocking: call them from `spawn_blocking`.

@@ -455,6 +455,14 @@ impl Service {
         inner.apply_updates_locked(&guard, vec![update]).await;
     }
 
+    /// Go `emitAuthUpdate` for runtime-only auths (the AI Studio websocket channels): applies the
+    /// update to the manager and model registry without touching the file sync state.
+    pub async fn apply_runtime_auth_update(&self, update: AuthUpdate) {
+        let inner = &self.inner;
+        let guard = inner.apply_lock.lock().await;
+        inner.apply_updates_locked(&guard, vec![update]).await;
+    }
+
     /// Waits for in-flight Antigravity capability probes (Go: `WaitAntigravityProbes`).
     pub async fn wait_antigravity_probes(&self) {
         let handles = std::mem::take(&mut *self.inner.probes.lock());
