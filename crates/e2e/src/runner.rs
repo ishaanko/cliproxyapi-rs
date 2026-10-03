@@ -67,6 +67,10 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
     server.stop().await;
 
     let mut n = Normalizer::new(opts.mock_port, server_port, &opts.work_dir.to_string_lossy());
+    for (name, content) in &spec.auth_files {
+        let auth_type = serde_json::from_str::<Value>(content).ok().and_then(|v| v.get("type").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+        n.mask_auth_file(&auth_type, &dir.join("auth").join(name).to_string_lossy(), name);
+    }
     let steps = observed
         .into_iter()
         .map(|(mut request, mut response)| {

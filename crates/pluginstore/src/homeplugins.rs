@@ -73,8 +73,14 @@ fn build_doer(proxy_url: &str) -> Arc<dyn HttpDoer> {
             Err(err) => tracing::error!("parse proxy URL failed: {err}"),
         }
     }
-    let client = builder.build().unwrap_or_default();
-    Arc::new(ReqwestDoer::new(client))
+    // A failed build must not fall back to reqwest's default client (it follows redirects).
+    match builder.build() {
+        Ok(client) => Arc::new(ReqwestDoer::new(client)),
+        Err(err) => {
+            tracing::error!("build plugin store http client failed: {err}");
+            crate::http::default_doer()
+        }
+    }
 }
 
 impl ClientFactory for DefaultClientFactory {

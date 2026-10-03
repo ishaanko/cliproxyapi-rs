@@ -336,7 +336,7 @@ impl Host {
         };
         // The stream owns the operation from here on; closing the stream finishes it.
         let ops = self.bridges.http_ops.clone();
-        let (finish_ctx, finish_plugin, finish_id) = op.detach();
+        let (_, finish_plugin, finish_id) = op.detach();
         let on_close: Box<dyn FnOnce() + Send> = {
             let (ops, plugin, op_id) = (ops.clone(), finish_plugin.clone(), finish_id.clone());
             Box::new(move || ops.finish_by_id(&plugin, &op_id))
@@ -348,7 +348,6 @@ impl Host {
             let (streams, plugin, instance, sid) = (self.bridges.http_streams.clone(), plugin_id.clone(), instance.clone(), stream_id.clone());
             Box::new(move || streams.close(&plugin, &instance, &sid))
         };
-        let _ = finish_ctx;
         if !ops.set_cleanup(&plugin_id, &op_id, cleanup) {
             return Err(HostError::canceled());
         }

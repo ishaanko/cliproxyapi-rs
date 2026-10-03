@@ -19,7 +19,7 @@ use cpa_pluginapi::api::{
     ExecutorStreamResponse,
 };
 use cpa_runtime::conductor::SharedManager;
-use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Metadata, Options, Request, Response, StreamResult};
+use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
 use cpa_translator::registry::Param;
 use cpa_translator::{Ctx as TranslatorCtx, Format};
 use tokio::sync::mpsc;
@@ -918,6 +918,3 @@ impl Executor for ExecutorAdapter {
         self.count_tokens_inner(&ctx, Some(auth), req, opts).await
     }
 }
-
-#[allow(dead_code)]
-type _M = Metadata;

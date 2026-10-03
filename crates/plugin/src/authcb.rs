@@ -12,12 +12,12 @@ use cpa_pluginapi::api::{
     HostAuthFileEntry, HostAuthGetRequest, HostAuthGetResponse, HostAuthGetRuntimeResponse, HostAuthSaveRequest,
     HostAuthSaveResponse, HostRecentRequestEntry,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::callbacks::{decode, marshal_result};
 use crate::convert::{
-    auth_attribute, is_runtime_only_auth, normalize_provider_id, parse_bool_value, parse_go_bool, parse_priority_value, status_str,
+    auth_attribute, is_runtime_only_auth, parse_bool_value, parse_go_bool, parse_priority_value, status_str,
 };
 use crate::error::HostError;
 use crate::host::Host;
@@ -502,12 +502,3 @@ fn host_recent_requests(auth: &Auth) -> Vec<HostRecentRequestEntry> {
         .map(|b| HostRecentRequestEntry { time: b.time, success: b.success, failed: b.failed })
         .collect()
 }
-
-#[allow(dead_code)]
-fn _provider(p: &str) -> String {
-    normalize_provider_id(p)
-}
-
-#[allow(dead_code)]
-#[derive(Deserialize)]
-struct _Unused;

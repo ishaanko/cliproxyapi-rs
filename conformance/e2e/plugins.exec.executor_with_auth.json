@@ -27,7 +27,7 @@
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "content-type": "application/json",
-          "x-cpa-trace-id": "<ts14>-ddb50d4c1c421ed9-<uuid:1>"
+          "x-cpa-trace-id": "<ts14>-<auth-index:plugin-example.json>-<uuid:1>"
         },
         "body": {
           "type": "json",
@@ -68,7 +68,7 @@
           "cache-control": "no-cache",
           "connection": "keep-alive",
           "content-type": "text/event-stream",
-          "x-cpa-trace-id": "<ts14>-ddb50d4c1c421ed9-<uuid:2>"
+          "x-cpa-trace-id": "<ts14>-<auth-index:plugin-example.json>-<uuid:2>"
         },
         "body": {
           "type": "sse",
