@@ -9,6 +9,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cpa_config::Config;
@@ -240,19 +241,32 @@ enum Output {
     File(RotatingFile),
 }
 
+/// Receives every formatted log line (the TUI's log hook in standalone mode).
+pub type LogTap = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Swappable log destination shared with the subscriber.
 #[derive(Clone)]
 pub struct SwitchWriter {
     inner: Arc<Mutex<Output>>,
+    tap: Arc<Mutex<Option<LogTap>>>,
+    /// Drop stdout output instead of printing (the TUI owns the terminal).
+    discard_stdout: Arc<AtomicBool>,
 }
 
 pub struct SwitchGuard {
     inner: Arc<Mutex<Output>>,
+    tap: Arc<Mutex<Option<LogTap>>>,
+    discard_stdout: Arc<AtomicBool>,
 }
 
 impl Write for SwitchGuard {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let tap = self.tap.lock().clone();
+        if let Some(tap) = tap {
+            tap(&String::from_utf8_lossy(buf));
+        }
         match &mut *self.inner.lock() {
+            Output::Stdout if self.discard_stdout.load(Ordering::Relaxed) => Ok(buf.len()),
             Output::Stdout => io::stdout().write(buf),
             Output::File(f) => f.write(buf),
         }
@@ -270,7 +284,11 @@ impl<'a> MakeWriter<'a> for SwitchWriter {
     type Writer = SwitchGuard;
 
     fn make_writer(&'a self) -> Self::Writer {
-        SwitchGuard { inner: self.inner.clone() }
+        SwitchGuard {
+            inner: self.inner.clone(),
+            tap: self.tap.clone(),
+            discard_stdout: self.discard_stdout.clone(),
+        }
     }
 }
 
@@ -285,6 +303,8 @@ pub struct LogControl {
 pub fn init() -> Arc<LogControl> {
     let writer = SwitchWriter {
         inner: Arc::new(Mutex::new(Output::Stdout)),
+        tap: Arc::new(Mutex::new(None)),
+        discard_stdout: Arc::new(AtomicBool::new(false)),
     };
     let (filter, level) = reload::Layer::new(LevelFilter::INFO);
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -331,6 +351,18 @@ fn is_dir_writable(dir: &Path) -> bool {
 }
 
 impl LogControl {
+    /// Standalone TUI: mirrors every log line to `tap` and stops printing to stdout.
+    pub fn attach_tui(&self, tap: LogTap) {
+        *self.writer.tap.lock() = Some(tap);
+        self.writer.discard_stdout.store(true, Ordering::Relaxed);
+    }
+
+    /// Undoes [`attach_tui`](Self::attach_tui) once the TUI has released the terminal.
+    pub fn detach_tui(&self) {
+        *self.writer.tap.lock() = None;
+        self.writer.discard_stdout.store(false, Ordering::Relaxed);
+    }
+
     /// `ConfigureLogOutput` + `util.SetLogLevel`.
     pub fn apply_config(&self, cfg: &Config) -> io::Result<()> {
         let _ = self.level.modify(|f| *f = if cfg.debug { LevelFilter::DEBUG } else { LevelFilter::INFO });
