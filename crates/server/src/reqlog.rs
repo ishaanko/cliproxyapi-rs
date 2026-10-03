@@ -97,6 +97,15 @@ impl ApiLog {
         d.api_response.extend_from_slice(data);
     }
 
+    /// The error branch of the handler's cancel function (`GetContextWithCancel`): the cause is
+    /// appended to `API_RESPONSE` unless the log already holds handler-level response text.
+    pub fn note_cancel(&self, text: &str) {
+        let held = !self.data.lock().api_response.trim_ascii().is_empty();
+        if !held {
+            self.append_api_response(text.as_bytes());
+        }
+    }
+
     /// `c.Set("API_RESPONSE", body)` as done by `WriteModelListResponse`: replaces the response
     /// text without touching the timestamp.
     pub fn set_api_response(&self, data: &[u8]) {

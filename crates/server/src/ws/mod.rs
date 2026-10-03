@@ -532,6 +532,12 @@ async fn forward_turn(
     let mut pending: BTreeSet<String> = BTreeSet::new();
     let mut ticker = (!keepalive.is_zero()).then(|| interval_at(Instant::now() + keepalive, keepalive));
     let api_log = info.api_log.clone();
+    // The handler's cancel function records the cause as `API_RESPONSE` while request-log is on.
+    let note = |text: &str| {
+        if timeline {
+            api_log.note_cancel(text);
+        }
+    };
 
     macro_rules! outcome {
         () => {
@@ -556,6 +562,7 @@ async fn forward_turn(
                         let err = ErrorMessage::new(408, "stream closed before response.completed");
                         api_log.record_error(err.status, &err.text);
                         api_log.mark_response_timestamp();
+                        note(&err.text);
                         return TurnEnd::Terminate(CLOSE_SENT.into());
                     }
                     return TurnEnd::Completed(outcome!());
@@ -563,7 +570,14 @@ async fn forward_turn(
                 let chunk = match item {
                     Ok(chunk) => chunk,
                     Err(err) => {
-                        api_log.record_error(err.status, &err.text);
+                        // The client went away under a steering stream: Go's context-done branch,
+                        // no upstream error to log.
+                        if err.status == 0 && err.text == "context canceled" {
+                            note(&err.text);
+                            return TurnEnd::Terminate(err.text);
+                        }
+                        api_log.record_error(err.status_or_500(), &err.text);
+                        note(&err.text);
                         if suppress(&err) {
                             return TurnEnd::Failed(err);
                         }
@@ -612,10 +626,11 @@ async fn forward_turn(
                         completed_output = collector.completed_output(&payload);
                         completed_response_id = payload.g("response.id").str().trim().to_string();
                     }
-                    if let Some(err) = &payload_err
-                        && suppress(err)
-                    {
-                        return TurnEnd::Failed(err.clone());
+                    if let Some(err) = &payload_err {
+                        note(&err.text);
+                        if suppress(err) {
+                            return TurnEnd::Failed(err.clone());
+                        }
                     }
                     api_log.mark_response_timestamp();
                     if let Some(err) = payload_err {
@@ -626,22 +641,25 @@ async fn forward_turn(
                         tracing::warn!(
                             "responses websocket: downstream_out write failed id={session_id} event={event_type} error={e}"
                         );
+                        note(&e.to_string());
                         return TurnEnd::Terminate(e.to_string());
                     }
                 }
             }
             _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
-                if socket.send(Message::Ping(Bytes::new())).await.is_err() {
-                    return TurnEnd::Terminate("ping failed".into());
+                if let Err(e) = socket.send(Message::Ping(Bytes::new())).await {
+                    note(&e.to_string());
+                    return TurnEnd::Terminate(e.to_string());
                 }
             }
             (provider, text) = disconnects.fired() => {
-                if provider == "codex" && (options.duplex_stream)() {
-                    // The steering stream drains its acknowledgements and pending events in order.
-                    disconnects.disarm();
-                    continue;
+                disconnects.disarm();
+                // A steering stream drains its acknowledgements and pending events in order and
+                // owns the closure; otherwise the socket is closed here and the loop keeps
+                // draining the stream, like Go's concurrent disconnect goroutine.
+                if !(provider == "codex" && (options.duplex_stream)()) {
+                    close_for_upstream_disconnect(socket, session_id, &text).await;
                 }
-                return TurnEnd::Terminate(close_for_upstream_disconnect(socket, session_id, &text).await);
             }
         }
     }
@@ -762,6 +780,7 @@ async fn close_for_upstream_disconnect(socket: &mut Conn, session_id: &str, text
     let err = disconnect_error(text);
     if let Some(frame) = close_frame_for_upstream_error(&err) {
         let _ = socket.send(Message::Close(Some(frame))).await;
+        socket.close();
         return text.to_string();
     }
     if should_expose_upstream_error(&err) {
@@ -774,6 +793,7 @@ async fn close_for_upstream_disconnect(socket: &mut Conn, session_id: &str, text
             );
         }
     }
+    socket.close();
     text.to_string()
 }
 
@@ -833,7 +853,8 @@ async fn run_session(
                     disconnects.disarm();
                     continue;
                 }
-                return Some(close_for_upstream_disconnect(socket, session_id, &text).await);
+                close_for_upstream_disconnect(socket, session_id, &text).await;
+                return Some("use of closed network connection".into());
             }
         };
         let payload: Vec<u8> = match frame {

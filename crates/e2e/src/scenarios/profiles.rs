@@ -163,6 +163,18 @@ pub fn request_log(s: &mut ConfigSpec) {
     s.request_log = true;
 }
 
+/// Request log on plus Codex duplex steering.
+pub fn request_log_codex_steering(s: &mut ConfigSpec) {
+    request_log(s);
+    codex_steering(s);
+}
+
+/// Request log on plus xAI upstream websockets.
+pub fn request_log_xai_ws(s: &mut ConfigSpec) {
+    request_log(s);
+    xai_websockets(s);
+}
+
 /// Request log on plus Codex upstream websockets.
 pub fn request_log_codex_ws(s: &mut ConfigSpec) {
     request_log(s);

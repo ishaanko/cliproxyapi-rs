@@ -22,6 +22,25 @@ pub const CLOSE_MESSAGE_TOO_BIG: u16 = 1009;
 
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
+/// gorilla's name of a well-known close code, as in `websocket: close 1006 (abnormal closure)`.
+fn close_code_label(code: u16) -> &'static str {
+    match code {
+        1000 => " (normal)",
+        1001 => " (going away)",
+        1002 => " (protocol error)",
+        1003 => " (unsupported data)",
+        1005 => " (no status)",
+        1006 => " (abnormal closure)",
+        1007 => " (invalid payload data)",
+        1008 => " (policy violation)",
+        1009 => " (message too big)",
+        1010 => " (mandatory extension missing)",
+        1011 => " (internal server error)",
+        1015 => " (TLS handshake error)",
+        _ => "",
+    }
+}
+
 /// A peer close frame (Go: `*websocket.CloseError`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloseInfo {
@@ -31,7 +50,7 @@ pub struct CloseInfo {
 
 impl fmt::Display for CloseInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "websocket: close {}", self.code)?;
+        write!(f, "websocket: close {}{}", self.code, close_code_label(self.code))?;
         if !self.text.is_empty() {
             write!(f, ": {}", self.text)?;
         }

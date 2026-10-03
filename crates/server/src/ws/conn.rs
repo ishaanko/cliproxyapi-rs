@@ -17,6 +17,8 @@ const INPUT_QUEUE: usize = 16;
 enum Kind {
     Direct(WebSocket),
     Duplex { sink: SplitSink<WebSocket, Message>, input: WebsocketInput, reader: JoinHandle<()> },
+    /// Torn down by [`Conn::close`]: writes fail, reads see the end of the stream.
+    Closed,
 }
 
 pub struct Conn(Kind);
@@ -50,15 +52,25 @@ impl Conn {
     /// The shared frame queue in duplex mode.
     pub fn input(&self) -> Option<WebsocketInput> {
         match &self.0 {
-            Kind::Direct(_) => None,
+            Kind::Direct(_) | Kind::Closed => None,
             Kind::Duplex { input, .. } => Some(input.clone()),
         }
     }
+
+    /// Drops the connection without a close frame (Go: `conn.Close()`).
+    pub fn close(&mut self) {
+        if let Kind::Duplex { reader, .. } = &self.0 {
+            reader.abort();
+        }
+        self.0 = Kind::Closed;
+    }
+
 
     pub async fn send(&mut self, msg: Message) -> Result<(), axum::Error> {
         match &mut self.0 {
             Kind::Direct(socket) => socket.send(msg).await,
             Kind::Duplex { sink, .. } => sink.send(msg).await,
+            Kind::Closed => Err(axum::Error::new(std::io::Error::other("use of closed network connection"))),
         }
     }
 
@@ -67,6 +79,7 @@ impl Conn {
     pub async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {
         match &mut self.0 {
             Kind::Direct(socket) => socket.recv().await,
+            Kind::Closed => None,
             Kind::Duplex { input, .. } => match input.recv().await? {
                 Ok(payload) => Some(Ok(Message::Binary(Bytes::from(payload)))),
                 Err(err) => Some(Err(axum::Error::new(err))),
@@ -77,9 +90,7 @@ impl Conn {
 
 impl Drop for Conn {
     fn drop(&mut self) {
-        if let Kind::Duplex { reader, .. } = &self.0 {
-            reader.abort();
-        }
+        self.close();
     }
 }
 

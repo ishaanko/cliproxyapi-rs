@@ -124,5 +124,40 @@ pub fn scenarios() -> Vec<Scenario> {
         .profile(profiles::request_log)
         .with_logs(),
     );
+    let ws = |id: &str, desc: &str, script: Script, messages: Vec<Value>, profile: fn(&mut crate::config::ConfigSpec)| {
+        Scenario::new(format!("reqlog.ws.{id}"), desc, script, vec![Req::Ws(WsReq::new("/v1/responses", messages))]).profile(profile).with_logs()
+    };
+    out.push(ws(
+        "upstream_error",
+        "an upstream error frame on the Codex websocket",
+        Script::steps(vec![Step::always(Reply::error(400))]),
+        vec![create("hello")],
+        profiles::request_log_codex_ws,
+    ));
+    out.push(ws(
+        "upstream_abort",
+        "the upstream drops its websocket mid-turn",
+        Script::steps(vec![Step::always(Reply::Cut { content: Content::Text, after: 6, abort: true })]),
+        vec![create("hello")],
+        profiles::request_log_codex_ws,
+    ));
+    out.push(ws("steering", "duplex steering stream on the Codex websocket", Script::ok(Content::Text), vec![create("hello"), json!({"type": "response.append", "input": user_input("more")})], profiles::request_log_codex_steering));
+    out.push(ws(
+        "xai",
+        "Responses websocket client over an xAI upstream websocket",
+        Script::ok(Content::Text),
+        vec![json!({"type": "response.create", "model": "grok-4.3", "input": user_input("hello")})],
+        profiles::request_log_xai_ws,
+    ));
+    out.push(
+        Scenario::new(
+            "reqlog.claude.count_tokens",
+            "Claude count_tokens request-log file",
+            Script::ok(Content::Text),
+            vec![Req::Http(HttpReq::post("/v1/messages/count_tokens", bodies::claude(Family::Claude.model(), false, Kind::Text)))],
+        )
+        .profile(profiles::request_log)
+        .with_logs(),
+    );
     out
 }

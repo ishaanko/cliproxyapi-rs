@@ -1,0 +1,46 @@
+{
+  "id": "reqlog.claude.count_tokens",
+  "desc": "Claude count_tokens request-log file",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages/count_tokens",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "claude-sonnet-4-5-20250929",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "input_tokens": 9
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [],
+  "request_logs": [
+    "=== REQUEST INFO ===\nVersion: <version>\nURL: /v1/messages/count_tokens\nMethod: POST\nDownstream Transport: http\nTimestamp: <ts>\n\n\n=== HEADERS ===\nAccept: */*\nAuthorization: Bearer e2e-...-key\nContent-Length: 142\nContent-Type: application/json\nUser-Agent: cpa-e2e/1\n\n\n=== REQUEST BODY ===\n{\"model\":\"claude-sonnet-4-5-20250929\",\"max_tokens\":4096,\"messages\":[{\"role\":\"user\",\"content\":\"What is the weather in Paris?\"}],\"stream\":false}\n\n\n=== RESPONSE ===\nStatus: 200\nAccess-Control-Allow-Headers: *\nAccess-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS\nAccess-Control-Allow-Origin: *\nAccess-Control-Expose-Headers: X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id\nContent-Type: application/json\nX-Cpa-Trace-Id: <ts14>-f46ece6b8824823d-<uuid:1>\n\n{\"input_tokens\":9}\n"
+  ]
+}

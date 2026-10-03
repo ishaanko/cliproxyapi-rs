@@ -1,0 +1,98 @@
+{
+  "id": "ws.xai.error_400",
+  "desc": "upstream error frame",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "grok-4.3",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade",
+          "upgrade": "websocket"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [
+            {
+              "type": "error",
+              "status": 400,
+              "error": {
+                "message": "mock upstream error 400",
+                "type": "invalid_request_error",
+                "code": null
+              }
+            }
+          ],
+          "close": "abnormal"
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "unknown",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Upgrade",
+        "content-type": "application/json",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "upgrade": "websocket",
+        "user-agent": "<go-default-ua>",
+        "x-grok-conv-id": "<uuid:1>"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "grok-4.3",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "store": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "prompt_cache_key": "<uuid:1>",
+          "type": "response.create"
+        }
+      ]
+    }
+  ]
+}
