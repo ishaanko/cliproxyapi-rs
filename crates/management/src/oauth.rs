@@ -72,7 +72,11 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
         return Err(ApiError::bad_request("provider is required"));
     }
     let Some(provider) = v8_provider(&name) else {
-        return Err(ApiError::new(404, "provider_not_found"));
+        let query = crate::http::query_pairs(uri);
+        return match crate::plugin_routes::serve_plugin_auth_url(&st, "/v8/management/oauth/auth-url", &query).await {
+            Some(resp) => Ok(resp),
+            None => Err(ApiError::new(404, "provider_not_found")),
+        };
     };
     start_login(&st, uri, provider).await
 }
@@ -139,7 +143,13 @@ async fn start_login(st: &ManagementState, uri: &Uri, provider: Provider) -> Api
 
 /// `GET /oauth/status?state=`.
 pub(crate) async fn status(State(st): State<ManagementState>, req: Request) -> ApiResult {
-    let (code, body) = st.oauth.poll_status(&query_trim(req.uri(), "state"));
+    let state = query_trim(req.uri(), "state");
+    let plugin = if cpa_auth::oauth::validate_oauth_state(&state).is_ok() {
+        crate::plugin_routes::plugin_login_status(&st, &state).await
+    } else {
+        None
+    };
+    let (code, body) = plugin.unwrap_or_else(|| st.oauth.poll_status(&state));
     Ok(json_response(code, &body))
 }
 

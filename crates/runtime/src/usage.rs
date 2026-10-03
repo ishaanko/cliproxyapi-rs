@@ -10,6 +10,7 @@
 //! ui/API_EXTENSIONS.md. Memory only; resets on restart.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -65,6 +66,13 @@ pub struct UsageExtra {
     pub parent_session_id: String,
     pub trace_id: String,
     pub response_headers: http::HeaderMap,
+    /// Fields only usage plugins read (Go: `usage.Record` beyond the queue record).
+    pub base_url: String,
+    pub auth_id: String,
+    pub response_service_tier: String,
+    pub response_model: String,
+    pub cache_read_tokens: i64,
+    pub cache_creation_tokens: i64,
     /// Account the usage queue reports as the record's `source` (API key or e-mail); empty
     /// falls back to `UsageRecord::source`.
     pub queue_source: String,
@@ -80,6 +88,12 @@ pub struct UsageExtra {
     pub node_kind: String,
     pub is_fork: bool,
     pub is_compaction: bool,
+}
+
+/// Receives every usage record, whether or not statistics are enabled (Go: a registered
+/// `usage.Plugin`). Implementations must not block.
+pub trait UsageListener: Send + Sync {
+    fn handle_usage(&self, record: &UsageRecord);
 }
 
 /// One usage event (field names match the Go usage-queue record).
@@ -239,6 +253,7 @@ pub struct UsageTracker {
     sink: Mutex<Option<UsageSink>>,
     started_at: DateTime<Utc>,
     state: Mutex<State>,
+    listeners: Mutex<Vec<(String, Arc<dyn UsageListener>)>>,
 }
 
 impl Default for UsageTracker {
@@ -282,7 +297,22 @@ impl UsageTracker {
             sink: Mutex::new(None),
             started_at: Utc::now(),
             state: Mutex::new(State::default()),
+            listeners: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Registers (or replaces) the named listener (Go: `RegisterNamedPlugin`).
+    pub fn register_listener(&self, name: &str, listener: Arc<dyn UsageListener>) {
+        let mut listeners = self.listeners.lock();
+        match listeners.iter_mut().find(|(n, _)| n == name) {
+            Some(slot) => slot.1 = listener,
+            None => listeners.push((name.to_string(), listener)),
+        }
+    }
+
+    /// Removes the named listener.
+    pub fn unregister_listener(&self, name: &str) {
+        self.listeners.lock().retain(|(n, _)| n != name);
     }
 
     /// Process start time; doubles as the instance id of the request feed.
@@ -306,6 +336,10 @@ impl UsageTracker {
 
     /// Records one usage event: aggregates it and appends it to the ring buffer.
     pub fn record(&self, mut record: UsageRecord) {
+        let listeners: Vec<Arc<dyn UsageListener>> = self.listeners.lock().iter().map(|(_, l)| l.clone()).collect();
+        for listener in listeners {
+            listener.handle_usage(&record);
+        }
         if !self.enabled.load(Ordering::Relaxed) {
             return;
         }

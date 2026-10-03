@@ -39,6 +39,10 @@ pub struct SessionInfo {
     /// Empty while pending; the failure message once failed.
     pub status: String,
     pub completed: bool,
+    /// Registered by a plugin auth provider (Go: `oauthSessionSourcePlugin`).
+    pub is_plugin: bool,
+    /// Metadata the plugin returned from `StartLogin`.
+    pub metadata: Option<serde_json::Map<String, Value>>,
 }
 
 struct Session {
@@ -47,6 +51,8 @@ struct Session {
     completed: bool,
     expires_at: Instant,
     inbox: Option<mpsc::UnboundedSender<CallbackPayload>>,
+    is_plugin: bool,
+    metadata: Option<serde_json::Map<String, Value>>,
 }
 
 /// Session registry. One instance per server; cheap to share behind an `Arc`.
@@ -113,8 +119,45 @@ impl OAuthSessions {
                 completed: false,
                 expires_at: now + self.ttl,
                 inbox,
+                is_plugin: false,
+                metadata: None,
             },
         );
+    }
+
+    /// `RegisterPlugin`: a pending session started by a plugin auth provider. Fails for an
+    /// invalid state or when the state is already registered.
+    pub fn register_plugin(
+        &self,
+        state: &str,
+        provider: &str,
+        metadata: Option<serde_json::Map<String, Value>>,
+    ) -> Result<(), String> {
+        let state = state.trim();
+        let provider = provider.trim().to_lowercase();
+        if state.is_empty() || provider.is_empty() {
+            return Err("invalid oauth state: empty state or provider".into());
+        }
+        validate_oauth_state(state)?;
+        let now = Instant::now();
+        let mut map = self.sessions.lock();
+        Self::purge(&mut map, now);
+        if map.contains_key(state) {
+            return Err("oauth session already exists".into());
+        }
+        map.insert(
+            state.to_string(),
+            Session {
+                provider,
+                status: String::new(),
+                completed: false,
+                expires_at: now + self.ttl,
+                inbox: None,
+                is_plugin: true,
+                metadata,
+            },
+        );
+        Ok(())
     }
 
     /// `SetError`: ignored for unknown or completed sessions; empty message becomes
@@ -187,6 +230,8 @@ impl OAuthSessions {
             provider: s.provider.clone(),
             status: s.status.clone(),
             completed: s.completed,
+            is_plugin: s.is_plugin,
+            metadata: s.metadata.clone(),
         })
     }
 
@@ -278,8 +323,13 @@ impl OAuthSessions {
         code: &str,
         error: &str,
     ) -> Result<(), CallbackError> {
-        let canonical =
-            normalize_callback_provider(provider).ok_or(CallbackError::UnsupportedProvider)?;
+        let is_plugin = self.get(state).is_some_and(|s| s.is_plugin);
+        let canonical = if is_plugin {
+            normalize_plugin_callback_provider(provider)
+        } else {
+            normalize_callback_provider(provider)
+        }
+        .ok_or(CallbackError::UnsupportedProvider)?;
         if !self.is_pending(state, &canonical) {
             return Err(CallbackError::NotPending);
         }
@@ -361,7 +411,12 @@ impl OAuthSessions {
         } else {
             req.provider.trim().to_string()
         };
-        let Some(canonical) = normalize_callback_provider(&provider) else {
+        let canonical = if session.is_plugin {
+            normalize_plugin_callback_provider(&provider)
+        } else {
+            normalize_callback_provider(&provider)
+        };
+        let Some(canonical) = canonical else {
             return err(400, "unsupported provider");
         };
         if !session.status.is_empty() {
@@ -423,6 +478,12 @@ pub fn normalize_oauth_provider(provider: &str) -> Option<&'static str> {
         "meta" | "muse" => Some("meta"),
         _ => None,
     }
+}
+
+/// `NormalizePluginOAuthCallbackProvider`: lowercase `[a-z0-9-]+`.
+pub fn normalize_plugin_callback_provider(provider: &str) -> Option<String> {
+    let t = provider.trim().to_lowercase();
+    (!t.is_empty() && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')).then_some(t)
 }
 
 /// Callback providers are the built-in ones plus kimi sessions (their own names) and

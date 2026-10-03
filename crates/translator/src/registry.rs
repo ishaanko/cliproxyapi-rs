@@ -1,8 +1,8 @@
-//! Translator registry (Go: sdk/translator/registry.go), minus plugin hooks.
+//! Translator registry (Go: sdk/translator/registry.go, plugin_hooks.go).
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, RwLock};
 
 use cpa_core::format::Format;
 use cpa_core::registry::ModelInfo;
@@ -85,11 +85,34 @@ enum RequestTransform {
     Envelope(RequestEnvelopeFn),
 }
 
+/// Optional translator extension hooks provided by plugins (Go: `PluginHooks`). Response hooks
+/// take `from` = upstream format and `to` = client format, like the registry's response API.
+pub trait PluginHooks: Send + Sync {
+    fn normalize_request(&self, ctx: &Ctx, from: Format, to: Format, model: &str, body: &[u8], stream: bool) -> Vec<u8>;
+    fn translate_request(&self, ctx: &Ctx, from: Format, to: Format, model: &str, body: &[u8], stream: bool) -> Option<Vec<u8>>;
+    #[allow(clippy::too_many_arguments)]
+    fn normalize_response_before(&self, ctx: &Ctx, from: Format, to: Format, model: &str, original: &[u8], request: &[u8], body: &[u8], stream: bool) -> Vec<u8>;
+    #[allow(clippy::too_many_arguments)]
+    fn translate_response(&self, ctx: &Ctx, from: Format, to: Format, model: &str, original: &[u8], request: &[u8], body: &[u8], stream: bool) -> Option<Vec<u8>>;
+    #[allow(clippy::too_many_arguments)]
+    fn normalize_response_after(&self, ctx: &Ctx, from: Format, to: Format, model: &str, original: &[u8], request: &[u8], body: &[u8], stream: bool) -> Vec<u8>;
+}
+
 #[derive(Default)]
 pub struct Registry {
     requests: HashMap<(Format, Format), RequestTransform>,
     /// Keyed (client, upstream), like Go's `responses[from][to]` at registration.
     responses: HashMap<(Format, Format), ResponseFns>,
+    hooks: RwLock<Option<Arc<dyn PluginHooks>>>,
+}
+
+/// Raw JSON of the Responses `configuration_update` input items (Go: `configurationUpdates`).
+fn configuration_updates(body: &[u8]) -> Vec<String> {
+    cpa_json::raw_children(body, "input")
+        .into_iter()
+        .filter(|raw| cpa_json::parse_str(raw).g("type").str() == "configuration_update")
+        .map(str::to_string)
+        .collect()
 }
 
 impl Registry {
@@ -104,6 +127,38 @@ impl Registry {
     /// Go: RegisterRequestEnvelope (overrides the plain request transform).
     pub fn register_request_envelope(&mut self, client: Format, upstream: Format, f: RequestEnvelopeFn) {
         self.requests.insert((client, upstream), RequestTransform::Envelope(f));
+    }
+
+    /// Go: SetPluginHooks.
+    pub fn set_plugin_hooks(&self, hooks: Option<Arc<dyn PluginHooks>>) {
+        if let Ok(mut slot) = self.hooks.write() {
+            *slot = hooks;
+        }
+    }
+
+    fn hooks(&self) -> Option<Arc<dyn PluginHooks>> {
+        self.hooks.read().ok().and_then(|h| h.clone())
+    }
+
+    /// Go: HasPluginHooks.
+    pub fn has_plugin_hooks(&self) -> bool {
+        self.hooks().is_some()
+    }
+
+    pub fn has_stream_response_transformer(&self, client: Format, upstream: Format) -> bool {
+        self.responses.get(&(client, upstream)).is_some_and(|r| r.stream.is_some())
+    }
+
+    pub fn has_non_stream_response_transformer(&self, client: Format, upstream: Format) -> bool {
+        self.responses.get(&(client, upstream)).is_some_and(|r| r.non_stream.is_some())
+    }
+
+    /// Plugin request normalizers only (Go: Registry.NormalizeRequest).
+    pub fn normalize_request(&self, ctx: &Ctx, from: Format, to: Format, model: &str, body: Vec<u8>, stream: bool) -> Vec<u8> {
+        match self.hooks() {
+            Some(h) => h.normalize_request(ctx, from, to, model, &body, stream),
+            None => body,
+        }
     }
 
     pub fn has_request_transformer(&self, client: Format, upstream: Format) -> bool {
@@ -126,6 +181,7 @@ impl Registry {
     }
 
     pub fn translate_request_envelope(&self, ctx: &Ctx, client: Format, upstream: Format, mut req: RequestEnvelope) -> RequestEnvelope {
+        let hooks = self.hooks();
         match self.requests.get(&(client, upstream)).copied() {
             Some(t) => {
                 let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
@@ -137,6 +193,13 @@ impl Registry {
                     RequestTransform::Envelope(f) => f(ctx, req),
                 };
                 req.body = thinking::apply_summary_config_for_model(req.body, upstream.as_str(), &req.model, &summary);
+                if let Some(h) = &hooks {
+                    // Request normalizers run after native translation and own the final provider
+                    // payload, including any summary field they remove.
+                    let before = configuration_updates(&req.body);
+                    req.body = h.normalize_request(ctx, client, upstream, &req.model, &req.body, req.stream);
+                    req.configuration_updates_changed = req.configuration_updates_changed || before != configuration_updates(&req.body);
+                }
                 req
             }
             None => {
@@ -151,6 +214,16 @@ impl Registry {
                         cpa_json::set(&mut v, "model", req.model.clone());
                         req.body = cpa_json::to_vec(&v);
                     }
+                }
+                let Some(h) = hooks else { return req };
+                // Plugin normalizers canonicalize the source before a plugin request translator
+                // handles the missing native route.
+                let before = configuration_updates(&req.body);
+                req.body = h.normalize_request(ctx, client, upstream, &req.model, &req.body, req.stream);
+                req.configuration_updates_changed = req.configuration_updates_changed || before != configuration_updates(&req.body);
+                let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
+                if let Some(translated) = h.translate_request(ctx, client, upstream, &req.model, &req.body, req.stream) {
+                    req.body = thinking::apply_summary_config_for_model(translated, upstream.as_str(), &req.model, &summary);
                 }
                 req
             }
@@ -170,11 +243,37 @@ impl Registry {
         raw: &[u8],
         param: &mut Param,
     ) -> Vec<Vec<u8>> {
-        match self.responses.get(&(client, upstream)).and_then(|r| r.stream) {
-            Some(f) => f(ctx, model, original, translated, raw, param),
-            None if param.tool_input_error.is_some() => vec![],
-            None => vec![raw.to_vec()],
+        let hooks = self.hooks();
+        let stream_fn = self.responses.get(&(client, upstream)).and_then(|r| r.stream);
+        let body: Vec<u8> = match &hooks {
+            Some(h) => h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, true),
+            None => raw.to_vec(),
+        };
+        let mut outputs: Option<Vec<Vec<u8>>> = None;
+        let mut used_native = false;
+        if let Some(f) = stream_fn {
+            used_native = true;
+            outputs = Some(f(ctx, model, original, translated, &body, param));
+        } else if let Some(h) = &hooks
+            && let Some(t) = h.translate_response(ctx, upstream, client, model, original, translated, &body, true)
+        {
+            outputs = Some(vec![t]);
         }
+        // Retained tool failures are never recovered by raw fallback or plugin normalization.
+        if param.tool_input_error.is_some() {
+            return outputs.unwrap_or_default();
+        }
+        let mut outputs = match outputs {
+            Some(o) => o,
+            None if !used_native => vec![body],
+            None => Vec::new(),
+        };
+        if let Some(h) = &hooks {
+            for out in &mut outputs {
+                *out = h.normalize_response_after(ctx, upstream, client, model, original, translated, out, true);
+            }
+        }
+        outputs
     }
 
     /// Non-stream response translation; `None` mirrors a nil Go result.
@@ -190,11 +289,30 @@ impl Registry {
         raw: &[u8],
         param: &mut Param,
     ) -> Option<Vec<u8>> {
-        let out = match self.responses.get(&(client, upstream)).and_then(|r| r.non_stream) {
-            Some(f) => f(ctx, model, original, translated, raw, param)?,
+        let hooks = self.hooks();
+        let non_stream = self.responses.get(&(client, upstream)).and_then(|r| r.non_stream);
+        let mut body: Vec<u8> = match &hooks {
+            Some(h) => h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, false),
             None => raw.to_vec(),
         };
-        if param.tool_input_error.is_some() { None } else { Some(out) }
+        let mut nil_result = false;
+        if let Some(f) = non_stream {
+            match f(ctx, model, original, translated, &body, param) {
+                Some(out) => body = out,
+                None => nil_result = true,
+            }
+        } else if let Some(h) = &hooks
+            && let Some(t) = h.translate_response(ctx, upstream, client, model, original, translated, &body, false)
+        {
+            body = t;
+        }
+        if param.tool_input_error.is_some() || nil_result {
+            return None;
+        }
+        if let Some(h) = &hooks {
+            body = h.normalize_response_after(ctx, upstream, client, model, original, translated, &body, false);
+        }
+        Some(body)
     }
 
     pub fn translate_token_count(&self, ctx: &Ctx, upstream: Format, client: Format, count: i64, raw: &[u8]) -> Vec<u8> {
@@ -219,6 +337,36 @@ static GLOBAL: LazyLock<Registry> = LazyLock::new(|| {
 /// The process-wide registry with every built-in translator.
 pub fn global() -> &'static Registry {
     &GLOBAL
+}
+
+/// Installs (or clears) the plugin hooks of the global registry (Go: `SetPluginHooks`).
+pub fn set_plugin_hooks(hooks: Option<Arc<dyn PluginHooks>>) {
+    global().set_plugin_hooks(hooks);
+}
+
+pub fn has_plugin_hooks() -> bool {
+    global().has_plugin_hooks()
+}
+
+pub fn has_request_transformer(client: Format, upstream: Format) -> bool {
+    global().has_request_transformer(client, upstream)
+}
+
+pub fn has_response_transformer(client: Format, upstream: Format) -> bool {
+    global().has_response_transformer(client, upstream)
+}
+
+pub fn has_stream_response_transformer(client: Format, upstream: Format) -> bool {
+    global().has_stream_response_transformer(client, upstream)
+}
+
+pub fn has_non_stream_response_transformer(client: Format, upstream: Format) -> bool {
+    global().has_non_stream_response_transformer(client, upstream)
+}
+
+/// Plugin request normalizers only (Go: package-level `NormalizeRequest`).
+pub fn normalize_request(ctx: &Ctx, from: Format, to: Format, model: &str, body: Vec<u8>, stream: bool) -> Vec<u8> {
+    global().normalize_request(ctx, from, to, model, body, stream)
 }
 
 pub fn translate_request(client: Format, upstream: Format, model: &str, body: &[u8], stream: bool) -> Vec<u8> {

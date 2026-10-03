@@ -26,6 +26,7 @@ use cpa_core::registry::{
 use cpa_core::thinking::parse_suffix;
 use cpa_core::util::openai_compatible_provider_key;
 
+use super::plugins::{ServicePlugins, append_plugin_models};
 use super::synth::{ATTRIBUTE_CONFIG_INDEX, oauth_model_aliases_from_attributes};
 
 /// What an auth contributes to the model registry.
@@ -39,6 +40,15 @@ pub enum ModelRegistration {
 /// Computes the registry entry for `auth` under `cfg` (Go: `registerModelsForAuthWithCache`
 /// without the manager-state checks and the registry write).
 pub fn resolve_models_for_auth(cfg: &Config, auth: &Auth) -> ModelRegistration {
+    resolve_models_for_auth_with(cfg, auth, None)
+}
+
+/// [`resolve_models_for_auth`] with the plugin model providers (Go: `appendPluginModels` calls).
+pub(super) fn resolve_models_for_auth_with(
+    cfg: &Config,
+    auth: &Auth,
+    plugins: Option<&dyn ServicePlugins>,
+) -> ModelRegistration {
     if auth.disabled || auth.id.is_empty() {
         return ModelRegistration::Unregister;
     }
@@ -142,7 +152,7 @@ pub fn resolve_models_for_auth(cfg: &Config, auth: &Auth) -> ModelRegistration {
             apply_excluded_models(models, &excluded)
         }
         _ => {
-            if let Some(reg) = resolve_compat_models(cfg, auth, &provider, compat) {
+            if let Some(reg) = resolve_compat_models(cfg, auth, &provider, compat, plugins) {
                 return reg;
             }
             Vec::new()
@@ -151,6 +161,7 @@ pub fn resolve_models_for_auth(cfg: &Config, auth: &Auth) -> ModelRegistration {
 
     let models = apply_oauth_model_alias_for_auth(cfg, &provider, auth_kind, &auth.attributes, models);
     let key = if provider.is_empty() { auth.provider.trim().to_lowercase() } else { provider };
+    let models = append_plugin_models(plugins, &key, models);
     if models.is_empty() {
         return ModelRegistration::Unregister;
     }
@@ -181,6 +192,10 @@ fn finalize(provider: &str, models: Vec<ModelInfo>) -> ModelRegistration {
     } else {
         ModelRegistration::Register { provider, models }
     }
+}
+
+pub(super) fn finalize_registration(provider: &str, models: Vec<ModelInfo>) -> ModelRegistration {
+    finalize(provider, models)
 }
 
 /// Writes `reg` for `client_id` into the registry.
@@ -224,6 +239,7 @@ fn resolve_compat_models(
     auth: &Auth,
     provider: &str,
     compat: Option<(String, String)>,
+    plugins: Option<&dyn ServicePlugins>,
 ) -> Option<ModelRegistration> {
     let mut provider_key = provider.to_string();
     let mut compat_name = auth.provider.trim().to_string();
@@ -265,10 +281,8 @@ fn resolve_compat_models(
 
     let register = |entry: &OpenAiCompatibility, provider_key: &str| {
         let provider_key = if provider_key.is_empty() { "openai-compatibility" } else { provider_key };
-        finalize(
-            provider_key,
-            apply_model_prefixes(build_openai_compat_config_models(entry), &auth.prefix, cfg.force_model_prefix),
-        )
+        let models = append_plugin_models(plugins, provider_key, build_openai_compat_config_models(entry));
+        finalize(provider_key, apply_model_prefixes(models, &auth.prefix, cfg.force_model_prefix))
     };
     if let Some(entry) = config_entry_for_auth_index(auth, &cfg.openai_compatibility).filter(|e| !e.disabled) {
         return Some(register(entry, &provider_key));
@@ -280,8 +294,13 @@ fn resolve_compat_models(
     {
         return Some(register(entry, &provider_key));
     }
-    // A compat auth whose entry is gone (or disabled) drops its registration.
-    is_compat.then_some(ModelRegistration::Unregister)
+    // A compat auth whose entry is gone (or disabled) keeps only plugin models, if any.
+    if is_compat {
+        let key = if provider_key.is_empty() { "openai-compatibility" } else { provider_key.as_str() };
+        let models = append_plugin_models(plugins, key, Vec::new());
+        return Some(finalize(key, apply_model_prefixes(models, &auth.prefix, cfg.force_model_prefix)));
+    }
+    None
 }
 
 // ---- Config entry resolution ----
@@ -400,7 +419,7 @@ fn resolve_codex_style_key<'a>(
 // ---- Exclusions, aliases, settings, prefixes ----
 
 /// Go `oauthExcludedModels`: the global per-provider exclusion list; never applies to API keys.
-fn oauth_excluded_models(cfg: &Config, provider: &str, auth_kind: &str) -> Vec<String> {
+pub(super) fn oauth_excluded_models(cfg: &Config, provider: &str, auth_kind: &str) -> Vec<String> {
     if auth_kind.trim().eq_ignore_ascii_case("apikey") {
         return Vec::new();
     }

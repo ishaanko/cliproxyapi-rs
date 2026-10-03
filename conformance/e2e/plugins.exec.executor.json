@@ -1,0 +1,164 @@
+{
+  "id": "plugins.exec.executor",
+  "desc": "a plugin executor serves its own model (plain and streaming)",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "plugin-example-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "auth_not_found: no auth available (providers=plugin-example, model=plugin-example-model)",
+              "type": "server_error",
+              "code": "internal_server_error"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "plugin-example-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "auth_not_found: no auth available (providers=plugin-example, model=plugin-example-model)",
+              "type": "server_error",
+              "code": "internal_server_error"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "plugin-example/plugin-example-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "unknown provider for model plugin-example/plugin-example-model",
+              "type": "invalid_request_error",
+              "code": "model_not_found",
+              "param": "model"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "no-such-plugin-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "unknown provider for model no-such-plugin-model",
+              "type": "invalid_request_error",
+              "code": "model_not_found",
+              "param": "model"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

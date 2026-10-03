@@ -31,6 +31,13 @@ impl Scenario {
         self.profile = profile;
         self
     }
+
+    /// Plugin libraries this scenario loads that have not been built.
+    pub fn missing_plugins(&self, mock_port: u16) -> Vec<&'static str> {
+        let mut spec = ConfigSpec::baseline(mock_port);
+        (self.profile)(&mut spec);
+        crate::server::missing_plugins(&spec)
+    }
 }
 
 /// What the client sent and received for one step.

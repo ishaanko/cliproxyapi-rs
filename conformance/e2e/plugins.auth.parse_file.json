@@ -1,0 +1,354 @@
+{
+  "id": "plugins.auth.parse_file",
+  "desc": "a credential file owned by a plugin auth provider is parsed by the plugin",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/credentials",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "files": [
+              {
+                "account_type": "oauth",
+                "auth_index": "<file-auth-index>",
+                "cooldowns": [],
+                "created_at": "<now>",
+                "disabled": false,
+                "failed": 0,
+                "id": "example-auth-go",
+                "label": "Auth Example",
+                "modtime": "<now>",
+                "name": "example-auth-go.json",
+                "path": "<work>/plugins.auth.parse_file/auth/example-auth.json",
+                "provider": "example-auth-go",
+                "quota": {
+                  "signals": {}
+                },
+                "recent_requests": [
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  }
+                ],
+                "runtime_only": false,
+                "size": 66,
+                "source": "file",
+                "status": "active",
+                "status_message": "",
+                "success": 0,
+                "type": "example-auth-go",
+                "unavailable": false,
+                "updated_at": "<now>"
+              }
+            ],
+            "observed_at": "<now>"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/auth-files",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "files": [
+              {
+                "account_type": "oauth",
+                "auth_index": "<file-auth-index>",
+                "cooldowns": [],
+                "created_at": "<now>",
+                "disabled": false,
+                "failed": 0,
+                "id": "example-auth-go",
+                "label": "Auth Example",
+                "modtime": "<now>",
+                "name": "example-auth-go.json",
+                "path": "<work>/plugins.auth.parse_file/auth/example-auth.json",
+                "provider": "example-auth-go",
+                "quota": {
+                  "signals": {}
+                },
+                "recent_requests": [
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  },
+                  {
+                    "time": "<time-bucket>",
+                    "success": 0,
+                    "failed": 0
+                  }
+                ],
+                "runtime_only": false,
+                "size": 66,
+                "source": "file",
+                "status": "active",
+                "status_message": "",
+                "success": 0,
+                "type": "example-auth-go",
+                "unavailable": false,
+                "updated_at": "<now>"
+              }
+            ],
+            "observed_at": "<now>"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/credentials/download?name=example-auth-go.json",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "file not found"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

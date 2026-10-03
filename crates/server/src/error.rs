@@ -90,6 +90,16 @@ pub struct ErrorMessage {
     pub retry_after: Option<Duration>,
     /// Upstream error headers, forwarded only with `passthrough-headers`.
     pub addon: HeaderMap,
+    /// A trusted in-process component (a plugin) supplied the whole downstream response
+    /// (Go: `DirectResponse` with `Body` and `Headers`).
+    pub direct: Option<std::sync::Arc<DirectResponse>>,
+}
+
+/// Preformatted downstream response carried by an [`ErrorMessage`].
+#[derive(Debug, Clone, Default)]
+pub struct DirectResponse {
+    pub body: bytes::Bytes,
+    pub headers: HeaderMap,
 }
 
 impl ErrorMessage {
@@ -165,6 +175,14 @@ pub fn is_selection_error(err: &ExecError) -> bool {
 
 /// `executionErrorMessage`: converts an executor failure to a handler error.
 pub fn exec_error_message(err: &ExecError) -> ErrorMessage {
+    if let Some(t) = &err.terminated {
+        return ErrorMessage {
+            status: normalized_termination_status(i64::from(t.status)),
+            text: err.message.clone(),
+            direct: Some(std::sync::Arc::new(DirectResponse { body: t.body.clone(), headers: t.headers.clone() })),
+            ..Default::default()
+        };
+    }
     // `coreauth.SafeResponseHeaders`: only conductor cooldown / unavailable failures expose
     // Retry-After, read from the headers the conductor attached (never upstream's own).
     let retry_after = cpa_runtime::conductor::errors::safe_response_headers(err)
@@ -178,7 +196,13 @@ pub fn exec_error_message(err: &ExecError) -> ErrorMessage {
         terminal_auth: err.terminal_auth,
         retry_after,
         addon: err.headers.clone(),
+        direct: None,
     }
+}
+
+/// `normalizedTerminationStatus`: plugin-chosen statuses outside 200..=599 become 403.
+pub fn normalized_termination_status(status: i64) -> u16 {
+    if (200..=599).contains(&status) { status as u16 } else { 403 }
 }
 
 /// `enrichAuthSelectionError`: adds providers/model (and a Claude hint) to credential selection
