@@ -1414,6 +1414,7 @@ dependencies = [
  "http",
  "http-body",
  "http-body-util",
+ "libc",
  "memchr",
  "mimalloc",
  "mime_guess",

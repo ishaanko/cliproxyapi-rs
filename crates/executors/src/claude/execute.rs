@@ -73,8 +73,8 @@ use crate::helps::usage::{Detail, StreamUsageBuffer, UsageReporter, parse_claude
 pub(super) struct Prepared {
     pub url: String,
     pub upstream_stream: bool,
-    pub body_for_translation: Vec<u8>,
-    pub body_for_upstream: Vec<u8>,
+    pub body_for_translation: Bytes,
+    pub body_for_upstream: Bytes,
     pub headers: HeaderMap,
     /// Forward tool-name alias map inverted for the response (alias to original).
     pub tool_reverse_map: HashMap<String, String>,
@@ -107,10 +107,10 @@ pub fn sanitize_claude_messages_for_claude_upstream_with_debug(
     preserve_empty_thinking_blocks: bool,
 ) -> Vec<u8> {
     use cpa_core::signature::{SignatureProvider, sanitize_claude_messages_for_claude_upstream, signature_provider_from_model_name};
-    let mut sanitized = body.to_vec();
+    let mut sanitized = std::borrow::Cow::Borrowed(body);
     if signature_provider_from_model_name(base_model) == SignatureProvider::Claude || preserve_empty_thinking_blocks {
         let (out, report) = sanitize_claude_messages_for_claude_upstream(body, base_model, preserve_empty_thinking_blocks);
-        sanitized = out;
+        sanitized = std::borrow::Cow::Owned(out);
         if report.dropped_blocks != 0 || report.dropped_signatures != 0 || report.replaced_signatures != 0 {
             tracing::debug!(
                 component = "signature_sanitizer",
@@ -237,6 +237,8 @@ impl ClaudeExecutor {
         body = cloaked_body;
         let system_placement_state = capture_claude_code_system_placement(&body_before_cloaking, &body, cloaked);
         let fable_state = capture_claude_code_fable_state(&body_before_cloaking, &body, cloaked);
+        // Last use; the copy would otherwise stay resident through every later stage.
+        drop(body_before_cloaking);
         // Only the Messages endpoint on Anthropic itself was captured.
         let mut diagnostics_state = ClaudeDiagnosticsRequestState::default();
         if !is_probe_or_helper {
@@ -302,6 +304,7 @@ impl ClaudeExecutor {
             &["context_management", "fallbacks", "thinking.display", "diagnostics"],
         );
         body = payload_body;
+        drop(original_translated);
         context_management_state.payload_rule_touched = touched_payload_paths.contains("context_management");
         body = reconcile_claude_code_system_placement_after_payload(&body, &system_placement_state);
         let was_probe_or_helper = is_probe_or_helper;
@@ -456,11 +459,17 @@ impl ClaudeExecutor {
         )?;
         let fast_request = is_anthropic_upstream_base(&base_url) && claude_request_is_fast(&headers, &body_for_upstream);
 
+        // Without aliasing, identity or signing edits the two bodies are identical: hold one copy
+        // for the whole upstream round trip instead of two.
+        let body_for_translation = Bytes::from(body_for_translation);
+        let body_for_upstream =
+            if body_for_upstream == body_for_translation[..] { body_for_translation.clone() } else { Bytes::from(body_for_upstream) };
+
         Ok(Prepared {
             url,
             upstream_stream,
-            body_for_translation,
             body_for_upstream,
+            body_for_translation,
             headers,
             tool_reverse_map,
             diagnostics_state,
@@ -512,7 +521,7 @@ impl ClaudeExecutor {
         self.record_upstream_request(cfg, auth, opts, &p.url, &p.headers, &p.body_for_upstream);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
         let model_level_cooling = cfg.claude.model_level_cooling;
-        let resp = match super::http::send_messages(&client, &p.url, &p.headers, &p.body_for_upstream).await {
+        let resp = match super::http::send_messages_shared(&client, &p.url, &p.headers, p.body_for_upstream.clone()).await {
             Ok(r) => r,
             Err(err) => {
                 tracing::debug!("claude upstream request failed: {}", err.message);

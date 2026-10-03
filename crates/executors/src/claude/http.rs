@@ -78,11 +78,16 @@ pub async fn send_messages(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<reqwest::Response, ExecError> {
-    client
-        .post(url)
-        .headers(headers.clone())
-        .body(body.to_vec())
-        .send()
-        .await
-        .map_err(|e| e.exec_error())
+    send_messages_shared(client, url, headers, bytes::Bytes::copy_from_slice(body)).await
+}
+
+/// [`send_messages`] for a body the caller already holds as `Bytes`: no copy of a multi-megabyte
+/// request while it is in flight.
+pub async fn send_messages_shared(
+    client: &UtlsClient,
+    url: &str,
+    headers: &HeaderMap,
+    body: bytes::Bytes,
+) -> Result<reqwest::Response, ExecError> {
+    client.post(url).headers(headers.clone()).body(body).send().await.map_err(|e| e.exec_error())
 }
