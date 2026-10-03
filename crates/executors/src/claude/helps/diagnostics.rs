@@ -13,7 +13,7 @@ use regex::Regex;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::code_session::{header_value_case_insensitive, header_values_case_insensitive};
+use crate::helps::session::{header_value_case_insensitive, header_values_case_insensitive};
 use super::credential_identity::sjson_string;
 
 const CLAUDE_DIAGNOSTICS_TTL: Duration = Duration::from_secs(3600);

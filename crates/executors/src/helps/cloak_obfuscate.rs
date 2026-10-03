@@ -18,6 +18,13 @@ pub struct SensitiveWordMatcher {
     regex: Regex,
 }
 
+impl SensitiveWordMatcher {
+    /// [`build_sensitive_word_matcher`] for a word list.
+    pub fn new<S: AsRef<str>>(words: &[S]) -> Option<Self> {
+        build_sensitive_word_matcher(words)
+    }
+}
+
 /// Compiles the word list (Go: `BuildSensitiveWordMatcher`). Words are trimmed; words shorter than
 /// two characters or already containing a zero-width space are dropped; longest first so the
 /// longest word wins at a position. `None` when nothing usable remains.

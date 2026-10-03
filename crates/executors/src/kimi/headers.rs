@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 
 use cpa_auth::Auth;
 use cpa_core::util::apply_custom_headers_from_attrs;
@@ -17,8 +18,13 @@ fn set(headers: &mut HeaderMap, name: HeaderName, value: &str) {
     }
 }
 
-/// Machine hostname (Go: os.Hostname), `unknown` when unreadable.
-fn hostname() -> String {
+/// Machine hostname (Go: os.Hostname), `unknown` when unreadable; read once per process.
+fn hostname() -> &'static str {
+    static HOSTNAME: LazyLock<String> = LazyLock::new(read_hostname);
+    &HOSTNAME
+}
+
+fn read_hostname() -> String {
     for path in ["/proc/sys/kernel/hostname", "/etc/hostname"] {
         if let Ok(v) = std::fs::read_to_string(path) {
             let v = v.trim();
@@ -85,7 +91,7 @@ pub(super) fn kimi_headers(token: &str, stream: bool, auth: &Auth, client_header
     set(&mut h, USER_AGENT, &format!("CLIProxyAPI/{version}"));
     set(&mut h, HeaderName::from_static("x-msh-platform"), "CLIProxyAPI");
     set(&mut h, HeaderName::from_static("x-msh-version"), &version);
-    set(&mut h, HeaderName::from_static("x-msh-device-name"), &hostname());
+    set(&mut h, HeaderName::from_static("x-msh-device-name"), hostname());
     set(&mut h, HeaderName::from_static("x-msh-device-model"), &device_model());
     let device_id = resolve_device_id(auth);
     let device_id = if device_id.is_empty() { default_device_id() } else { device_id };

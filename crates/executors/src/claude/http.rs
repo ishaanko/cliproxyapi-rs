@@ -75,44 +75,5 @@ pub async fn send_messages(
         .body(body.to_vec())
         .send()
         .await
-        .map_err(|e| ExecError::new(0, describe_send_error(&e)))
-}
-
-/// Full cause chain of a failed send (`error sending request: client error (Connect): tcp connect
-/// error: Connection refused (os error 111)`), so the conductor can recognize transient dial and
-/// reset failures by text. The URL is dropped to keep it out of client-visible errors.
-fn describe_send_error(err: &reqwest::Error) -> String {
-    let mut parts = vec![err.to_string()];
-    let mut source = std::error::Error::source(err);
-    while let Some(cause) = source {
-        parts.push(cause.to_string());
-        source = cause.source();
-    }
-    let top = parts.remove(0);
-    let top = top.split(" for url").next().unwrap_or(&top).to_string();
-    std::iter::once(top).chain(parts).collect::<Vec<_>>().join(": ")
-}
-
-/// Message for a response-body read failure. Go surfaces a body cut short as `unexpected EOF`
-/// and the conductor retries on that text, so the incomplete-message errors of hyper map to it;
-/// anything else keeps the innermost cause (for example `connection reset by peer`).
-pub fn describe_body_error(err: &reqwest::Error) -> String {
-    let mut chain = vec![err.to_string()];
-    let mut source = std::error::Error::source(err);
-    while let Some(cause) = source {
-        chain.push(cause.to_string());
-        source = cause.source();
-    }
-    let lower = chain.join(": ").to_lowercase();
-    const INCOMPLETE: [&str; 5] = [
-        "unexpected eof",
-        "unexpected end of file",
-        "connection closed before message completed",
-        "end of file before message length reached",
-        "incomplete message",
-    ];
-    if INCOMPLETE.iter().any(|needle| lower.contains(needle)) {
-        return "unexpected EOF".to_string();
-    }
-    chain.pop().unwrap_or_default()
+        .map_err(|e| crate::helps::status::transport_error(&e))
 }

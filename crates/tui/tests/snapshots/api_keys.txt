@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+🔐 API Keys
+
+ [↑↓/jk] Navigate • [a] Add • [e] Edit • [d] Delete • [c] Copy • [r] Refresh
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  Access API Keys (2)
+─────────────────────
+▸ 1. sk-t*******************ghij
+  2. *****
+
+  Claude API Keys (1)
+─────────────────────
+  1. sk-a***************mnop (prefix: team) → https://api.anthropic.com
+
+  OpenAI Compatibility (1)
+──────────────────────────
+  1. openrouter → https://openrouter.ai/api/v1
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit
