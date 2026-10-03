@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Builds the Go reference as a release binary (-trimpath -ldflags "-s -w") into target/bench-bin/.
-# Env: GO_SRC (CLIProxyAPI checkout), GO_TOOLCHAIN (go install dir), GOPATH, CPA_TMP.
+# Env: OUT (output dir), GO_SRC (CLIProxyAPI checkout), GO_TOOLCHAIN (go install dir), GOPATH, CPA_TMP.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP="${CPA_TMP:-/home/ishaan/box/cliproxyapirust/tmp}"
 GO_SRC="${GO_SRC:-$TMP/CLIProxyAPI}"
 GO_TOOLCHAIN="${GO_TOOLCHAIN:-$TMP/go-toolchain}"
-OUT="$ROOT/target/bench-bin"
+OUT="${OUT:-$ROOT/target/bench-bin}"
 mkdir -p "$OUT"
 
 export PATH="$GO_TOOLCHAIN/bin:$PATH"
