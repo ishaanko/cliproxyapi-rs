@@ -262,14 +262,14 @@ pub fn auth_id_for_path(path: &str, auth_dir: &str) -> String {
     {
         id = rel;
     }
-    let cleaned = cpa_config::clean_path(Path::new(&id));
+    let cleaned = crate::platform::clean_path(Path::new(&id));
     cleaned.to_string_lossy().replace('\\', "/")
 }
 
 /// `filepath.Rel` for the common case of `path` below `base`; `None` otherwise.
 pub fn relative_path(base: &str, path: &str) -> Option<String> {
-    let base = cpa_config::clean_path(Path::new(base));
-    let path = cpa_config::clean_path(Path::new(path));
+    let base = crate::platform::clean_path(Path::new(base));
+    let path = crate::platform::clean_path(Path::new(path));
     path.strip_prefix(&base).ok().map(|p| p.to_string_lossy().into_owned())
 }
 
@@ -302,23 +302,22 @@ pub fn plugin_auth_data_to_core_auth(data: &AuthData, path: &str, file_name: &st
     let status = if data.disabled { Status::Disabled } else { Status::Active };
     let now = Utc::now();
     let storage = PluginTokenStorage { provider: provider.clone(), raw_json: data.storage_json.clone(), meta: metadata.clone() };
-    Some(Auth {
-        provider,
-        id,
-        file_name,
-        label: data.label.trim().to_string(),
-        prefix: data.prefix.trim().to_string(),
-        proxy_url: data.proxy_url.trim().to_string(),
-        disabled: data.disabled,
-        status,
-        storage: Some(cpa_auth::TokenStorage::Plugin(storage)),
-        metadata,
-        attributes,
-        created_at: Some(now),
-        updated_at: Some(now),
-        next_refresh_after: data.next_refresh_after,
-        ..Default::default()
-    })
+    let mut auth = Auth::default();
+    auth.provider = provider;
+    auth.id = id;
+    auth.file_name = file_name;
+    auth.label = data.label.trim().to_string();
+    auth.prefix = data.prefix.trim().to_string();
+    auth.proxy_url = data.proxy_url.trim().to_string();
+    auth.disabled = data.disabled;
+    auth.status = status;
+    auth.storage = Some(cpa_auth::TokenStorage::Plugin(storage));
+    auth.metadata = metadata;
+    auth.attributes = attributes;
+    auth.created_at = Some(now);
+    auth.updated_at = Some(now);
+    auth.next_refresh_after = data.next_refresh_after;
+    Some(auth)
 }
 
 fn fill_if_empty(slot: &mut String, value: &str) {

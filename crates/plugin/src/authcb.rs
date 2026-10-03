@@ -245,18 +245,16 @@ impl Host {
         let status = if disabled { Status::Disabled } else { Status::Active };
         let now = Utc::now();
         let path_str = path.to_string_lossy().into_owned();
-        let mut auth = Auth {
-            id: auth_id.clone(),
-            provider,
-            file_name: path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
-            label,
-            status,
-            disabled,
-            metadata,
-            created_at: Some(now),
-            updated_at: Some(now),
-            ..Default::default()
-        };
+        let mut auth = Auth::default();
+        auth.id = auth_id.clone();
+        auth.provider = provider;
+        auth.file_name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        auth.label = label;
+        auth.status = status;
+        auth.disabled = disabled;
+        auth.metadata = metadata;
+        auth.created_at = Some(now);
+        auth.updated_at = Some(now);
         auth.attributes.insert("path".into(), path_str.clone());
         auth.attributes.insert("source".into(), path_str);
         if let Some(manager) = self.auth_manager()
@@ -392,7 +390,7 @@ impl Host {
         if dir.is_empty() {
             return PathBuf::new();
         }
-        let cleaned = cpa_config::clean_path(Path::new(dir));
+        let cleaned = crate::platform::clean_path(Path::new(dir));
         if cleaned.is_absolute() {
             cleaned
         } else {
@@ -405,7 +403,7 @@ impl Host {
         if path.as_os_str().is_empty() {
             return String::new();
         }
-        let mut path = cpa_config::clean_path(path);
+        let mut path = crate::platform::clean_path(path);
         if !path.is_absolute()
             && let Ok(cwd) = std::env::current_dir()
         {

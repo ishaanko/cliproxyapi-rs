@@ -11,12 +11,12 @@ use cpa_runtime::conductor::SharedManager;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 
-use crate::abi;
-use crate::api::PluginMetadata;
+use cpa_pluginapi::abi;
+use cpa_pluginapi::api::PluginMetadata;
 use crate::bridge::Bridges;
 use crate::callbacks::ModelExecutor;
-use crate::caps::{PluginInfo, Record, Registration};
-use crate::client::{CallbackInstance, Empty, GuardedClient, PluginError, RawClient, call_plugin, empty_request, PluginIdentifier};
+use crate::caps::{PluginIdentifier, PluginInfo, Record, Registration};
+use crate::client::{CallbackInstance, Empty, GuardedClient, PluginError, RawClient, call_plugin, empty_request};
 use crate::config::{RuntimeConfig, RuntimeItem, default_runtime_item, desired_versions, runtime_config_from_config};
 use crate::ctx::CallCtx;
 use crate::loader::{DynClient, HostCallbacks};
@@ -134,6 +134,7 @@ pub(crate) struct State {
     pub provider_models: HashMap<String, Vec<cpa_core::registry::ModelInfo>>,
     pub executor_providers: HashSet<String>,
     pub access_provider_keys: HashSet<String>,
+    pub executor_adapters: HashMap<String, Arc<crate::adapters::executors::ExecutorAdapter>>,
     pub command_line_flags: HashMap<String, crate::cli::FlagRecord>,
     pub command_line_hits: HashSet<String>,
     pub management_routes: HashMap<String, crate::management::ManagementRouteRecord>,
@@ -147,12 +148,13 @@ pub struct Host {
     apply: tokio::sync::Mutex<()>,
     snapshot: RwLock<Arc<Snapshot>>,
     pub(crate) bridges: Bridges,
+    pub(crate) access: Mutex<crate::adapters::access::AccessRegistry>,
     runtime: Mutex<Option<tokio::runtime::Handle>>,
 }
 
 #[derive(Serialize)]
 struct LifecycleRequest<'a> {
-    #[serde(with = "crate::wire::b64")]
+    #[serde(with = "cpa_pluginapi::wire::b64")]
     config_yaml: &'a [u8],
     schema_version: u32,
 }
@@ -170,6 +172,7 @@ impl Host {
             apply: tokio::sync::Mutex::new(()),
             snapshot: RwLock::new(Snapshot::empty()),
             bridges: Bridges::default(),
+            access: Mutex::new(Default::default()),
             runtime: Mutex::new(None),
         })
     }
@@ -357,7 +360,7 @@ impl Host {
 
         if !rc.enabled {
             self.clear_routes_and_maps();
-            self.refresh_thinking_providers(&[]);
+            self.arc().refresh_thinking_providers(&[]);
             return;
         }
         let desired = desired_versions(&rc.items);
@@ -366,7 +369,7 @@ impl Host {
             Err(e) => {
                 tracing::warn!("pluginhost: failed to select plugin files: {e}");
                 self.clear_routes_and_maps();
-                self.refresh_thinking_providers(&[]);
+                self.arc().refresh_thinking_providers(&[]);
                 return;
             }
         };
@@ -518,7 +521,7 @@ impl Host {
             pending
         };
         self.store_snapshot(Arc::new(Snapshot { enabled: true, records: records.clone(), quota_supported: Mutex::new(HashMap::new()) }));
-        self.refresh_thinking_providers(&records);
+        self.arc().refresh_thinking_providers(&records);
         for (id, av, ap, rv, rp) in hot_reload_logs {
             tracing::info!(plugin_id = %id, active_version = %av, active_path = %ap.display(), retired_version = %rv, retired_path = %rp.display(), "pluginhost: plugin hot reloaded");
         }
@@ -769,8 +772,8 @@ impl Host {
         for t in &targets {
             self.bridges.close_http_plugin_resources(&t.id, Some(&t.client.instance()));
         }
-        self.refresh_thinking_providers(&records);
-        self.register_frontend_auth_providers();
+        self.arc().refresh_thinking_providers(&records);
+        self.arc().register_frontend_auth_providers();
         for t in &targets {
             t.client.shutdown(Some(Duration::from_secs(5)));
             tracing::info!(plugin_id = %t.id, plugin_name = %t.name(), version = %t.version(), path = %t.path.display(), "pluginhost: plugin unloaded");
@@ -826,8 +829,8 @@ impl Host {
             self.bridges.close_http_plugin_resources(&t.id, Some(&t.client.instance()));
         }
         self.bridges.cancel_all_http();
-        self.refresh_thinking_providers(&[]);
-        self.register_frontend_auth_providers();
+        self.arc().refresh_thinking_providers(&[]);
+        self.arc().register_frontend_auth_providers();
         for t in &targets {
             t.client.shutdown(Some(Duration::from_secs(5)));
             tracing::info!(plugin_id = %t.id, plugin_name = %t.name(), version = %t.version(), path = %t.path.display(), "pluginhost: plugin unloaded");

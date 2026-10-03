@@ -14,7 +14,7 @@ use libloading::os::unix::{Library, RTLD_LOCAL, RTLD_NOW};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 
-use crate::abi::{self, ABI_VERSION};
+use cpa_pluginapi::abi::{self, ABI_VERSION};
 use crate::client::{CallbackInstance, PluginError, PluginResult, RawClient};
 
 unsafe extern "C" {

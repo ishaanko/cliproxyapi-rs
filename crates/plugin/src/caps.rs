@@ -8,8 +8,8 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
-use crate::abi;
-use crate::api::{PluginMetadata, Header};
+use cpa_pluginapi::abi;
+use cpa_pluginapi::api::{Header, PluginMetadata};
 use crate::client::{GuardedClient, call_plugin_blocking, empty_request};
 
 /// `capabilities` of the registration response (Go: `rpcCapabilities`).
@@ -22,7 +22,7 @@ pub struct Capabilities {
     pub frontend_auth_provider: bool,
     pub frontend_auth_provider_exclusive: bool,
     pub scheduler: bool,
-    #[serde(skip_serializing_if = "crate::wire::is_false")]
+    #[serde(skip_serializing_if = "cpa_pluginapi::wire::is_false")]
     pub scheduler_across_priorities: bool,
     pub model_router: bool,
     pub executor: bool,

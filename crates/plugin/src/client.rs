@@ -9,7 +9,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::abi::{self, Envelope};
+use cpa_pluginapi::abi::{self, Envelope};
 use crate::ctx::CallCtx;
 
 /// Failure of a plugin call. `code` is set for errors the plugin reported itself; `status` is the
@@ -19,14 +19,17 @@ pub struct PluginError {
     pub code: String,
     pub message: String,
     pub status: i32,
+    /// The call panicked inside the host (Go: a recovered panic, which fuses the plugin).
+    pub panicked: bool,
 }
 
 impl PluginError {
     pub fn msg(message: impl Into<String>) -> Self {
-        PluginError { code: String::new(), message: message.into(), status: 0 }
+        PluginError { code: String::new(), message: message.into(), status: 0, panicked: false }
     }
+    /// `context.Canceled`; Go maps it to 499.
     pub fn canceled() -> Self {
-        PluginError::msg("context canceled")
+        PluginError { code: String::new(), message: "context canceled".into(), status: 499, panicked: false }
     }
     pub fn is_canceled(&self) -> bool {
         self.message == "context canceled"
@@ -135,7 +138,7 @@ impl GuardedClient {
             inner.call(&method, &request)
         });
         tokio::select! {
-            joined = task => joined.map_err(|e| PluginError::msg(format!("plugin call panicked: {e}")))?,
+            joined = task => joined.map_err(|e| PluginError { panicked: true, ..PluginError::msg(format!("plugin call panicked: {e}")) })?,
             () = ctx.cancelled() => Err(PluginError::canceled()),
         }
     }
@@ -213,6 +216,7 @@ pub fn decode_envelope<T: DeserializeOwned + Default>(raw: &[u8], method: &str) 
                     code: err.code.trim().to_string(),
                     message: if message.is_empty() { "plugin call failed".into() } else { message },
                     status: err.http_status,
+                    panicked: false,
                 }
             }
             None => PluginError::msg("plugin call failed"),

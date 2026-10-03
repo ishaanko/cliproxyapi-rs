@@ -179,7 +179,7 @@ impl OperationHandle {
             return;
         }
         self.finished = true;
-        self.ops.finish(&self.plugin_id, &self.operation_id);
+        self.ops.finish_by_id(&self.plugin_id, &self.operation_id);
         self.ctx.cancel();
     }
 
@@ -281,7 +281,7 @@ impl HttpOperations {
         false
     }
 
-    fn finish(&self, plugin_id: &str, operation_id: &str) {
+    pub fn finish_by_id(&self, plugin_id: &str, operation_id: &str) {
         let removed = self.map.lock().remove(&(plugin_id.trim().to_string(), operation_id.trim().to_string()));
         if let Some(mut op) = removed
             && let Some(stop) = op.scope_cleanup.take()
