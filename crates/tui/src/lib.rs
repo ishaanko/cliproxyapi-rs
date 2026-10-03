@@ -44,7 +44,7 @@ pub use loghook::LogHook;
 pub use msg::Msg;
 
 /// `Run`: the TUI against the management API on localhost at `port`.
-pub async fn run(port: u16, secret_key: &str, hook: Option<LogHook>) -> io::Result<()> {
+pub async fn run(port: i64, secret_key: &str, hook: Option<LogHook>) -> io::Result<()> {
     run_with_base_url(&format!("http://127.0.0.1:{port}"), secret_key, hook).await
 }
 

@@ -65,7 +65,7 @@ fn is_loopback_url(base_url: &str) -> bool {
 
 impl Client {
     /// `NewClient`: management API on localhost at `port`.
-    pub fn new(port: u16, secret_key: &str) -> Self {
+    pub fn new(port: i64, secret_key: &str) -> Self {
         Self::with_base_url(&format!("http://127.0.0.1:{port}"), secret_key)
     }
 
@@ -282,9 +282,10 @@ impl Client {
         }
     }
 
-    /// `AddAPIKey`: `old=null, new=key` appends.
+    /// `AddAPIKey`. The Go client sends `old=null`, which the server rejects as "missing fields"
+    /// (it needs both `old` and `new`); with `old == new` the server appends an unknown key.
     pub async fn add_api_key(&self, key: &str) -> Result<()> {
-        let body = json!({"old": null, "new": key}).to_string();
+        let body = json!({"old": key, "new": key}).to_string();
         self.patch("/v0/management/api-keys", body).await.map(drop)
     }
 

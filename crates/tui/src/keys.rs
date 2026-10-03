@@ -46,6 +46,7 @@ impl Key {
                 }
             }
             KeyCode::Enter => ("enter".into(), None),
+            KeyCode::Tab if shift => ("shift+tab".into(), None),
             KeyCode::Tab => ("tab".into(), None),
             KeyCode::BackTab => ("shift+tab".into(), None),
             KeyCode::Esc => ("esc".into(), None),
