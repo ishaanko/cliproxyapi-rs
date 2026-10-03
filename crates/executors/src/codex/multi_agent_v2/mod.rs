@@ -108,6 +108,7 @@ fn multi_agent_v2_enabled(headers: &HeaderMap, cfg: Option<&Config>) -> bool {
 
 /// Optimizes an eligible spawn_agent request (see the module docs) and reports whether the
 /// collaboration namespace was renamed for upstream use. Ineligible requests come back untouched.
+#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn rewrite_spawn_agent_description(
     ctx: &RequestCtx,
     headers: &HeaderMap,
@@ -137,6 +138,7 @@ pub fn rewrite_input(
 
 /// Prepares collaboration tool definitions at the Responses API boundary without renaming the
 /// namespace. The bool is Go's `prepared` flag: true when the client is an enabled Codex client.
+#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn prepare_tools(
     ctx: &RequestCtx,
     headers: &HeaderMap,
@@ -154,6 +156,7 @@ pub fn prepare_tools(
 
 /// Rewrites an eligible spawn_agent request and reports whether the collaboration namespace was
 /// renamed for upstream use (the flag to hand to [`restore_response`]).
+#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn optimize_request(
     ctx: &RequestCtx,
     headers: &HeaderMap,
@@ -415,6 +418,7 @@ fn spawn_agent_models_and_markdown_for_request(
 /// Decodes the home control plane's models response (`{section: [{id|name, display_name}]}`)
 /// into id-sorted, de-duplicated entries. Anything else (for example an error envelope) yields
 /// an empty list. Sections are visited in key order so de-duplication is deterministic.
+#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn decode_home_available_models(raw: &[u8]) -> Vec<Map<String, Value>> {
     let Value::Object(sections) = cpa_json::parse(raw) else {
         return Vec::new();
