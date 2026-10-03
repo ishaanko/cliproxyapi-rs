@@ -102,7 +102,10 @@ pub fn is_responses_token_event(payload: &[u8]) -> bool {
             return false;
         }
     }
-    let v = Doc::new(payload);
+    is_responses_token_doc(&Doc::new(payload))
+}
+
+fn is_responses_token_doc(v: &Doc<'_>) -> bool {
     let has = |path: &str| !v.g(path).str().is_empty();
     match v.g("type").str().as_str() {
         "response.reasoning_summary_text.delta"
@@ -145,6 +148,19 @@ pub fn is_responses_token_event(payload: &[u8]) -> bool {
 
 /// Observes a Responses API frame: records the served model and TTFT like
 /// [`observe_chat_token_event`].
+pub fn observe_responses_token_event_doc(reporter: &UsageReporter, payload: &[u8], doc: &Doc<'_>) {
+    if payload.is_empty() {
+        return;
+    }
+    reporter.observe_response_model_doc(payload, doc);
+    if reporter.is_ttft_set() {
+        return;
+    }
+    // `payload` is the bare data payload here (no `data:` prefix), as `is_responses_token_event` reads it.
+    let token = !trim_space(payload).is_empty() && is_responses_token_doc(doc);
+    reporter.observe_token_event(token);
+}
+
 pub fn observe_responses_token_event(reporter: &UsageReporter, payload: &[u8]) {
     if payload.is_empty() {
         return;

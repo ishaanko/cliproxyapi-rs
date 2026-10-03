@@ -24,6 +24,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
 use cpa_core::thinking::extract_translated_reasoning_effort;
+use cpa_runtime::conductor::session::lazy::Doc;
 use cpa_runtime::executor::{ExecError, Options, meta};
 use futures_util::{Stream, StreamExt};
 use parking_lot::Mutex;
@@ -33,7 +34,7 @@ use sha2::{Digest, Sha256};
 use super::accounting::{Detail, ensure_token_breakdown_for_provider};
 use super::parse::StreamUsageBuffer;
 use crate::helps::response_model::{
-    MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event,
+    MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event, extract_response_model_event_doc,
     is_model_substituted, normalize_model_name,
 };
 
@@ -290,6 +291,20 @@ impl UsageReporter {
             return;
         }
         let (served, terminal) = extract_response_model_event(payload, &self.inner.provider);
+        self.apply_response_model(served, terminal);
+    }
+
+    /// [`Self::observe_response_model`] for a frame indexed by the caller (`payload` is the raw
+    /// frame, `doc` its JSON object), so other observers can share the scan.
+    pub fn observe_response_model_doc(&self, payload: &[u8], doc: &Doc<'_>) {
+        if self.is_response_model_final() || crate::helps::text::json_payload(payload).is_none() {
+            return;
+        }
+        let (served, terminal) = extract_response_model_event_doc(doc, &self.inner.provider);
+        self.apply_response_model(served, terminal);
+    }
+
+    fn apply_response_model(&self, served: String, terminal: bool) {
         if !served.is_empty() {
             self.inner.state.lock().response_model = served;
         }

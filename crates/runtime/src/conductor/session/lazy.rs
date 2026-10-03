@@ -175,6 +175,12 @@ impl<'a> Doc<'a> {
     }
 }
 
+impl J for Doc<'_> {
+    fn g(&self, path: &str) -> Res<'_> {
+        Doc::g(self, path)
+    }
+}
+
 impl<'a> Lazy<'a> {
     fn member(&self, key: &str) -> Option<&Member<'a>> {
         self.members.iter().find(|m| m.key == key)

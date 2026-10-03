@@ -210,7 +210,7 @@ pub fn parse_openai_stream_usage(line: &[u8]) -> Option<Detail> {
 /// Codex `response.completed` style event: `response.usage` and service tier.
 pub fn parse_codex_usage(data: &[u8]) -> Option<Detail> {
     let v = cpa_json::parse(data);
-    let tier = extract_response_service_tier(data);
+    let tier = if data.is_empty() || !cpa_json::valid(data) { String::new() } else { extract_response_service_tier_of(&v) };
     let node = v.g("response.usage").value();
     if !has_openai_style_usage_token_fields(&node) {
         return (!tier.is_empty()).then(|| Detail { response_service_tier: tier, ..Default::default() });
@@ -697,14 +697,16 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 /// One SSE chunk parsed once for the filter's several questions (the JSON text, whether it is
 /// valid JSON, and the value tree).
 struct Chunk {
-    value: Value,
+    value: std::sync::Arc<Value>,
     valid: bool,
 }
 
 impl Chunk {
+    /// Parses through the executor parse memo, so an observer that already read the same frame
+    /// (response model) and this filter share one parse and one validity scan.
     fn new(raw_json: &[u8]) -> Self {
         let json = trim_space(raw_json);
-        Chunk { valid: !json.is_empty() && cpa_json::valid(json), value: cpa_json::parse(raw_json) }
+        Chunk { valid: !json.is_empty() && crate::helps::parse_cache::valid(json), value: crate::helps::parse_cache::parse(raw_json) }
     }
 
     fn has_usage_metadata(&self) -> bool {
@@ -721,23 +723,27 @@ impl Chunk {
     }
 
     /// [`strip_usage_metadata_from_json`] on the already parsed chunk.
-    fn into_stripped(mut self, raw_json: &[u8]) -> (Vec<u8>, bool) {
+    fn into_stripped(self, raw_json: &[u8]) -> (Vec<u8>, bool) {
         if !self.valid || self.is_terminal() || !self.has_usage_metadata() {
             return (raw_json.to_vec(), false);
         }
-        let v = &mut self.value;
+        // Release our share first so the memo can hand its value over without a copy.
+        drop(self.value);
         let mut changed = false;
-        if let Some(usage) = v.g("usageMetadata").into_value() {
-            cpa_json::set(v, "cpaUsageMetadata", usage);
-            cpa_json::delete(v, "usageMetadata");
-            changed = true;
-        }
-        if let Some(usage) = v.g("response.usageMetadata").into_value() {
-            cpa_json::set(v, "response.cpaUsageMetadata", usage);
-            cpa_json::delete(v, "response.usageMetadata");
-            changed = true;
-        }
-        (cpa_json::to_vec(v), changed)
+        let out = crate::helps::parse_cache::edit(raw_json, |v| {
+            if let Some(usage) = v.g("usageMetadata").into_value() {
+                cpa_json::set(v, "cpaUsageMetadata", usage);
+                cpa_json::delete(v, "usageMetadata");
+                changed = true;
+            }
+            if let Some(usage) = v.g("response.usageMetadata").into_value() {
+                cpa_json::set(v, "response.cpaUsageMetadata", usage);
+                cpa_json::delete(v, "response.usageMetadata");
+                changed = true;
+            }
+            changed
+        });
+        (out, changed)
     }
 }
 

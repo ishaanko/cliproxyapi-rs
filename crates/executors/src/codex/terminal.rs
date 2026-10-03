@@ -69,7 +69,7 @@ impl OutputItems {
 
     /// Records the item of a `response.output_item.done` event (Go: collectCodexOutputItemDone).
     /// `raw` is the event as received so the item keeps its original bytes.
-    pub fn collect(&mut self, event: &Value, raw: &[u8]) {
+    pub fn collect(&mut self, event: &impl J, raw: &[u8]) {
         let item = event.g("item");
         if !matches!(item.v(), Some(Value::Object(_) | Value::Array(_))) {
             return;
@@ -130,7 +130,7 @@ fn hydrate_completed_output_item_ids(original: &[u8], ev: &mut Value, items: &Ou
 // ---------------------------------------------------------------- deltas and empty incomplete
 
 /// Whether an event carries non-blank generated content (Go: HasMeaningfulCodexOutputDelta).
-pub fn has_meaningful_output_delta(event: &Value) -> bool {
+pub fn has_meaningful_output_delta(event: &impl J) -> bool {
     match event.g("type").str().as_str() {
         "response.output_text.delta"
         | "response.reasoning_text.delta"
@@ -145,7 +145,7 @@ pub fn has_meaningful_output_delta(event: &Value) -> bool {
 
 /// Whether `response.incomplete` is a silent upstream abort: explicitly zero output tokens and no
 /// output content at all (Go: IsCodexTerminalEmptyIncomplete).
-pub fn is_terminal_empty_incomplete(event: &Value, output_items: usize, saw_output_delta: bool) -> bool {
+pub fn is_terminal_empty_incomplete(event: &impl J, output_items: usize, saw_output_delta: bool) -> bool {
     if event.g("type").str() != "response.incomplete" {
         return false;
     }
@@ -165,7 +165,7 @@ pub fn is_terminal_empty_incomplete(event: &Value, output_items: usize, saw_outp
 
 /// `{"error":{...}}` body of a terminal `error` / `response.failed` event, `None` for other
 /// events (Go: codexTerminalFailureBody).
-pub fn terminal_failure_body(event: &Value) -> Option<Vec<u8>> {
+pub fn terminal_failure_body(event: &impl J) -> Option<Vec<u8>> {
     let body = match event.g("type").str().as_str() {
         "error" => terminal_error_body(event, "error").or_else(|| terminal_top_level_error_body(event)),
         "response.failed" => terminal_error_body(event, "response.error").or_else(|| terminal_error_body(event, "error")),
@@ -182,7 +182,7 @@ pub fn terminal_failure_body(event: &Value) -> Option<Vec<u8>> {
     Some(cpa_json::to_vec(&body))
 }
 
-fn terminal_error_body(event: &Value, path: &str) -> Option<Value> {
+fn terminal_error_body(event: &impl J, path: &str) -> Option<Value> {
     let error = event.g(path);
     if !error.exists() {
         return None;
@@ -218,7 +218,7 @@ fn terminal_error_body(event: &Value, path: &str) -> Option<Value> {
     Some(body)
 }
 
-fn terminal_top_level_error_body(event: &Value) -> Option<Value> {
+fn terminal_top_level_error_body(event: &impl J) -> Option<Value> {
     let field = |name: &str| event.g(name).str().trim().to_string();
     let (message, code, error_type, param) = (field("message"), field("code"), field("error_type"), field("param"));
     if message.is_empty() && code.is_empty() && error_type.is_empty() && param.is_empty() {
@@ -250,7 +250,7 @@ fn terminal_top_level_error_body(event: &Value) -> Option<Value> {
 /// A terminal failure event as an error plus the failure body it was built from (Go:
 /// codexTerminalFailureErrWithCooling). Context-length, usage-limit, capacity and invalid-signature
 /// bodies are classified as 400 first (usage-limit and capacity then become 429).
-pub fn terminal_failure_err(event: &Value, model_level_cooling: bool) -> Option<(ExecError, Vec<u8>)> {
+pub fn terminal_failure_err(event: &impl J, model_level_cooling: bool) -> Option<(ExecError, Vec<u8>)> {
     let body = terminal_failure_body(event)?;
     if terminal_stream_err_should_handle(&body) {
         return Some((new_status_err_with_cooling(400, &body, model_level_cooling), body));
@@ -475,7 +475,7 @@ pub fn is_overload_bootstrap_failure(body: &[u8]) -> bool {
 
 /// Whether a frame may be held back before the downstream headers are committed: nothing
 /// observable has happened yet (Go: isCodexBootstrapBufferableEvent). The list is closed on purpose.
-pub fn is_bootstrap_bufferable_event(event_type: &str, payload: &[u8], event: &Value) -> bool {
+pub fn is_bootstrap_bufferable_event(event_type: &str, payload: &[u8], event: &impl J) -> bool {
     if payload.iter().all(u8::is_ascii_whitespace) {
         return true;
     }
@@ -487,7 +487,7 @@ pub fn is_bootstrap_bufferable_event(event_type: &str, payload: &[u8], event: &V
     }
 }
 
-fn is_bufferable_output_item(event: &Value) -> bool {
+fn is_bufferable_output_item(event: &impl J) -> bool {
     let item = event.g("item");
     match item.g("type").str().as_str() {
         "message" => is_empty_content_list(&item.g("content")),
@@ -510,7 +510,7 @@ fn is_empty_content_list(list: &cpa_json::Res<'_>) -> bool {
     })
 }
 
-fn is_empty_part(event: &Value) -> bool {
+fn is_empty_part(event: &impl J) -> bool {
     let part = event.g("part");
     match part.g("type").str().as_str() {
         "output_text" | "summary_text" | "text" | "reasoning_text" => part.g("text").str().is_empty(),
