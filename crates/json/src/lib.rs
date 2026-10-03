@@ -790,11 +790,13 @@ fn valid_uncached(bytes: &[u8]) -> bool {
 
 /// Compact serialization.
 pub fn to_vec(v: &Value) -> Vec<u8> {
-    fast::to_vec(v)
+    let out = fast::to_vec(v);
+    memo::note_serialized(&out);
+    out
 }
 
 pub fn to_string(v: &Value) -> String {
-    String::from_utf8(fast::to_vec(v)).unwrap_or_default()
+    String::from_utf8(to_vec(v)).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------- path parsing

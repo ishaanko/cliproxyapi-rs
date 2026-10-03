@@ -35,3 +35,22 @@ fn parse_valid_matches_valid_then_parse() {
     let deep = format!("{}1{}", "[".repeat(300), "]".repeat(300));
     assert!(parse_valid(deep.as_bytes()).is_some());
 }
+
+/// Serialized output is remembered as valid and parses back to the same value on every
+/// sighting, including after eviction by other large documents.
+#[test]
+fn memo_handles_serialized_output_and_eviction() {
+    scope_sync(|| {
+        let docs: Vec<String> = (0..6).map(|i| format!(r#"{{"id":{i},"pad":"{}"}}"#, "x\\t".repeat(15_000 + i))).collect();
+        let values: Vec<_> = docs.iter().map(|d| parse_uncached(d.as_bytes())).collect();
+        for round in 0..3 {
+            for (doc, value) in docs.iter().zip(&values) {
+                let out = crate::to_vec(value);
+                assert_eq!(out, doc.as_bytes(), "round {round}");
+                assert!(valid(&out));
+                assert_eq!(to_string(&parse(&out)), *doc);
+                assert_eq!(to_string(&parse(&out)), *doc);
+            }
+        }
+    });
+}

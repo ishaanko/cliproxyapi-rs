@@ -1,10 +1,12 @@
 //! Per-request memo of parses of large documents.
 //!
 //! Request handling parses the same multi-megabyte body many times (each helper reads a field or
-//! two through `parse(body).g(..)`). Inside a [`scope`] the second sighting of a large document
-//! stores its parsed tree, and every later `parse`/`valid` of identical bytes costs a hash of the
-//! input plus a deep clone instead of a full parse. Outside a scope nothing is cached, and the
-//! memo is dropped when the scope ends, so nothing is shared between requests.
+//! two through `parse(body).g(..)`), and each pipeline stage re-parses what the previous one
+//! serialized. Inside a [`scope`], a large document seen a second time keeps its parsed tree, so
+//! later `parse`/`valid` calls on identical bytes cost a hash of the input plus a deep clone
+//! instead of a full parse. Output of `to_vec` counts as already seen (and as valid), since the
+//! next stage nearly always parses it. Outside a scope nothing is cached, and the memo is dropped
+//! when the scope ends, so nothing is shared between requests.
 //!
 //! Identity is the length plus a 64-bit hash with a per-process random seed, so a body cannot be
 //! crafted to collide with another one.
@@ -16,12 +18,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde_json::Value;
 
-/// Documents shorter than this are parsed directly (a parse is cheaper than hashing + cloning).
+/// Documents shorter than this are handled directly (a parse is cheaper than hashing + cloning).
 pub(crate) const MIN_LEN: usize = 32 * 1024;
-/// Trees kept per scope, and the byte budget (source length) they may cover.
-const MAX_TREES: usize = 2;
+/// Trees kept per scope (least recently used goes first), and the source bytes they may cover.
+const MAX_TREES: usize = 3;
 const MAX_TREE_BYTES: usize = 16 * 1024 * 1024;
-/// Hashes remembered to detect a second sighting.
+/// Hashes remembered to detect a second sighting, and validity verdicts.
 const MAX_SEEN: usize = 16;
 /// Source bytes covered by stored trees across all live scopes; past it nothing new is stored,
 /// so many large requests in flight cannot multiply memory use.
@@ -31,8 +33,15 @@ static IN_USE: AtomicUsize = AtomicUsize::new(0);
 #[derive(Default)]
 pub(crate) struct Memo {
     seen: Vec<(u64, usize)>,
+    /// Most recently used last.
     trees: Vec<Tree>,
     valid: Vec<(u64, usize, bool)>,
+}
+
+struct Tree {
+    hash: u64,
+    len: usize,
+    value: Value,
 }
 
 impl Drop for Memo {
@@ -44,10 +53,46 @@ impl Drop for Memo {
     }
 }
 
-struct Tree {
-    hash: u64,
-    len: usize,
-    value: Value,
+impl Memo {
+    fn note_seen(&mut self, key: (u64, usize)) {
+        if !self.seen.contains(&key) {
+            if self.seen.len() == MAX_SEEN {
+                self.seen.remove(0);
+            }
+            self.seen.push(key);
+        }
+    }
+
+    fn note_valid(&mut self, hash: u64, len: usize, ok: bool) {
+        if !self.valid.iter().any(|(h, l, _)| *h == hash && *l == len) {
+            if self.valid.len() == MAX_SEEN {
+                self.valid.remove(0);
+            }
+            self.valid.push((hash, len, ok));
+        }
+    }
+
+    fn drop_tree(&mut self, at: usize) {
+        let t = self.trees.remove(at);
+        IN_USE.fetch_sub(t.len, Ordering::Relaxed);
+    }
+
+    /// Stores a tree, evicting the least recently used ones to stay within the budgets.
+    fn store_tree(&mut self, hash: u64, len: usize, value: Value) {
+        if len > MAX_TREE_BYTES {
+            return;
+        }
+        while !self.trees.is_empty()
+            && (self.trees.len() >= MAX_TREES || self.trees.iter().map(|t| t.len).sum::<usize>() + len > MAX_TREE_BYTES)
+        {
+            self.drop_tree(0);
+        }
+        if IN_USE.fetch_add(len, Ordering::Relaxed) + len > GLOBAL_BUDGET {
+            IN_USE.fetch_sub(len, Ordering::Relaxed);
+            return;
+        }
+        self.trees.push(Tree { hash, len, value });
+    }
 }
 
 tokio::task_local! {
@@ -74,15 +119,6 @@ fn digest(bytes: &[u8]) -> u64 {
     STATE.hash_one(bytes)
 }
 
-/// Claims `len` bytes of the global budget.
-fn reserve(len: usize) -> bool {
-    if IN_USE.fetch_add(len, Ordering::Relaxed) + len <= GLOBAL_BUDGET {
-        return true;
-    }
-    IN_USE.fetch_sub(len, Ordering::Relaxed);
-    false
-}
-
 /// `parse` through the memo; `miss` does the real parse.
 pub(crate) fn parse(bytes: &[u8], miss: impl FnOnce(&[u8]) -> Value) -> Value {
     if bytes.len() < MIN_LEN || !in_scope() {
@@ -90,7 +126,14 @@ pub(crate) fn parse(bytes: &[u8], miss: impl FnOnce(&[u8]) -> Value) -> Value {
     }
     let hash = digest(bytes);
     let len = bytes.len();
-    let hit = MEMO.try_with(|m| m.borrow().trees.iter().find(|t| t.hash == hash && t.len == len).map(|t| t.value.clone()));
+    let hit = MEMO.try_with(|m| {
+        let mut m = m.borrow_mut();
+        let at = m.trees.iter().position(|t| t.hash == hash && t.len == len)?;
+        let tree = m.trees.remove(at);
+        let value = tree.value.clone();
+        m.trees.push(tree);
+        Some(value)
+    });
     if let Ok(Some(v)) = hit {
         return v;
     }
@@ -98,15 +141,9 @@ pub(crate) fn parse(bytes: &[u8], miss: impl FnOnce(&[u8]) -> Value) -> Value {
     let _ = MEMO.try_with(|m| {
         let mut m = m.borrow_mut();
         if m.seen.contains(&(hash, len)) {
-            let budget_used: usize = m.trees.iter().map(|t| t.len).sum();
-            if m.trees.len() < MAX_TREES && budget_used + len <= MAX_TREE_BYTES && reserve(len) {
-                m.trees.push(Tree { hash, len, value: value.clone() });
-            }
+            m.store_tree(hash, len, value.clone());
         } else {
-            if m.seen.len() == MAX_SEEN {
-                m.seen.remove(0);
-            }
-            m.seen.push((hash, len));
+            m.note_seen((hash, len));
         }
     });
     value
@@ -126,10 +163,23 @@ pub(crate) fn valid(bytes: &[u8], miss: impl FnOnce(&[u8]) -> bool) -> bool {
     let ok = miss(bytes);
     let _ = MEMO.try_with(|m| {
         let mut m = m.borrow_mut();
-        if m.valid.len() == MAX_SEEN {
-            m.valid.remove(0);
-        }
-        m.valid.push((hash, len, ok));
+        m.note_valid(hash, len, ok);
+        // Validated documents are nearly always parsed next.
+        m.note_seen((hash, len));
     });
     ok
+}
+
+/// Records freshly serialized output: valid by construction, and likely parsed by the next stage.
+pub(crate) fn note_serialized(bytes: &[u8]) {
+    if bytes.len() < MIN_LEN || !in_scope() {
+        return;
+    }
+    let hash = digest(bytes);
+    let len = bytes.len();
+    let _ = MEMO.try_with(|m| {
+        let mut m = m.borrow_mut();
+        m.note_valid(hash, len, true);
+        m.note_seen((hash, len));
+    });
 }
