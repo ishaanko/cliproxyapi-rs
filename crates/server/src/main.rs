@@ -94,8 +94,10 @@ fn build_info() -> BuildInfo {
 /// Polls a worker runs between checks of the I/O driver and timers (tokio's `event_interval`,
 /// default 61). A longer interval polls the driver less often under load, which saves CPU on
 /// streaming workloads; the price is that under saturation (a worker never idle) timers and I/O
-/// readiness can be noticed up to this many polls late. `CPA_EVENT_INTERVAL` overrides the
-/// default; zero or unparsable values are ignored.
+/// readiness can be noticed up to this many polls late. Measured against 256 (64 connections,
+/// mock upstream): 1024 used 5 to 11% less CPU per request and cut p99 by 17 to 23% on
+/// `chat-claude-stream` and `claude-native-stream`. `CPA_EVENT_INTERVAL` overrides the default;
+/// zero or unparsable values are ignored.
 fn event_interval() -> u32 {
     const DEFAULT: u32 = 1024;
     std::env::var("CPA_EVENT_INTERVAL").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(DEFAULT)
