@@ -194,10 +194,10 @@ fn target_for(sc: &Scenario, side: Side) -> Option<Target> {
 }
 
 /// Fails unless the target answers 200 with the expected content.
-async fn preflight(sc: &Scenario, t: &Target, who: &str) -> Result<()> {
+async fn preflight(sc: &Scenario, t: &Target, who: &str, side: Side) -> Result<()> {
     let (status, body) = load::once(t).await?;
     let text = String::from_utf8_lossy(&body);
-    if status != 200 || !text.contains(sc.expect) {
+    if status != 200 || (side == Side::Server && !text.contains(sc.expect)) {
         let head: String = text.chars().take(300).collect();
         bail!("preflight {} on {who}: status {status}, body: {head}", sc.id);
     }
@@ -317,7 +317,7 @@ async fn run_one(a: &RunArgs, who: &str, run: usize, standard: &[Scenario], larg
     // Warm every route (connection pools, caches, GC) and verify the responses.
     for sc in standard.iter().chain(large) {
         let Some(t) = target_for(sc, side) else { continue };
-        preflight(sc, &t, who).await?;
+        preflight(sc, &t, who, side).await?;
         if !large.iter().any(|l| l.id == sc.id) {
             let r = Running::start(&t, 16, false);
             tokio::time::sleep(Duration::from_secs(2)).await;

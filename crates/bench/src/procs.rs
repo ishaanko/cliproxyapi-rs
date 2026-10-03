@@ -129,16 +129,15 @@ pub async fn start_server(bin: &Path, dir: &Path, cpus: Option<&str>) -> Result<
         path: "/v1/models".into(),
         body: Default::default(),
     };
-    let mut last = String::from("no response");
     loop {
         if proc.exited()? {
             bail!("server {} exited early", bin.display());
         }
-        match crate::load::once(&target).await {
+        let last = match crate::load::once(&target).await {
             Ok((200, body)) if String::from_utf8_lossy(&body).contains("\"id\"") => return Ok((proc, t0.elapsed())),
-            Ok((status, _)) => last = format!("status {status}"),
-            Err(e) => last = e.to_string(),
-        }
+            Ok((status, _)) => format!("status {status}"),
+            Err(e) => e.to_string(),
+        };
         if t0.elapsed() > Duration::from_secs(60) {
             bail!("server {} not healthy after 60s ({last})", bin.display());
         }

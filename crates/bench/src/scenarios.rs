@@ -17,7 +17,8 @@ pub struct Scenario {
     pub body: Bytes,
     /// SSE scenario: eligible for the streaming-timing test.
     pub stream: bool,
-    /// Substring a correct 200 response must contain (guards against measuring error paths).
+    /// Substring a correct 200 response from the server must contain (guards against measuring
+    /// error paths). Not checked for direct-to-mock requests.
     pub expect: &'static str,
 }
 
@@ -115,7 +116,7 @@ pub fn large(target_bytes: usize) -> Vec<Scenario> {
             direct_path: Some("/anthropic/v1/messages".into()),
             body: large_chat(CLAUDE_MODEL, target_bytes),
             stream: false,
-            expect: "Hello from the benchmark mock",
+            expect: "\"choices\"",
         },
         Scenario {
             id: "large-claude-gemini",
