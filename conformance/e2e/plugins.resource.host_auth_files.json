@@ -1,0 +1,53 @@
+{
+  "id": "plugins.resource.host_auth_files",
+  "desc": "plugin resource over the host auth file callbacks",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/resource/plugins/host-callback-auth-files/status",
+        "auth": "None",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": {
+          "type": "text",
+          "value": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Host Auth Files</title><style>body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;margin:2rem;line-height:1.45;color:#1f2933}code,pre{background:#f3f4f6;border-radius:6px}code{padding:.1rem .3rem}pre{padding:1rem;overflow:auto;white-space:pre-wrap}dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem}dt{font-weight:600}dd{margin:0}.error{color:#b42318}</style></head><body><main><h1>Host Auth Files</h1><dl><dt>op</dt><dd><code>list</code></dd></dl><h2>Result</h2><pre>{\n  &#34;files&#34;: []\n}</pre><h2>Usage</h2><ul><li><code>?op=list</code></li><li><code>?op=get&amp;auth_index=&lt;AUTH_INDEX&gt;</code></li><li><code>?op=runtime&amp;auth_index=&lt;AUTH_INDEX&gt;</code></li><li><code>?op=save&amp;name=example.json&amp;json=...</code></li></ul></main></body></html>"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/resource/plugins/host-callback-auth-files/status?mode=list",
+        "auth": "None",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": {
+          "type": "text",
+          "value": "<!doctype html><html><head><meta charset=\"utf-8\"><title>Host Auth Files</title><style>body{font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;margin:2rem;line-height:1.45;color:#1f2933}code,pre{background:#f3f4f6;border-radius:6px}code{padding:.1rem .3rem}pre{padding:1rem;overflow:auto;white-space:pre-wrap}dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem}dt{font-weight:600}dd{margin:0}.error{color:#b42318}</style></head><body><main><h1>Host Auth Files</h1><dl><dt>op</dt><dd><code>list</code></dd></dl><h2>Result</h2><pre>{\n  &#34;files&#34;: []\n}</pre><h2>Usage</h2><ul><li><code>?op=list</code></li><li><code>?op=get&amp;auth_index=&lt;AUTH_INDEX&gt;</code></li><li><code>?op=runtime&amp;auth_index=&lt;AUTH_INDEX&gt;</code></li><li><code>?op=save&amp;name=example.json&amp;json=...</code></li></ul></main></body></html>"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

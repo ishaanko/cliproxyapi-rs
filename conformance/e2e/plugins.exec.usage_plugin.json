@@ -1,0 +1,181 @@
+{
+  "id": "plugins.exec.usage_plugin",
+  "desc": "a usage plugin observing a request",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "compat-gpt-4o",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "chatcmpl-mock01",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "mock-gpt-4o",
+            "choices": [
+              {
+                "index": 0,
+                "message": {
+                  "role": "assistant",
+                  "content": "Hello from mock"
+                },
+                "finish_reason": "stop"
+              }
+            ],
+            "usage": {
+              "prompt_tokens": 11,
+              "completion_tokens": 7,
+              "total_tokens": 18
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/usage-queue",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "timestamp": "<now>",
+              "latency_ms": "<latency_ms>",
+              "ttft_ms": "<ttft_ms>",
+              "source": "sk-compat-2",
+              "auth_index": "50b3c9a0d698bde0",
+              "client_ip": "127.0.0.1",
+              "resolved_client_ip": "127.0.0.1",
+              "x_forwarded_for": "",
+              "user_agent": "cpa-e2e/1",
+              "tokens": {
+                "input_tokens": 11,
+                "output_tokens": 7,
+                "reasoning_tokens": 0,
+                "cached_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_read_tokens_present": true,
+                "cache_creation_tokens": 0,
+                "total_tokens": 18
+              },
+              "failed": false,
+              "generate": true,
+              "stream": false,
+              "fail": {
+                "status_code": 200,
+                "body": ""
+              },
+              "response_headers": {
+                "Content-Length": [
+                  "269"
+                ],
+                "Content-Type": [
+                  "application/json"
+                ],
+                "Date": "<date>"
+              },
+              "accounting_version": 2,
+              "token_breakdown": {
+                "schema_version": 2,
+                "quality": "complete",
+                "total_tokens": 18,
+                "input": {
+                  "total_tokens": 11,
+                  "uncached_tokens": 11,
+                  "cache_read_tokens": 0,
+                  "cache_write_tokens": 0
+                },
+                "output": {
+                  "total_tokens": 7,
+                  "non_reasoning_tokens": 7,
+                  "reasoning_tokens": 0
+                },
+                "unclassified_tokens": 0
+              },
+              "provider": "openai-compatible-mockcompat",
+              "executor_type": "OpenAICompatExecutor",
+              "model": "mock-gpt-4o",
+              "alias": "compat-gpt-4o",
+              "endpoint": "POST /v1/chat/completions",
+              "auth_type": "apikey",
+              "api_key": "e2e-client-key",
+              "request_id": "<request_id>",
+              "execution_id": "<execution_id>",
+              "trace_id": "<trace_id>",
+              "session_id": "6ae58c5c-b8ab-81a6-ab97-26da30358da1",
+              "reasoning_effort": "",
+              "service_tier": "auto",
+              "response_model": "mock-gpt-4o"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-compat-2",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
+          {
+            "role": "user",
+            "content": "What is the weather in Paris?"
+          }
+        ],
+        "stream": false
+      }
+    }
+  ]
+}
