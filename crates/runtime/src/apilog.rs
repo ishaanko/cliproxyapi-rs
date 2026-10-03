@@ -71,13 +71,18 @@ fn canonical_header_name(name: &str) -> String {
 
 /// Header block sorted by name with sensitive values masked, or `<none>`.
 pub fn write_headers(out: &mut String, headers: &HeaderMap) {
+    write_headers_as(out, headers, canonical_header_name);
+}
+
+/// Like [`write_headers`] with `name_of` choosing the printed name (and so the sort key).
+fn write_headers_as(out: &mut String, headers: &HeaderMap, name_of: impl Fn(&str) -> String) {
     if headers.is_empty() {
         out.push_str("<none>\n");
         return;
     }
     let mut entries: Vec<(String, String)> = headers
         .iter()
-        .map(|(k, v)| (canonical_header_name(k.as_str()), v.to_str().map(str::to_string).unwrap_or_default()))
+        .map(|(k, v)| (name_of(k.as_str()), v.to_str().map(str::to_string).unwrap_or_default()))
         .collect();
     // Stable: values of one header keep their wire order.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -337,7 +342,11 @@ impl ApiLog {
         }
         if !attempt.headers_written {
             let mut b = String::from("Headers:\n");
-            write_headers(&mut b, headers);
+            // Go's `http.Response.Header` never holds `Transfer-Encoding` (the transport parses
+            // it into a field), so a chunked body leaves no trace in the log.
+            let mut logged = headers.clone();
+            logged.remove(http::header::TRANSFER_ENCODING);
+            write_headers(&mut b, &logged);
             parts.push(b.into_bytes());
             parts.push(b"\n".to_vec());
             attempt.headers_written = true;
@@ -415,7 +424,10 @@ impl ApiLog {
             b.push_str(&format!("Auth: {auth}\n"));
         }
         b.push_str("Headers:\n");
-        write_headers(&mut b, &info.headers);
+        // The Codex handshake carries `session_id` as a raw (non-canonical) map key.
+        write_headers_as(&mut b, &info.headers, |name| {
+            if name == "session_id" { name.to_string() } else { canonical_header_name(name) }
+        });
         b.push_str("\nBody:\n");
         if info.body.is_empty() {
             b.push_str("<empty>");

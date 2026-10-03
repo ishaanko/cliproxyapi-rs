@@ -43,6 +43,8 @@ use toolcache::{ToolCacheTurn, is_complete_tool_call};
 const WS_EVENT_TYPE_ERROR: &str = "error";
 const WS_CLOSE_REASON_MAX_BYTES: usize = 123;
 const CLOSE_MESSAGE_TOO_BIG: u16 = 1009;
+/// Go's `websocket.ErrCloseSent` text: the handler already closed the socket itself.
+const CLOSE_SENT: &str = "websocket: close sent";
 
 /// `GET /v1/responses` upgrade.
 pub async fn responses_websocket(
@@ -87,6 +89,26 @@ struct TurnOutcome {
     output: Vec<u8>,
     response_id: String,
     pending_tool_call_ids: Vec<String>,
+}
+
+/// gorilla's `CloseError.Error()`: `websocket: close 1005 (no status)`, with `: text` appended.
+fn close_error_text(code: u16, text: &str) -> String {
+    let label = match code {
+        1000 => " (normal)",
+        1001 => " (going away)",
+        1002 => " (protocol error)",
+        1003 => " (unsupported data)",
+        1005 => " (no status)",
+        1006 => " (abnormal closure)",
+        1007 => " (invalid payload data)",
+        1008 => " (policy violation)",
+        1009 => " (message too big)",
+        1010 => " (mandatory extension missing)",
+        1011 => " (internal server error)",
+        1015 => " (TLS handshake error)",
+        _ => "",
+    };
+    if text.is_empty() { format!("websocket: close {code}{label}") } else { format!("websocket: close {code}{label}: {text}") }
 }
 
 /// `truncateWebsocketCloseReason`: at most `max_bytes`, never splitting a character.
@@ -528,16 +550,13 @@ async fn forward_turn(
                 let Some(item) = item else {
                     if (options.duplex_stream)() {
                         // A duplex stream ends with its socket, not an individual response.
-                        return TurnEnd::Terminate("websocket: close sent".into());
+                        return TurnEnd::Terminate(CLOSE_SENT.into());
                     }
                     if !completed {
                         let err = ErrorMessage::new(408, "stream closed before response.completed");
                         api_log.record_error(err.status, &err.text);
                         api_log.mark_response_timestamp();
-                        if timeline {
-                            api_log.ws_timeline_append("disconnect", err.text.as_bytes());
-                        }
-                        return TurnEnd::Terminate(err.text);
+                        return TurnEnd::Terminate(CLOSE_SENT.into());
                     }
                     return TurnEnd::Completed(outcome!());
                 };
@@ -639,14 +658,14 @@ async fn end_with_error(
 ) -> TurnEnd {
     if let Some(frame) = close_frame_for_upstream_error(err) {
         let _ = socket.send(Message::Close(Some(frame))).await;
-        return TurnEnd::Terminate(err.text.clone());
+        return TurnEnd::Terminate(CLOSE_SENT.into());
     }
     if !should_expose_upstream_error(err) {
         // Keep the reason in the request-log timeline even though the client only sees a close.
         if timeline {
             api_log.ws_timeline_append("disconnect", err.text.as_bytes());
         }
-        return TurnEnd::Terminate(err.text.clone());
+        return TurnEnd::Terminate(CLOSE_SENT.into());
     }
     let body = match payload {
         Some(p) if !p.is_empty() => p.to_vec(),
@@ -659,7 +678,7 @@ async fn end_with_error(
         cpa_json::parse(&body).g("type").str(),
         String::from_utf8_lossy(&body)
     );
-    TurnEnd::Terminate(err.text.clone())
+    TurnEnd::Terminate(CLOSE_SENT.into())
 }
 
 struct SessionState {
@@ -700,6 +719,13 @@ async fn session(socket: WebSocket, st: AppState, info: ReqInfo) {
     let mut disconnects = upstream_disconnects(&st.manager, &session_id);
 
     let reason = run_session(&mut socket, &mut disconnects, &st, &info, &session_id, &session_key).await;
+    // Go: the deferred `appendWebsocketTimelineDisconnect(wsTerminateErr)`.
+    if let Some(r) = &reason
+        && cfg.request_log
+        && !cfg.commercial_mode
+    {
+        info.api_log.ws_timeline_append("disconnect", r.as_bytes());
+    }
 
     toolcache::release_session(&session_key);
     match &reason {
@@ -811,13 +837,17 @@ async fn run_session(
             }
         };
         let payload: Vec<u8> = match frame {
-            None => return None,
+            // The client dropped the connection without a close handshake (gorilla: 1006).
+            // In duplex mode the reader ends quietly (Go returns without a termination error).
+            None if socket.input().is_some() => return None,
+            None => return Some(close_error_text(1006, "unexpected EOF")),
             Some(Err(e)) => return Some(e.to_string()),
             Some(Ok(Message::Text(t))) => t.as_str().as_bytes().to_vec(),
             Some(Ok(Message::Binary(b))) => b.to_vec(),
-            Some(Ok(Message::Close(_))) => {
+            Some(Ok(Message::Close(frame))) => {
                 tracing::info!("responses websocket: client disconnected id={session_id}");
-                return None;
+                let (code, text) = frame.map_or((1005, String::new()), |f| (f.code, f.reason.to_string()));
+                return Some(close_error_text(code, &text));
             }
             Some(Ok(_)) => continue,
         };

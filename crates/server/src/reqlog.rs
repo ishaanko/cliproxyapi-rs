@@ -458,7 +458,7 @@ fn has_payload(payload: &[u8]) -> bool {
 
 /// `writeNonStreamingLog`, or with `stream_layout` the `FileStreamingLogWriter` final log
 /// (used when the logger is enabled and the response streamed): no error sections, the API
-/// response timestamp is the first chunk's, and no trailing newline after the response body.
+/// response timestamp is the first chunk's.
 fn render(exchange: &Exchange, api: &ApiLogData, exec: &ExecView, websocket: bool, stream_layout: bool) -> Vec<u8> {
     let mut out = Vec::new();
     let has_http = has_payload(&exec.request) || has_payload(&api.api_response) || has_payload(&exec.response);
@@ -494,7 +494,8 @@ fn render(exchange: &Exchange, api: &ApiLogData, exec: &ExecView, websocket: boo
         Some(exchange.status),
         &exchange.response_headers,
         &exchange.response_body,
-        !stream_layout,
+        // Go's streamed logs end with an extra newline too (verified against the reference).
+        true,
     );
     out
 }
