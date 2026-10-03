@@ -73,8 +73,8 @@ use crate::helps::usage::{Detail, StreamUsageBuffer, UsageReporter, parse_claude
 pub(super) struct Prepared {
     pub url: String,
     pub upstream_stream: bool,
-    pub body_for_translation: Vec<u8>,
-    pub body_for_upstream: Vec<u8>,
+    pub body_for_translation: Bytes,
+    pub body_for_upstream: Bytes,
     pub headers: HeaderMap,
     /// Forward tool-name alias map inverted for the response (alias to original).
     pub tool_reverse_map: HashMap<String, String>,
@@ -459,11 +459,17 @@ impl ClaudeExecutor {
         )?;
         let fast_request = is_anthropic_upstream_base(&base_url) && claude_request_is_fast(&headers, &body_for_upstream);
 
+        // Without aliasing, identity or signing edits the two bodies are identical: hold one copy
+        // for the whole upstream round trip instead of two.
+        let body_for_translation = Bytes::from(body_for_translation);
+        let body_for_upstream =
+            if body_for_upstream == body_for_translation[..] { body_for_translation.clone() } else { Bytes::from(body_for_upstream) };
+
         Ok(Prepared {
             url,
             upstream_stream,
-            body_for_translation,
             body_for_upstream,
+            body_for_translation,
             headers,
             tool_reverse_map,
             diagnostics_state,
@@ -515,7 +521,7 @@ impl ClaudeExecutor {
         self.record_upstream_request(cfg, auth, opts, &p.url, &p.headers, &p.body_for_upstream);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
         let model_level_cooling = cfg.claude.model_level_cooling;
-        let resp = match super::http::send_messages(&client, &p.url, &p.headers, &p.body_for_upstream).await {
+        let resp = match super::http::send_messages_shared(&client, &p.url, &p.headers, p.body_for_upstream.clone()).await {
             Ok(r) => r,
             Err(err) => {
                 tracing::debug!("claude upstream request failed: {}", err.message);

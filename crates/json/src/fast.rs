@@ -511,7 +511,9 @@ fn size_hint(v: &Value) -> usize {
     match v {
         Value::Null | Value::Bool(_) => 5,
         Value::Number(n) => n.as_str().len(),
-        Value::String(s) => s.len() + 2,
+        // Escapes (newlines, quotes) lengthen the text a little; a hint that is too small makes the
+        // output buffer double (a 2 MB body would briefly hold 4 MB).
+        Value::String(s) => s.len() + s.len() / 8 + 2,
         Value::Array(a) => 2 + a.iter().map(|e| size_hint(e) + 1).sum::<usize>(),
         Value::Object(m) => 2 + m.iter().map(|(k, e)| k.len() + 4 + size_hint(e)).sum::<usize>(),
     }

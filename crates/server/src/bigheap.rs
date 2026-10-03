@@ -10,7 +10,8 @@
 //! - a freed slot is reused by whichever thread asks next (most recent first, so it is still warm
 //!   and resident), which keeps the footprint near the *global* peak instead of the sum of
 //!   per-thread peaks;
-//! - a background sweeper returns the pages of slots that stayed free for [`AGE`] to the OS
+//! - a background sweeper returns the pages of slots that stayed free for [`AGE_TICKS`] sweeps
+//!   (~100 ms) to the OS
 //!   (`MADV_DONTNEED`; the address range stays reserved), so an idle process drops back.
 //!
 //! No `mmap`/`munmap` happens after startup, so no process-wide VM write lock is taken on the
@@ -20,18 +21,19 @@
 //! Set `CPA_BIGHEAP=0` to bypass the front end.
 
 use std::alloc::{GlobalAlloc, Layout};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, Once};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Virtual address space reserved for slots (untouched pages cost nothing).
 const REGION: usize = 16 << 30;
 /// Requests larger than this (and at most [`MAX_SIZE`]) are served from the region.
 const MIN_SIZE: usize = 8 * 1024;
 const MAX_SIZE: usize = 1 << 31;
-/// Free slots older than this have their pages returned to the OS.
-const AGE: Duration = Duration::from_millis(100);
+/// Free slots that sat unused for this many sweeps have their pages returned to the OS. A tick
+/// counter instead of a clock: stamping a slot on every free must stay cheap.
+const AGE_TICKS: u32 = 3;
 /// Sweeper period while slots are waiting to age out, and while everything is clean.
 const SWEEP_BUSY: Duration = Duration::from_millis(50);
 const SWEEP_IDLE: Duration = Duration::from_millis(500);
@@ -47,12 +49,15 @@ static BASE: AtomicUsize = AtomicUsize::new(0);
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 /// Free slots whose pages are still resident.
 static DIRTY: AtomicUsize = AtomicUsize::new(0);
+/// Advanced once per sweep.
+static TICK: AtomicU32 = AtomicU32::new(0);
 static INIT: Once = Once::new();
 
 #[derive(Clone, Copy)]
 struct Slot {
     off: usize,
-    freed: Instant,
+    /// [`TICK`] when the slot was freed.
+    freed: u32,
     /// Pages may still be resident (cleared by the sweeper).
     dirty: bool,
 }
@@ -117,15 +122,15 @@ fn release(off: usize, cap: usize) {
 fn sweep_loop() {
     loop {
         thread::sleep(if DIRTY.load(Ordering::Relaxed) > 0 { SWEEP_BUSY } else { SWEEP_IDLE });
+        let now = TICK.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
         for idx in 0..NCLASS {
             let cap = class_size(idx);
             let mut old = Vec::new();
             {
                 let mut free = lock(idx);
-                let now = Instant::now();
                 let mut i = 0;
                 while i < free.len() {
-                    if free[i].dirty && now.duration_since(free[i].freed) > AGE {
+                    if free[i].dirty && now.wrapping_sub(free[i].freed) >= AGE_TICKS {
                         old.push(free.swap_remove(i));
                     } else {
                         i += 1;
@@ -184,7 +189,7 @@ fn region_free(ptr: *mut u8, size: usize) {
     let (idx, cap) = class_of(size);
     let off = ptr as usize - BASE.load(Ordering::Relaxed);
     DIRTY.fetch_add(cap, Ordering::Relaxed);
-    lock(idx).push(Slot { off, freed: Instant::now(), dirty: true });
+    lock(idx).push(Slot { off, freed: TICK.load(Ordering::Relaxed), dirty: true });
 }
 
 /// mimalloc, with large blocks served from the region.
@@ -226,7 +231,8 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for Tiered<A> {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        if in_region(ptr) {
+        // Region blocks always have a layout above MIN_SIZE, so small frees skip the address test.
+        if layout.size() > MIN_SIZE && in_region(ptr) {
             region_free(ptr, layout.size());
         } else {
             // SAFETY: not ours, so it came from the wrapped allocator with this layout.
@@ -236,14 +242,13 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for Tiered<A> {
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         // SAFETY: the caller guarantees `new_size` is valid for `layout.align()`.
-        let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
-        if in_region(ptr) {
-            if eligible(&new_layout) && class_of(new_size).0 == class_of(layout.size()).0 {
-                return ptr;
-            }
-        } else if layout.size() <= MIN_SIZE && new_size <= MIN_SIZE {
+        if layout.size() <= MIN_SIZE && new_size <= MIN_SIZE {
             // SAFETY: same contract as ours.
             return unsafe { self.0.realloc(ptr, layout, new_size) };
+        }
+        let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
+        if layout.size() > MIN_SIZE && in_region(ptr) && eligible(&new_layout) && class_of(new_size).0 == class_of(layout.size()).0 {
+            return ptr;
         }
         let new = unsafe { self.alloc(new_layout) };
         if !new.is_null() {
