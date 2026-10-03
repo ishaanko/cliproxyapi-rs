@@ -19,7 +19,7 @@ use cpa_core::cache::{
 };
 use cpa_core::signature::{GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR, validate_gemini_function_call_pairing};
 use cpa_core::util::{
-    GoJsonStyle, gemini_claude_tool_use_id, go_json_sorted, is_gemini_claude_tool_use_id, map_sanitized_function_name,
+    GoJsonStyle, gemini_claude_tool_use_id, go_any, go_json_sorted, is_gemini_claude_tool_use_id, map_sanitized_function_name,
     sanitized_function_name_map,
 };
 use cpa_json::J;
@@ -1007,7 +1007,8 @@ fn native_function_call_json(item: &Value, fallback_id: &str) -> Option<Value> {
 fn function_call_map(name: &str, call_id: &str, args: &cpa_json::Res<'_>) -> Value {
     let mut fc = Map::new();
     if args.exists() {
-        fc.insert("args".into(), args.value());
+        // Go stores `args.Value()` (a decoded map): sorted keys, float64 numbers.
+        fc.insert("args".into(), go_any(args.value()));
     }
     if !call_id.is_empty() {
         fc.insert("id".into(), Value::String(call_id.to_string()));
@@ -1083,7 +1084,8 @@ fn insert_model_function_call_before_content(
     let new_content = json!({"parts": [part], "role": "model"});
     let mut list = contents.clone();
     list.insert(before, new_content);
-    cpa_json::set(doc, "request.contents", Value::Array(list))
+    // Go rebuilds the whole list from `arr[i].Value()`, so every content is re-marshaled sorted.
+    cpa_json::set(doc, "request.contents", go_any(Value::Array(list)))
 }
 
 fn append_function_call_to_model_content(

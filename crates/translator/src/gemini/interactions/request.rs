@@ -164,9 +164,15 @@ fn normalize_gemini_thinking_config_for_interactions(out: &mut Value) {
 /// One normalized tool entry: `{"type": kind, <kind>: raw?}` for url_context, code_execution and
 /// google_search tools; the raw value is kept only for a non-empty object.
 fn gemini_builtin_tool_entry(kind: &str, value: &Res<'_>) -> Value {
+    // Go marshals a `map[string]any`: keys sorted, so `type` follows `code_execution` and
+    // `google_search` but precedes `url_context`; the raw value keeps its own key order.
+    let keep_raw = value.is_object() && value.v().and_then(Value::as_object).is_some_and(|m| !m.is_empty());
     let mut entry = Map::new();
+    if keep_raw && kind < "type" {
+        entry.insert(kind.into(), value.value());
+    }
     entry.insert("type".into(), Value::String(kind.into()));
-    if value.is_object() && value.v().and_then(Value::as_object).is_some_and(|m| !m.is_empty()) {
+    if keep_raw && kind > "type" {
         entry.insert(kind.into(), value.value());
     }
     Value::Object(entry)
