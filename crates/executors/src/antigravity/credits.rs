@@ -271,19 +271,6 @@ async fn store_credits_balance_best_effort(auth_id: &str, bal: CreditsBalance) {
     }
 }
 
-/// Whether the credential has AI credits; a Home KV failure reads as "no" and is logged (Go:
-/// antigravityAuthHasCredits).
-#[allow(dead_code)]
-pub(crate) async fn auth_has_credits(auth: &Auth) -> bool {
-    match auth_has_credits_required(auth).await {
-        Ok(ok) => ok,
-        Err(e) => {
-            tracing::error!("antigravity executor: home kv credits check error: {e}");
-            false
-        }
-    }
-}
-
 /// The conductor hint when known, else the stored balance (Home KV in Home mode), else
 /// optimistic `true` (Go: antigravityAuthHasCreditsRequired).
 pub(crate) async fn auth_has_credits_required(auth: &Auth) -> Result<bool, HomeError> {

@@ -88,6 +88,7 @@ fn error_reply(kind: &str, extra: Value) -> Result<Vec<u8>, HomeError> {
     Ok(serde_json::to_vec(&json!({"error": detail})).unwrap())
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum Step {
     Ok(&'static str),
