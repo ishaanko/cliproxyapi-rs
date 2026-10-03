@@ -7,6 +7,8 @@
 set -euo pipefail
 L=/home/ishaan/box/cliproxyapirust/tmp
 mkdir -p "$L"
+# Nested tools/shared.sh calls (e.g. builds inside bench scripts) run directly under this lock.
+export CPA_SHARED_LOCK_HELD=1
 exec flock "$L/bench-gate.lock" flock "$L/machine.lock" bash -c '
   rc=0; "$@" || rc=$?
   until [ "$(ss -tan state time-wait | wc -l)" -lt 1000 ]; do sleep 5; done
