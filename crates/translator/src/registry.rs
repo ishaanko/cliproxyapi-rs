@@ -1,6 +1,7 @@
 //! Translator registry (Go: sdk/translator/registry.go, plugin_hooks.go).
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
@@ -184,7 +185,7 @@ impl Registry {
         let hooks = self.hooks();
         match self.requests.get(&(client, upstream)).copied() {
             Some(t) => {
-                let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
+                let summary = crate::common::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
                 req = match t {
                     RequestTransform::Plain(f) => {
                         req.body = f(&req.model, &req.body, req.stream);
@@ -221,7 +222,7 @@ impl Registry {
                 let before = configuration_updates(&req.body);
                 req.body = h.normalize_request(ctx, client, upstream, &req.model, &req.body, req.stream);
                 req.configuration_updates_changed = req.configuration_updates_changed || before != configuration_updates(&req.body);
-                let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
+                let summary = crate::common::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
                 if let Some(translated) = h.translate_request(ctx, client, upstream, &req.model, &req.body, req.stream) {
                     req.body = thinking::apply_summary_config_for_model(translated, upstream.as_str(), &req.model, &summary);
                 }
@@ -245,9 +246,10 @@ impl Registry {
     ) -> Vec<Vec<u8>> {
         let hooks = self.hooks();
         let stream_fn = self.responses.get(&(client, upstream)).and_then(|r| r.stream);
-        let body: Vec<u8> = match &hooks {
-            Some(h) => h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, true),
-            None => raw.to_vec(),
+        // Borrowed unless a plugin normalizer rewrites the line (this runs once per upstream line).
+        let body: Cow<[u8]> = match &hooks {
+            Some(h) => Cow::Owned(h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, true)),
+            None => Cow::Borrowed(raw),
         };
         let mut outputs: Option<Vec<Vec<u8>>> = None;
         let mut used_native = false;
@@ -265,7 +267,7 @@ impl Registry {
         }
         let mut outputs = match outputs {
             Some(o) => o,
-            None if !used_native => vec![body],
+            None if !used_native => vec![body.into_owned()],
             None => Vec::new(),
         };
         if let Some(h) = &hooks {

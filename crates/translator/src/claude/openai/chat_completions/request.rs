@@ -429,7 +429,7 @@ fn convert(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_b
         }
     }
 
-    thinking::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), raw, "openai", model_name)
+    crate::common::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), raw, "openai", model_name)
 }
 
 /// Converts an OpenAI content part to a Claude block without cache_control; `None` when the part
