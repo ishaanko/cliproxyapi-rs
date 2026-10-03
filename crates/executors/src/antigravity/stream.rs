@@ -218,8 +218,8 @@ impl AntigravityExecutor {
         }
         // Any other exit still publishes what was observed (no-op after a failure outcome).
         reporter.publish_buffer(&usage);
-        if let Some(record) = reporter.record() {
-            let _ = usage_tx.send(UsageReporter::usage_metadata(&record.detail));
+        if let Some(detail) = reporter.published_detail() {
+            let _ = usage_tx.send(UsageReporter::usage_metadata(&detail));
         }
     }
 

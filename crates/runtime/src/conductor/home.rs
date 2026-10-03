@@ -865,7 +865,7 @@ impl Manager {
         if let Some(aff) = self.selector().affinity() {
             aff.on_result(&result);
         }
-        self.record_usage(&result, auth, facts.as_ref(), now);
+        self.record_usage(&result, auth, facts, now);
     }
 }
 

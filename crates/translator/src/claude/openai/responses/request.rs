@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use cpa_core::applypatch;
 use cpa_core::registry::lookup_model_info;
 use cpa_core::signature::{self, SignatureProvider};
-use cpa_core::thinking;
 use cpa_core::util::{normalize_claude_tool_input_schema, sanitize_claude_function_name, sanitize_claude_tool_id};
 use cpa_json::{J, Kind, Res, Value};
 
@@ -551,7 +550,7 @@ fn convert(model_name: &str, input_raw: &[u8], stream: bool, preserve_empty_thin
         _ => {}
     }
 
-    thinking::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), &raw_json, "openai-response", model_name)
+    crate::common::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), &raw_json, "openai-response", model_name)
 }
 
 /// Converts one `message` input item into Claude parts and queues them on `builder`.

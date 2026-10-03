@@ -1,6 +1,7 @@
 //! Translator registry (Go: sdk/translator/registry.go, plugin_hooks.go).
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
@@ -106,6 +107,18 @@ pub struct Registry {
     hooks: RwLock<Option<Arc<dyn PluginHooks>>>,
 }
 
+/// True when `body` is a well-formed JSON object whose single top-level `model` is exactly
+/// `model`: the passthrough model rewrite is then a no-op and the body needs no parse and
+/// re-serialization. Anything else (missing, other type, duplicates, malformed) answers false.
+fn body_has_model(body: &[u8], model: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Probe<'a> {
+        #[serde(default, borrow)]
+        model: crate::common::fast::Field<crate::common::fast::Str<'a>>,
+    }
+    serde_json::from_slice::<Probe>(body).is_ok_and(|p| p.model.as_ref().is_some_and(|m| &**m == model))
+}
+
 /// Raw JSON of the Responses `configuration_update` input items (Go: `configurationUpdates`).
 fn configuration_updates(body: &[u8]) -> Vec<String> {
     cpa_json::raw_children(body, "input")
@@ -184,7 +197,7 @@ impl Registry {
         let hooks = self.hooks();
         match self.requests.get(&(client, upstream)).copied() {
             Some(t) => {
-                let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
+                let summary = crate::common::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
                 req = match t {
                     RequestTransform::Plain(f) => {
                         req.body = f(&req.model, &req.body, req.stream);
@@ -204,7 +217,7 @@ impl Registry {
             }
             None => {
                 // Fallback: pass through, normalising the model field (Go does the same).
-                if !req.model.is_empty() {
+                if !req.model.is_empty() && !body_has_model(&req.body, &req.model) {
                     let mut v = cpa_json::parse(&req.body);
                     // sjson turns an empty, null or scalar body into `{"model":...}` and refuses arrays.
                     if v.g("model").str() != req.model && !v.is_array() {
@@ -221,7 +234,7 @@ impl Registry {
                 let before = configuration_updates(&req.body);
                 req.body = h.normalize_request(ctx, client, upstream, &req.model, &req.body, req.stream);
                 req.configuration_updates_changed = req.configuration_updates_changed || before != configuration_updates(&req.body);
-                let summary = thinking::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
+                let summary = crate::common::extract_translated_summary_config(&req.body, client.as_str(), upstream.as_str());
                 if let Some(translated) = h.translate_request(ctx, client, upstream, &req.model, &req.body, req.stream) {
                     req.body = thinking::apply_summary_config_for_model(translated, upstream.as_str(), &req.model, &summary);
                 }
@@ -245,9 +258,10 @@ impl Registry {
     ) -> Vec<Vec<u8>> {
         let hooks = self.hooks();
         let stream_fn = self.responses.get(&(client, upstream)).and_then(|r| r.stream);
-        let body: Vec<u8> = match &hooks {
-            Some(h) => h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, true),
-            None => raw.to_vec(),
+        // Borrowed unless a plugin normalizer rewrites the line (this runs once per upstream line).
+        let body: Cow<[u8]> = match &hooks {
+            Some(h) => Cow::Owned(h.normalize_response_before(ctx, upstream, client, model, original, translated, raw, true)),
+            None => Cow::Borrowed(raw),
         };
         let mut outputs: Option<Vec<Vec<u8>>> = None;
         let mut used_native = false;
@@ -265,7 +279,7 @@ impl Registry {
         }
         let mut outputs = match outputs {
             Some(o) => o,
-            None if !used_native => vec![body],
+            None if !used_native => vec![body.into_owned()],
             None => Vec::new(),
         };
         if let Some(h) = &hooks {

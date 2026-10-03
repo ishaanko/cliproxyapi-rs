@@ -5,7 +5,8 @@
 //! the caller moves on to the next pooled model / credential. Once the first payload is buffered
 //! the stream is handed to a wrapper task that forwards chunks, rewrites force-mapped model names,
 //! tracks usage, and records exactly one result (failure on the first error chunk, success on a
-//! clean end, nothing when the client hung up).
+//! clean end, no result when the client hung up). Executor-published usage records are recorded as
+//! they appear, whether or not the client is still reading.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -270,6 +271,9 @@ impl Manager {
                 && !ephemeral
                 && super::exec::claude_cancelled(&auth, err)
             {
+                // No result mark, but the reporter's failure record still counts.
+                let result = make_result(&auth, err, false, &exec_opts);
+                self.record_usage_only(&result, Some(&auth), facts(started, Default::default()));
                 return Err(err.clone().into());
             }
             let mut stream = match res {
@@ -343,6 +347,8 @@ impl Manager {
                 && !ephemeral
                 && super::exec::claude_cancelled(&auth, e)
             {
+                let result = make_result(&auth, e, false, &exec_opts);
+                self.record_usage_only(&result, Some(&auth), facts(started, Default::default()));
                 return Err(e.clone().into());
             }
 
@@ -495,11 +501,50 @@ fn wrap_stream(
         let mut ttft: Option<Duration> = None;
         let mut failed = false;
         let mut client_gone = false;
+        let mut send_failed = false;
+        // Some report was already recorded (per-response records of a long stream): the final
+        // mark must not add a response-derived fallback record on top.
+        let mut published_any = false;
         let mut pending: VecDeque<Chunk> = buffered.into_iter().map(Ok).collect();
         let mut remaining = remaining;
 
+        // Records the reports published so far as success events, independent of the result mark
+        // and of whether the client is still reading (Go publishes each response's usage when it
+        // completes, and deferred on exit). Returns whether anything was recorded.
+        let drain_reports = |manager: &Manager, ttft: Option<Duration>| -> bool {
+            let recs = reports.take();
+            if recs.is_empty() {
+                return false;
+            }
+            let auth = home_auth.clone().or_else(|| manager.get(&auth_id));
+            let result = ExecResult {
+                auth_id: auth_id.clone(),
+                provider: provider.clone(),
+                model: result_model.clone(),
+                route_model: route_model.clone(),
+                success: true,
+                retry_after: None,
+                credential_scope: false,
+                error: None,
+                options: options.clone(),
+                skip_quota_observation: false,
+                response_headers: response_headers.clone(),
+            };
+            let facts = UsageFacts {
+                latency: started.elapsed(),
+                ttft,
+                stream: true,
+                upstream_model: upstream_model.clone(),
+                requested_model: requested_model.clone(),
+                reports: recs,
+                ..Default::default()
+            };
+            manager.record_usage_only(&result, auth.as_ref(), facts);
+            true
+        };
+
         let record_failure =
-            |manager: &Manager, err: &ExecError, usage: &StreamUsage, ttft: Option<Duration>| {
+            |manager: &Manager, err: &ExecError, usage: &StreamUsage, ttft: Option<Duration>, published_any: bool| {
                 let auth = home_auth.clone().or_else(|| manager.get(&auth_id));
                 let mut result = ExecResult {
                     auth_id: auth_id.clone(),
@@ -522,22 +567,24 @@ fn wrap_stream(
                     let action = rules::match_action(&auth, err, &cfg);
                     rules::apply_action_to_result(action, &mut result);
                 }
-                let facts = UsageFacts {
+                let recs = reports.take();
+                let facts = (!recs.is_empty() || !published_any).then(|| UsageFacts {
                     latency: started.elapsed(),
                     ttft,
                     stream: true,
                     tokens: usage.tokens.clone(),
                     upstream_model: upstream_model.clone(),
                     requested_model: requested_model.clone(),
-                    reports: reports.take(),
-                };
+                    reports: recs,
+                });
                 match &home_auth {
-                    Some(a) => manager.report_home_result(result, Some(a), Some(facts)),
-                    None => manager.mark_result_inner(result, Some(facts)),
+                    Some(a) => manager.report_home_result(result, Some(a), facts),
+                    None => manager.mark_result_inner(result, facts),
                 }
             };
 
         loop {
+            published_any |= drain_reports(&manager, ttft);
             let item = match pending.pop_front() {
                 Some(i) => i,
                 None => match remaining.as_mut() {
@@ -560,10 +607,11 @@ fn wrap_stream(
                 Err(err) => {
                     if !failed {
                         failed = true;
-                        record_failure(&manager, &err, &usage, ttft);
+                        record_failure(&manager, &err, &usage, ttft, published_any);
                     }
                     if tx.send(Err(err)).await.is_err() {
-                        return;
+                        send_failed = true;
+                        break;
                     }
                 }
                 Ok(payload) => {
@@ -573,7 +621,12 @@ fn wrap_stream(
                     if ttft.is_none() {
                         ttft = Some(started.elapsed());
                     }
-                    usage.observe(&payload);
+                    // Executors with a reporter publish exact usage; the scan is only the
+                    // fallback for those without one.
+                    if !reports.has_reporter() {
+                        usage.observe(&payload);
+                    }
+                    published_any |= drain_reports(&manager, ttft);
                     let payload = match rewriter.as_mut() {
                         Some(r) => Bytes::from(r.rewrite_payload(&payload)),
                         None => payload,
@@ -582,58 +635,74 @@ fn wrap_stream(
                         continue;
                     }
                     if tx.send(Ok(payload)).await.is_err() {
-                        // Client hung up: nothing is recorded, the upstream stream is dropped.
-                        return;
+                        send_failed = true;
+                        break;
                     }
                 }
             }
         }
         drop(remaining);
-        if !client_gone
+        if !send_failed
+            && !client_gone
             && let Some(r) = rewriter.as_mut()
             && let Some(tail) = r.finish()
             && !tail.is_empty()
             && tx.send(Ok(Bytes::from(tail))).await.is_err()
         {
+            send_failed = true;
+        }
+        if send_failed {
+            // The client hung up while sending: no result mark, but published usage counts.
+            drain_reports(&manager, ttft);
             return;
         }
-        if !failed && !(client_gone && claude_oauth) {
-            if let Some(mut rx) = executor_usage
-                && let Ok(u) = rx.try_recv()
-            {
-                let mut meta = Metadata::new();
-                meta.insert(super::usage::META_USAGE.to_string(), u);
-                let t = super::usage::tokens_from_response(options.response_format_or_source(), b"", &meta);
-                if t != Default::default() {
-                    usage.tokens = t;
-                }
+        if failed {
+            return;
+        }
+        if client_gone && claude_oauth {
+            // Claude OAuth records no success for an abandoned stream, only its usage.
+            drain_reports(&manager, ttft);
+            return;
+        }
+        let recs = reports.take();
+        if recs.is_empty()
+            && !published_any
+            && let Some(mut rx) = executor_usage
+            && let Ok(u) = rx.try_recv()
+        {
+            let mut meta = Metadata::new();
+            meta.insert(super::usage::META_USAGE.to_string(), u);
+            let t = super::usage::tokens_from_response(options.response_format_or_source(), b"", &meta);
+            if t != Default::default() {
+                usage.tokens = t;
             }
-            let result = ExecResult {
-                auth_id,
-                provider,
-                model: result_model,
-                route_model,
-                success: true,
-                retry_after: None,
-                credential_scope: false,
-                error: None,
-                options,
-                skip_quota_observation: false,
-                response_headers,
-            };
-            let facts = UsageFacts {
-                latency: started.elapsed(),
-                ttft,
-                stream: true,
-                tokens: usage.tokens.clone(),
-                upstream_model,
-                requested_model,
-                reports: reports.take(),
-            };
-            match &home_auth {
-                Some(a) => manager.report_home_result(result, Some(a), Some(facts)),
-                None => manager.mark_result_inner(result, Some(facts)),
-            }
+        }
+        let result = ExecResult {
+            auth_id,
+            provider,
+            model: result_model,
+            route_model,
+            success: true,
+            retry_after: None,
+            credential_scope: false,
+            error: None,
+            options,
+            skip_quota_observation: false,
+            response_headers,
+        };
+        // Reports already recorded as they were published need no fallback record on top.
+        let facts = (!recs.is_empty() || !published_any).then(|| UsageFacts {
+            latency: started.elapsed(),
+            ttft,
+            stream: true,
+            tokens: usage.tokens,
+            upstream_model,
+            requested_model,
+            reports: recs,
+        });
+        match &home_auth {
+            Some(a) => manager.report_home_result(result, Some(a), facts),
+            None => manager.mark_result_inner(result, facts),
         }
     });
     StreamResult::new(headers, rx)

@@ -21,12 +21,14 @@ mod claude_messages;
 mod claude_system;
 mod claude_user_id;
 mod devin_tools;
+pub mod fast;
 mod file_data;
 mod gemini;
 mod interactions_usage;
 mod openai_tools;
 mod raw;
 mod request;
+mod summary_probe;
 mod responses;
 mod util;
 
@@ -44,8 +46,12 @@ pub use interactions_usage::*;
 pub use openai_tools::*;
 pub use raw::*;
 pub use request::*;
+pub use summary_probe::*;
 pub use responses::*;
 pub use util::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub mod test_gen;

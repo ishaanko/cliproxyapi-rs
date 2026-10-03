@@ -96,7 +96,7 @@ pub struct UsageExtra {
     /// SHA-256 hex of the access token the attempt used (never the token); empty for API keys.
     pub access_token_sha256: String,
     /// Reasoning effort and service tier the request carried (`None` when the request did not set
-    /// them; the queue then reports `""` and `"auto"`).
+    /// them; the queue then reports `""` and `"default"`).
     pub reasoning_effort: Option<String>,
     pub service_tier: Option<String>,
     /// `false` only when the client explicitly disabled generation.
@@ -119,7 +119,7 @@ pub struct UsageRecord {
     #[serde(serialize_with = "serialize_ts")]
     pub timestamp: DateTime<Utc>,
     pub latency_ms: i64,
-    /// 0 for non-streaming requests.
+    /// Milliseconds to the first response byte or token; 0 when no first byte was observed.
     pub ttft_ms: i64,
     /// Credential label (email or key alias).
     pub source: String,
