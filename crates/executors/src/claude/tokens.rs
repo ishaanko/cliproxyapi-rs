@@ -16,10 +16,10 @@ use super::cloaking::{
     detect_incoming_claude_code_request, relocate_claude_system_prompt_for_count_tokens, validate_claude_caller_system_blocks,
     validate_claude_mid_system_message_model,
 };
-use super::execute::{sanitize_claude_messages_for_claude_upstream_with_debug, translate_request_single};
-use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
+use super::execute::sanitize_claude_messages_for_claude_upstream_with_debug;
+use crate::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::credential_identity::claude_agent_session_uuid_for_request;
-use super::helps::input_tokens::count_claude_input_tokens;
+use crate::helps::claude_input_tokens::count_claude_input_tokens;
 use super::helps::upstream::is_anthropic_upstream_base;
 use super::policy::{resolve_claude_fingerprint_policy, resolve_claude_wire_policy};
 use super::request::{
@@ -30,6 +30,7 @@ use super::signing::rebuild_mid_system_message_enabled;
 use super::tool_remap::{prepare_claude_oauth_tool_names_for_upstream, resolve_claude_mcp_alias_options};
 use super::{ClaudeExecutor, DEFAULT_BASE_URL};
 use crate::helps::status::status_err;
+use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 
 /// Only Anthropic's first-party origin has the measured native count_tokens contract
@@ -106,7 +107,8 @@ impl ClaudeExecutor {
 
         // Streaming translation preserves function calling, except for claude.
         let stream = from != to;
-        let mut body = translate_request_single(&opts.headers, from, &base_model, &req.payload, stream, api_key_model_is_compat(&req));
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, to, &base_model, stream).compat(api_key_model_is_compat(&req));
+        let mut body = translate_request(&translation, &req.payload).0;
         body = apply_request_thinking(&body, &req, &opts, from.as_str(), to.as_str(), "claude", false)
             .map_err(|e| ExecError::new(e.status_code(), e.to_string()))?;
         if rebuild_mid_system_message_enabled(cfg, auth) {
@@ -159,7 +161,8 @@ impl ClaudeExecutor {
             );
         }
         let stream = from != to;
-        let mut body = translate_request_single(&opts.headers, from, &base_model, &req.payload, stream, api_key_model_is_compat(&req));
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, to, &base_model, stream).compat(api_key_model_is_compat(&req));
+        let mut body = translate_request(&translation, &req.payload).0;
         body = set_string_if_different_bytes(&body, "model", &upstream_model);
         body = apply_request_thinking(&body, &req, &opts, from.as_str(), to.as_str(), "claude", false)
             .map_err(|e| ExecError::new(e.status_code(), e.to_string()))?;
@@ -238,11 +241,11 @@ impl ClaudeExecutor {
         if !(200..300).contains(&status) {
             let data = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => Bytes::from(format!("failed to read error response body: {}", super::http::describe_body_error(&e))),
+                Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
             };
             return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &data, cfg.claude.model_level_cooling));
         }
-        let data = resp.bytes().await.map_err(|e| ExecError::new(0, super::http::describe_body_error(&e)))?;
+        let data = resp.bytes().await.map_err(|e| ExecError::new(0, crate::helps::status::transport_message(&e)))?;
         let count = cpa_json::parse(&data).g("input_tokens").int();
         let out = cpa_translator::translate_token_count(&Ctx::default(), to, response_format, count, &data);
         Ok(Response { payload: Bytes::from(out), headers: resp_headers, ..Default::default() })

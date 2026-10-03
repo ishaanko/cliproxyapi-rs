@@ -5,7 +5,7 @@ use cpa_auth::Auth;
 use cpa_json::J;
 use cpa_runtime::conductor::resolved_model_info;
 use cpa_runtime::executor::{ExecError, Metadata, Options, Request, Response};
-use cpa_translator::{Ctx, Format, RequestEnvelope, translate_request_envelope, translate_token_count};
+use cpa_translator::{Ctx, Format, translate_token_count};
 
 use super::AntigravityExecutor;
 use super::pipeline::{base_model_of, pre_send};
@@ -16,6 +16,7 @@ use super::transport::close_auth_idle_transports;
 use crate::helps::json_retry::parse_retry_delay;
 use crate::helps::payload::delete_json_field;
 use crate::helps::thinking::apply_request_thinking;
+use crate::helps::translate::{RequestTranslation, translate_request};
 
 impl AntigravityExecutor {
     pub(crate) async fn count_tokens_impl(&self, auth: &Auth, mut req: Request, opts: Options) -> Result<Response, ExecError> {
@@ -36,14 +37,11 @@ impl AntigravityExecutor {
         }
 
         let model_info = resolved_model_info(&req).map(|r| r.info);
-        let envelope = RequestEnvelope {
-            model: base_model.clone(),
-            body: req.payload.to_vec(),
-            model_info,
-            ..Default::default()
-        };
         let ctx = Ctx { alt: Some(opts.alt.clone()) };
-        let payload = translate_request_envelope(&ctx, from, to, envelope).body;
+        let mut translation = RequestTranslation::new(&opts.headers, Some(&cfg), from, to, &base_model, false);
+        translation.ctx = ctx.clone();
+        translation.envelope.model_info = model_info;
+        let payload = translate_request(&translation, &req.payload).0;
         let payload = apply_request_thinking(&payload, &req, &opts, from.as_str(), to.as_str(), "antigravity", false)
             .map_err(|e| pre_send(ExecError::new(e.status_code(), e.message)))?;
         let payload = Self::obfuscate_sensitive_words(&cfg, payload);
@@ -70,10 +68,10 @@ impl AntigravityExecutor {
             .body(payload)
             .send()
             .await
-            .map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+            .map_err(|e| crate::helps::status::transport_error(&e))?;
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = resp.bytes().await.map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+        let body = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
 
         if (200..300).contains(&status) {
             let count = cpa_json::parse(&body).g("totalTokens").int();

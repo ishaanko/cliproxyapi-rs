@@ -35,6 +35,8 @@ pub enum Body {
     Json(Value),
     /// Sent verbatim with `Content-Type: application/json` (for malformed bodies).
     Text(String),
+    /// Sent verbatim with the given content type (SDP, multipart).
+    Typed(&'static str, String),
 }
 
 #[derive(Clone, Debug)]
@@ -78,6 +80,12 @@ impl HttpReq {
 
     pub fn raw(mut self, text: &str) -> Self {
         self.body = Body::Text(text.to_string());
+        self
+    }
+
+    /// Verbatim body with its own content type.
+    pub fn typed(mut self, content_type: &'static str, text: &str) -> Self {
+        self.body = Body::Typed(content_type, text.to_string());
         self
     }
 
@@ -218,6 +226,7 @@ impl Client {
             Body::None => req,
             Body::Json(v) => req.header("content-type", "application/json").body(v.to_string()),
             Body::Text(t) => req.header("content-type", "application/json").body(t.clone()),
+            Body::Typed(content_type, t) => req.header("content-type", *content_type).body(t.clone()),
         };
         let resp = req.send().await.with_context(|| format!("{} {}", r.method, r.path))?;
         let status = resp.status().as_u16();
