@@ -970,15 +970,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cpa-execreg"
-version = "0.1.0"
-dependencies = [
- "thiserror 2.0.21",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "cpa-executors"
 version = "0.1.0"
 dependencies = [
