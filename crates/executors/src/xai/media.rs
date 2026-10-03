@@ -57,10 +57,11 @@ impl XaiExecutor {
             let payload = normalize_image_refs(&req.payload);
             let url = format!("{}{endpoint_path}", base_url.trim_end_matches('/'));
             let headers = apply_headers(Some(auth), &token, false, "", opts, session.as_deref())?;
+            self.record_request(&cfg, auth, opts, &url, &headers, &payload);
             let resp = self.send(&cfg, auth, opts, &reporter, &url, headers, payload).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data = read_body(&reporter, resp).await?;
+            let data = read_body(&cfg, opts, &reporter, resp).await?;
             if !(200..300).contains(&status) {
                 tracing::debug!(
                     "request error, error status: {status}, error message: {}",
@@ -118,10 +119,11 @@ impl XaiExecutor {
                     headers.insert("x-idempotency-key", value);
                 }
             }
+            self.record_request(&cfg, auth, opts, &url, &headers, &payload);
             let resp = self.send_method(&cfg, auth, opts, &reporter, method, &url, headers, body).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data: Bytes = read_body(&reporter, resp).await?;
+            let data: Bytes = read_body(&cfg, opts, &reporter, resp).await?;
             if !(200..300).contains(&status) {
                 tracing::debug!(
                     "request error, error status: {status}, error message: {}",

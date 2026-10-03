@@ -21,6 +21,7 @@ use super::common::{
     compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
     translate_request, upstream_error, usage_metadata,
 };
+use crate::helps::http_request;
 use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::wsrelay::{
@@ -29,6 +30,7 @@ use super::wsrelay::{
 };
 use crate::ConfigRx;
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::ensure_session_id;
@@ -161,6 +163,20 @@ fn envelope_headers(
     out
 }
 
+/// The envelope headers as the `http.Header` Go logs.
+fn log_headers(headers: &BTreeMap<String, Vec<String>>) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, values) in headers {
+        let Ok(name) = http::HeaderName::from_bytes(name.as_bytes()) else { continue };
+        for value in values {
+            if let Ok(value) = HeaderValue::from_str(value) {
+                out.append(name.clone(), value);
+            }
+        }
+    }
+    out
+}
+
 impl AiStudioExecutor {
     /// Translation, thinking, payload rules and the AI Studio specific body edits.
     fn translate(&self, cfg: &Config, req: &Request, opts: &Options, stream: bool) -> Result<Translated, ExecError> {
@@ -279,7 +295,13 @@ impl Executor for AiStudioExecutor {
             headers: envelope_headers(auth, &opts, None, false),
             body: payload,
         };
-        let resp = self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error)?;
+        let log = UpstreamLog::new(&opts, &cfg);
+        log.request(auth, "aistudio", &ws_req.url, &log_headers(&ws_req.headers), &ws_req.body);
+        let resp = log.tap_err(self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error))?;
+        log.metadata(resp.status, &resp.headers);
+        if !resp.body.is_empty() {
+            log.chunk(&resp.body);
+        }
         if !(200..300).contains(&resp.status) {
             return Err(upstream_error(resp.status, &resp.body));
         }
@@ -301,13 +323,46 @@ impl Executor for AiStudioExecutor {
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
     }
+
+    /// Go: AIStudioExecutor.PrepareRequest (custom headers only).
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: AIStudioExecutor.HttpRequest: the request travels through the websocket relay and the
+    /// page's response is rebuilt as an HTTP response.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        if auth.id.is_empty() {
+            return Err(ExecError::new(0, "aistudio executor: missing auth"));
+        }
+        self.prepare_request(&mut req, auth).await?;
+        let mut headers: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (name, value) in req.headers() {
+            headers
+                .entry(wsrelay::canonical_header_key(name.as_str()))
+                .or_default()
+                .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
+        }
+        let ws_req = HttpRequest {
+            method: req.method().to_string(),
+            url: req.url().to_string(),
+            headers,
+            body: req.body().and_then(|b| b.as_bytes()).map(<[u8]>::to_vec).unwrap_or_default(),
+        };
+        let resp = self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error)?;
+        let mut out = http::Response::new(reqwest::Body::from(resp.body));
+        *out.status_mut() = http::StatusCode::from_u16(resp.status).map_err(|e| ExecError::new(0, e.to_string()))?;
+        *out.headers_mut() = resp.headers;
+        Ok(reqwest::Response::from(out))
+    }
 }
 
 impl AiStudioExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn execute_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: &Request,
         opts: &Options,
@@ -323,11 +378,15 @@ impl AiStudioExecutor {
             headers: envelope_headers(auth, opts, session_id, true),
             body: translated.payload.clone(),
         };
+        let log = UpstreamLog::new(opts, cfg);
+        log.request(auth, "aistudio", &ws_req.url, &log_headers(&ws_req.headers), &ws_req.body);
         reporter.start_response_ttft();
-        let resp = self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error)?;
+        let resp = log.tap_err(self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error))?;
+        log.metadata(resp.status, &resp.headers);
         reporter.start_response_ttft();
         if !resp.body.is_empty() {
             reporter.mark_first_response_byte();
+            log.chunk(&resp.body);
         }
         if !(200..300).contains(&resp.status) {
             return Err(upstream_error(resp.status, &resp.body));
@@ -363,7 +422,7 @@ impl AiStudioExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn stream_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: Request,
         opts: Options,
@@ -379,17 +438,23 @@ impl AiStudioExecutor {
             headers: envelope_headers(auth, &opts, session_id, true),
             body: translated.payload.clone(),
         };
+        let log = UpstreamLog::new(&opts, cfg);
+        log.request(auth, "aistudio", &ws_req.url, &log_headers(&ws_req.headers), &ws_req.body);
         reporter.start_response_ttft();
-        let mut events = self.relay.stream(&auth.id, &ws_req).await.map_err(relay_error)?;
+        let mut events = log.tap_err(self.relay.stream(&auth.id, &ws_req).await.map_err(relay_error))?;
         let Some(first) = events.recv().await else {
-            return Err(ExecError::new(0, "wsrelay: stream closed before start"));
+            let err = ExecError::new(0, "wsrelay: stream closed before start");
+            log.error(&err.message);
+            return Err(err);
         };
         if first.status > 0 && first.status != 200 {
             // The upstream refused: drain the remaining frames into the error body.
+            log.metadata(first.status, &first.headers);
             reporter.start_response_ttft();
             let mut body: Vec<u8> = Vec::new();
             if !first.payload.is_empty() {
                 reporter.mark_first_response_byte();
+                log.chunk(&first.payload);
                 body.extend_from_slice(&first.payload);
             }
             if first.kind == MESSAGE_TYPE_STREAM_END {
@@ -397,6 +462,7 @@ impl AiStudioExecutor {
             }
             while let Some(event) = events.recv().await {
                 if let Some(err) = &event.err {
+                    log.error(err);
                     if body.is_empty() {
                         body.extend_from_slice(err.as_bytes());
                     }
@@ -404,6 +470,7 @@ impl AiStudioExecutor {
                 }
                 if !event.payload.is_empty() {
                     reporter.mark_first_response_byte();
+                    log.chunk(&event.payload);
                     body.extend_from_slice(&event.payload);
                 }
                 if event.kind == MESSAGE_TYPE_STREAM_END {
@@ -428,6 +495,7 @@ impl AiStudioExecutor {
         let reporter = reporter.clone();
         tokio::spawn(async move {
             let mut next = Some(first);
+            let mut metadata_logged = false;
             loop {
                 let event = match next.take() {
                     Some(event) => event,
@@ -439,7 +507,7 @@ impl AiStudioExecutor {
                         },
                     },
                 };
-                match process_event(&mut pump, &reporter, event).await {
+                match process_event(&mut pump, &reporter, &log, &mut metadata_logged, event).await {
                     Flow::Continue => {}
                     Flow::Stop => return,
                     Flow::Finish => {
@@ -466,18 +534,33 @@ enum Flow {
 }
 
 /// Translates and forwards one relay event (Go: processEvent).
-async fn process_event(pump: &mut StreamPump, reporter: &UsageReporter, event: StreamEvent) -> Flow {
+async fn process_event(
+    pump: &mut StreamPump,
+    reporter: &UsageReporter,
+    log: &UpstreamLog,
+    metadata_logged: &mut bool,
+    event: StreamEvent,
+) -> Flow {
     if let Some(err) = event.err {
+        log.error(&err);
         pump.fail(ExecError::new(0, format!("wsrelay: {err}"))).await;
         return Flow::Stop;
     }
     match event.kind.as_str() {
-        MESSAGE_TYPE_STREAM_START => Flow::Continue,
+        MESSAGE_TYPE_STREAM_START => {
+            if !*metadata_logged && event.status > 0 {
+                log.metadata(event.status, &event.headers);
+                reporter.start_response_ttft();
+                *metadata_logged = true;
+            }
+            Flow::Continue
+        }
         MESSAGE_TYPE_STREAM_CHUNK => {
             if event.payload.is_empty() {
                 return Flow::Continue;
             }
             reporter.mark_first_response_byte();
+            log.chunk(&event.payload);
             reporter.observe_response_model(&event.payload);
             let filtered = filter_sse_usage_metadata(&event.payload);
             if let Some(detail) = parse_gemini_stream_usage(&filtered) {
@@ -492,8 +575,14 @@ async fn process_event(pump: &mut StreamPump, reporter: &UsageReporter, event: S
             Flow::Finish
         }
         MESSAGE_TYPE_HTTP_RESP => {
+            if !*metadata_logged && event.status > 0 {
+                log.metadata(event.status, &event.headers);
+                reporter.start_response_ttft();
+                *metadata_logged = true;
+            }
             if !event.payload.is_empty() {
                 reporter.mark_first_response_byte();
+                log.chunk(&event.payload);
             }
             if !feed_spaced(pump, &event.payload).await {
                 return Flow::Stop;

@@ -25,6 +25,7 @@ use super::replay::{
 use super::request::{BuiltRequest, build_request, resolve_request_base_url};
 use super::signature::{ensure_boundary_user_content, sanitize_gemini_request_signatures, validate_request_signatures};
 use super::transport::close_auth_idle_transports;
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::session::derived_antigravity_session_id;
 use crate::helps::thinking::apply_request_thinking;
@@ -66,6 +67,8 @@ pub(crate) struct Prepared {
     pub reporter: UsageReporter,
     pub client: reqwest::Client,
     pub built: BuiltRequest,
+    /// Upstream request-log recorder of the inbound request.
+    pub log: UpstreamLog,
 }
 
 pub(crate) fn credits_requested(opts: &Options) -> bool {
@@ -240,6 +243,7 @@ impl AntigravityExecutor {
             &derived,
         )?;
 
+        let log = UpstreamLog::new(opts, &cfg);
         Ok(Prepared {
             cfg,
             base_model: base_model.to_string(),
@@ -254,19 +258,26 @@ impl AntigravityExecutor {
             reporter: reporter.clone(),
             client,
             built,
+            log,
         })
     }
 
-    /// Sends the built request. Transport failures carry no status.
+    /// Logs and sends the built request (Go: the `RecordAPIRequest` at the end of `buildRequest`,
+    /// whose body is only captured when `request-log` is on, then `RecordAPIResponseError` on a
+    /// transport failure). Transport failures carry no status.
     pub(crate) async fn send(&self, p: &Prepared) -> Result<reqwest::Response, ExecError> {
+        let logged_body: &[u8] = if p.cfg.request_log { &p.built.body } else { &[] };
+        p.log.request(&p.auth, "antigravity", &p.built.url, &p.built.headers, logged_body);
         p.reporter.start_response_ttft();
-        p.client
+        let sent = p
+            .client
             .post(&p.built.url)
             .headers(p.built.headers.clone())
             .body(p.built.body.clone())
             .send()
             .await
-            .map_err(|e| crate::helps::status::transport_error(&e))
+            .map_err(|e| crate::helps::status::transport_error(&e));
+        p.log.tap_err(sent)
     }
 
     /// Non-2xx handling common to every path: 429 cooldown and credits bookkeeping, replay

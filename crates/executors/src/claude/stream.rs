@@ -1,5 +1,7 @@
 //! Streaming Messages call (Go: ExecuteStream in claude_executor_stream.go).
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures_util::TryStreamExt;
 use cpa_auth::Auth;
@@ -19,6 +21,7 @@ use crate::helps::apply_patch::{
     apply_patch_original_request, apply_patch_translation_error, end_apply_patch_stream, gateway_error,
     initialize_apply_patch_stream, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
+use crate::helps::logging::ApiLogHandle;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
@@ -30,7 +33,7 @@ impl ClaudeExecutor {
     /// stream translator.
     pub(super) async fn execute_stream_impl(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: Request,
         opts: Options,
@@ -57,11 +60,30 @@ impl ClaudeExecutor {
         let (usage_tx, usage_rx) = oneshot::channel();
         let original_request = apply_patch_original_request(&prepared.req, &opts);
         let task_headers = resp_headers.clone();
+        let task_cfg = Arc::clone(cfg);
+        let api_log = opts.api_log.clone();
         tokio::spawn(async move {
             let mut usage = StreamUsageBuffer::default();
-            let outcome = run_stream(resp, status, &task_headers, &prepared, &original_request, response_format, &reporter, &mut usage, &tx).await;
-            if let Err(err) = outcome {
+            let outcome = run_stream(
+                resp,
+                status,
+                &task_headers,
+                &prepared,
+                &original_request,
+                response_format,
+                &reporter,
+                &mut usage,
+                &tx,
+                (&task_cfg, &api_log),
+            )
+            .await;
+            if let Err(StreamEnd::Cancelled(err)) = outcome {
+                api_log.record_api_response_error(&task_cfg, &err.message);
+                reporter.publish_buffer_failure(&usage, &err);
+                let _ = tx.try_send(Err(err));
+            } else if let Err(StreamEnd::Failed(err)) = outcome {
                 let err = wrap_claude_fast_request_error(prepared.fast_request, status, err);
+                api_log.record_api_response_error(&task_cfg, &err.message);
                 reporter.publish_buffer_failure(&usage, &err);
                 if prepared.replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(Some(&err)) {
                     clear_claude_thinking_replay_content(&prepared.replay_scope);
@@ -84,6 +106,29 @@ impl ClaudeExecutor {
     }
 }
 
+/// Why a stream pump stopped early.
+enum StreamEnd {
+    /// The client went away on an OAuth credential (Go: `claudeOAuthCancellationError`): recorded
+    /// and published as a failure, but not wrapped or sent anywhere.
+    Cancelled(ExecError),
+    Failed(ExecError),
+}
+
+impl From<ExecError> for StreamEnd {
+    fn from(err: ExecError) -> Self {
+        StreamEnd::Failed(err)
+    }
+}
+
+/// The client channel closed (Go: `ctx.Done()` while sending). Only OAuth credentials turn this
+/// into a recorded cancellation failure.
+fn client_gone(p: &Prepared) -> Result<(), StreamEnd> {
+    if p.oauth_cancellation {
+        return Err(StreamEnd::Cancelled(ExecError::new(0, "context canceled")));
+    }
+    Ok(())
+}
+
 /// Pumps the upstream body to the client channel. `Err` is a terminal stream failure that the
 /// caller reports; a closed channel (client gone) ends the pump with `Ok`.
 #[allow(clippy::too_many_arguments)]
@@ -97,10 +142,11 @@ async fn run_stream(
     reporter: &UsageReporter,
     usage: &mut StreamUsageBuffer,
     tx: &mpsc::Sender<Result<Bytes, ExecError>>,
-) -> Result<(), ExecError> {
+    (cfg, api_log): (&Config, &ApiLogHandle),
+) -> Result<(), StreamEnd> {
     let to = Format::Claude;
     let mut lines = LineReader::from_stream(
-        resp.bytes_stream().map_err(|e| crate::helps::status::transport_message(&e)),
+        super::decode::decode_stream(Box::pin(resp.bytes_stream().map_err(|e| crate::helps::status::transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     let mut upstream_message_id = String::new();
@@ -124,14 +170,16 @@ async fn run_stream(
                 }
             };
             observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+            api_log.append_api_response_chunk(cfg, &line);
             reporter.observe_response_model(&line);
             usage.observe_claude_stream(&line);
             let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
+            let restored = p.restore_response_model(restored);
             event.extend_from_slice(&restored);
             event.push(b'\n');
             if trim_space(&restored).is_empty() {
                 if !event.is_empty() && tx.send(Ok(Bytes::from(std::mem::take(&mut event)))).await.is_err() {
-                    return Ok(());
+                    return client_gone(p);
                 }
                 if upstream_completed {
                     break;
@@ -139,10 +187,10 @@ async fn run_stream(
             }
         }
         if !event.is_empty() && tx.send(Ok(Bytes::from(event))).await.is_err() {
-            return Ok(());
+            return client_gone(p);
         }
         if !upstream_completed && let Some(err) = scan_error {
-            return Err(err);
+            return Err(err.into());
         }
         if upstream_completed {
             commit_claude_continuity_state(&p.diagnostics_state, &upstream_message_id, &header_value(resp_headers, "request-id"));
@@ -164,9 +212,11 @@ async fn run_stream(
             }
         };
         observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+        api_log.append_api_response_chunk(cfg, &line);
         reporter.observe_response_model(&line);
         usage.observe_claude_stream(&line);
         let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
+        let restored = p.restore_response_model(restored);
         let mut chunks = cpa_translator::translate_stream(
             &Ctx::default(),
             to,
@@ -185,7 +235,7 @@ async fn run_stream(
         record_apply_patch_stream_failure(&param, reporter, &gateway_error());
         for chunk in chunks {
             if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
-                return Ok(());
+                return client_gone(p);
             }
         }
         // A retained tool-input failure ends the stream after its one translated frame.
@@ -201,7 +251,7 @@ async fn run_stream(
         return Ok(());
     }
     if !upstream_completed && let Some(err) = scan_error {
-        return Err(err);
+        return Err(err.into());
     }
     if upstream_completed {
         commit_claude_continuity_state(&p.diagnostics_state, &upstream_message_id, &header_value(resp_headers, "request-id"));

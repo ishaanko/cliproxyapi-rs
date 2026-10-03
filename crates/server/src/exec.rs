@@ -49,6 +49,9 @@ pub struct ExecOk {
     pub headers: HeaderMap,
 }
 
+/// Callback receiving the auth id of each credential pick.
+pub type SelectedAuthFn = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Per-call execution parameters (Go: `modelExecutionOptions` plus the positional arguments).
 #[derive(Clone)]
 pub struct ExecArgs<'a> {
@@ -69,7 +72,7 @@ pub struct ExecArgs<'a> {
     /// websocket (Go: `WithRequiredUpstreamWebsocket`).
     pub required_upstream_websocket: bool,
     /// Called with the auth id of every credential pick (Go: `WithSelectedAuthIDCallback`).
-    pub on_selected_auth: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub on_selected_auth: Option<SelectedAuthFn>,
     /// Plugin whose interceptors and routers are skipped: the caller of a nested host model
     /// execution (Go: `SkipInterceptorPluginID` / `SkipRouterPluginID`).
     pub skip_plugin_id: Option<&'a str>,
@@ -87,6 +90,10 @@ pub struct ExecArgs<'a> {
     pub handler_type: Option<&'a str>,
     /// Skip known free-tier credentials (Go: `WithDisallowFreeAuth`).
     pub disallow_free_auth: bool,
+    /// Client frames for a steering executor stream (Go: `WithWebsocketInput`).
+    pub ws_input: Option<cpa_runtime::executor::WebsocketInput>,
+    /// Live credential-state check of the bound socket (Go: `WithWebsocketAuthCheck`).
+    pub ws_auth_check: Option<cpa_runtime::executor::WebsocketAuthCheck>,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -113,6 +120,8 @@ impl<'a> ExecArgs<'a> {
             query: None,
             handler_type: None,
             disallow_free_auth: false,
+            ws_input: None,
+            ws_auth_check: None,
         }
     }
 
@@ -265,6 +274,9 @@ impl Pipeline {
             opts.response_format = Some(a.exit.unwrap_or(a.entry));
         }
         opts.metadata = metadata;
+        opts.api_log = self.info.api_log.exec_handle();
+        opts.ws_input = a.ws_input.clone();
+        opts.ws_auth_check = a.ws_auth_check.clone();
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
         let on_selected = a.on_selected_auth.clone();

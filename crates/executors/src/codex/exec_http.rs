@@ -1,6 +1,7 @@
 //! Codex over HTTP + SSE: `Execute`, `ExecuteStream` and `/responses/compact` (Go:
 //! codex_executor_execute.go and codex_executor_stream.go).
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -13,7 +14,9 @@ use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
 use super::CodexExecutor;
+use super::logging::{error_text, upstream_log};
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
+use crate::helps::logging::ApiLogHandle;
 use super::creds::{base_url, codex_creds};
 use super::headers::{apply_codex_headers, apply_model_header_overrides, apply_routing_hint, header_value, set_header};
 use super::multi_agent_v2::restore_response;
@@ -31,6 +34,9 @@ use crate::helps::tls_fingerprint::new_utls_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::usage::{parse::parse_codex_usage, parse::parse_openai_usage, reporter::UsageReporter};
+
+/// Message of the 502 recorded when the upstream closes before any payload.
+const EMPTY_STREAM_MESSAGE: &str = "upstream stream closed before first payload";
 
 /// Channel depth between the SSE reader task and the conductor.
 const STREAM_CHANNEL_CAPACITY: usize = 64;
@@ -97,28 +103,41 @@ impl CodexExecutor {
         headers: HeaderMap,
         body: Vec<u8>,
     ) -> Result<reqwest::Response, ExecError> {
+        opts.api_log.record_api_request(cfg, upstream_log(auth, url, "POST", &headers, &body));
         let fallback = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         let client = new_utls_http_client(&opts.proxy_url, Some(cfg), Some(auth), fallback);
-        client
-            .post(url)
-            .headers(headers)
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| e.exec_error())
+        match client.post(url).headers(headers).body(body).send().await {
+            Ok(resp) => {
+                opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
+                Ok(resp)
+            }
+            Err(e) => {
+                let err = e.exec_error();
+                opts.api_log.record_api_response_error(cfg, &error_text(&err));
+                Err(err)
+            }
+        }
     }
 
-    /// Error for a non-2xx response; also drops stale reasoning replay state.
-    async fn http_status_error(&self, cfg: &Config, scope: &ReplayScope, resp: reqwest::Response) -> ExecError {
+    /// Error for a non-2xx response; also drops stale reasoning replay state. The streaming
+    /// path fails on a body read error (`strict`), the others keep the bytes read so far.
+    async fn http_status_error(&self, cfg: &Config, opts: &Options, scope: &ReplayScope, resp: reqwest::Response, strict: bool) -> ExecError {
         let status = resp.status().as_u16();
-        let data = match resp.bytes().await {
-            Ok(b) => b,
-            Err(e) => return crate::helps::status::transport_error(&e),
-        };
+        let content_type = header_value(resp.headers(), "Content-Type");
+        let (data, read_err) = read_all_lenient(resp).await;
+        if let (true, Some(read_err)) = (strict, read_err) {
+            opts.api_log.record_api_response_error(cfg, &read_err);
+            return ExecError::new(0, read_err);
+        }
         // A failed replay cleanup replaces the upstream error (Go returns the cleanup error).
         if let Err(replay_err) = clear_replay_on_invalid_signature(scope, status, &data) {
             return replay_err;
         }
+        opts.api_log.append_api_response_chunk(cfg, &data);
+        tracing::debug!(
+            "request error, error status: {status}, error message: {}",
+            crate::helps::logging::summarize_error_body(&content_type, &data)
+        );
         new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling)
     }
 
@@ -132,10 +151,11 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(&cfg, auth, &req, &opts, &prepared, true, "/responses");
         let resp = self.send_http(&cfg, auth, &opts, &url, headers, body).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(&cfg, &prepared.replay_scope, resp).await);
+            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, false).await);
         }
         let resp_headers = resp.headers().clone();
-        let data = read_all_lenient(resp).await;
+        let (data, read_err) = read_all_lenient(resp).await;
+        opts.api_log.append_api_response_chunk(&cfg, &data);
         let modelc = cfg.codex.model_level_cooling;
 
         let mut items = OutputItems::default();
@@ -186,6 +206,9 @@ impl CodexExecutor {
             let metadata = detail.as_ref().map(usage_metadata).unwrap_or_default();
             return Ok(Response { payload: Bytes::from(out), metadata, headers: resp_headers });
         }
+        if let Some(read_err) = read_err {
+            opts.api_log.record_api_response_error(&cfg, &read_err);
+        }
         Err(new_incomplete_stream_error())
     }
 
@@ -195,10 +218,18 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(cfg, auth, &req, &opts, &prepared, false, "/responses/compact");
         let resp = self.send_http(cfg, auth, &opts, &url, headers, body).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(cfg, &prepared.replay_scope, resp).await);
+            return Err(self.http_status_error(cfg, &opts, &prepared.replay_scope, resp, false).await);
         }
         let resp_headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
+        let data = match resp.bytes().await {
+            Ok(data) => data,
+            Err(e) => {
+                let err = crate::helps::status::transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &error_text(&err));
+                return Err(err);
+            }
+        };
+        opts.api_log.append_api_response_chunk(cfg, &data);
         let upstream = restore_response(&data, prepared.optimize_multi_agent_v2);
         let mut param = Param::default();
         let out = cpa_translator::translate_non_stream(
@@ -232,7 +263,7 @@ impl CodexExecutor {
         let (url, headers, body) = self.build_http_request(&cfg, auth, &req, &opts, &prepared, true, "/responses");
         let resp = self.send_http(&cfg, auth, &opts, &url, headers, body).await?;
         if !resp.status().is_success() {
-            return Err(self.http_status_error(&cfg, &prepared.replay_scope, resp).await);
+            return Err(self.http_status_error(&cfg, &opts, &prepared.replay_scope, resp, true).await);
         }
         let upstream_headers = resp.headers().clone();
         let buffering = cfg.codex.stream_bootstrap_buffering;
@@ -294,13 +325,17 @@ impl CodexExecutor {
             }
             if !started && bootstrap_terminal_err.is_none() {
                 if let Some(err) = scan_error {
+                    opts.api_log.record_api_response_error(&cfg, &err.to_string());
                     return Err(err.into());
                 }
                 if buffered.is_empty() && initial.is_empty() {
+                    opts.api_log.record_api_response_error(&cfg, EMPTY_STREAM_MESSAGE);
                     let (_tx, rx) = mpsc::channel(1);
                     return Ok(StreamResult::new(upstream_headers, rx));
                 }
-                return Err(new_incomplete_stream_error());
+                let err = new_incomplete_stream_error();
+                opts.api_log.record_api_response_error(&cfg, &error_text(&err));
+                return Err(err);
             }
         }
 
@@ -332,16 +367,17 @@ impl CodexExecutor {
     }
 }
 
-/// Reads a body to the end; on a read error the bytes received so far are kept.
-async fn read_all_lenient(mut resp: reqwest::Response) -> Vec<u8> {
+/// Reads a body to the end (Go `io.ReadAll`): on a read error the bytes received so far are
+/// returned together with the rendered error.
+async fn read_all_lenient(mut resp: reqwest::Response) -> (Vec<u8>, Option<String>) {
     let mut data = Vec::new();
     loop {
         match resp.chunk().await {
             Ok(Some(chunk)) => data.extend_from_slice(&chunk),
-            Ok(None) | Err(_) => break,
+            Ok(None) => return (data, None),
+            Err(e) => return (data, Some(crate::helps::status::transport_message(&e))),
         }
     }
-    data
 }
 
 /// What one upstream line turned into.
@@ -363,10 +399,12 @@ struct HttpStream {
     model_level_cooling: bool,
     is_grok: bool,
     usage: Option<crate::helps::usage::accounting::Detail>,
+    cfg: Arc<Config>,
+    api_log: ApiLogHandle,
 }
 
 impl HttpStream {
-    fn new(cfg: &Config, req: &Request, opts: &Options, prepared: Prepared) -> Self {
+    fn new(cfg: &Arc<Config>, req: &Request, opts: &Options, prepared: Prepared) -> Self {
         // Response translators receive the translated request before the prompt cache identity.
         let request_body = prepared.body.clone();
         let claude_tokens = ClaudeInputTokenState::new(prepared.from, prepared.to, prepared.response_format, &prepared.original_payload);
@@ -380,6 +418,8 @@ impl HttpStream {
             model_level_cooling: cfg.codex.model_level_cooling,
             is_grok: is_grok_client(&opts.headers),
             usage: None,
+            cfg: Arc::clone(cfg),
+            api_log: opts.api_log.clone(),
             prepared,
         }
     }
@@ -406,6 +446,7 @@ impl HttpStream {
 
     /// Handles one upstream SSE line (Go: the body of the scan loop).
     fn step(&mut self, line: &[u8]) -> Step {
+        self.api_log.append_api_response_chunk(&self.cfg, line);
         if let Some(transformed) = grok_keepalive_line(line, self.is_grok) {
             let chunks = self.translate(&transformed);
             return Step::Frame { chunks, handshake: true, terminal_success: false };
@@ -418,13 +459,16 @@ impl HttpStream {
         let event = cpa_json::parse(&data);
         let event_type = event.g("type").str();
         if let Some((err, body)) = terminal_failure_err(&event, self.model_level_cooling) {
+            self.api_log.record_api_response_error(&self.cfg, &error_text(&err));
             return Step::Failure { err, body };
         }
         if has_meaningful_output_delta(&event) {
             self.saw_output_delta = true;
         }
         if is_terminal_empty_incomplete(&event, self.items.len(), self.saw_output_delta) {
-            return Step::EmptyIncomplete(new_empty_incomplete_stream_error());
+            let err = new_empty_incomplete_stream_error();
+            self.api_log.record_api_response_error(&self.cfg, &error_text(&err));
+            return Step::EmptyIncomplete(err);
         }
         let mut handshake = is_bootstrap_bufferable_event(&event_type, &data, &event);
         let mut terminal_success = false;
@@ -464,7 +508,13 @@ impl HttpStream {
                 next = lines.next_line() => next,
             };
             let Some(line) = next else { break };
-            let Ok(line) = line else { break };
+            let line = match line {
+                Ok(line) => line,
+                Err(err) => {
+                    self.api_log.record_api_response_error(&self.cfg, &err.to_string());
+                    break;
+                }
+            };
             match self.step(&line) {
                 Step::Failure { err, body } => {
                     let err = self.clear_replay(&err, &body).err().unwrap_or(err);
@@ -496,8 +546,11 @@ impl HttpStream {
         }
         if emitted == 0 {
             // "upstream stream closed before first payload": no chunk, the conductor sees an empty stream.
+            self.api_log.record_api_response_error(&self.cfg, EMPTY_STREAM_MESSAGE);
             return;
         }
-        let _ = tx.send(Err(new_incomplete_stream_error())).await;
+        let err = new_incomplete_stream_error();
+        self.api_log.record_api_response_error(&self.cfg, &error_text(&err));
+        let _ = tx.send(Err(err)).await;
     }
 }

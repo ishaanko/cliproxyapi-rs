@@ -14,6 +14,9 @@ mod stream;
 mod tokens;
 mod tools;
 mod util;
+mod ws;
+
+pub use ws::{close_xai_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
 use std::sync::Arc;
 
@@ -24,6 +27,8 @@ use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, 
 use http::{HeaderMap, Method};
 
 use crate::ConfigRx;
+use crate::helps::http_request;
+use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::proxy::{effective_proxy_url, new_proxy_aware_http_client};
@@ -50,6 +55,7 @@ impl XaiExecutor {
     }
 
     /// POST of `body` with TTFT tracking; transport failures become status-less errors.
+    #[allow(clippy::too_many_arguments)]
     async fn send(
         &self,
         cfg: &Config,
@@ -82,7 +88,37 @@ impl XaiExecutor {
             builder = builder.body(body);
         }
         reporter.start_response_ttft();
-        builder.send().await.map_err(|e| transport_error(&e))
+        match builder.send().await {
+            Ok(resp) => {
+                opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
+                Ok(resp)
+            }
+            Err(e) => {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                Err(err)
+            }
+        }
+    }
+
+    /// Go: recordXAIRequest. Records the upstream request in the request log (always as POST,
+    /// like Go, even for the video status GET).
+    fn record_request(&self, cfg: &Config, auth: &Auth, opts: &Options, url: &str, headers: &HeaderMap, body: &[u8]) {
+        let (auth_type, auth_value) = auth.account_info();
+        opts.api_log.record_api_request(
+            cfg,
+            UpstreamRequestLog {
+                url: url.to_string(),
+                method: Method::POST.to_string(),
+                headers: headers.clone(),
+                body: body.to_vec(),
+                provider: IDENTIFIER.to_string(),
+                auth_id: auth.id.clone(),
+                auth_label: auth.label.clone(),
+                auth_type: auth_type.to_string(),
+                auth_value,
+            },
+        );
     }
 }
 
@@ -106,7 +142,15 @@ impl Executor for XaiExecutor {
         self.execute_chat(auth, &req, &opts).await
     }
 
+    /// Go: XAIAutoExecutor.ExecuteStream. The upstream websocket serves a request only when the
+    /// client is on a Responses websocket and the credential enables `websockets`.
     async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        if ws::is_downstream_websocket(&opts) && ws::websockets_enabled(auth) {
+            return self.execute_stream_ws(auth, &req, &opts).await;
+        }
+        if ws::requires_upstream_websocket(&opts) {
+            return Err(crate::codex::upstream_websocket_replay_required());
+        }
         self.execute_stream_chat(auth, &req, &opts).await
     }
 
@@ -137,11 +181,30 @@ impl Executor for XaiExecutor {
         self.count_tokens_local(&req, &opts).await
     }
 
+    async fn close_execution_session(&self, session_id: &str) {
+        ws::close_execution_session(session_id);
+    }
+
     fn for_api_key(&self) -> Option<DynExecutor> {
         Some(Arc::new(XaiExecutor { cfg: self.cfg.clone(), api_key_view: true }))
     }
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: XAIExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (token, _) = request::creds(Some(auth));
+        http_request::set_bearer_or_clear(req, &token);
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: XAIExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }

@@ -3,10 +3,10 @@
 //!
 //! With `request-log: true` every request writes one file; with `false` only "actionable error"
 //! requests (status >= 400 other than 499, or recorded upstream errors) produce an `error-*.log`.
-//! Layout and file naming follow Go. Upstream request/response sections that Go collects from
-//! the executors (`API REQUEST`, executor-side `API RESPONSE`) are not available through the
-//! executor contract; the `API RESPONSE` section holds the handler-level response text and
-//! `API ERROR RESPONSE` the recorded upstream errors.
+//! Layout and file naming follow Go. The upstream sections (`API REQUEST`, executor-side
+//! `API RESPONSE n` blocks, `API WEBSOCKET TIMELINE`) come from the executors' capture
+//! ([`cpa_runtime::apilog::ApiLog`], handed over through `Options.api_log`); the handler-level
+//! response text (`API_RESPONSE`) and `API ERROR RESPONSE` entries are recorded here.
 
 use std::fs;
 use std::io::Write as _;
@@ -22,6 +22,7 @@ use axum::response::Response;
 use chrono::{DateTime, Local, SecondsFormat};
 use cpa_config::Config;
 use cpa_core::util::{mask_sensitive_header_value, mask_sensitive_query};
+use cpa_runtime::apilog::{ApiLog as ExecLog, ApiLogHandle as ExecLogHandle};
 use parking_lot::Mutex;
 use tokio::sync::{Notify, watch};
 
@@ -38,6 +39,8 @@ const MAX_RESPONSE_CAPTURE: usize = 128 << 20;
 #[derive(Default)]
 pub struct ApiLog {
     pub(crate) data: Mutex<ApiLogData>,
+    /// Upstream capture written by the executors serving this request.
+    exec: Arc<ExecLog>,
     pub(crate) ws_done: Notify,
     /// Set when `request-log` is off: Go only records `API_RESPONSE_ERROR` entries then.
     errors_muted: AtomicBool,
@@ -49,8 +52,17 @@ pub struct ApiLogData {
     pub errors: Vec<(u16, String)>,
     /// Appended upstream/handler response text (`API_RESPONSE`).
     pub api_response: Vec<u8>,
-    pub api_response_timestamp: Option<DateTime<Local>>,
     pub ws_timeline: String,
+}
+
+/// The executors' capture as the renderer needs it (Go: `API_REQUEST`, the executor part of
+/// `API_RESPONSE`, `API_WEBSOCKET_TIMELINE`, `API_RESPONSE_TIMESTAMP`).
+#[derive(Default)]
+pub struct ExecView {
+    pub request: Vec<u8>,
+    pub response: Vec<u8>,
+    pub ws_timeline: Vec<u8>,
+    pub response_timestamp: Option<DateTime<Local>>,
 }
 
 impl ApiLog {
@@ -67,19 +79,31 @@ impl ApiLog {
         self.data.lock().errors.push((status, text.to_string()));
     }
 
+    /// Handle for `Options.api_log`: the executors record upstream attempts into this request's log.
+    pub fn exec_handle(&self) -> ExecLogHandle {
+        ExecLogHandle::new(self.exec.clone())
+    }
+
     /// `appendAPIResponse`: newline-separated accumulation with a first-write timestamp.
     pub fn append_api_response(&self, data: &[u8]) {
         if data.is_empty() {
             return;
         }
+        self.exec.mark_response_timestamp();
         let mut d = self.data.lock();
-        if d.api_response_timestamp.is_none() {
-            d.api_response_timestamp = Some(Local::now());
-        }
         if !d.api_response.is_empty() && d.api_response.last() != Some(&b'\n') {
             d.api_response.push(b'\n');
         }
         d.api_response.extend_from_slice(data);
+    }
+
+    /// The error branch of the handler's cancel function (`GetContextWithCancel`): the cause is
+    /// appended to `API_RESPONSE` unless the log already holds handler-level response text.
+    pub fn note_cancel(&self, text: &str) {
+        let held = !self.data.lock().api_response.trim_ascii().is_empty();
+        if !held {
+            self.append_api_response(text.as_bytes());
+        }
     }
 
     /// `c.Set("API_RESPONSE", body)` as done by `WriteModelListResponse`: replaces the response
@@ -90,9 +114,21 @@ impl ApiLog {
 
     /// `markAPIResponseTimestamp`.
     pub fn mark_response_timestamp(&self) {
-        let mut d = self.data.lock();
-        if d.api_response_timestamp.is_none() {
-            d.api_response_timestamp = Some(Local::now());
+        self.exec.mark_response_timestamp();
+    }
+
+    /// Snapshot of the executors' capture for rendering. A forced (error-only) log has no
+    /// recorded attempts, so the deferred requests stand in for `API REQUEST`.
+    fn exec_view(&self, force: bool) -> ExecView {
+        let mut request = self.exec.api_request();
+        if force && request.is_empty() {
+            request = self.exec.deferred_api_requests().concat();
+        }
+        ExecView {
+            request,
+            response: self.exec.api_response(),
+            ws_timeline: self.exec.websocket_timeline(),
+            response_timestamp: self.exec.response_timestamp(),
         }
     }
 
@@ -408,26 +444,57 @@ struct Exchange {
     response_headers: HeaderMap,
     response_body: Vec<u8>,
     streaming: bool,
+    /// When the first body chunk was written (Go: `firstChunkTimestamp`).
+    first_chunk: Option<DateTime<Local>>,
 }
 
-fn render(exchange: &Exchange, api: &ApiLogData, websocket: bool) -> Vec<u8> {
+/// `writePreformattedAPISectionWithSource`: the handler's `API_RESPONSE` payload gets the
+/// section header, the executor capture is already formatted (`=== API RESPONSE n ===` blocks)
+/// and follows it as is.
+fn write_preformatted_section(out: &mut Vec<u8>, header: &str, prefix: &str, payload: &[u8], captured: &[u8], timestamp: Option<DateTime<Local>>) {
+    if captured.is_empty() {
+        write_api_section(out, header, prefix, payload, timestamp);
+        return;
+    }
+    write_api_section(out, header, prefix, payload, timestamp);
+    out.extend_from_slice(captured);
+    section_spacing(out, trailing_newlines(captured));
+}
+
+fn has_payload(payload: &[u8]) -> bool {
+    !payload.trim_ascii().is_empty()
+}
+
+/// `writeNonStreamingLog`, or with `stream_layout` the `FileStreamingLogWriter` final log
+/// (used when the logger is enabled and the response streamed): no error sections, the API
+/// response timestamp is the first chunk's.
+fn render(exchange: &Exchange, api: &ApiLogData, exec: &ExecView, websocket: bool, stream_layout: bool) -> Vec<u8> {
     let mut out = Vec::new();
-    let has_api = !api.api_response.is_empty();
-    let upstream = if has_api { "http" } else { "" };
-    let is_ws_transcript = !api.ws_timeline.trim().is_empty();
-    let downstream = if is_ws_transcript || websocket { "websocket" } else { "http" };
-    let downstream = if exchange.streaming && !websocket { "http" } else { downstream };
+    let has_http = has_payload(&exec.request) || has_payload(&api.api_response) || has_payload(&exec.response);
+    let upstream = match (has_http, has_payload(&exec.ws_timeline)) {
+        (true, true) => "websocket+http",
+        (false, true) => "websocket",
+        (true, false) => "http",
+        (false, false) => "",
+    };
+    let is_ws_transcript = !stream_layout && !api.ws_timeline.trim().is_empty();
+    let downstream = if !stream_layout && (is_ws_transcript || websocket) { "websocket" } else { "http" };
     write_request_info(&mut out, &exchange.info, downstream, upstream, !is_ws_transcript);
     if is_ws_transcript {
         write_api_section(&mut out, "=== WEBSOCKET TIMELINE ===\n", "=== WEBSOCKET TIMELINE", api.ws_timeline.as_bytes(), None);
     }
-    for (status, text) in &api.errors {
-        out.extend_from_slice(b"=== API ERROR RESPONSE ===\n");
-        out.extend_from_slice(format!("HTTP Status: {status}\n").as_bytes());
-        out.extend_from_slice(text.as_bytes());
-        section_spacing(&mut out, if text.is_empty() { 1 } else { trailing_newlines(text.as_bytes()) });
+    write_api_section(&mut out, "=== API WEBSOCKET TIMELINE ===\n", "=== API WEBSOCKET TIMELINE", &exec.ws_timeline, None);
+    write_api_section(&mut out, "=== API REQUEST ===\n", "=== API REQUEST", &exec.request, None);
+    if !stream_layout {
+        for (status, text) in &api.errors {
+            out.extend_from_slice(b"=== API ERROR RESPONSE ===\n");
+            out.extend_from_slice(format!("HTTP Status: {status}\n").as_bytes());
+            out.extend_from_slice(text.as_bytes());
+            section_spacing(&mut out, if text.is_empty() { 1 } else { trailing_newlines(text.as_bytes()) });
+        }
     }
-    write_api_section(&mut out, "=== API RESPONSE ===\n", "=== API RESPONSE", &api.api_response, api.api_response_timestamp);
+    let ts = if stream_layout { exchange.first_chunk } else { exec.response_timestamp };
+    write_preformatted_section(&mut out, "=== API RESPONSE ===\n", "=== API RESPONSE", &api.api_response, &exec.response, ts);
     if is_ws_transcript {
         return out;
     }
@@ -436,7 +503,8 @@ fn render(exchange: &Exchange, api: &ApiLogData, websocket: bool) -> Vec<u8> {
         Some(exchange.status),
         &exchange.response_headers,
         &exchange.response_body,
-        !exchange.streaming,
+        // Go's streamed logs end with an extra newline too (verified against the reference).
+        true,
     );
     out
 }
@@ -490,6 +558,7 @@ fn decode_body_for_log(raw: &[u8], encoding: &str) -> Vec<u8> {
 #[derive(Default)]
 struct Captured {
     body: Vec<u8>,
+    first_chunk: Option<DateTime<Local>>,
 }
 
 /// Inner layer for handler routes: Go's `WriteErrorResponse` appends every error body it writes
@@ -611,6 +680,9 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         let captured = captured.clone();
         Some(Box::new(move |chunk| {
             let mut c = captured.lock();
+            if c.first_chunk.is_none() {
+                c.first_chunk = Some(Local::now());
+            }
             if c.body.len() < MAX_RESPONSE_CAPTURE {
                 c.body.extend_from_slice(chunk);
             }
@@ -628,13 +700,11 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         let captured = captured.clone();
         let logger = logger.clone();
         Box::new(move || {
-            let exchange = Exchange {
-                info,
-                status,
-                response_headers,
-                response_body: std::mem::take(&mut captured.lock().body),
-                streaming,
+            let (response_body, first_chunk) = {
+                let mut c = captured.lock();
+                (std::mem::take(&mut c.body), c.first_chunk)
             };
+            let exchange = Exchange { info, status, response_headers, response_body, streaming, first_chunk };
             let task = async move {
                 if ws_upgrade && status == 101 {
                     api_log.ws_done.notified().await;
@@ -667,9 +737,10 @@ async fn forward_to_home(exchange: &Exchange, api_log: &ApiLog, websocket: bool)
     if crate::reqlog_home::ready_client().is_none() {
         return;
     }
+    let exec = api_log.exec_view(false);
     let content = {
         let data = api_log.data.lock();
-        render(exchange, &data, websocket)
+        render(exchange, &data, &exec, websocket, exchange.streaming)
     };
     let text = String::from_utf8_lossy(&content);
     if let Err(e) = crate::reqlog_home::forward_request_log(&exchange.info.headers, &exchange.info.request_id, &text).await {
@@ -683,9 +754,10 @@ fn finalize(logger: &RequestLogger, exchange: Exchange, api_log: &ApiLog, enable
     if !enabled && !force {
         return;
     }
+    let exec = api_log.exec_view(force);
     let content = {
         let data = api_log.data.lock();
-        render(&exchange, &data, websocket)
+        render(&exchange, &data, &exec, websocket, enabled && exchange.streaming)
     };
     let filename = logger.filename(&exchange.info.url, &exchange.info.request_id);
     logger.write_log(&filename, &content, force && !enabled);
@@ -714,6 +786,7 @@ mod tests {
             response_headers: rh,
             response_body: body.as_bytes().to_vec(),
             streaming,
+            first_chunk: None,
         }
     }
 
@@ -731,16 +804,16 @@ mod tests {
     #[test]
     fn non_streaming_layout() {
         let ex = exchange(r#"{"ok":true}"#, 200, false);
-        let text = String::from_utf8(render(&ex, &ApiLogData::default(), false)).unwrap();
+        let text = String::from_utf8(render(&ex, &ApiLogData::default(), &ExecView::default(), false, ex.streaming)).unwrap();
         assert!(text.starts_with("=== REQUEST INFO ===\nVersion: dev\nURL: /v1/chat/completions?key=abcdefghijkl\nMethod: POST\nDownstream Transport: http\nTimestamp: "), "{text}");
         assert!(text.contains("\n\n\n=== HEADERS ===\nAuthorization: Bearer sk-1...cdef\nContent-Type: application/json\n\n\n=== REQUEST BODY ===\n{\"model\":\"m\"}\n\n\n=== RESPONSE ===\nStatus: 200\nContent-Type: application/json\n\n{\"ok\":true}\n"), "{text}");
     }
 
     #[test]
-    fn streaming_layout_has_no_trailing_newline() {
+    fn streaming_layout_ends_with_an_extra_newline_like_go() {
         let ex = exchange("data: x\n\n", 200, true);
-        let text = String::from_utf8(render(&ex, &ApiLogData::default(), false)).unwrap();
-        assert!(text.ends_with("=== RESPONSE ===\nStatus: 200\nContent-Type: application/json\n\ndata: x\n\n"), "{text}");
+        let text = String::from_utf8(render(&ex, &ApiLogData::default(), &ExecView::default(), false, ex.streaming)).unwrap();
+        assert!(text.ends_with("=== RESPONSE ===\nStatus: 200\nContent-Type: application/json\n\ndata: x\n\n\n"), "{text}");
     }
 
     #[test]
@@ -749,7 +822,7 @@ mod tests {
         let mut api = ApiLogData::default();
         api.errors.push((502, "upstream exploded".into()));
         api.api_response = b"{\"error\":1}".to_vec();
-        let text = String::from_utf8(render(&ex, &api, false)).unwrap();
+        let text = String::from_utf8(render(&ex, &api, &ExecView::default(), false, false)).unwrap();
         let e = text.find("=== API ERROR RESPONSE ===\nHTTP Status: 502\nupstream exploded\n\n\n").unwrap();
         let r = text.find("=== API RESPONSE ===\n").unwrap();
         let resp = text.find("=== RESPONSE ===\n").unwrap();
@@ -762,7 +835,7 @@ mod tests {
         let ex = exchange("", 101, false);
         let api = ApiLog::default();
         api.ws_timeline_append("request", b"{\"type\":\"response.create\"}");
-        let text = String::from_utf8(render(&ex, &api.data.lock(), true)).unwrap();
+        let text = String::from_utf8(render(&ex, &api.data.lock(), &ExecView::default(), true, false)).unwrap();
         assert!(text.contains("Downstream Transport: websocket"));
         assert!(text.contains("=== WEBSOCKET TIMELINE ===\nTimestamp: "));
         assert!(!text.contains("=== REQUEST BODY ==="));

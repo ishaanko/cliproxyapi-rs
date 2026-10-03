@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::applypatch;
+use cpa_core::util::go_any;
 use cpa_json::{J, Res, Value, json};
 
 use crate::codex::util::build_short_name_map;
@@ -28,7 +29,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
     // Codex does not support temperature, top_p, top_k or token limits, so they are dropped.
     let effort = root.g("reasoning_effort");
     if effort.exists() {
-        cpa_json::set(&mut out, "reasoning.effort", effort.value());
+        cpa_json::set(&mut out, "reasoning.effort", go_any(effort.value()));
     } else {
         cpa_json::set(&mut out, "reasoning.effort", "medium");
     }
@@ -296,11 +297,11 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
                     cpa_json::set(&mut out, "text.format.type", "json_schema");
                     let v = js.g("name");
                     if v.exists() {
-                        cpa_json::set(&mut out, "text.format.name", v.value());
+                        cpa_json::set(&mut out, "text.format.name", go_any(v.value()));
                     }
                     let v = js.g("strict");
                     if v.exists() {
-                        cpa_json::set(&mut out, "text.format.strict", v.value());
+                        cpa_json::set(&mut out, "text.format.strict", go_any(v.value()));
                     }
                     let v = js.g("schema");
                     if v.exists() {
@@ -313,7 +314,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
         if text.exists() {
             let v = text.g("verbosity");
             if v.exists() {
-                cpa_json::set(&mut out, "text.verbosity", v.value());
+                cpa_json::set(&mut out, "text.verbosity", go_any(v.value()));
             }
         }
     } else if text.exists() {
@@ -322,7 +323,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
             if !out.g("text").exists() {
                 cpa_json::set(&mut out, "text", json!({}));
             }
-            cpa_json::set(&mut out, "text.verbosity", v.value());
+            cpa_json::set(&mut out, "text.verbosity", go_any(v.value()));
         }
     }
 
@@ -353,7 +354,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
                     }
                     let v = f.g("description");
                     if v.exists() {
-                        cpa_json::set(&mut item, "description", v.value());
+                        cpa_json::set(&mut item, "description", go_any(v.value()));
                     }
                     let v = f.g("parameters");
                     if v.exists() {
@@ -361,7 +362,7 @@ pub fn convert_openai_request_to_codex(model_name: &str, raw_json: &[u8], stream
                     }
                     let v = f.g("strict");
                     if v.exists() {
-                        cpa_json::set(&mut item, "strict", v.value());
+                        cpa_json::set(&mut item, "strict", go_any(v.value()));
                     } else {
                         // Chat Completions defaults strict to false while Responses defaults
                         // to true, so an omitted value must be forwarded explicitly.

@@ -250,7 +250,7 @@ pub fn prepare(cfg: &Config, auth: &Auth, req: &Request, opts: &Options, mode: M
                 }
                 // Only the summary delivery option of stream_options survives, and only here.
                 let summary_delivery = v.g("stream_options.reasoning_summary_delivery");
-                let summary_delivery = summary_delivery.exists().then(|| summary_delivery.value());
+                let summary_delivery = summary_delivery.exists().then(|| cpa_core::util::go_any(summary_delivery.value()));
                 changed |= delete_if_present(v, "stream_options");
                 if let Some(value) = summary_delivery {
                     changed |= cpa_json::set(v, "stream_options.reasoning_summary_delivery", value);

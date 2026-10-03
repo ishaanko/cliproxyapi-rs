@@ -86,6 +86,7 @@ const ROUTE_TABLE: &[(&str, &str)] = &[
     ("GET", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses/compact"),
+    ("GET", "/v1/ws"),
     ("POST", "/backend-api/codex/alpha/search"),
     ("GET", "/v1beta/models"),
     ("POST", "/v1beta/interactions"),
@@ -223,6 +224,11 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/antigravity/callback", get(callback_antigravity))
         .route("/callback", get(callback_devin))
         .route("/devin/callback", get(callback_devin))
+        .route(
+            "/v1/ws",
+            get(crate::aistudio::relay_websocket)
+                .route_layer(from_fn_with_state(state.clone(), crate::aistudio::ws_auth_gate)),
+        )
         .nest("/v1", v1)
         .nest("/openai/v1", openai_v1)
         .nest("/backend-api/codex", codex_direct)

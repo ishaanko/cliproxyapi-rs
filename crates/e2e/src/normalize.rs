@@ -23,6 +23,11 @@ static UUID_RE: Lazy<Regex> = Lazy::new(|| {
 });
 /// Generated ids embed the unix nanosecond clock (`<name>-<19 digits>-<counter>`, `interaction_<19 digits>`).
 static NANOS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(^|[^0-9])(\d{19})([^0-9]|$)").expect("nanos regex"));
+/// Unix-second clock values (10 digits) inside request-log text.
+static UNIX_SECS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(^|[^0-9])(\d{10})([^0-9]|$)").expect("unix secs regex"));
+static CACHE_KEY_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#""prompt_cache_key":"[^"]*""#).expect("cache key regex"));
+/// Header lines in request logs whose values are random per connection or session.
+const LOG_RANDOM_HEADERS: &[&str] = &["sec-websocket-key", "sec-websocket-accept", "conversation_id", "session_id", "session-id"];
 /// bcrypt hashes are salted randomly on every server start.
 static BCRYPT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\$2[aby]\$\d\d\$[./A-Za-z0-9]{53}").expect("bcrypt regex"));
 /// Remaining ban time in the management IP-ban message.
@@ -177,6 +182,50 @@ impl Normalizer {
                 (k.clone(), v)
             })
             .collect()
+    }
+
+    /// Request-log file text: timestamps and the version are masked, header blocks are sorted
+    /// (the reference prints Go maps in random order), then the generic string masks apply.
+    pub fn request_log(&mut self, text: &str) -> String {
+        let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        for l in lines.iter_mut() {
+            if l.starts_with("Timestamp: ") {
+                *l = "Timestamp: <ts>".into();
+            } else if l.starts_with("Version: ") {
+                *l = "Version: <version>".into();
+            } else if l.starts_with("Date: ") {
+                *l = "Date: <date>".into();
+            } else if let Some(name) = l.split_once(": ").map(|(k, _)| k.to_ascii_lowercase()).filter(|k| LOG_RANDOM_HEADERS.contains(&k.as_str())) {
+                let key = l.split_once(": ").map(|(k, _)| k.to_string()).unwrap_or_default();
+                *l = format!("{key}: <{name}>");
+            } else {
+                *l = CACHE_KEY_RE.replace_all(l, "\"prompt_cache_key\":\"<key>\"").into_owned();
+                *l = UNIX_SECS_RE
+                    .replace_all(l, |c: &Captures| {
+                        let near = c[2].parse::<i64>().is_ok_and(|s| self.near_now(s));
+                        if near { format!("{}<now>{}", &c[1], &c[3]) } else { c[0].to_string() }
+                    })
+                    .into_owned();
+            }
+        }
+        // Sort the lines of `=== HEADERS ===` and of the header lines after `Status:` in `=== RESPONSE ===`.
+        let mut i = 0;
+        while i < lines.len() {
+            let start = if lines[i] == "=== HEADERS ===" {
+                Some(i + 1)
+            } else if lines[i] == "=== RESPONSE ===" && lines.get(i + 1).is_some_and(|l| l.starts_with("Status: ")) {
+                Some(i + 2)
+            } else {
+                None
+            };
+            if let Some(start) = start {
+                let end = lines[start..].iter().position(|l| l.is_empty()).map_or(lines.len(), |p| start + p);
+                lines[start..end].sort();
+                i = end;
+            }
+            i += 1;
+        }
+        self.string(&lines.join("\n"))
     }
 
     pub fn headers(&mut self, headers: &BTreeMap<String, String>) -> BTreeMap<String, String> {

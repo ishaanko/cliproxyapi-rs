@@ -33,6 +33,7 @@ use cpa_translator::{Ctx, Format, Param};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::helps::http_request;
 use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
     gateway_error, patch_failure, apply_patch_original_request, apply_patch_requested,
@@ -49,6 +50,7 @@ use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{KIMI_SCANNER_BUFFER, LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::{status_err, transport_error};
+use crate::openai_compat::log::record_request;
 use crate::helps::translate::{RequestTranslation, translate_request_pair};
 use crate::helps::thinking::apply_request_thinking;
 use crate::helps::usage::{
@@ -174,19 +176,28 @@ impl KimiExecutor {
         let token = kimi_creds(auth);
         let headers = kimi_headers(&token, stream, auth, &opts.headers);
         tracing::debug!(target: "cpa::upstream", provider = PROVIDER, url, "kimi upstream request");
-        self.http_client(cfg, auth, opts)
+        record_request(&opts.api_log, cfg, PROVIDER, Some(auth), "POST", url, &headers, &body);
+        let resp = self
+            .http_client(cfg, auth, opts)
             .post(url)
             .headers(headers)
             .body(body)
             .send()
             .await
-            .map_err(|e| transport_error(&e))
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                err
+            })?;
+        opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
+        Ok(resp)
     }
 
-    /// Non-2xx upstream response as `statusErr{code, msg: body}`.
-    async fn upstream_error(resp: reqwest::Response) -> ExecError {
+    /// Non-2xx upstream response as `statusErr{code, msg: body}`; the body lands in the request log.
+    async fn upstream_error(cfg: &Config, opts: &Options, resp: reqwest::Response) -> ExecError {
         let status = resp.status().as_u16();
         let body = resp.bytes().await.unwrap_or_default();
+        opts.api_log.append_api_response_chunk(cfg, &body);
         tracing::debug!(
             target: "cpa::upstream",
             status,
@@ -265,10 +276,15 @@ impl KimiExecutor {
         let url = resolve_kimi_chat_url(Some(auth));
         let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp).await);
         }
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| transport_error(&e))?;
+        let data = resp.bytes().await.map_err(|e| {
+            let err = transport_error(&e);
+            opts.api_log.record_api_response_error(&cfg, &err.message);
+            err
+        })?;
+        opts.api_log.append_api_response_chunk(&cfg, &data);
         reporter.observe_response_model(&data);
 
         let mut param = Param::default();
@@ -308,12 +324,13 @@ impl KimiExecutor {
         let url = resolve_kimi_chat_url(Some(auth));
         let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp).await);
         }
         let headers = resp.headers().clone();
         let apply_original = apply_patch_original_request(&req, &opts);
         let model = req.model;
         let reporter = reporter.clone();
+        let api_log = opts.api_log.clone();
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (usage_tx, usage_rx) = oneshot::channel();
 
@@ -332,6 +349,7 @@ impl KimiExecutor {
                         break;
                     }
                 };
+                api_log.append_api_response_chunk(&cfg, &line);
                 reporter.observe_response_model(&line);
                 usage.observe_openai_stream(&line);
                 let chunks = cpa_translator::translate_stream(
@@ -376,6 +394,7 @@ impl KimiExecutor {
             }
             if let Some(err) = scan_err {
                 let err = ExecError::from(err);
+                api_log.record_api_response_error(&cfg, &err.message);
                 reporter.publish_failure(&err);
                 let _ = tx.send(Err(err)).await;
             }
@@ -452,10 +471,15 @@ impl KimiExecutor {
         let url = resolve_kimi_responses_url(Some(auth));
         let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp).await);
         }
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| transport_error(&e))?;
+        let data = resp.bytes().await.map_err(|e| {
+            let err = transport_error(&e);
+            opts.api_log.record_api_response_error(&cfg, &err.message);
+            err
+        })?;
+        opts.api_log.append_api_response_chunk(&cfg, &data);
         reporter.observe_response_model(&data);
 
         let original_request = apply_patch_original_request(&req, &opts);
@@ -504,13 +528,14 @@ impl KimiExecutor {
         let url = resolve_kimi_responses_url(Some(auth));
         let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp).await);
         }
         let headers = resp.headers().clone();
         let original_request = apply_patch_original_request(&req, &opts);
         let source_format = opts.source_format;
         let model = req.model;
         let reporter = reporter.clone();
+        let api_log = opts.api_log.clone();
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (usage_tx, usage_rx) = oneshot::channel();
 
@@ -538,6 +563,7 @@ impl KimiExecutor {
                         break;
                     }
                 };
+                api_log.append_api_response_chunk(&cfg, &line);
                 reporter.observe_response_model(&line);
                 observe_responses_usage(&mut usage, &line);
 
@@ -582,6 +608,7 @@ impl KimiExecutor {
             }
             if !stopped && let Some(e) = scan_err {
                 let err = ExecError::from(e);
+                api_log.record_api_response_error(&cfg, &err.message);
                 reporter.publish_failure(&err);
                 let _ = tx.send(Err(err)).await;
             }
@@ -789,6 +816,23 @@ impl Executor for KimiExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: KimiExecutor.PrepareRequest (a blank token leaves `Authorization` as is).
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let token = kimi_creds(auth);
+        if !token.trim().is_empty() {
+            http_request::set_header(req, "Authorization", &format!("Bearer {token}"));
+        }
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: KimiExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }
 

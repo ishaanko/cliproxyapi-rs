@@ -1,5 +1,7 @@
 //! Server config variations used by scenarios (applied on top of `ConfigSpec::baseline`).
 
+use serde_json::json;
+
 use crate::config::{ConfigSpec, KeyEntry, ModelCfg, ScopedRule};
 
 fn all_keys(s: &mut ConfigSpec) -> impl Iterator<Item = &mut KeyEntry> {
@@ -100,6 +102,22 @@ pub fn codex_websockets(s: &mut ConfigSpec) {
     }
 }
 
+/// xAI keys (two, like the other families) with the upstream websocket enabled. The mock only
+/// serves xAI over websocket for text, so scenarios using this profile stay on the socket.
+pub fn xai_websockets(s: &mut ConfigSpec) {
+    let base = s.codex[0].base_url.replace("/codex", "/xai");
+    s.xai = (1..=2)
+        .map(|i| KeyEntry { api_key: format!("sk-xai-{i}"), base_url: base.clone(), websockets: Some(true), ..Default::default() })
+        .collect();
+}
+
+/// Codex websockets with `codex.response-steering` on: the client socket has a dedicated reader
+/// and Codex turns run as duplex streams.
+pub fn codex_steering(s: &mut ConfigSpec) {
+    codex_websockets(s);
+    s.codex_settings.push(("response-steering", json!(true)));
+}
+
 /// Custom upstream headers on every key; `$X-Client-Tag` copies the client's header.
 pub fn custom_headers(s: &mut ConfigSpec) {
     for k in all_keys(s) {
@@ -138,4 +156,27 @@ pub fn no_management(s: &mut ConfigSpec) {
 /// No client API keys configured: the proxy API is open.
 pub fn open_access(s: &mut ConfigSpec) {
     s.client_keys.clear();
+}
+
+/// `request-log: true`: every request writes a log file, with the upstream sections.
+pub fn request_log(s: &mut ConfigSpec) {
+    s.request_log = true;
+}
+
+/// Request log on plus Codex duplex steering.
+pub fn request_log_codex_steering(s: &mut ConfigSpec) {
+    request_log(s);
+    codex_steering(s);
+}
+
+/// Request log on plus xAI upstream websockets.
+pub fn request_log_xai_ws(s: &mut ConfigSpec) {
+    request_log(s);
+    xai_websockets(s);
+}
+
+/// Request log on plus Codex upstream websockets.
+pub fn request_log_codex_ws(s: &mut ConfigSpec) {
+    request_log(s);
+    codex_websockets(s);
 }

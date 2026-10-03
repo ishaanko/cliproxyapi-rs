@@ -26,7 +26,8 @@
 //!
 //! Home mode (`lifecycle/home.rs`): the config arrives over the Home subscription.
 //!
-//! Not ported: the aistudio websocket gateway and runtime-only auths.
+//! Runtime-only auths (the aistudio websocket channels) enter through
+//! [`Service::apply_runtime_auth_update`].
 
 pub mod antigravity;
 pub mod discovery;

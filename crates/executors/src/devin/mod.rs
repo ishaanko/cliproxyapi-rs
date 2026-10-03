@@ -17,6 +17,7 @@
 // ExecError is a large shared error type; every executor returns it by value.
 #![allow(clippy::result_large_err)]
 
+mod log;
 pub mod models;
 mod pb;
 pub mod request;
@@ -49,6 +50,7 @@ use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::cloak_obfuscate::SensitiveWordMatcher;
+use crate::helps::logging::UpstreamRequestLog;
 use self::stream::{StreamParams, consume_frames_to_interactions, stream_frames};
 use self::wire::{
     CHAT_PATH, ChatRequest, ConnectFrameReader, DEFAULT_BASE_URL, build_get_chat_message_request,
@@ -226,6 +228,8 @@ struct Prepared {
     headers: HeaderMap,
     body: Vec<u8>,
     chat_model_uid: String,
+    /// Readable rendition of the request for the request log (Go: `logBody`).
+    log_body: Vec<u8>,
 }
 
 impl DevinExecutor {
@@ -336,6 +340,24 @@ impl DevinExecutor {
             matcher: matcher.as_deref(),
         });
 
+        let sanitized_system_prompt = if parsed.system_prompt.is_empty() {
+            String::new()
+        } else {
+            wire::sanitize_system_prompt(&parsed.system_prompt, matcher.as_deref())
+        };
+        let log_body = log::request_body(
+            &payload,
+            opts.source_format == Format::Interactions,
+            &chat_model_uid,
+            &sanitized_system_prompt,
+            &parsed.prompts,
+            &parsed.tools,
+            parsed.temperature,
+            parsed.max_tokens,
+            &session_id,
+            &cascade_id,
+        );
+
         let url = format!("{}{CHAT_PATH}", creds.base_url.trim_end_matches('/'));
         let headers = prepare_headers(
             Some(auth),
@@ -348,6 +370,7 @@ impl DevinExecutor {
             headers,
             body: wrap_connect_envelope(&proto),
             chat_model_uid,
+            log_body,
         })
     }
 
@@ -359,7 +382,24 @@ impl DevinExecutor {
         opts: &Options,
         prepared: Prepared,
     ) -> Result<reqwest::Response, ExecError> {
+        let cfg = self.cfg.borrow().clone();
         let client = self.http_client(&opts.proxy_url, auth, None);
+        // The log keeps the headers as prepared, including the empty User-Agent.
+        let (auth_type, auth_value) = auth_log_fields(auth);
+        opts.api_log.record_api_request(
+            &cfg,
+            UpstreamRequestLog {
+                url: prepared.url.clone(),
+                method: "POST".to_string(),
+                headers: prepared.headers.clone(),
+                body: prepared.log_body.clone(),
+                provider: PROVIDER.to_string(),
+                auth_id: auth.id.clone(),
+                auth_label: auth.label.clone(),
+                auth_type,
+                auth_value,
+            },
+        );
         let mut headers = prepared.headers;
         if headers
             .get(http::header::USER_AGENT)
@@ -367,21 +407,35 @@ impl DevinExecutor {
         {
             headers.remove(http::header::USER_AGENT);
         }
-        let resp = client
-            .post(&prepared.url)
-            .headers(headers)
-            .body(prepared.body)
-            .send()
-            .await
-            .map_err(|e| transport_error(&e))?;
+        let resp = match client.post(&prepared.url).headers(headers).body(prepared.body).send().await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                return Err(err);
+            }
+        };
+        opts.api_log.record_api_response_metadata(&cfg, resp.status().as_u16(), resp.headers());
         if resp.status().is_success() {
             return Ok(resp);
         }
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
         let body = read_limited(resp, MAX_ERROR_BODY).await;
+        opts.api_log.append_api_response_chunk(&cfg, &body);
         Err(new_status_error(status, &headers, &body))
     }
+}
+
+/// `devinAuthLogFields`: the request log's auth type and masked session token.
+fn auth_log_fields(auth: &Auth) -> (String, String) {
+    let api_key = credentials(Some(auth)).api_key;
+    let value = match api_key.len() {
+        0 => String::new(),
+        n if n > 8 => format!("{}...{}", &api_key[..4], &api_key[n - 4..]),
+        _ => "***".to_string(),
+    };
+    ("devin".to_string(), value)
 }
 
 /// Reads at most `limit` bytes of a response body (errors end the read early).
@@ -531,6 +585,26 @@ impl Executor for DevinExecutor {
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
     }
+
+    /// Go: DevinExecutor.PrepareRequest. The Connect-RPC headers replace the request's own;
+    /// an existing `Sentry-Trace` is kept.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let prepared = prepare_headers(Some(auth), req.url().path(), None, None);
+        for (name, value) in &prepared {
+            if name.as_str() == "sentry-trace" && req.headers().contains_key(name) {
+                continue;
+            }
+            req.headers_mut().insert(name.clone(), value.clone());
+        }
+        Ok(())
+    }
+
+    /// Go: DevinExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        Executor::prepare_request(self, &mut req, auth).await?;
+        let client = self.http_client("", auth, None);
+        crate::helps::http_request::execute(&client, req).await
+    }
 }
 
 impl DevinExecutor {
@@ -548,14 +622,24 @@ impl DevinExecutor {
 
         let original = apply_patch_original_request(&req, &opts);
         let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
-        let consumed = match consume_frames_to_interactions(reader, &req.model, &original).await {
+        let cfg = self.cfg.borrow().clone();
+        let (outcome, response_log) = consume_frames_to_interactions(reader, &req.model, &original).await;
+        let interactions_raw = outcome.as_ref().map(|c| cpa_json::to_vec(&c.interactions)).unwrap_or_default();
+        if response_log.is_some() || !interactions_raw.is_empty() {
+            let body = log::response_body(response_log.as_ref(), &interactions_raw);
+            opts.api_log.append_api_response_chunk(&cfg, &body);
+        }
+        let consumed = match outcome {
             Ok(c) => c,
             // A declared apply_patch tool hides every upstream decoding failure behind the
             // sanitized gateway error.
             Err(_) if apply_patch_requested(&original) => {
                 return Err(status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE));
             }
-            Err(err) => return Err(err),
+            Err(err) => {
+                opts.api_log.record_api_response_error(&cfg, &err.message);
+                return Err(err);
+            }
         };
         if let Some(model) = consumed
             .usage
@@ -625,6 +709,7 @@ impl DevinExecutor {
             response_format: opts.response_format_or_source(),
             chat_model_uid,
             reporter: reporter.clone(),
+            log: crate::helps::gemini_log::UpstreamLog::new(&opts, &self.cfg.borrow().clone()),
         };
         let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
         tokio::spawn(async move {

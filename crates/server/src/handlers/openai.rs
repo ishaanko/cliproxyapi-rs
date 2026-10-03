@@ -303,7 +303,7 @@ pub fn convert_chat_response_to_completions(raw: &[u8]) -> Vec<u8> {
             }
             let logprobs = choice.g("logprobs");
             if logprobs.exists() {
-                c.insert("logprobs".into(), logprobs.value());
+                c.insert("logprobs".into(), cpa_core::util::go_any(logprobs.value()));
             }
             choices.push(Value::Object(c));
         }
@@ -365,7 +365,7 @@ pub fn convert_chat_stream_chunk_to_completions(chunk: &[u8]) -> Option<Vec<u8>>
             }
             let logprobs = choice.g("logprobs");
             if logprobs.exists() {
-                c.insert("logprobs".into(), logprobs.value());
+                c.insert("logprobs".into(), cpa_core::util::go_any(logprobs.value()));
             }
             choices.push(Value::Object(c));
         }

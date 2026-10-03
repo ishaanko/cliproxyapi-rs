@@ -13,6 +13,7 @@ use super::replay::prepare_gemini_reasoning_replay_payload;
 use super::request::{COUNT_TOKENS_PATH, base_headers, resolve_request_base_url};
 use super::signature::{ensure_leading_user_content, sanitize_gemini_request_signatures, validate_request_signatures};
 use super::transport::close_auth_idle_transports;
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::json_retry::parse_retry_delay;
 use crate::helps::payload::delete_json_field;
 use crate::helps::thinking::apply_request_thinking;
@@ -62,16 +63,22 @@ impl AntigravityExecutor {
             url.extend(url::form_urlencoded::byte_serialize(opts.alt.as_bytes()));
         }
 
-        let resp = client
+        let headers = base_headers(&auth, &token);
+        let log = UpstreamLog::new(&opts, &cfg);
+        log.request(&auth, "antigravity", &url, &headers, &payload);
+        let sent = client
             .post(&url)
-            .headers(base_headers(&auth, &token))
+            .headers(headers)
             .body(payload)
             .send()
             .await
-            .map_err(|e| crate::helps::status::transport_error(&e))?;
+            .map_err(|e| crate::helps::status::transport_error(&e));
+        let resp = log.tap_err(sent)?;
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
+        log.metadata(status, &headers);
+        let body = log.tap_err(resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e)))?;
+        log.chunk(&body);
 
         if (200..300).contains(&status) {
             let count = cpa_json::parse(&body).g("totalTokens").int();

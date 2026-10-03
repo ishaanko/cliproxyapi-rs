@@ -1,3 +1,7 @@
+use std::sync::Arc;
+
+use cpa_config::Config;
+use cpa_runtime::executor::Options;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -54,6 +58,7 @@ async fn run_stream(bytes: Vec<u8>, format: Format, request: &str) -> Vec<String
         response_format: format,
         chat_model_uid: "swe-2-high".into(),
         reporter: UsageReporter::new("devin", "DevinExecutor", "swe-2", None, None),
+        log: crate::helps::gemini_log::UpstreamLog::new(&Options::new(Format::Interactions), &Arc::new(Config::default())),
     };
     stream_frames(reader(bytes), params, tx, usage_tx).await;
     let mut chunks = Vec::new();
@@ -99,7 +104,7 @@ async fn consumed_responses_match_go() {
         let name = case["name"].as_str().unwrap();
         let requests = scenario_requests(case);
         let original = requests["interactions"].as_str().unwrap().as_bytes();
-        let result = consume_frames_to_interactions(
+        let (result, _log) = consume_frames_to_interactions(
             reader(scenario_bytes(&case["frames"])),
             "devin/swe-2",
             original,
@@ -186,6 +191,7 @@ async fn chunk_boundaries_do_not_change_stream_output() {
         response_format: Format::Interactions,
         chat_model_uid: "swe-2-high".into(),
         reporter: UsageReporter::new("devin", "DevinExecutor", "swe-2", None, None),
+        log: crate::helps::gemini_log::UpstreamLog::new(&Options::new(Format::Interactions), &Arc::new(Config::default())),
     };
     stream_frames(split, params, tx, usage_tx).await;
     let mut got = Vec::new();
@@ -221,6 +227,7 @@ async fn completed_stream_reports_usage_before_closing() {
         response_format: Format::Interactions,
         chat_model_uid: "swe-2-high".into(),
         reporter: UsageReporter::new("devin", "DevinExecutor", "swe-2", None, None),
+        log: crate::helps::gemini_log::UpstreamLog::new(&Options::new(Format::Interactions), &Arc::new(Config::default())),
     };
     stream_frames(
         reader(scenario_bytes(&case["frames"])),
@@ -258,6 +265,7 @@ async fn dropping_the_receiver_stops_the_stream_task() {
         response_format: Format::Interactions,
         chat_model_uid: "swe-2-high".into(),
         reporter: UsageReporter::new("devin", "DevinExecutor", "swe-2", None, None),
+        log: crate::helps::gemini_log::UpstreamLog::new(&Options::new(Format::Interactions), &Arc::new(Config::default())),
     };
     // Returns promptly instead of blocking on a full channel, and sends no usage.
     stream_frames(
@@ -268,4 +276,34 @@ async fn dropping_the_receiver_stops_the_stream_task() {
     )
     .await;
     assert!(usage_rx.await.is_err());
+}
+
+#[tokio::test]
+async fn request_log_gets_the_event_stream_and_the_summary() {
+    let case = golden()["streams"].as_array().unwrap().iter().find(|c| c["name"] == "tool_call_single").unwrap();
+    let handle = cpa_runtime::apilog::ApiLogHandle::new(Arc::new(cpa_runtime::apilog::ApiLog::new()));
+    let mut opts = Options::new(Format::Interactions);
+    opts.api_log = handle.clone();
+    let cfg = Arc::new(Config { request_log: true, ..Config::default() });
+    let (tx, mut rx) = mpsc::channel(1024);
+    let (usage_tx, _usage_rx) = oneshot::channel();
+    let request = Bytes::from_static(b"{}");
+    let params = StreamParams {
+        model: "devin/swe-2".into(),
+        request: request.clone(),
+        original: request.clone(),
+        client_original: request,
+        source_format: Format::Interactions,
+        response_format: Format::Interactions,
+        chat_model_uid: "swe-2-high".into(),
+        reporter: UsageReporter::new("devin", "DevinExecutor", "swe-2", None, None),
+        log: crate::helps::gemini_log::UpstreamLog::new(&opts, &cfg),
+    };
+    stream_frames(reader(scenario_bytes(&case["frames"])), params, tx, usage_tx).await;
+    while rx.try_recv().is_ok() {}
+    let log = String::from_utf8(handle.get().expect("log").api_response()).unwrap();
+    assert!(log.contains("=== INTERMEDIATE INTERACTIONS STREAM ===\n\n{\"event_type\":\"interaction.created\""), "{log}");
+    assert_eq!(log.matches("=== INTERMEDIATE INTERACTIONS STREAM ===").count(), 1);
+    assert!(log.contains("=== DEVIN UPSTREAM RESPONSE SUMMARY ===\n{\n  \"status\": \"completed\",\n  \"frames_count\": "), "{log}");
+    assert!(log.contains("\"usage\": {\n    \"prompt_tokens\": 100,"), "{log}");
 }

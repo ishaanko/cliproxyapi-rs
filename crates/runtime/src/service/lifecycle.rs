@@ -550,6 +550,14 @@ impl Service {
         inner.apply_updates_locked(&guard, vec![update]).await;
     }
 
+    /// Go `emitAuthUpdate` for runtime-only auths (the AI Studio websocket channels): applies the
+    /// update to the manager and model registry without touching the file sync state.
+    pub async fn apply_runtime_auth_update(&self, update: AuthUpdate) {
+        let inner = &self.inner;
+        let guard = inner.apply_lock.lock().await;
+        inner.apply_updates_locked(&guard, vec![update]).await;
+    }
+
     /// Go `refreshPluginModelRegistrations`: re-registers the models of every auth (after the
     /// plugin set or its models changed).
     pub async fn refresh_model_registrations(&self) {

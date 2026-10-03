@@ -20,15 +20,23 @@ pub struct Scenario {
     pub profile: Profile,
     pub script: Script,
     pub steps: Vec<Step>,
+    /// Also capture the request-log files the server wrote (normalized) into the golden.
+    pub capture_logs: bool,
 }
 
 impl Scenario {
     pub fn new(id: impl Into<String>, desc: impl Into<String>, script: Script, steps: Vec<Step>) -> Self {
-        Scenario { id: id.into(), desc: desc.into(), profile: default_profile, script, steps }
+        Scenario { id: id.into(), desc: desc.into(), profile: default_profile, script, steps, capture_logs: false }
     }
 
     pub fn profile(mut self, profile: Profile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// Compare the request-log files too (pair with `profiles::request_log` for full logs).
+    pub fn with_logs(mut self) -> Self {
+        self.capture_logs = true;
         self
     }
 
@@ -68,6 +76,9 @@ pub struct Capture {
     pub desc: String,
     pub steps: Vec<StepCapture>,
     pub upstream: Vec<UpstreamCapture>,
+    /// Normalized request-log files the server wrote, oldest first (only for `with_logs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub request_logs: Vec<String>,
     /// JSON pointers of leaves that differed between the two recording runs; `check` ignores
     /// their values (they are stored as `<volatile>`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

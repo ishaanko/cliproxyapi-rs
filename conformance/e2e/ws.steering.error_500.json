@@ -1,0 +1,158 @@
+{
+  "id": "ws.steering.error_500",
+  "desc": "upstream error frame before the first response",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade",
+          "upgrade": "websocket"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [],
+          "close": "abnormal"
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Upgrade",
+        "conversation_id": "<volatile>",
+        "openai-beta": "responses_websockets=2026-02-06",
+        "originator": "codex-tui",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "session_id": "<volatile>",
+        "upgrade": "websocket",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "gpt-5.5",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "store": false,
+          "parallel_tool_calls": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "tools": [
+            {
+              "type": "image_generation",
+              "output_format": "png"
+            }
+          ],
+          "prompt_cache_key": "<volatile>",
+          "type": "response.create"
+        }
+      ]
+    },
+    {
+      "family": "codex",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-1",
+      "headers": {
+        "authorization": "Bearer sk-codex-1",
+        "connection": "Upgrade",
+        "conversation_id": "<volatile>",
+        "openai-beta": "responses_websockets=2026-02-06",
+        "originator": "codex-tui",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "session_id": "<volatile>",
+        "upgrade": "websocket",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "gpt-5.5",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "store": false,
+          "parallel_tool_calls": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "tools": [
+            {
+              "type": "image_generation",
+              "output_format": "png"
+            }
+          ],
+          "prompt_cache_key": "<volatile>",
+          "type": "response.create"
+        }
+      ]
+    }
+  ],
+  "volatile": [
+    "/upstream/0/headers/conversation_id",
+    "/upstream/0/headers/session_id",
+    "/upstream/0/ws_frames/0/prompt_cache_key",
+    "/upstream/1/headers/conversation_id",
+    "/upstream/1/headers/session_id",
+    "/upstream/1/ws_frames/0/prompt_cache_key"
+  ]
+}

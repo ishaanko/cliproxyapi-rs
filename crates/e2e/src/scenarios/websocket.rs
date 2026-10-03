@@ -161,6 +161,82 @@ pub fn scenarios() -> Vec<Scenario> {
         .profile(profiles::codex_websockets),
     );
 
+    // xAI over its upstream websocket: the same passthrough contract as Codex.
+    let xai = "grok-4.3";
+    let xai_upstream = |id: &str, desc: &str, script: Script, messages: Vec<Value>| {
+        Scenario::new(format!("ws.xai.{id}"), desc, script, vec![ws(messages)]).profile(profiles::xai_websockets)
+    };
+    out.push(xai_upstream("text", "response.create forwarded over the xAI upstream websocket", ok(Content::Text), vec![create(xai, "hello")]));
+    out.push(xai_upstream("thinking", "reasoning events over the xAI websocket", ok(Content::Thinking), vec![create(xai, "think")]));
+    out.push(xai_upstream("two_turns", "second turn continues on the same upstream socket", ok(Content::Text), vec![create(xai, "first"), append("second")]));
+    out.push(xai_upstream(
+        "previous_response_id",
+        "previous_response_id continues on the live upstream socket",
+        ok(Content::Text),
+        vec![create(xai, "first"), json!({"type": "response.create", "previous_response_id": "resp_mock01", "input": user_input("next")})],
+    ));
+    for (id, reply) in [
+        ("error_400", Reply::error(400)),
+        ("error_401", Reply::error(401)),
+        ("error_429", Reply::error_with(429, &[("retry-after", "30")], None)),
+        ("error_500", Reply::error(500)),
+    ] {
+        out.push(xai_upstream(id, "upstream error frame", Script::steps(vec![Step::always(reply)]), vec![create(xai, "hello")]));
+    }
+    out.push(xai_upstream(
+        "mid_error",
+        "upstream response.failed after some output",
+        Script::steps(vec![Step::always(Reply::StreamError { content: Content::Text, after: 6 })]),
+        vec![create(xai, "hello")],
+    ));
+    out.push(xai_upstream(
+        "cut_abort",
+        "upstream drops its websocket mid-turn",
+        Script::steps(vec![Step::always(Reply::Cut { content: Content::Text, after: 6, abort: true })]),
+        vec![create(xai, "hello")],
+    ));
+
+    // Duplex steering: with `codex.response-steering` the client socket has a dedicated reader and
+    // Codex turns run as duplex streams that outlive a response's terminal event.
+    let steering = |id: &str, desc: &str, script: Script, messages: Vec<Value>| {
+        Scenario::new(format!("ws.steering.{id}"), desc, script, vec![ws(messages)]).profile(profiles::codex_steering)
+    };
+    out.push(steering("text", "one turn over a duplex stream", ok(Content::Text), vec![create(codex, "hello")]));
+    out.push(steering("thinking", "reasoning events over a duplex stream", ok(Content::Thinking), vec![create(codex, "think")]));
+    out.push(steering("two_turns", "a second create travels through the duplex writer", ok(Content::Text), vec![create(codex, "first"), append("second")]));
+    out.push(steering(
+        "steer_frame",
+        "response.steer reaches the upstream socket untouched",
+        ok(Content::Text),
+        vec![create(codex, "first"), json!({"type": "response.steer", "previous_response_id": "resp_mock01", "input": "go left"})],
+    ));
+    out.push(steering(
+        "bad_frames",
+        "invalid frames get local error frames and keep the stream alive",
+        ok(Content::Text),
+        vec![create(codex, "first"), json!({"type": "response.bogus"}), json!({"type": "response.create", "model": codex, "input": []}), append("after")],
+    ));
+    for (id, reply) in [
+        ("error_400", Reply::error(400)),
+        ("error_401", Reply::error(401)),
+        ("error_429", Reply::error_with(429, &[("retry-after", "30")], None)),
+        ("error_500", Reply::error(500)),
+    ] {
+        out.push(steering(id, "upstream error frame before the first response", Script::steps(vec![Step::always(reply)]), vec![create(codex, "hello")]));
+    }
+    out.push(steering(
+        "mid_error",
+        "upstream response.failed after some output",
+        Script::steps(vec![Step::always(Reply::StreamError { content: Content::Text, after: 6 })]),
+        vec![create(codex, "hello")],
+    ));
+    out.push(steering(
+        "cut_abort",
+        "upstream drops its websocket mid-turn",
+        Script::steps(vec![Step::always(Reply::Cut { content: Content::Text, after: 6, abort: true })]),
+        vec![create(codex, "hello")],
+    ));
+
     // Handshake and routing.
     let hs = |id: &str, desc: &str, req: Req| Scenario::new(format!("ws.handshake.{id}"), desc, ok(Content::Text), vec![req]);
     out.push(hs("missing_key", "upgrade without credentials", Req::Ws(WsReq::new(PATH, vec![]).auth(Auth::None))));

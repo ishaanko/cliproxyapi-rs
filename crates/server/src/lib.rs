@@ -9,13 +9,13 @@
 //! Home mode here covers the heartbeat gate, Home-backed model lists, request-log forwarding and
 //! the application log forwarder ([`home_app_log`]); the service wiring lives with the caller.
 //!
-//! Not ported: image and video generation (501), `/v1/alpha/search`, pprof, plugins, the AI Studio
-//! `/v1/ws` relay.
+//! Not ported: pprof, plugins.
 
 // `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
 #![allow(clippy::result_large_err)]
 
 pub mod access;
+pub mod aistudio;
 pub mod body;
 pub mod bodytee;
 pub mod cli;

@@ -11,6 +11,7 @@ mod matrix;
 mod plugins;
 mod media;
 mod profiles;
+mod reqlog;
 mod realtime;
 mod redisqueue;
 mod rich;
@@ -32,6 +33,7 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(interactions::scenarios());
     v.extend(access::scenarios());
     v.extend(websocket::scenarios());
+    v.extend(reqlog::scenarios());
     v.extend(realtime::scenarios());
     v.extend(management::scenarios(mock_port));
     v.extend(plugins::scenarios());

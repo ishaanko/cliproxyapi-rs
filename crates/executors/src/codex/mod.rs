@@ -16,6 +16,7 @@ mod headers;
 mod exec_http;
 mod images;
 mod input_ids;
+mod logging;
 pub(crate) mod multi_agent_v2;
 mod quota;
 mod reasoning;
@@ -35,6 +36,7 @@ use cpa_config::Config;
 use cpa_runtime::executor::{DynExecutor, ErrorCode, ExecError, Executor, Metadata, Options, Request, Response, StreamResult, meta};
 use serde_json::Value;
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 
@@ -68,6 +70,7 @@ fn metadata_flag(metadata: &Metadata, key: &str) -> bool {
 }
 
 /// The Codex provider executor.
+#[derive(Clone)]
 pub struct CodexExecutor {
     cfg: ConfigRx,
     /// Execution-local view without OAuth-only configuration (API-key credentials).
@@ -142,6 +145,23 @@ impl Executor for CodexExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: CodexExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (api_key, _) = creds::codex_creds(auth);
+        http_request::set_bearer_or_clear(req, &api_key);
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: CodexExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let cfg = self.config();
+        let fallback = crate::helps::proxy::new_proxy_aware_http_client("", Some(&cfg), Some(auth), None);
+        let client = crate::helps::tls_fingerprint::new_utls_http_client("", Some(&cfg), Some(auth), fallback);
+        client.execute(req).await.map_err(|e| e.exec_error())
     }
 }
 

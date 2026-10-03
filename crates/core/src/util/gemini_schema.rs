@@ -204,8 +204,8 @@ fn clean_json_schema_inner(json_str: &str, options: CleanOptions) -> String {
     let mut doc = cpa_json::parse(text.as_bytes());
     let raw_source = RawSource::new(&text);
     convert_refs_to_hints(&mut doc, options.antigravity_semantics);
-    convert_const_to_enum(&mut doc);
-    convert_enum_values_to_strings(&mut doc, options.force_enum_string_type, &raw_source);
+    let const_raws = convert_const_to_enum(&mut doc);
+    convert_enum_values_to_strings(&mut doc, options.force_enum_string_type, &raw_source, &const_raws);
     add_enum_hints(&mut doc, &raw_source);
     drop_ignored_enums_to_hints(&mut doc, options, &raw_source);
     if !options.preserve_additional_properties_false && !options.preserve_all_additional_properties
@@ -876,8 +876,11 @@ fn convert_refs_to_hints(doc: &mut Value, preserve_siblings: bool) {
 // ---------------------------------------------------------------- phase 1: conversions and hints
 
 /// Adds `enum: [const]` next to `const` when no enum exists (the value goes through Go's float64
-/// decoding, so numbers are re-formatted and object keys sorted).
-fn convert_const_to_enum(doc: &mut Value) {
+/// decoding, so numbers are re-formatted and object keys sorted). Returns the Go raw text
+/// (`json.Marshal` output, HTML-escaped) of every object/array element it created, keyed by the
+/// element path, because the stringified enum later exposes that raw text.
+fn convert_const_to_enum(doc: &mut Value) -> HashMap<String, String> {
+    let mut raws = HashMap::new();
     for p in find_paths(doc, "const") {
         let Some(val) = doc.g(&p).v().cloned() else {
             continue;
@@ -895,17 +898,27 @@ fn convert_const_to_enum(doc: &mut Value) {
         } else {
             canonical
         };
+        if matches!(val, Value::Object(_) | Value::Array(_)) {
+            raws.insert(format!("{enum_path}.0"), canonical.clone());
+        }
         cpa_json::set(
             doc,
             &enum_path,
             Value::Array(vec![cpa_json::parse_str(&canonical)]),
         );
     }
+    raws
 }
 
 /// Rewrites every enum array to strings (Gemini's proto schema requires it). With
 /// `force_string_type` the sibling `type` becomes `string`; Antigravity keeps the declared type.
-fn convert_enum_values_to_strings(doc: &mut Value, force_string_type: bool, source: &RawSource) {
+/// `const_raws` supplies the Go raw text for elements created by `convert_const_to_enum`.
+fn convert_enum_values_to_strings(
+    doc: &mut Value,
+    force_string_type: bool,
+    source: &RawSource,
+    const_raws: &HashMap<String, String>,
+) {
     for p in find_paths(doc, "enum") {
         let Some(Value::Array(items)) = doc.g(&p).v().cloned() else {
             continue;
@@ -913,7 +926,10 @@ fn convert_enum_values_to_strings(doc: &mut Value, force_string_type: bool, sour
         let string_vals: Vec<String> = items
             .iter()
             .enumerate()
-            .map(|(i, item)| element_string(source, &p, i, item))
+            .map(|(i, item)| match const_raws.get(&format!("{p}.{i}")) {
+                Some(raw) => raw.clone(),
+                None => element_string(source, &p, i, item),
+            })
             .collect();
         cpa_json::set(doc, &p, strings_value(&string_vals));
         if force_string_type {

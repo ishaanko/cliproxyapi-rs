@@ -7,6 +7,7 @@
 
 mod codec;
 mod conn;
+mod duplex;
 mod errors;
 mod session;
 mod stream;
@@ -24,9 +25,11 @@ use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 use tokio::sync::{OwnedMutexGuard, mpsc};
 
-use self::conn::{Read, WsConn};
+use self::conn::{Read, ReadError, UNEXPECTED_BINARY, WsConn};
 use self::errors::{clear_replay_on_error_frame, map_read_error, map_write_error, parse_error_frame, should_retry_send};
 use self::session::Session;
+use crate::helps::logging::{ApiLogHandle, UpstreamRequestLog};
+use crate::helps::websocket_observer::WsFrameObserver;
 use self::transport::DialFailure;
 use super::headers::{WireHeaders, apply_model_header_overrides, apply_routing_hint, apply_websocket_headers, websocket_cache_headers};
 use super::multi_agent_v2::restore_response;
@@ -58,6 +61,59 @@ pub(super) struct WsPlan {
     pub proxy: ProxySetting,
     pub required_upstream: bool,
     pub model_level_cooling: bool,
+    pub cfg: Arc<Config>,
+    /// The request's log handle (a session outlives one request, the log of the request being
+    /// served receives the timeline).
+    pub api_log: ApiLogHandle,
+    /// Handshake request details for `api.websocket.request` events (body is the frame).
+    pub req_log: UpstreamRequestLog,
+    /// Plugin observer of the upstream frames (`EmitWebSocketResponseEvent`).
+    pub observer: Option<WsFrameObserver>,
+}
+
+impl WsPlan {
+    /// `RecordAPIWebsocketRequest` of the current frame.
+    pub(super) fn log_request(&self) {
+        self.api_log.record_api_websocket_request(&self.cfg, &self.req_log);
+    }
+
+    /// `RecordAPIWebsocketError`.
+    pub(super) fn log_error(&self, stage: &str, err: &str) {
+        self.api_log.record_api_websocket_error(&self.cfg, stage, err);
+    }
+
+    /// `AppendCodexAPIWebsocketResponse`: merges quota headers carried by the frame, then logs it.
+    pub(super) fn log_frame(&self, payload: &[u8]) {
+        self.api_log.merge_response_headers(&crate::codex::quota::parse_codex_quota_event_headers(payload));
+        self.api_log.append_api_websocket_response(&self.cfg, payload);
+        if let Some(observer) = &self.observer {
+            observer.emit(payload);
+        }
+    }
+
+    /// `RecordAPIWebsocketUpgradeRejection` for a refused upgrade.
+    fn log_upgrade_rejection(&self, status: u16, headers: &HeaderMap, body: &[u8]) {
+        self.api_log.record_api_websocket_upgrade_rejection(&self.cfg, websocket_upgrade_request_log(&self.req_log), status, headers, body);
+    }
+
+    /// `recordAPIWebsocketHandshake` for a fresh connection.
+    fn log_handshake(&self, headers: &HeaderMap) {
+        self.api_log.record_api_websocket_handshake(&self.cfg, 101, headers);
+    }
+}
+
+/// The handshake as an HTTP request (Go: websocketUpgradeRequestLog).
+fn websocket_upgrade_request_log(info: &UpstreamRequestLog) -> UpstreamRequestLog {
+    let mut upgrade = info.clone();
+    upgrade.url = crate::helps::logging::websocket_upgrade_request_url(&info.url);
+    upgrade.method = "GET".to_string();
+    upgrade.body = Vec::new();
+    for (name, value) in [("connection", "Upgrade"), ("upgrade", "websocket")] {
+        if upgrade.headers.get(name).and_then(|v| v.to_str().ok()).is_none_or(|v| v.trim().is_empty()) {
+            upgrade.headers.insert(http::HeaderName::from_static(name), http::HeaderValue::from_static(value));
+        }
+    }
+    upgrade
 }
 
 fn metadata_flag(metadata: &Metadata, key: &str) -> bool {
@@ -92,7 +148,7 @@ fn build_request_frame(body: &[u8]) -> Vec<u8> {
 
 impl CodexExecutor {
     /// Runs the shared pipeline and builds the handshake headers and request frame.
-    pub(super) fn prepare_ws(&self, cfg: &Config, auth: &Auth, req: &Request, opts: &Options, mode: Mode) -> Result<WsPlan, ExecError> {
+    pub(super) fn prepare_ws(&self, cfg: &Arc<Config>, auth: &Auth, req: &Request, opts: &Options, mode: Mode) -> Result<WsPlan, ExecError> {
         let prepared = prepare(cfg, auth, req, opts, mode)?;
         let (api_key, configured_base) = creds::codex_creds(auth);
         let ws_url = websocket_url(&format!("{}/responses", creds::base_url(&configured_base)))?;
@@ -121,6 +177,7 @@ impl CodexExecutor {
             ProxySetting::Inherit
         });
         let frame = build_request_frame(&body);
+        let req_log = super::logging::upstream_log(auth, &ws_url, "WEBSOCKET", &headers, &frame);
         Ok(WsPlan {
             prepared,
             ws_url,
@@ -132,6 +189,10 @@ impl CodexExecutor {
             proxy,
             required_upstream: metadata_flag(&opts.metadata, META_REQUIRED_UPSTREAM_WEBSOCKET),
             model_level_cooling: cfg.codex.model_level_cooling,
+            cfg: Arc::clone(cfg),
+            api_log: opts.api_log.clone(),
+            req_log,
+            observer: WsFrameObserver::new(opts, Some(auth), "codex", &req.model),
         })
     }
 
@@ -142,7 +203,7 @@ impl CodexExecutor {
             return self.execute_http(auth, req, opts).await;
         }
         let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsExecute)?;
-        let mut call = connect_and_send(&opts, &plan).await?;
+        let mut call = connect_and_send(&opts, &plan, false).await?;
         let prepared = &plan.prepared;
 
         let mut items = OutputItems::default();
@@ -151,17 +212,30 @@ impl CodexExecutor {
             let read = call.next_read().await;
             let payload = match read {
                 Some(Read::Text(payload)) => payload,
-                Some(Read::Err(err)) => return Err(map_read_error(&err)),
-                None => return Err(ExecError::new(0, "codex websockets executor: session read channel closed")),
+                Some(Read::Err(err)) => {
+                    let mapped = map_read_error(&err);
+                    plan.log_error(read_error_stage(&err), &mapped.message);
+                    return Err(mapped);
+                }
+                None => {
+                    let err = ExecError::new(0, SESSION_READ_CLOSED);
+                    plan.log_error("read", &err.message);
+                    return Err(err);
+                }
             };
             if payload.is_empty() {
                 continue;
             }
+            plan.log_frame(&payload);
             let payload = restore_response(&payload, call.restore_multi_agent);
             let frame = cpa_json::parse(&payload);
             if let Some(ws_err) = parse_error_frame(&frame, plan.model_level_cooling) {
                 call.invalidate("upstream_error", true);
-                clear_replay_on_error_frame(&prepared.replay_scope, &frame)?;
+                if let Err(replay_err) = clear_replay_on_error_frame(&prepared.replay_scope, &frame) {
+                    plan.log_error("replay_clear_error", &replay_err.message);
+                    return Err(replay_err);
+                }
+                plan.log_error("upstream_error", &ws_err.message);
                 return Err(ws_err);
             }
             if let Some((stream_err, terminal_body)) = terminal_failure_err(&frame, plan.model_level_cooling) {
@@ -182,7 +256,9 @@ impl CodexExecutor {
                     if is_terminal_empty_incomplete(&frame, items.len(), saw_output_delta) {
                         call.invalidate("terminal_empty_incomplete", true);
                         call.unlock();
-                        return Err(new_empty_incomplete_stream_error());
+                        let err = new_empty_incomplete_stream_error();
+                        plan.api_log.record_api_response_error(&plan.cfg, &err.message);
+                        return Err(err);
                     }
                     let payload = patch_completed_output(&payload, &items);
                     if event_type != "response.incomplete" {
@@ -273,24 +349,45 @@ impl Drop for WsCall {
     }
 }
 
-fn dial_failure_error(failure: DialFailure, model_level_cooling: bool) -> ExecError {
+/// Go's read error for a session whose channel was closed under the request.
+pub(super) const SESSION_READ_CLOSED: &str = "codex websockets executor: session read channel closed";
+
+/// Log stage of a failed read: the reader reports an unexpected binary frame as a read error,
+/// Go logs it under its own stage.
+pub(super) fn read_error_stage(err: &ReadError) -> &'static str {
+    match err {
+        ReadError::Other(text) if text == UNEXPECTED_BINARY => "unexpected_binary",
+        _ => "read",
+    }
+}
+
+/// Error of a failed dial, logging the rejected upgrade or the transport failure like Go's
+/// Execute/ExecuteStream (the 426 and status paths log only the rejection).
+fn dial_failure_error(plan: &WsPlan, failure: DialFailure) -> ExecError {
+    if let Some(status) = failure.status {
+        plan.log_upgrade_rejection(status, &failure.headers, &failure.body);
+    }
     match failure.status {
         Some(426) => status_error(426, String::from_utf8_lossy(&failure.body).into_owned()),
-        Some(status) if status > 0 => new_status_err_with_cooling(status, &failure.body, model_level_cooling),
-        _ => ExecError::new(0, failure.error),
+        Some(status) if status > 0 => new_status_err_with_cooling(status, &failure.body, plan.model_level_cooling),
+        _ => {
+            plan.log_error("dial", &failure.error);
+            ExecError::new(0, failure.error)
+        }
     }
 }
 
 /// Attaches the request to its session connection (reusing or dialing) and writes the
 /// `response.create` frame, retrying once on a fresh connection when a persistent session's
 /// first send fails (Go: the connect/send prologue of Execute and ExecuteStream).
-pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<WsCall, ExecError> {
+pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool) -> Result<WsCall, ExecError> {
     let session_id = execution_session_id(opts);
     let (sess, ephemeral) = match Session::get_or_create(&session_id) {
         Some(s) => (s, false),
         None => (Session::ephemeral(), true),
     };
     let guard = if ephemeral { None } else { Some(Arc::clone(&sess.req_mu).lock_owned().await) };
+    plan.log_request();
 
     let (conn, handshake) = if plan.required_upstream {
         match sess.existing_conn(&plan.auth_id, &plan.ws_url, &plan.proxy_url) {
@@ -301,13 +398,16 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<Ws
         let dial = || transport::dial(&plan.ws_url, &plan.wire, &plan.proxy);
         match sess.ensure_conn(&plan.auth_id, &plan.ws_url, &plan.proxy_url, dial).await {
             Ok(ok) => ok,
-            Err(failure) => return Err(dial_failure_error(failure, plan.model_level_cooling)),
+            Err(failure) => return Err(dial_failure_error(plan, failure)),
         }
     };
     if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &conn) {
         drop(guard);
         close_after_bind_failure(&sess, &conn);
         return Err(ExecError::new(0, message));
+    }
+    if let Some(headers) = &handshake {
+        plan.log_handshake(headers);
     }
     let (generation, rx) = sess.activate(&conn);
     let mut call = WsCall {
@@ -325,35 +425,59 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<Ws
 
     if let Err(text) = call.conn.write_text(plan.frame.clone()).await {
         let mapped = map_write_error(text, sess.upstream_close(&call.conn));
+        // ExecuteStream logs the send error up front, Execute only where the request ends on it.
+        if stream {
+            plan.log_error("send", &mapped.message);
+        }
         if ephemeral {
             call.sess.invalidate(&call.conn, "send_error", Some(&mapped.message), true);
             call.set_close_reason("send_error");
+            if !stream {
+                plan.log_error("send", &mapped.message);
+            }
             return Err(mapped);
         }
         if plan.required_upstream {
             call.sess.invalidate(&call.conn, "send_error", Some(&mapped.message), false);
-            return Err(if should_retry_send(&mapped) { upstream_websocket_replay_required() } else { mapped });
+            if should_retry_send(&mapped) {
+                return Err(upstream_websocket_replay_required());
+            }
+            if !stream {
+                plan.log_error("send", &mapped.message);
+            }
+            return Err(mapped);
         }
         call.sess.invalidate(&call.conn, "send_error", Some(&mapped.message), true);
         if !should_retry_send(&mapped) {
+            if !stream {
+                plan.log_error("send", &mapped.message);
+            }
             return Err(mapped);
         }
         // The upstream may have closed the socket between sequential requests of this session.
         let dial = || transport::dial(&plan.ws_url, &plan.wire, &plan.proxy);
         let (retry_conn, retry_handshake) = match sess.ensure_conn(&plan.auth_id, &plan.ws_url, &plan.proxy_url, dial).await {
             Ok(ok) => ok,
-            Err(failure) => return Err(ExecError::new(0, failure.error)),
+            Err(failure) => {
+                plan.log_error("dial_retry", &failure.error);
+                return Err(ExecError::new(0, failure.error));
+            }
         };
         if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &retry_conn) {
             close_after_bind_failure(&sess, &retry_conn);
             return Err(ExecError::new(0, message));
         }
         call.rebind(retry_conn);
+        plan.log_request();
+        if let Some(headers) = &retry_handshake {
+            plan.log_handshake(headers);
+        }
         call.handshake_headers = retry_handshake.unwrap_or_default();
         call.restore_multi_agent = !plan.prepared.multi_agent_v2_conflict && (plan.prepared.optimize_multi_agent_v2 || sess.is_multi_agent_v2_optimized(&call.conn));
         if let Err(text) = call.conn.write_text(plan.frame.clone()).await {
             let mapped = map_write_error(text, sess.upstream_close(&call.conn));
             call.sess.invalidate(&call.conn, "send_error", Some(&mapped.message), true);
+            plan.log_error("send_retry", &mapped.message);
             return Err(mapped);
         }
     }

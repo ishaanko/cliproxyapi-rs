@@ -20,11 +20,13 @@ use cpa_auth::singleflight::SingleFlight;
 use cpa_config::Config;
 use cpa_core::thinking::{ThinkingError, parse_suffix};
 use cpa_json::J;
+use cpa_runtime::apilog::ApiLogHandle;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Metadata, Options, Request, Response, StreamResult};
 use cpa_translator::{Ctx, Format, Param};
 use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
@@ -49,6 +51,7 @@ use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::token_count::tokenizer_for_model;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
+use crate::openai_compat::log::record_request;
 
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use codex::{
@@ -254,13 +257,20 @@ impl MetaExecutor {
         let url = format!("{}/responses", base_url.trim_end_matches('/'));
         let headers = Self::headers(enriched, &token, true, opts, payload);
         tracing::debug!(target: "cpa::upstream", provider = PROVIDER, url = %url, "meta upstream request");
-        new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(enriched), None)
+        record_request(&opts.api_log, cfg, PROVIDER, Some(enriched), "POST", &url, &headers, &body);
+        let resp = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(enriched), None)
             .post(url)
             .headers(headers)
             .body(body)
             .send()
             .await
-            .map_err(|e| transport_error(&e))
+            .map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                err
+            })?;
+        opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
+        Ok(resp)
     }
 
     /// Converts the collected upstream SSE (or a plain response object) of a non-stream call into
@@ -356,7 +366,12 @@ impl MetaExecutor {
         let resp = self.send(cfg, enriched, opts, &req.payload, prepared.body.clone()).await?;
         let status = resp.status();
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| transport_error(&e))?;
+        let data = resp.bytes().await.map_err(|e| {
+            let err = transport_error(&e);
+            opts.api_log.record_api_response_error(cfg, &err.message);
+            err
+        })?;
+        opts.api_log.append_api_response_chunk(cfg, &data);
         reporter.observe_response_model(&data);
         if !status.is_success() {
             tracing::debug!(
@@ -405,7 +420,7 @@ impl MetaExecutor {
 
     async fn start_stream(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         enriched: &Auth,
         req: Request,
         opts: &Options,
@@ -416,7 +431,12 @@ impl MetaExecutor {
         let status = resp.status();
         let headers = resp.headers().clone();
         if !status.is_success() {
-            let data = resp.bytes().await.map_err(|e| transport_error(&e))?;
+            let data = resp.bytes().await.map_err(|e| {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                err
+            })?;
+            opts.api_log.append_api_response_chunk(cfg, &data);
             tracing::debug!(
                 target: "cpa::upstream",
                 status = status.as_u16(),
@@ -430,11 +450,18 @@ impl MetaExecutor {
         let (usage_tx, usage_rx) = oneshot::channel();
         let reporter = reporter.clone();
         let model = req.model;
-        tokio::spawn(run_stream(resp, prepared, model, reporter, tx, usage_tx));
+        let log = StreamLog { api_log: opts.api_log.clone(), cfg: cfg.clone() };
+        tokio::spawn(run_stream(resp, prepared, model, reporter, log, tx, usage_tx));
         let mut result = StreamResult::new(headers, rx);
         result.usage = Some(usage_rx);
         Ok(result)
     }
+}
+
+/// Request-log handle and config snapshot the stream task records with.
+struct StreamLog {
+    api_log: ApiLogHandle,
+    cfg: Arc<Config>,
 }
 
 /// Everything the stream task needs to translate and deliver lines.
@@ -503,6 +530,7 @@ async fn run_stream(
     prepared: Prepared,
     model: String,
     reporter: UsageReporter,
+    log: StreamLog,
     tx: mpsc::Sender<Result<Bytes, ExecError>>,
     usage_tx: oneshot::Sender<serde_json::Value>,
 ) {
@@ -521,6 +549,7 @@ async fn run_stream(
                 break;
             }
         };
+        log.api_log.append_api_response_chunk(&log.cfg, &line);
         let Some(rest) = line.strip_prefix(b"data:") else {
             if !sc.emit(&line).await {
                 finish_usage(&sc.reporter, &usage, usage_tx);
@@ -531,6 +560,7 @@ async fn run_stream(
         let mut event_data = crate::helps::text::trim_space(rest).to_vec();
         sc.reporter.observe_response_model(&event_data);
         if let Some(err) = meta_stream_event_error(&event_data) {
+            log.api_log.record_api_response_error(&log.cfg, &err.message);
             sc.reporter.publish_failure(&err);
             let _ = sc.tx.send(Err(err)).await;
             finish_usage(&sc.reporter, &usage, usage_tx);
@@ -584,6 +614,7 @@ async fn run_stream(
     }
     if let Some(e) = scan_err {
         let err = ExecError::from(e);
+        log.api_log.record_api_response_error(&log.cfg, &err.message);
         sc.reporter.publish_failure(&err);
         let _ = sc.tx.send(Err(err)).await;
     }
@@ -644,6 +675,24 @@ impl Executor for MetaExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: MetaExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (_, token) = meta_creds(Some(auth));
+        http_request::set_bearer_or_clear(req, &token);
+        http_request::set_header(req, "User-Agent", USER_AGENT);
+        http_request::set_header(req, "X-Client-Id", "tbh:tui");
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: MetaExecutor.HttpRequest (mints the API key from a DCA token first).
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        let enriched = self.ensure_auth(auth).await?;
+        self.prepare_request(&mut req, &enriched).await?;
+        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(&enriched), None);
+        http_request::execute(&client, req).await
     }
 }
 

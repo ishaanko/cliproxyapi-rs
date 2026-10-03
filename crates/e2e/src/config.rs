@@ -105,6 +105,8 @@ pub struct ConfigSpec {
     pub force_model_prefix: bool,
     /// `usage-statistics-enabled`: records usage events for the management usage queue.
     pub usage_statistics: bool,
+    /// `request-log`: write a log file for every request (otherwise only error requests).
+    pub request_log: bool,
     pub claude: Vec<KeyEntry>,
     pub codex: Vec<KeyEntry>,
     pub gemini: Vec<KeyEntry>,
@@ -121,6 +123,8 @@ pub struct ConfigSpec {
     /// `multimedia` settings (`disable-image-generation`, `gpt-image-2-base-model`,
     /// `video-result-auth-cache-ttl`).
     pub multimedia: Vec<(&'static str, Value)>,
+    /// Provider-wide `codex:` settings (`response-steering`, ...), legacy layout only.
+    pub codex_settings: Vec<(&'static str, Value)>,
 }
 
 impl ConfigSpec {
@@ -147,6 +151,7 @@ impl ConfigSpec {
             bootstrap_retries: 0,
             force_model_prefix: false,
             usage_statistics: false,
+            request_log: false,
             claude: keys("anthropic", "claude"),
             codex: keys("codex", "codex"),
             gemini: keys("gemini", "gemini"),
@@ -166,6 +171,7 @@ impl ConfigSpec {
             }],
             xai: vec![],
             multimedia: vec![],
+            codex_settings: vec![],
         }
     }
 }
@@ -350,6 +356,10 @@ impl ConfigSpec {
         }
         m.insert("force-model-prefix".into(), json!(self.force_model_prefix));
         m.insert("usage-statistics-enabled".into(), json!(self.usage_statistics));
+        // Emitted only when on: the management config goldens predate the key.
+        if self.request_log {
+            m.insert("request-log".into(), json!(true));
+        }
         m.insert("disable-cooling".into(), json!(self.disable_cooling));
         if let Some(t) = self.transient_cooldown_seconds {
             m.insert("transient-error-cooldown-seconds".into(), json!(t));
@@ -365,6 +375,9 @@ impl ConfigSpec {
         }
         for (key, value) in &self.multimedia {
             m.insert((*key).into(), value.clone());
+        }
+        if !self.codex_settings.is_empty() {
+            m.insert("codex".into(), Value::Object(self.codex_settings.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()));
         }
         m.insert("openai-compatibility".into(), Value::Array(self.compat.iter().map(|c| compat_value(c, "api-key-entries")).collect()));
         Value::Object(m)
@@ -409,9 +422,14 @@ impl ConfigSpec {
                 "streaming": self.streaming(),
             },
             "oauth": {"auth-dir": auth_dir.to_string_lossy()},
-            "observability": {"usage": {"usage-statistics-enabled": self.usage_statistics}},
+            "observability": {
+                "usage": {"usage-statistics-enabled": self.usage_statistics},
+            },
             "api-keys": api_keys,
         });
+        if self.request_log {
+            out["observability"]["logs"] = json!({"request-log": true});
+        }
         if !multimedia.is_empty() {
             out["multimedia"] = Value::Object(multimedia);
         }

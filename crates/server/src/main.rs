@@ -13,6 +13,7 @@ use cpa_auth::OAuthSessions;
 use cpa_config::Config;
 use cpa_runtime::service::{ServiceBuilder, StoreBackend};
 use cpa_runtime::usage::UsageTracker;
+use cpa_server::aistudio;
 use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
 use cpa_server::redis_protocol::RedisProtocol;
@@ -590,6 +591,8 @@ async fn serve_proxy(
     for executor in cpa_executors::all_executors(config_rx.clone()) {
         service.register_executor(executor);
     }
+    aistudio::install_relay_hooks(&service);
+    aistudio::watch_ws_auth(config_rx.clone());
     plugin_host.sync_model_runtime(&service.manager(), service.registry()).await;
     service.refresh_model_registrations().await;
     let manager = service.manager();

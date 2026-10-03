@@ -1,0 +1,116 @@
+{
+  "id": "reqlog.ws.upstream_error",
+  "desc": "an upstream error frame on the Codex websocket",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/responses",
+        "auth": "Client",
+        "headers": [],
+        "messages": [
+          {
+            "type": "response.create",
+            "model": "gpt-5.5",
+            "input": [
+              {
+                "type": "message",
+                "role": "user",
+                "content": [
+                  {
+                    "type": "input_text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 101,
+        "headers": {
+          "connection": "Upgrade",
+          "upgrade": "websocket"
+        },
+        "body": {
+          "type": "ws",
+          "frames": [
+            {
+              "type": "error",
+              "status": 400,
+              "error": {
+                "message": "mock upstream error 400",
+                "type": "invalid_request_error",
+                "code": null
+              }
+            }
+          ],
+          "close": "abnormal"
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "GET",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Upgrade",
+        "conversation_id": "<volatile>",
+        "openai-beta": "responses_websockets=2026-02-06",
+        "originator": "codex-tui",
+        "sec-websocket-extensions": "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+        "sec-websocket-version": "13",
+        "session_id": "<volatile>",
+        "upgrade": "websocket",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": null,
+      "ws_frames": [
+        {
+          "model": "gpt-5.5",
+          "input": [
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ],
+          "stream": true,
+          "store": false,
+          "parallel_tool_calls": true,
+          "include": [
+            "reasoning.encrypted_content"
+          ],
+          "instructions": "",
+          "tools": [
+            {
+              "type": "image_generation",
+              "output_format": "png"
+            }
+          ],
+          "prompt_cache_key": "<volatile>",
+          "type": "response.create"
+        }
+      ]
+    }
+  ],
+  "request_logs": [
+    "=== REQUEST INFO ===\nVersion: <version>\nURL: /v1/responses\nMethod: GET\nDownstream Transport: websocket\nUpstream Transport: websocket+http\nTimestamp: <ts>\n\n\n=== HEADERS ===\nAuthorization: Bearer e2e-...-key\nConnection: Upgrade\nSec-Websocket-Key: <sec-websocket-key>\nSec-Websocket-Version: 13\nUpgrade: websocket\nUser-Agent: cpa-e2e/1\n\n\n=== WEBSOCKET TIMELINE ===\nTimestamp: <ts>\nEvent: websocket.request\n{\"type\":\"response.create\",\"model\":\"gpt-5.5\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}]}\n\nTimestamp: <ts>\nEvent: websocket.response\n{\"type\":\"error\",\"status\":400,\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}\n\nTimestamp: <ts>\nEvent: websocket.disconnect\nwebsocket: close sent\n\n\n=== API WEBSOCKET TIMELINE ===\nTimestamp: <ts>\nEvent: api.websocket.request\nUpstream URL: ws://<mock>/codex/responses\nAuth: provider=codex, auth_id=codex:apikey:39ddf5b44282, label=codex-apikey, type=api_key value=sk-c...ex-2\nHeaders:\nAuthorization: Bearer sk-c...ex-2\nConversation_id: <conversation_id>\nOpenai-Beta: responses_websockets=2026-02-06\nOriginator: codex-tui\nUser-Agent: codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)\nsession_id: <session_id>\n\nBody:\n{\"model\":\"gpt-5.5\",\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hello\"}]}],\"stream\":true,\"store\":false,\"parallel_tool_calls\":true,\"include\":[\"reasoning.encrypted_content\"],\"instructions\":\"\",\"tools\":[{\"type\":\"image_generation\",\"output_format\":\"png\"}],\"prompt_cache_key\":\"<key>\",\"type\":\"response.create\"}\n\nTimestamp: <ts>\nEvent: api.websocket.handshake\nStatus: 101\nHeaders:\nConnection: upgrade\nDate: <date>\nSec-Websocket-Accept: <sec-websocket-accept>\nUpgrade: websocket\n\nTimestamp: <ts>\nEvent: api.websocket.response\n{\"type\":\"error\",\"status\":400,\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}\n\nTimestamp: <ts>\nEvent: api.websocket.error\nStage: upstream_error\nError: {\"status\":400,\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}\n\n\n=== API ERROR RESPONSE ===\nHTTP Status: 400\n{\"status\":400,\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}\n\n\n=== API RESPONSE ===\nTimestamp: <ts>\n{\"status\":400,\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}\n\n\n"
+  ],
+  "volatile": [
+    "/upstream/0/headers/conversation_id",
+    "/upstream/0/headers/session_id",
+    "/upstream/0/ws_frames/0/prompt_cache_key"
+  ]
+}

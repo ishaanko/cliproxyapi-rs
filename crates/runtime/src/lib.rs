@@ -9,6 +9,7 @@
 // `ExecError` carries the upstream status, headers and body (Go: `*Error`); errors are the rare path.
 #![allow(clippy::result_large_err)]
 
+pub mod apilog;
 pub mod conductor;
 pub mod executor;
 pub mod service;

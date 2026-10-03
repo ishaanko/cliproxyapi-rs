@@ -96,7 +96,7 @@ impl ClaudeExecutor {
             base_url = DEFAULT_BASE_URL.to_string();
         }
         // Every custom or third-party base URL keeps local estimation, OAuth or API key alike.
-        if should_use_claude_upstream_token_count(&api_key, &base_url) {
+        if self.embedding.is_some() || should_use_claude_upstream_token_count(&api_key, &base_url) {
             return self.count_tokens_upstream(cfg, auth, req, opts).await;
         }
 
@@ -135,7 +135,7 @@ impl ClaudeExecutor {
         opts: Options,
     ) -> Result<Response, ExecError> {
         let base_model = parse_suffix(&req.model).model_name;
-        let upstream_model = base_model.clone();
+        let upstream_model = self.upstream_model(&base_model);
 
         let (api_key, mut base_url) = claude_creds(auth);
         if base_url.is_empty() {
@@ -234,18 +234,45 @@ impl ClaudeExecutor {
             },
         )?;
 
+        self.record_upstream_request(cfg, auth, &opts, &url, &headers, &body);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
-        let resp = super::http::send_messages(&client, &url, &headers, &body).await?;
+        let resp = match super::http::send_messages(&client, &url, &headers, &body).await {
+            Ok(r) => r,
+            Err(err) => {
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                return Err(err);
+            }
+        };
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        opts.api_log.record_api_response_metadata(cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
             let data = match resp.bytes().await {
-                Ok(b) => b,
-                Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
+                Ok(b) => match super::decode::decode_body(b) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        opts.api_log.record_api_response_error(cfg, &e);
+                        let msg = format!("failed to decode error response body: {e}");
+                        return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, msg.as_bytes(), cfg.claude.model_level_cooling));
+                    }
+                },
+                Err(e) => {
+                    let msg = crate::helps::status::transport_message(&e);
+                    opts.api_log.record_api_response_error(cfg, &msg);
+                    Bytes::from(format!("failed to read error response body: {msg}"))
+                }
             };
+            opts.api_log.append_api_response_chunk(cfg, &data);
             return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &data, cfg.claude.model_level_cooling));
         }
-        let data = resp.bytes().await.map_err(|e| ExecError::new(0, crate::helps::status::transport_message(&e)))?;
+        let data = match resp.bytes().await.map_err(|e| crate::helps::status::transport_message(&e)).and_then(super::decode::decode_body) {
+            Ok(b) => b,
+            Err(msg) => {
+                opts.api_log.record_api_response_error(cfg, &msg);
+                return Err(ExecError::new(0, msg));
+            }
+        };
+        opts.api_log.append_api_response_chunk(cfg, &data);
         let count = cpa_json::parse(&data).g("input_tokens").int();
         let out = cpa_translator::translate_token_count(&Ctx::default(), to, response_format, count, &data);
         Ok(Response { payload: Bytes::from(out), headers: resp_headers, ..Default::default() })

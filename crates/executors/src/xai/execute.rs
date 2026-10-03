@@ -74,20 +74,21 @@ impl XaiExecutor {
         reporter.set_translated_reasoning_effort(&prepared.body, super::request::IDENTIFIER);
         let url = format!("{}/responses", base_url.trim_end_matches('/'));
         let headers = apply_chat_headers(Some(auth), token, true, &prepared.session_id, opts, session)?;
+        self.record_request(cfg, auth, opts, &url, &headers, &prepared.body);
         let resp = self
             .send(cfg, auth, opts, reporter, &url, headers, prepared.body.clone())
             .await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = read_body(reporter, resp).await?;
+            let data = read_body(cfg, opts, reporter, resp).await?;
             tracing::debug!(
                 "request error, error status: {status}, error message: {}",
                 crate::helps::logging::summarize_error_body(&content_type(&resp_headers), &data)
             );
             return Err(status_err_for_body(status, &data));
         }
-        let data = read_body(reporter, resp).await?;
+        let data = read_body(cfg, opts, reporter, resp).await?;
 
         let mut output_items_by_index = std::collections::BTreeMap::new();
         let mut output_items_fallback: Vec<Value> = Vec::new();
@@ -261,10 +262,11 @@ impl XaiExecutor {
             // Official API and custom compact endpoints use standard API headers, not the CLI
             // chat-proxy identity headers.
             let headers = apply_headers(Some(auth), &token, false, &prepared.session_id, opts, session.as_deref())?;
+            self.record_request(&cfg, auth, opts, &url, &headers, &prepared.body);
             let resp = self.send(&cfg, auth, opts, &reporter, &url, headers, prepared.body.clone()).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data = read_body(&reporter, resp).await?;
+            let data = read_body(&cfg, opts, &reporter, resp).await?;
             if !(200..300).contains(&status) {
                 tracing::debug!(
                     "request error, error status: {status}, error message: {}",
@@ -312,14 +314,28 @@ pub(super) fn content_type(headers: &HeaderMap) -> String {
     headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string()
 }
 
-/// Reads a whole upstream body, marking the first byte for TTFT.
-pub(super) async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
+/// Reads a whole upstream body, marking the first byte for TTFT, and records it in the
+/// request log (Go: `io.ReadAll` then `RecordAPIResponseError` / `AppendAPIResponseChunk`).
+pub(super) async fn read_body(
+    cfg: &cpa_config::Config,
+    opts: &Options,
+    reporter: &UsageReporter,
+    resp: reqwest::Response,
+) -> Result<Bytes, ExecError> {
     use futures_util::StreamExt;
     let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
     let mut buf = Vec::new();
     while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk.map_err(|e| transport_error(&e))?);
+        match chunk {
+            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Err(e) => {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                return Err(err);
+            }
+        }
     }
+    opts.api_log.append_api_response_chunk(cfg, &buf);
     Ok(Bytes::from(buf))
 }
 
@@ -330,7 +346,7 @@ pub(super) fn input_has_item_type(body: &[u8], item_type: &str) -> bool {
 }
 
 /// Go: xaiRemoveInputItemsByType.
-fn remove_input_items_by_type(body: &mut Value, item_type: &str) {
+pub(super) fn remove_input_items_by_type(body: &mut Value, item_type: &str) {
     let Some(input) = at(body, "input").and_then(Value::as_array) else { return };
     let kept: Vec<Value> = input.iter().filter(|i| s(i, "type") != item_type).cloned().collect();
     cpa_json::set(body, "input", Value::Array(kept));
@@ -351,7 +367,7 @@ fn now_unix() -> i64 {
 }
 
 /// Go: xaiCompactionResponseID.
-fn compaction_response_id(compact: &Value) -> String {
+pub(super) fn compaction_response_id(compact: &Value) -> String {
     let response_id = ts(compact, "id");
     if !response_id.is_empty() {
         if response_id.starts_with("resp_") {
@@ -375,7 +391,7 @@ fn compaction_item_id(response_id: &str) -> String {
 }
 
 /// Go: xaiCompactionOutputItem.
-fn compaction_output_item(compact: &Value, response_id: &str) -> Value {
+pub(super) fn compaction_output_item(compact: &Value, response_id: &str) -> Value {
     let mut item = match at(compact, "output.0") {
         Some(v) if v.is_object() || v.is_array() => v.clone(),
         _ => json!({"type": "compaction"}),
@@ -442,7 +458,7 @@ fn compaction_base_response(
 }
 
 /// Go: xaiBuildCompactionTriggerStreamChunks.
-fn build_compaction_trigger_stream_chunks(prepared: &PreparedRequest, compact_data: &[u8]) -> Vec<Vec<u8>> {
+pub(super) fn build_compaction_trigger_stream_chunks(prepared: &PreparedRequest, compact_data: &[u8]) -> Vec<Vec<u8>> {
     let compact = cpa_json::parse(compact_data);
     let response_id = compaction_response_id(&compact);
     let now = now_unix();

@@ -43,6 +43,7 @@ mod credits;
 pub mod errors;
 pub mod events;
 mod exec;
+mod http_request;
 pub mod home;
 mod home_concurrency;
 mod home_dispatch;

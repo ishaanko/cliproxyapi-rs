@@ -70,11 +70,17 @@ impl AntigravityExecutor {
         };
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
+        p.log.metadata(status, &headers);
         if !(200..300).contains(&status) {
             let body = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => return Err((p, crate::helps::status::transport_error(&e))),
+                Err(e) => {
+                    let err = crate::helps::status::transport_error(&e);
+                    p.log.error(&err.message);
+                    return Err((p, err));
+                }
             };
+            p.log.chunk(&body);
             let err = self.handle_upstream_error(&p, status, &body).await;
             return Err((p, err));
         }
@@ -151,6 +157,7 @@ impl AntigravityExecutor {
                     break 'lines;
                 }
             };
+            p.log.chunk(&line);
             reporter.mark_first_response_byte();
             if let Some(acc) = accumulator.as_mut() {
                 acc.observe_sse_line(&line);
@@ -185,6 +192,7 @@ impl AntigravityExecutor {
             finished = false;
         }
         if let Some(err) = read_error.take().filter(|_| finished) {
+            p.log.error(&err.message);
             reporter.publish_failure(&err);
             let _ = out.send(Err(err)).await;
         } else if finished {

@@ -1069,6 +1069,7 @@ dependencies = [
  "url",
  "uuid",
  "webpki-roots",
+ "zstd 0.13.3",
 ]
 
 [[package]]

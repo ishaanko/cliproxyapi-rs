@@ -32,6 +32,8 @@ pub mod cloak_obfuscate;
 pub mod codex_tool_integers;
 pub mod content_type;
 pub mod gemini_content_turns;
+pub mod gemini_log;
+pub mod http_request;
 pub mod home_kv;
 pub mod home_refresh;
 pub mod id_cache;
