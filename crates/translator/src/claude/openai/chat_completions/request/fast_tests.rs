@@ -45,7 +45,7 @@ fn schema(g: &mut Gen) -> Json {
     for i in 0..g.below(4) {
         props.push((format!("p{i}"), Json::obj(vec![("type", Json::s("string")), ("description", text(g))])));
     }
-    let mut fields = vec![("type", Json::s("object")), ("properties", Json::Obj(props.into_iter().map(|(k, v)| (k, v)).collect()))];
+    let mut fields = vec![("type", Json::s("object")), ("properties", Json::Obj(props))];
     if g.chance(30) {
         fields.push(("required", Json::Arr(vec![Json::s("p0")])));
     }
