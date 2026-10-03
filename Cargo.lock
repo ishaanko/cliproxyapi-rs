@@ -5132,6 +5132,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "itoa",
  "memchr",
+ "serde",
  "serde_core",
  "zmij",
 ]
