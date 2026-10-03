@@ -9,7 +9,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use cpa_pluginapi::abi::{self, Envelope};
+use cpa_pluginapi::abi::{self, RpcErrorBody};
 use crate::ctx::CallCtx;
 
 /// Failure of a plugin call. `code` is set for errors the plugin reported itself; `status` is the
@@ -206,10 +206,23 @@ fn scopeguard<F: FnMut()>(f: F) -> ScopeGuard<F> {
 /// Decodes a response envelope into `T` (Go: `decodeEnvelopeResult`). A missing result decodes
 /// as `T::default()`.
 pub fn decode_envelope<T: DeserializeOwned + Default>(raw: &[u8], method: &str) -> PluginResult<T> {
-    let envelope: Envelope =
-        serde_json::from_slice(raw).map_err(|e| PluginError::msg(format!("decode plugin envelope {method}: {e}")))?;
-    if !envelope.ok {
-        return Err(match envelope.error {
+    let fail = |e: serde_json::Error| PluginError::msg(format!("decode plugin envelope {method}: {e}"));
+    let envelope: serde_json::Value = serde_json::from_slice(raw).map_err(fail)?;
+    let serde_json::Value::Object(mut fields) = envelope else {
+        return Err(fail(<serde_json::Error as serde::de::Error>::custom("envelope is not an object")));
+    };
+    // Go matches the envelope keys ignoring case like every other struct.
+    let mut take = |name: &str| {
+        let key = fields.keys().find(|k| k.eq_ignore_ascii_case(name)).cloned()?;
+        fields.shift_remove(&key)
+    };
+    let ok = take("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    if !ok {
+        let err: Option<RpcErrorBody> = match take("error") {
+            Some(v) if !v.is_null() => Some(cpa_pluginapi::fold::from_value(v).map_err(fail)?),
+            _ => None,
+        };
+        return Err(match err {
             Some(err) => {
                 let message = err.message.trim().to_string();
                 PluginError {
@@ -222,10 +235,11 @@ pub fn decode_envelope<T: DeserializeOwned + Default>(raw: &[u8], method: &str) 
             None => PluginError::msg("plugin call failed"),
         });
     }
-    match envelope.result {
-        None => Ok(T::default()),
-        Some(raw) => serde_json::from_str::<T>(raw.get())
-            .map_err(|e| PluginError::msg(format!("decode plugin result {method}: {e}"))),
+    match take("result") {
+        None | Some(serde_json::Value::Null) => Ok(T::default()),
+        Some(value) => {
+            cpa_pluginapi::fold::from_value::<T>(value).map_err(|e| PluginError::msg(format!("decode plugin result {method}: {e}")))
+        }
     }
 }
 

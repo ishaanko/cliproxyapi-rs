@@ -5,5 +5,6 @@
 
 pub mod abi;
 pub mod api;
+pub mod fold;
 pub mod host_api;
 pub mod wire;

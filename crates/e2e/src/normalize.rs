@@ -32,6 +32,10 @@ static BUCKET_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b\d{2}:\d{2}-\d{2}:\d
 /// `X-Cpa-Trace-Id: <YYYYMMDDHHMMSS>-<auth index>-<request id>`: only the timestamp is masked here
 /// (the request id is a v7 uuid; the auth index is deterministic and stays, it checks credential ids).
 static TS14_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b\d{14}-").expect("ts14 regex"));
+/// RFC 1123 HTTP dates (upstream `Date` headers echoed into bodies).
+static HTTP_DATE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT").expect("http date regex")
+});
 static RFC3339_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)").expect("rfc3339 regex")
 });
@@ -99,6 +103,7 @@ impl Normalizer {
                 if near { format!("{}<nanos>{}", &c[1], &c[3]) } else { c[0].to_string() }
             })
             .into_owned();
+        out = HTTP_DATE_RE.replace_all(&out, "<http-date>").into_owned();
         out = RFC3339_RE
             .replace_all(&out, |c: &Captures| match chrono::DateTime::parse_from_rfc3339(&c[0]) {
                 Ok(t) if self.near_now(t.timestamp()) => "<now>".to_string(),

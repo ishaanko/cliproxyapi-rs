@@ -63,8 +63,26 @@ fn instance_json(item: &cpa_config::PluginInstanceConfig) -> Value {
     }
 }
 
+/// `yamlNodeFromJSONValue`: integers stay integers, other numbers become floats.
 fn json_to_yaml(v: &Value) -> serde_yaml_ng::Value {
-    serde_yaml_ng::to_value(v).unwrap_or(serde_yaml_ng::Value::Null)
+    use serde_yaml_ng::Value as Y;
+    match v {
+        Value::Null => Y::Null,
+        Value::Bool(b) => Y::Bool(*b),
+        Value::String(s) => Y::String(s.clone()),
+        Value::Number(n) => match (n.as_i64(), n.as_u64(), n.as_f64()) {
+            (Some(i), _, _) => Y::Number(i.into()),
+            (_, Some(u), _) => Y::Number(u.into()),
+            (_, _, Some(f)) => Y::Number(f.into()),
+            _ => Y::Null,
+        },
+        Value::Array(items) => Y::Sequence(items.iter().map(json_to_yaml).collect()),
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            Y::Mapping(keys.into_iter().map(|k| (Y::String(k.clone()), json_to_yaml(&map[k]))).collect())
+        }
+    }
 }
 
 pub(crate) fn instance_mapping(item: &cpa_config::PluginInstanceConfig) -> serde_yaml_ng::Mapping {

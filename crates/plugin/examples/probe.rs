@@ -30,5 +30,10 @@ async fn main() {
     for info in host.registered_plugins() {
         println!("{} name={} version={} oauth={:?} quota={:?}", info.id, info.metadata.name, info.metadata.version, info.oauth_provider, info.quota_provider);
     }
+    host.register_management_routes(&ctx, &Default::default()).await;
+    for id in ["status"] {
+        let r = host.serve_resource_http(&ctx, "GET", &format!("/v0/resource/plugins/{}/{id}", only.first().cloned().unwrap_or_default()), &Default::default(), &[]).await;
+        println!("resource {id}: {:?}", r.map(|r| (r.status, r.body.len())));
+    }
     host.shutdown_all(&ctx).await;
 }

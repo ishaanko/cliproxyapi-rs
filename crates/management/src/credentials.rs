@@ -568,7 +568,8 @@ pub(crate) async fn models(State(st): State<ManagementState>, req: Request) -> A
             if !m.owned_by.is_empty() {
                 entry.insert("owned_by".into(), m.owned_by.into());
             }
-            Value::Object(entry)
+            // Go builds each entry as a `gin.H`, which marshals with sorted keys.
+            crate::http::sort_top(Value::Object(entry))
         })
         .collect();
     Ok(ok_json(&json!({"models": models})))

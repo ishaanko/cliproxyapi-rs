@@ -143,7 +143,13 @@ async fn start_login(st: &ManagementState, uri: &Uri, provider: Provider) -> Api
 
 /// `GET /oauth/status?state=`.
 pub(crate) async fn status(State(st): State<ManagementState>, req: Request) -> ApiResult {
-    let (code, body) = st.oauth.poll_status(&query_trim(req.uri(), "state"));
+    let state = query_trim(req.uri(), "state");
+    let plugin = if cpa_auth::oauth::validate_oauth_state(&state).is_ok() {
+        crate::plugin_routes::plugin_login_status(&st, &state).await
+    } else {
+        None
+    };
+    let (code, body) = plugin.unwrap_or_else(|| st.oauth.poll_status(&state));
     Ok(json_response(code, &body))
 }
 

@@ -148,3 +148,79 @@ fn query_metadata(query: &[(String, String)], v8: bool) -> Option<Map<String, Va
     }
     Some(out)
 }
+
+/// `GetAuthStatus` for a pending plugin login: polls the plugin and saves a finished login.
+/// `None` when the session is not a pending plugin session (the built-in status applies).
+pub(crate) async fn plugin_login_status(st: &ManagementState, state: &str) -> Option<(u16, Value)> {
+    let host = st.plugins.clone()?;
+    let state = state.trim();
+    let session = st.oauth.get(state)?;
+    if !session.is_plugin || session.completed || !session.status.is_empty() || !host.has_auth_provider(&session.provider) {
+        return None;
+    }
+    let ctx = CallCtx::background();
+    let fail = |message: &str| {
+        st.oauth.set_error(state, message);
+        Some((200, json!({"status": "error", "error": message})))
+    };
+    let resp = match host.poll_login(&ctx, &session.provider, state, session.metadata.clone()).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return None,
+        Err(e) => {
+            let message = e.message.trim().to_string();
+            return fail(if message.is_empty() { "Authentication failed" } else { &message });
+        }
+    };
+    match resp.status.as_str() {
+        "" | "pending" => Some((200, json!({"status": "wait"}))),
+        "error" => {
+            let message = resp.message.trim().to_string();
+            fail(if message.is_empty() { "Authentication failed" } else { &message })
+        }
+        "success" => {
+            let datas = if resp.auths.is_empty() { vec![resp.auth.clone()] } else { resp.auths.clone() };
+            let records: Option<Vec<_>> = datas.iter().map(|d| host.auth_data_to_core_auth(d, "", "")).collect();
+            let Some(records) = records.filter(|r| !r.is_empty()) else {
+                return fail("Authentication failed");
+            };
+            let login = st.login.clone();
+            let saved = crate::http::blocking(move || Ok(save_plugin_login_records(&login, records))).await;
+            match saved {
+                Ok(Ok(())) => {
+                    st.oauth.complete(state);
+                    Some((200, json!({"status": "ok"})))
+                }
+                Ok(Err(e)) => {
+                    tracing::error!(provider = %session.provider, "failed to save plugin auth tokens: {e}");
+                    fail("Failed to save authentication tokens")
+                }
+                Err(_) => fail("Failed to save authentication tokens"),
+            }
+        }
+        _ => Some((200, json!({"status": "wait"}))),
+    }
+}
+
+/// `savePluginLoginRecords`: saves every record, removing the files already written when one
+/// fails.
+fn save_plugin_login_records(login: &cpa_auth::Manager, records: Vec<cpa_auth::Auth>) -> Result<(), String> {
+    let mut saved: Vec<std::path::PathBuf> = Vec::new();
+    for mut record in records {
+        match login.save_record(&mut record) {
+            Ok(path) => {
+                if let Some(p) = path.filter(|p| !p.as_os_str().is_empty()) {
+                    saved.push(p);
+                }
+            }
+            Err(e) => {
+                for path in saved.iter().rev() {
+                    if let Err(err) = std::fs::remove_file(path) {
+                        tracing::warn!(path = %path.display(), "failed to roll back plugin auth token: {err}");
+                    }
+                }
+                return Err(e.to_string());
+            }
+        }
+    }
+    Ok(())
+}

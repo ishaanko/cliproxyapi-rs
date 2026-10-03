@@ -191,12 +191,28 @@ struct HostLogRequest {
     fields: Map<String, Value>,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
+#[derive(Default)]
 struct RpcHostModelExecutionRequest {
-    #[serde(flatten)]
     inner: HostModelExecutionRequest,
     host_callback_id: String,
+}
+
+impl<'de> Deserialize<'de> for RpcHostModelExecutionRequest {
+    /// The callback id sits next to the flattened request fields; both match keys like Go does.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(d)?;
+        let host_callback_id = match &value {
+            Value::Object(m) => m
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("host_callback_id"))
+                .and_then(|(_, v)| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            _ => String::new(),
+        };
+        let inner = cpa_pluginapi::fold::from_value(value).map_err(serde::de::Error::custom)?;
+        Ok(RpcHostModelExecutionRequest { inner, host_callback_id })
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -226,7 +242,7 @@ pub fn empty_result() -> Vec<u8> {
 }
 
 pub(crate) fn decode<T: DeserializeOwned>(raw: &[u8], what: &str) -> Result<T, HostError> {
-    serde_json::from_slice(raw).map_err(|e| HostError::msg(format!("decode {what}: {e}")))
+    cpa_pluginapi::fold::from_slice(raw).map_err(|e| HostError::msg(format!("decode {what}: {e}")))
 }
 
 /// Who is calling: the plugin and its library instance (Go: the callback identity in the ctx).
