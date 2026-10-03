@@ -217,8 +217,12 @@ pub enum HomeErrKind {
 /// Resources owned by one execution attempt (Go: `ExecutionLifecycle`): executors bind session
 /// teardown to it and may retain it past the request (websocket sessions).
 pub trait ExecutionLifecycle: Send + Sync + std::fmt::Debug {
+    /// Registers a closer run when the lifecycle ends.
     fn bind(&self, close: Box<dyn FnOnce() -> Result<(), String> + Send>) -> Result<(), String>;
+    /// Keeps the lifecycle alive past the request (the executor owns a session now).
     fn retain(&self);
+    /// Ends the lifecycle, closing every bound resource. Must not be called from a closer.
+    fn end(&self, reason: &str);
 }
 
 impl ExecError {

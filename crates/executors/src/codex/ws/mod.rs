@@ -304,6 +304,11 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<Ws
             Err(failure) => return Err(dial_failure_error(failure, plan.model_level_cooling)),
         }
     };
+    if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &conn) {
+        drop(guard);
+        close_after_bind_failure(&sess, &conn);
+        return Err(ExecError::new(0, message));
+    }
     let (generation, rx) = sess.activate(&conn);
     let mut call = WsCall {
         sess: Arc::clone(&sess),
@@ -339,6 +344,10 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<Ws
             Ok(ok) => ok,
             Err(failure) => return Err(ExecError::new(0, failure.error)),
         };
+        if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &retry_conn) {
+            close_after_bind_failure(&sess, &retry_conn);
+            return Err(ExecError::new(0, message));
+        }
         call.rebind(retry_conn);
         call.handshake_headers = retry_handshake.unwrap_or_default();
         call.restore_multi_agent = !plan.prepared.multi_agent_v2_conflict && (plan.prepared.optimize_multi_agent_v2 || sess.is_multi_agent_v2_optimized(&call.conn));
@@ -352,6 +361,11 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan) -> Result<Ws
         sess.set_multi_agent_v2_optimized(&call.conn, plan.prepared.optimize_multi_agent_v2 && !plan.prepared.multi_agent_v2_conflict);
     }
     Ok(call)
+}
+
+/// Drops a connection whose lifecycle bind failed (Go: `closeWebsocketAfterBindFailure`).
+fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
+    sess.invalidate(conn, "lifecycle_bind_failed", None, false);
 }
 
 /// `downstream_websocket` flag of a request.

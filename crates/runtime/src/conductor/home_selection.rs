@@ -380,6 +380,10 @@ impl ExecutionLifecycle for HomeDispatchSelection {
     fn retain(&self) {
         HomeDispatchSelection::retain(self);
     }
+
+    fn end(&self, reason: &str) {
+        HomeDispatchSelection::end(self, reason);
+    }
 }
 
 fn preserve_home_routing_attributes(updated: &mut Auth, previous: &Auth) {
