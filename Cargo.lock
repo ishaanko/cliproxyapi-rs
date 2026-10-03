@@ -1349,6 +1349,7 @@ dependencies = [
  "futures-core",
  "hex",
  "http",
+ "memchr",
  "parking_lot",
  "pprof",
  "rand 0.9.5",
