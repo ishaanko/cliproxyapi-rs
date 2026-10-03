@@ -31,6 +31,7 @@ pub mod home_models;
 pub mod logging;
 pub mod middleware;
 pub mod models;
+pub mod multipart;
 pub mod mux;
 pub mod realtime;
 pub mod redis_protocol;

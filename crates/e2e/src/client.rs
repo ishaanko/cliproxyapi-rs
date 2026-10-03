@@ -36,6 +36,8 @@ pub enum Body {
     Json(Value),
     /// Sent verbatim with `Content-Type: application/json` (for malformed bodies).
     Text(String),
+    /// Sent verbatim with the given Content-Type (multipart and form bodies).
+    Raw { content_type: String, bytes: Vec<u8> },
     /// Sent verbatim with the given content type (SDP, multipart).
     Typed(&'static str, String),
 }
@@ -77,6 +79,36 @@ impl HttpReq {
 
     pub fn options(path: &str) -> Self {
         Self::new("OPTIONS", path, Body::None)
+    }
+
+    /// `multipart/form-data` body with a fixed boundary; `files` are `(field, filename, content type, bytes)`.
+    pub fn multipart(path: &str, fields: &[(&str, &str)], files: &[(&str, &str, &str, &[u8])]) -> Self {
+        const BOUNDARY: &str = "e2eboundary0123456789";
+        let mut bytes: Vec<u8> = Vec::new();
+        for (name, value) in fields {
+            bytes.extend_from_slice(format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+        }
+        for (name, filename, content_type, data) in files {
+            bytes.extend_from_slice(
+                format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n").as_bytes(),
+            );
+            bytes.extend_from_slice(data);
+            bytes.extend_from_slice(b"\r\n");
+        }
+        bytes.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+        Self::new("POST", path, Body::Raw { content_type: format!("multipart/form-data; boundary={BOUNDARY}"), bytes })
+    }
+
+    /// `application/x-www-form-urlencoded` body.
+    pub fn form(path: &str, pairs: &[(&str, &str)]) -> Self {
+        let text = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+        Self::new("POST", path, Body::Raw { content_type: "application/x-www-form-urlencoded".into(), bytes: text.into_bytes() })
+    }
+
+    /// Sends `bytes` with exactly this Content-Type (none when empty).
+    pub fn raw_typed(mut self, content_type: &str, bytes: &[u8]) -> Self {
+        self.body = Body::Raw { content_type: content_type.to_string(), bytes: bytes.to_vec() };
+        self
     }
 
     pub fn raw(mut self, text: &str) -> Self {
@@ -291,6 +323,8 @@ impl Client {
             Body::None => req,
             Body::Json(v) => req.header("content-type", "application/json").body(v.to_string()),
             Body::Text(t) => req.header("content-type", "application/json").body(t.clone()),
+            Body::Raw { content_type, bytes } if content_type.is_empty() => req.body(bytes.clone()),
+            Body::Raw { content_type, bytes } => req.header("content-type", content_type.as_str()).body(bytes.clone()),
             Body::Typed(content_type, t) => req.header("content-type", *content_type).body(t.clone()),
         };
         let resp = req.send().await.with_context(|| format!("{} {}", r.method, r.path))?;

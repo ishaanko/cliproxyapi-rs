@@ -16,6 +16,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use url::Url;
 
+use crate::upstream::MAX_WS_MESSAGE_SIZE;
+
 const DIAL_TIMEOUT: Duration = Duration::from_secs(30);
 /// Rejected handshake bodies are cut at 1024 bytes, like gorilla's.
 const ERROR_BODY_LIMIT: usize = 1024;
@@ -226,7 +228,7 @@ pub async fn dial(url: &str, headers: &HeaderMap, subprotocols: &[String], proxy
         request.headers_mut().insert(HeaderName::from_static("sec-websocket-protocol"), v);
     }
     let stream = connect_stream(&parsed, proxy_url).await.map_err(DialFailure::transport)?;
-    let config = WebSocketConfig::default().max_message_size(None).max_frame_size(None);
+    let config = WebSocketConfig::default().max_message_size(Some(MAX_WS_MESSAGE_SIZE)).max_frame_size(Some(MAX_WS_MESSAGE_SIZE));
     match tokio_tungstenite::client_async_with_config(request, stream, Some(config)).await {
         Ok((stream, response)) => {
             let subprotocol = response.headers().get("sec-websocket-protocol").and_then(|v| v.to_str().ok()).map(str::to_string);

@@ -159,13 +159,15 @@ async fn upstream_rejection_is_relayed_and_no_session_is_stored() {
 
 // ---------------------------------------------------------------- media relay fakes
 
+type CloseHandler = Box<dyn Fn(&str) + Send + Sync>;
+
 #[derive(Default)]
 struct FakeSession {
     upstream_answer: Mutex<String>,
     call_id: Mutex<String>,
     call_id_at_accept: Mutex<String>,
     downstream_sdp: String,
-    close_handler: Mutex<Option<Box<dyn Fn(&str) + Send + Sync>>>,
+    close_handler: Mutex<Option<CloseHandler>>,
     close_reason: Mutex<String>,
     closed: AtomicBool,
     fail: Option<&'static str>,
@@ -228,8 +230,7 @@ async fn call_relays_webrtc_media_sdp() {
     let mut auth = oauth_auth("codex-oauth", "oauth-token", None);
     auth.label = "Voice credential".into();
     auth.proxy_url = "direct".into();
-    let mut cfg = Config::default();
-    cfg.proxy_url = "http://global-proxy.example:8080".into();
+    let cfg = Config { proxy_url: "http://global-proxy.example:8080".into(), ..Default::default() };
     let env = env_with_config(cfg, vec![auth]).await;
     let upstream = Arc::new(UpstreamState::default());
     upstream.reply.lock().body = "v=0\r\no=upstream-answer\r\n";
@@ -381,12 +382,12 @@ async fn hangup_forwards_pinned_call_and_ends_the_session() {
     );
     let p = parts_with_call("/v1/realtime/calls/call-123/hangup", "call-123", &[]);
     // Another principal is refused.
-    let denied = env.handler.handle_hangup(&caller("other-key", "static"), &p, Bytes::new()).await;
+    let denied = env.handler.handle_hangup(&caller("other-key", "static"), &p, axum::body::Body::empty()).await;
     assert_eq!(denied.status, 403);
     assert_eq!(json_of(&denied)["error"]["code"], "realtime_call_scope_mismatch");
     assert!(env.handler.sessions().peek("call-123").is_some());
 
-    let reply = env.handler.handle_hangup(&caller("owner-key", "static"), &p, Bytes::new()).await;
+    let reply = env.handler.handle_hangup(&caller("owner-key", "static"), &p, axum::body::Body::empty()).await;
     assert_eq!(reply.status, 200, "{}", reply.text());
     assert_eq!(reply.text(), r#"{"status":"ok"}"#);
     let seen = upstream.last();
@@ -399,9 +400,11 @@ async fn hangup_forwards_pinned_call_and_ends_the_session() {
 #[tokio::test]
 async fn hangup_validation() {
     let env = env(vec![]).await;
-    let bad = env.handler.handle_hangup(&Caller::default(), &parts_with_call("/x", "bad id", &[]), Bytes::new()).await;
+    let bad = env.handler.handle_hangup(&Caller::default(), &parts_with_call("/x", "bad id", &[]), axum::body::Body::empty()).await;
     assert_eq!(json_of(&bad)["error"]["code"], "invalid_call_id");
-    let missing = env.handler.handle_hangup(&Caller::default(), &parts_with_call("/x", "call-x", &[]), Bytes::new()).await;
+    // The body is only read after the call checks: an oversized body on an unknown call is a 404.
+    let oversized = axum::body::Body::from(vec![0u8; (16 << 20) + 1]);
+    let missing = env.handler.handle_hangup(&Caller::default(), &parts_with_call("/x", "call-x", &[]), oversized).await;
     assert_eq!((missing.status, json_of(&missing)["error"]["code"].as_str().unwrap().to_string()), (404, "realtime_call_not_found".into()));
 }
 
@@ -490,8 +493,7 @@ async fn sideband_rejections() {
     assert_eq!(response.status().as_u16(), 404);
     // Client secret scope mismatch releases the claim.
     env.handler.sessions().put("call-123", LiveSession { auth_id: "codex-oauth".into(), client_secret_principal: "sess_expected".into(), ..Default::default() });
-    let mut c = Caller::default();
-    c.client_secret = Some(ClientSecretCaller { principal: "sess_other".into(), session: String::new() });
+    let c = Caller { client_secret: Some(ClientSecretCaller { principal: "sess_other".into(), session: String::new() }), ..Default::default() };
     let response = env.handler.handle_sideband(&c, &parts_with_call("/v1/realtime/calls/call-123", "call-123", &upgrade), None).await;
     assert_eq!(response.status().as_u16(), 403);
     let (_, claim) = env.handler.sessions().claim("call-123");
@@ -541,8 +543,10 @@ async fn sideband_dial_errors_forward_only_unauthorized_bodies() {
 #[tokio::test]
 async fn direct_websocket_rejects_client_secret_model_mismatch() {
     let env = env(vec![]).await;
-    let mut c = Caller::default();
-    c.client_secret = Some(ClientSecretCaller { principal: "sess_123".into(), session: r#"{"type":"realtime","model":"gpt-live-1-codex"}"#.into() });
+    let c = Caller {
+        client_secret: Some(ClientSecretCaller { principal: "sess_123".into(), session: r#"{"type":"realtime","model":"gpt-live-1-codex"}"#.into() }),
+        ..Default::default()
+    };
     let upgrade = [("connection", "Upgrade"), ("upgrade", "websocket")];
     let response = env.handler.handle_realtime_websocket(&c, &parts("/v1/realtime?model=another-live-model", &upgrade), None).await;
     assert_eq!(response.status().as_u16(), 403);
@@ -577,9 +581,13 @@ async fn direct_websocket_applies_client_secret_session() {
     let env = env(vec![oauth_auth("codex-oauth", "oauth-token", None)]).await;
     let upstream = Arc::new(UpstreamState::default());
     point_at(&env, &serve_upstream(upstream.clone()).await);
-    let mut c = Caller::default();
-    c.client_secret =
-        Some(ClientSecretCaller { principal: "sess_123".into(), session: r#"{"type":"realtime","model":"gpt-live-1-codex","instructions":"help"}"#.into() });
+    let c = Caller {
+        client_secret: Some(ClientSecretCaller {
+            principal: "sess_123".into(),
+            session: r#"{"type":"realtime","model":"gpt-live-1-codex","instructions":"help"}"#.into(),
+        }),
+        ..Default::default()
+    };
     let downstream = serve_downstream(env.handler.clone(), c).await;
     let mut client = ws_connect(&format!("ws://{downstream}/v1/realtime?model=gpt-realtime"), &[]).await.unwrap();
     // The proxy's session.update reaches the upstream, which echoes it back through the relay.

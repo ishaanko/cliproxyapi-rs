@@ -172,7 +172,8 @@ impl<'a> Reader<'a> {
         let mut needle = self.nl.to_vec();
         needle.extend_from_slice(&self.dash_boundary);
         let mut from = 0;
-        while let Some(i) = find(&rest[from..], &needle) {
+        let finder = memchr::memmem::Finder::new(&needle);
+        while let Some(i) = finder.find(&rest[from..]) {
             let idx = from + i;
             if boundary_after(idx, needle.len()) {
                 let body = rest[..idx].to_vec();
@@ -184,10 +185,6 @@ impl<'a> Reader<'a> {
         }
         Err(PartError::Read("unexpected EOF".into()))
     }
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 #[cfg(test)]

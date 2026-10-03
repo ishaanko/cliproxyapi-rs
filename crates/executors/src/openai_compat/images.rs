@@ -113,17 +113,17 @@ fn unescape_quoted(s: &str) -> String {
     out
 }
 
-struct FilePart {
-    key: String,
-    filename: String,
-    headers: BTreeMap<String, Vec<String>>,
-    data: Vec<u8>,
+pub(crate) struct FilePart {
+    pub(crate) key: String,
+    pub(crate) filename: String,
+    pub(crate) headers: BTreeMap<String, Vec<String>>,
+    pub(crate) data: Vec<u8>,
 }
 
 #[derive(Default)]
-struct Form {
-    values: Vec<(String, Vec<String>)>,
-    files: Vec<FilePart>,
+pub(crate) struct Form {
+    pub(crate) values: Vec<(String, Vec<String>)>,
+    pub(crate) files: Vec<FilePart>,
 }
 
 fn canonical_header_key(name: &str) -> String {
@@ -180,7 +180,7 @@ fn split_parts<'a>(body: &'a [u8], boundary: &str) -> Option<Vec<&'a [u8]>> {
     }
 }
 
-fn parse_form(body: &[u8], boundary: &str) -> Result<Form, String> {
+pub(crate) fn parse_form(body: &[u8], boundary: &str) -> Result<Form, String> {
     let parts = split_parts(body, boundary).ok_or("multipart: NextPart: EOF")?;
     let mut form = Form::default();
     for raw in parts {

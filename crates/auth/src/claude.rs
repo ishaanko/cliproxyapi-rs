@@ -4,9 +4,9 @@
 //! exchange at platform.claude.com, profile/roles companion lookups, token refresh with
 //! single-flight, 429 backoff blocking and retry, credential file naming and legacy migration.
 //!
-//! TLS fingerprint gap: Go uses a uTLS Firefox transport (`utls_transport.go`) for these hosts.
-//! This port uses reqwest + rustls, so the ClientHello is not fingerprinted and header order is not
-//! pinned; Cloudflare may treat it differently from the Go build.
+//! Every https request goes through the Claude Code OAuth TLS fingerprint and Axios header order
+//! of `claude_transport` (Go: `utls_transport.go`); without the `tls-fingerprint` feature it uses
+//! plain reqwest + rustls and header order is not pinned.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::credmeta::Metadata;
 use crate::error::{AuthFlowError, Result};
+use crate::claude_transport::Channel;
 use crate::http::{build_client_ext, read_text};
 use crate::pkce::PkceCodes;
 use crate::singleflight::SingleFlight;
@@ -173,9 +174,9 @@ impl Default for ClaudeEndpoints {
 /// Claude OAuth client. Cheap to construct; holds a reqwest client with the proxy applied.
 #[derive(Clone)]
 pub struct ClaudeAuth {
-    client: reqwest::Client,
+    client: Channel,
     /// Same transport plus the 10 s TLS handshake bound Go applies to refresh requests only.
-    refresh_client: reqwest::Client,
+    refresh_client: Channel,
     token_url: String,
     refresh_url: String,
     profile_url: String,
@@ -187,16 +188,17 @@ impl ClaudeAuth {
     pub fn new(proxy_url: &str) -> Result<Self> {
         let client = build_client_ext(proxy_url, None, None)?;
         let refresh_client = build_client_ext(proxy_url, None, Some(HANDSHAKE_TIMEOUT))?;
-        let mut auth = Self::with_client(client);
-        auth.refresh_client = refresh_client;
+        let mut auth = Self::with_client(client.clone());
+        auth.client = Channel::fingerprinted(client, proxy_url, None);
+        auth.refresh_client = Channel::fingerprinted(refresh_client, proxy_url, Some(HANDSHAKE_TIMEOUT));
         Ok(auth)
     }
 
-    /// Uses a caller-supplied client (tests, shared transports).
+    /// Uses a caller-supplied client without TLS fingerprinting (tests, shared transports).
     pub fn with_client(client: reqwest::Client) -> Self {
         Self {
-            refresh_client: client.clone(),
-            client,
+            refresh_client: Channel::plain(client.clone()),
+            client: Channel::plain(client),
             token_url: TOKEN_URL.to_string(),
             refresh_url: REFRESH_TOKEN_URL.to_string(),
             profile_url: PROFILE_URL.to_string(),
@@ -260,16 +262,10 @@ impl ClaudeAuth {
         })
         .map_err(|e| AuthFlowError::other(format!("failed to marshal request body: {e}")))?;
 
-        let resp = axios_headers(self.client.post(&self.token_url))
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| {
-                AuthFlowError::Transport(format!(
-                    "token exchange request failed: {}",
-                    e.without_url()
-                ))
-            })?;
+        let request = axios_headers(self.client.post(&self.token_url)).body(body);
+        let resp = self.client.send(request).await.map_err(|e| {
+            AuthFlowError::Transport(format!("token exchange request failed: {e}"))
+        })?;
         let (status, text) = read_text(resp).await.map_err(|e| {
             AuthFlowError::Transport(format!(
                 "failed to read token response: {}",
@@ -331,7 +327,7 @@ impl ClaudeAuth {
 
     async fn fetch_control_plane(
         &self,
-        client: &reqwest::Client,
+        client: &Channel,
         endpoint: &str,
         access_token: &str,
         label: &str,
@@ -345,9 +341,10 @@ impl ClaudeAuth {
         let req = axios_headers(client.get(endpoint))
             .header("Authorization", format!("Bearer {access_token}"))
             .header("Cache-Control", "no-cache");
-        let resp = req.send().await.map_err(|e| {
-            AuthFlowError::Transport(format!("fetch Claude OAuth {label}: {}", e.without_url()))
-        })?;
+        let resp = client
+            .send(req)
+            .await
+            .map_err(|e| AuthFlowError::Transport(format!("fetch Claude OAuth {label}: {e}")))?;
         let (status, body) = read_text(resp).await.map_err(|e| {
             AuthFlowError::Transport(format!(
                 "read Claude OAuth {label} response: {}",
@@ -372,7 +369,7 @@ impl ClaudeAuth {
 
     async fn fetch_oauth_profile_with(
         &self,
-        client: &reqwest::Client,
+        client: &Channel,
         access_token: &str,
     ) -> Result<OAuthProfile> {
         let body = self
@@ -441,16 +438,10 @@ impl ClaudeAuth {
         })
         .map_err(|e| AuthFlowError::other(format!("failed to marshal request body: {e}")))?;
 
-        let resp = axios_headers(self.refresh_client.post(&self.refresh_url))
-            .body(body)
-            .send()
-            .await
-            .map_err(|e| {
-                AuthFlowError::Transport(format!(
-                    "token refresh request failed: {}",
-                    e.without_url()
-                ))
-            })?;
+        let request = axios_headers(self.refresh_client.post(&self.refresh_url)).body(body);
+        let resp = self.refresh_client.send(request).await.map_err(|e| {
+            AuthFlowError::Transport(format!("token refresh request failed: {e}"))
+        })?;
         let retry_after = parse_retry_after(resp.headers());
         let (status, text) = read_text(resp).await.map_err(|e| {
             AuthFlowError::Transport(format!(

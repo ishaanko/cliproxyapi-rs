@@ -11,7 +11,7 @@ cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-translator = { path = "../translator" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }
 serde.workspace = true
 serde_json.workspace = true

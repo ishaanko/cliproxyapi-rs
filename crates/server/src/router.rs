@@ -10,7 +10,7 @@ use constant_time_eq_lite::eq as ct_eq;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 
-use crate::handlers::{claude, gemini, images, openai, responses};
+use crate::handlers::{alpha_search, claude, gemini, images, openai, responses, videos};
 use crate::middleware::{access_log, api_key_auth, cors, home_heartbeat, recover_panic, safe_mode, trace_header};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
@@ -79,12 +79,14 @@ const ROUTE_TABLE: &[(&str, &str)] = &[
     ("GET", "/v1/responses"),
     ("POST", "/v1/responses"),
     ("POST", "/v1/responses/compact"),
+    ("POST", "/v1/alpha/search"),
     ("POST", "/openai/v1/videos"),
     ("GET", "/openai/v1/videos/:video_id/content"),
     ("GET", "/openai/v1/videos/:video_id"),
     ("GET", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses"),
     ("POST", "/backend-api/codex/responses/compact"),
+    ("POST", "/backend-api/codex/alpha/search"),
     ("GET", "/v1beta/models"),
     ("POST", "/v1beta/interactions"),
     ("GET", "/v1beta/models/*action"),
@@ -168,17 +170,18 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/models", get(openai::unified_models))
         .route("/chat/completions", post(openai::chat_completions))
         .route("/completions", post(openai::completions))
-        .route("/images/generations", post(images::images))
-        .route("/images/edits", post(images::images))
-        .route("/videos", post(images::videos))
-        .route("/videos/generations", post(images::videos))
-        .route("/videos/edits", post(images::videos))
-        .route("/videos/extensions", post(images::videos))
-        .route("/videos/{request_id}", get(images::videos))
+        .route("/images/generations", post(images::generations))
+        .route("/images/edits", post(images::edits))
+        .route("/videos", post(videos::xai_native_post))
+        .route("/videos/generations", post(videos::xai_native_post))
+        .route("/videos/edits", post(videos::xai_native_post))
+        .route("/videos/extensions", post(videos::xai_native_post))
+        .route("/videos/{request_id}", get(videos::xai_retrieve))
         .route("/messages", post(claude::messages))
         .route("/messages/count_tokens", post(claude::count_tokens))
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route("/alpha/search", post(alpha_search::alpha_search))
         .route("/live", post(crate::realtime::live_call))
         .route("/live/{call_id}", get(crate::realtime::live_sideband))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
@@ -186,9 +189,9 @@ fn proxy_routes(state: &AppState) -> Router {
         .method_not_allowed_fallback(fallback);
 
     let openai_v1 = Router::new()
-        .route("/videos", post(images::videos))
-        .route("/videos/{video_id}/content", get(images::videos))
-        .route("/videos/{video_id}", get(images::videos))
+        .route("/videos", post(videos::videos_create))
+        .route("/videos/{video_id}/content", get(videos::videos_content))
+        .route("/videos/{video_id}", get(videos::videos_retrieve))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
@@ -196,6 +199,7 @@ fn proxy_routes(state: &AppState) -> Router {
     let codex_direct = Router::new()
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route("/alpha/search", post(alpha_search::alpha_search))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);

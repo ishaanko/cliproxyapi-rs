@@ -14,6 +14,10 @@ use serde_json::Value;
 /// Maximum request and response body size (16 MiB).
 pub const MAX_BODY_SIZE: usize = 16 << 20;
 
+/// Cap for one websocket message or frame on either leg of a relay (Go has no limit; unbounded
+/// buffering of client-controlled frames is not acceptable here).
+pub const MAX_WS_MESSAGE_SIZE: usize = MAX_BODY_SIZE;
+
 /// `liveProtocolHeaders`.
 pub const LIVE_PROTOCOL_HEADERS: [&str; 9] = [
     "OpenAI-Alpha",
@@ -152,6 +156,21 @@ pub struct UpstreamResponse {
     pub response: reqwest::Response,
 }
 
+/// Transport failure of [`send`]; `status` is the HTTP status the error maps to (Go:
+/// `HTTPStatusFromError`), 0 when it carries none.
+#[derive(Debug, Clone)]
+pub struct SendError {
+    pub status: u16,
+    pub message: String,
+}
+
+impl SendError {
+    /// `HTTPStatusFromErrorOr`.
+    pub fn status_or(&self, fallback: u16) -> u16 {
+        if self.status > 0 { self.status } else { fallback }
+    }
+}
+
 /// `HttpRequest` with the credential's proxy settings: sends one prepared request.
 pub async fn send(
     cfg: &Config,
@@ -160,7 +179,7 @@ pub async fn send(
     url: &str,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<UpstreamResponse, String> {
+) -> Result<UpstreamResponse, SendError> {
     let client = new_proxy_aware_http_client("", Some(cfg), Some(auth), None);
     let response = client
         .request(method, url)
@@ -168,7 +187,8 @@ pub async fn send(
         .body(body)
         .send()
         .await
-        .map_err(|e| error_chain(&e))?;
+        // A client timeout is Go's context deadline exceeded (504).
+        .map_err(|e| SendError { status: if e.is_timeout() { 504 } else { 0 }, message: error_chain(&e) })?;
     Ok(UpstreamResponse { status: response.status().as_u16(), headers: response.headers().clone(), response })
 }
 

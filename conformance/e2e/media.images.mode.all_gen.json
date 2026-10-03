@@ -1,0 +1,31 @@
+{
+  "id": "media.images.mode.all_gen",
+  "desc": "disable-image-generation true: generations is a 404",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/generations",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-image-2",
+          "prompt": "p"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id"
+        },
+        "body": {
+          "type": "empty"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

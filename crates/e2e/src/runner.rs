@@ -149,6 +149,7 @@ fn step_summary(step: &Step) -> Value {
                 Body::None => Value::Null,
                 Body::Json(v) => v.clone(),
                 Body::Text(t) | Body::Typed(_, t) => Value::String(t.clone()),
+                Body::Raw { content_type, bytes } => json!({"content_type": content_type, "text": String::from_utf8_lossy(bytes)}),
             };
             json!({"method": r.method, "path": r.path, "auth": format!("{:?}", r.auth), "headers": r.headers, "body": body})
         }
