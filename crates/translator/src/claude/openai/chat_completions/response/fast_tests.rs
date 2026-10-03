@@ -57,6 +57,22 @@ fn canonical_stream() {
     ]);
 }
 
+/// Derived serde structs would fill fields by position from an array; gjson sees no fields.
+#[test]
+fn array_for_object_shapes() {
+    assert_same(&[
+        r#"{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":11,"output_tokens":1}}}"#,
+        r#"{"type":"content_block_start","index":0,"content_block":["tool_use","t1","f"]}"#,
+        r#"{"type":"content_block_delta","index":0,"delta":["text_delta","hi"]}"#,
+        r#"{"type":"message_delta","delta":["end_turn"],"usage":[1,2,3,4]}"#,
+        r#"{"type":"message_delta","usage":[1,2,3,4]}"#,
+        r#"["message_stop"]"#,
+        r#"["message_start",{"id":"x"}]"#,
+        r#"{"type":"message_start","message":["m1",{"input_tokens":3}]}"#,
+        r#"{"type":"message_stop"}"#,
+    ]);
+}
+
 #[test]
 fn declined_shapes() {
     assert_same(&[

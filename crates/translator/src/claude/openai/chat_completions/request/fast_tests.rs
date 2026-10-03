@@ -214,3 +214,39 @@ fn fast_matches_general_on_generated_requests() {
     eprintln!("fast path accepted {accepted}/{total}");
     assert!(accepted > total / 5, "fast path accepted only {accepted}/{total}");
 }
+
+/// Derived serde structs would fill fields by position from an array; gjson sees no fields, so
+/// every struct position must decline (and the general path must cope with the shape).
+#[test]
+fn array_for_object_declines() {
+    for body in [
+        r#"{"messages":[["user","hello"]]}"#,
+        r#"["gpt-x",[{"role":"user","content":"hi"}]]"#,
+        r#"{"messages":[{"role":"user","content":[["text","hi"]]}]}"#,
+        r#"{"messages":[{"role":"user","content":"hi"}],"tools":[["function",["f","d"]]]}"#,
+        r#"{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":["f","d"]}]}"#,
+        r#"{"messages":[{"role":"assistant","tool_calls":[["call_1","function"]]}]}"#,
+        r#"{"messages":[{"role":"assistant","tool_calls":[{"type":"function","id":"c","function":["f","{}"]}]}]}"#,
+        r#"{"messages":[{"role":"user","content":[{"type":"image_url","image_url":["u"]}]}]}"#,
+        r#"{"messages":[{"role":"user","content":"hi"}],"tool_choice":["function",{"name":"f"}]}"#,
+    ] {
+        assert!(fast::convert("claude-x", body.as_bytes(), false).is_none(), "fast path accepted {body}");
+        let _ = convert_general("claude-x", body.as_bytes(), false, false);
+    }
+}
+
+/// Documents nested beyond `cpa_json::MAX_DEPTH` parse to `Null` in the general path; serde_json
+/// would still skip them, so the fast path must decline them. Deep but allowed ones may be accepted.
+#[test]
+fn deep_nesting_declines() {
+    for depth in [130, cpa_json::MAX_DEPTH - 5, cpa_json::MAX_DEPTH + 10] {
+        let body = format!(r#"{{"messages":[{{"role":"user","content":"hi"}}],"x":{}{}}}"#, "[".repeat(depth), "]".repeat(depth));
+        let fast_out = fast::convert("claude-x", body.as_bytes(), false);
+        if depth > cpa_json::MAX_DEPTH {
+            assert!(fast_out.is_none(), "depth {depth}");
+        } else if let Some(out) = fast_out {
+            let general = convert_general("claude-x", body.as_bytes(), false, false);
+            assert_eq!(String::from_utf8_lossy(&out), String::from_utf8_lossy(&general), "depth {depth}");
+        }
+    }
+}

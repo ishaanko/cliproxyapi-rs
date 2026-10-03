@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
-use crate::common::fast::{decode_literal, is_string_literal, push_int, push_json_str, push_literal, Field, Str};
+use crate::common::fast::{decode_literal, is_string_literal, push_int, push_json_str, push_literal, within_depth_limit, Field, Obj, Str};
 
 type Raw<'a> = &'a RawValue;
 
@@ -26,9 +26,9 @@ struct Request<'a> {
     #[serde(default, borrow)]
     model: Field<Raw<'a>>,
     #[serde(default, borrow)]
-    messages: Field<Vec<Message<'a>>>,
+    messages: Field<Vec<Obj<Message<'a>>>>,
     #[serde(default, borrow)]
-    tools: Field<Vec<Tool<'a>>>,
+    tools: Field<Vec<Obj<Tool<'a>>>>,
     #[serde(default, borrow)]
     tool_choice: Field<Raw<'a>>,
     #[serde(default, borrow)]
@@ -129,7 +129,7 @@ struct Message<'a> {
     #[serde(default, borrow)]
     content: Field<Raw<'a>>,
     #[serde(default, borrow)]
-    tool_calls: Field<Vec<ToolCall<'a>>>,
+    tool_calls: Field<Vec<Obj<ToolCall<'a>>>>,
     #[serde(default, borrow)]
     tool_call_id: Field<Str<'a>>,
     #[serde(default)]
@@ -143,7 +143,7 @@ struct ToolCall<'a> {
     #[serde(default, borrow)]
     id: Field<Str<'a>>,
     #[serde(default, borrow)]
-    function: Field<CallFunction<'a>>,
+    function: Field<Obj<CallFunction<'a>>>,
 }
 
 #[derive(Deserialize)]
@@ -161,7 +161,7 @@ struct Part<'a> {
     #[serde(default, borrow)]
     text: Field<Raw<'a>>,
     #[serde(default, borrow)]
-    image_url: Field<ImageUrl<'a>>,
+    image_url: Field<Obj<ImageUrl<'a>>>,
     #[serde(default)]
     cache_control: Field<IgnoredAny>,
 }
@@ -177,7 +177,7 @@ struct Tool<'a> {
     #[serde(rename = "type", default, borrow)]
     ty: Field<Str<'a>>,
     #[serde(default, borrow)]
-    function: Field<ToolFunction<'a>>,
+    function: Field<Obj<ToolFunction<'a>>>,
     #[serde(default, borrow)]
     strict: Field<Raw<'a>>,
     #[serde(default)]
@@ -205,7 +205,7 @@ struct Choice<'a> {
     #[serde(rename = "type", default, borrow)]
     ty: Field<Str<'a>>,
     #[serde(default, borrow)]
-    function: Field<ChoiceFunction<'a>>,
+    function: Field<Obj<ChoiceFunction<'a>>>,
     #[serde(default, borrow)]
     name: Field<Str<'a>>,
 }
@@ -228,7 +228,7 @@ enum Content<'a> {
 }
 
 fn content<'a>(raw: &Field<Raw<'a>>) -> Content<'a> {
-    let Some(raw) = raw.as_ref() else { return Content::Absent };
+    let Some(raw) = raw.get() else { return Content::Absent };
     let text = raw.get();
     match text.as_bytes().first() {
         Some(b'"') => Content::Text(text),
@@ -239,7 +239,7 @@ fn content<'a>(raw: &Field<Raw<'a>>) -> Content<'a> {
 
 /// The unescaped text of an optional string field; `None` (decline) for a present non-string.
 fn opt_string<'a>(raw: &Field<Raw<'a>>) -> Option<Option<Cow<'a, str>>> {
-    match raw.as_ref() {
+    match raw.get() {
         None => Some(None),
         Some(r) if is_string_literal(r.get()) => Some(Some(decode_literal(r.get())?)),
         Some(_) => None,
@@ -256,25 +256,25 @@ fn push_text_block(out: &mut Vec<u8>, lit: &str) -> Option<()> {
 
 /// A text literal for a `text` field: the field's own literal, `""` when absent, `None` otherwise.
 fn text_literal<'a>(raw: &Field<Raw<'a>>) -> Option<&'a str> {
-    match raw.as_ref() {
+    match raw.get() {
         None => Some(r#""""#),
         Some(r) if is_string_literal(r.get()) => Some(r.get()),
         Some(_) => None,
     }
 }
 
-/// Appends the Claude block for a user/assistant/tool content part. `Ok(false)` = part skipped.
+/// Appends the Claude block for a user/assistant/tool content part. `Some(false)` = part skipped, `None` = decline.
 fn push_part(out: &mut Vec<u8>, part: &Part<'_>) -> Option<bool> {
     if part.cache_control.exists() {
         return None;
     }
-    match part.ty.as_ref().map(|t| &**t) {
+    match part.ty.get().map(|t| &**t) {
         Some("text") => {
             push_text_block(out, text_literal(&part.text)?)?;
             Some(true)
         }
         Some("image_url") => {
-            let url = part.image_url.as_ref().and_then(|i| i.url.as_ref()).map(|u| &**u).unwrap_or("");
+            let url = part.image_url.get().and_then(|i| i.url.get()).map(|u| &**u).unwrap_or("");
             Some(push_image(out, url))
         }
         Some("file") => None,
@@ -376,9 +376,9 @@ impl Turns {
 
 /// The user id Claude gets in `metadata.user_id` (Go: `DeriveClaudeUserID`) for a body without any
 /// of the explicit id/seed keys (those make the request ineligible for this path).
-fn derive_user_id(req: &Request<'_>, messages: &[Message<'_>]) -> Option<String> {
+fn derive_user_id(req: &Request<'_>, messages: &[Obj<Message<'_>>]) -> Option<String> {
     // `user` counts only as a non-blank string; other types are skipped.
-    if let Some(raw) = req.user.as_ref()
+    if let Some(raw) = req.user.get()
         && is_string_literal(raw.get())
     {
         let user = decode_literal(raw.get())?;
@@ -409,22 +409,22 @@ fn derive_user_id(req: &Request<'_>, messages: &[Message<'_>]) -> Option<String>
 
 /// The first non-empty trimmed text of a `user` message (strings, or `text` parts joined by
 /// newlines), mirroring `first_stable_request_content` for chat messages. `None` = decline.
-fn first_user_text(messages: &[Message<'_>]) -> Option<Option<String>> {
+fn first_user_text(messages: &[Obj<Message<'_>>]) -> Option<Option<String>> {
     for message in messages {
-        let role = message.role.as_ref().map(|r| r.trim().to_lowercase()).unwrap_or_default();
+        let role = message.role.get().map(|r| r.trim().to_lowercase()).unwrap_or_default();
         if role != "user" {
             continue;
         }
         let text = match content(&message.content) {
             Content::Text(lit) => decode_literal(lit)?.trim().to_string(),
             Content::Array(arr) => {
-                let parts: Vec<Part<'_>> = serde_json::from_str(arr).ok()?;
+                let parts: Vec<Obj<Part<'_>>> = serde_json::from_str(arr).ok()?;
                 let mut texts: Vec<String> = Vec::new();
                 for part in &parts {
-                    if part.ty.as_ref().is_none_or(|t| &**t != "text") {
+                    if part.ty.get().is_none_or(|t| &**t != "text") {
                         continue;
                     }
-                    let Some(raw) = part.text.as_ref() else { continue };
+                    let Some(raw) = part.text.get() else { continue };
                     if !is_string_literal(raw.get()) {
                         return None;
                     }
@@ -455,20 +455,23 @@ fn int_literal(raw: &str) -> Option<i64> {
 
 /// Converts `raw` when it is a canonical body; `None` hands the request to the general path.
 pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<u8>> {
+    if !within_depth_limit(raw) {
+        return None;
+    }
     let text = std::str::from_utf8(raw).ok()?;
-    let req: Request<'_> = serde_json::from_str(text).ok()?;
+    let req: Obj<Request<'_>> = serde_json::from_str(text).ok()?;
     if req.needs_general_path() {
         return None;
     }
-    let messages: &[Message<'_>] = req.messages.as_ref().map_or(&[], |m| m.as_slice());
+    let messages: &[Obj<Message<'_>>] = req.messages.get().map_or(&[], |m| m.as_slice());
     let user_id = derive_user_id(&req, messages)?;
 
     // Last `tool` message per tool_call_id: duplicates collapse onto the first position with the
     // content of the last.
     let mut last_tool: HashMap<&str, usize> = HashMap::new();
     for (i, m) in messages.iter().enumerate() {
-        if m.role.as_ref().is_some_and(|r| &**r == "tool")
-            && let Some(id) = m.tool_call_id.as_ref().filter(|id| !id.is_empty())
+        if m.role.get().is_some_and(|r| &**r == "tool")
+            && let Some(id) = m.tool_call_id.get().filter(|id| !id.is_empty())
         {
             last_tool.insert(id, i);
         }
@@ -482,19 +485,19 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
         if message.cache_control.exists() {
             return None;
         }
-        let role = message.role.as_ref().map(|r| &**r).unwrap_or("");
+        let role = message.role.get().map(|r| &**r).unwrap_or("");
         match role {
             "system" | "developer" => match content(&message.content) {
                 Content::Text(lit) if lit != r#""""# => {
                     system.push(|o| push_text_block(o, lit).map(|()| true))?;
                 }
                 Content::Array(arr) => {
-                    let parts: Vec<Part<'_>> = serde_json::from_str(arr).ok()?;
+                    let parts: Vec<Obj<Part<'_>>> = serde_json::from_str(arr).ok()?;
                     for part in &parts {
                         if part.cache_control.exists() {
                             return None;
                         }
-                        if part.ty.as_ref().is_some_and(|t| &**t == "text") {
+                        if part.ty.get().is_some_and(|t| &**t == "text") {
                             let lit = text_literal(&part.text)?;
                             system.push(|o| push_text_block(o, lit).map(|()| true))?;
                         }
@@ -510,7 +513,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
                         blocks.push(|o| push_text_block(o, lit).map(|()| true))?;
                     }
                     Content::Array(arr) => {
-                        let parts: Vec<Part<'_>> = serde_json::from_str(arr).ok()?;
+                        let parts: Vec<Obj<Part<'_>>> = serde_json::from_str(arr).ok()?;
                         for part in &parts {
                             blocks.push(|o| push_part(o, part))?;
                         }
@@ -520,15 +523,15 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
 
                 let mut tool_uses = List::default();
                 if role == "assistant"
-                    && let Some(calls) = message.tool_calls.as_ref()
+                    && let Some(calls) = message.tool_calls.get()
                 {
                     for call in calls {
-                        if call.ty.as_ref().is_none_or(|t| &**t != "function") {
+                        if call.ty.get().is_none_or(|t| &**t != "function") {
                             continue;
                         }
-                        let id = call.id.as_ref().filter(|id| !id.is_empty())?;
-                        let function = call.function.as_ref();
-                        let name = function.and_then(|f| f.name.as_ref()).map(|n| &**n).unwrap_or("");
+                        let id = call.id.get().filter(|id| !id.is_empty())?;
+                        let function = call.function.get();
+                        let name = function.and_then(|f| f.name.get()).map(|n| &**n).unwrap_or("");
                         let args = function.map(|f| &f.arguments);
                         tool_uses.push(|o| {
                             o.extend_from_slice(br#"{"type":"tool_use","id":"#);
@@ -550,7 +553,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
                 }
             }
             "tool" => {
-                let raw_id = message.tool_call_id.as_ref().map(|s| &**s).unwrap_or("");
+                let raw_id = message.tool_call_id.get().map(|s| &**s).unwrap_or("");
                 if raw_id.is_empty() {
                     return None;
                 }
@@ -588,7 +591,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
     out.extend_from_slice(br#"{"model":"#);
     push_json_str(&mut out, model_name);
     out.extend_from_slice(br#","max_tokens":"#);
-    let max_tokens = [&req.max_tokens, &req.max_completion_tokens].into_iter().find_map(Field::as_ref);
+    let max_tokens = [&req.max_tokens, &req.max_completion_tokens].into_iter().find_map(Field::get);
     match max_tokens {
         Some(raw) => push_int(&mut out, int_literal(raw.get())?),
         None => out.extend_from_slice(b"32000"),
@@ -599,7 +602,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
     push_json_str(&mut out, &user_id);
     out.push(b'}');
 
-    if let Some(top_p) = req.top_p.as_ref() {
+    if let Some(top_p) = req.top_p.get() {
         let text = top_p.get();
         let first = *text.as_bytes().first()?;
         if !(first == b'-' || first.is_ascii_digit()) {
@@ -613,7 +616,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], stream: bool) -> Option<Vec<
         out.extend_from_slice(cpa_json::format_float(f).as_bytes());
     }
 
-    if let Some(stop) = req.stop.as_ref() {
+    if let Some(stop) = req.stop.get() {
         let text = stop.get();
         match text.as_bytes().first()? {
             b'"' => {
@@ -669,7 +672,7 @@ fn append(dst: &mut List, src: &List) {
 
 /// `tool_use.input`: the arguments when they are a valid JSON object, else `{}`.
 fn push_tool_input(out: &mut Vec<u8>, args: Option<&Field<Raw<'_>>>) -> Option<()> {
-    let Some(raw) = args.and_then(Field::as_ref) else {
+    let Some(raw) = args.and_then(Field::get) else {
         out.extend_from_slice(b"{}");
         return Some(());
     };
@@ -704,7 +707,7 @@ fn push_tool_result_content(out: &mut Vec<u8>, raw: &Field<Raw<'_>>) -> Option<(
                         parts.push(|o| push_text_block(o, text).map(|()| true))?;
                     }
                     b'{' => {
-                        let part: Part<'_> = serde_json::from_str(text).ok()?;
+                        let part: Obj<Part<'_>> = serde_json::from_str(text).ok()?;
                         parts.push(|o| push_part(o, &part))?;
                     }
                     _ => return None,
@@ -724,23 +727,23 @@ fn push_tool_result_content(out: &mut Vec<u8>, raw: &Field<Raw<'_>>) -> Option<(
 
 /// Appends `,"tools":[...]` when at least one function tool converts; reports whether it did.
 fn push_tools(out: &mut Vec<u8>, req: &Request<'_>) -> Option<bool> {
-    let Some(tools) = req.tools.as_ref() else { return Some(false) };
+    let Some(tools) = req.tools.get() else { return Some(false) };
     let mut list = List::default();
     for tool in tools {
-        if tool.ty.as_ref().is_none_or(|t| &**t != "function") {
+        if tool.ty.get().is_none_or(|t| &**t != "function") {
             continue;
         }
         if tool.cache_control.exists() {
             return None;
         }
-        let function = tool.function.as_ref();
+        let function = tool.function.get();
         if function.is_some_and(|f| f.cache_control.exists()) {
             return None;
         }
-        let name = function.and_then(|f| f.name.as_ref()).map(|n| &**n).unwrap_or("");
+        let name = function.and_then(|f| f.name.get()).map(|n| &**n).unwrap_or("");
         let description = function.map_or(Some(r#""""#), |f| text_literal(&f.description))?;
-        let parameters = function.and_then(|f| f.parameters.as_ref().or(f.parameters_json_schema.as_ref()));
-        let strict = function.and_then(|f| f.strict.as_ref()).or(tool.strict.as_ref());
+        let parameters = function.and_then(|f| f.parameters.get().or(f.parameters_json_schema.get()));
+        let strict = function.and_then(|f| f.strict.get()).or(tool.strict.get());
         list.push(|o| {
             o.extend_from_slice(br#"{"name":"#);
             push_json_str(o, &sanitize_claude_function_name(name));
@@ -778,7 +781,7 @@ enum ChoiceKind {
 /// Appends `,"tool_choice":{...}` per the mapping and `parallel_tool_calls: false`.
 fn push_tool_choice(out: &mut Vec<u8>, req: &Request<'_>, has_tools: bool) -> Option<()> {
     let mut kind: Option<ChoiceKind> = None;
-    if let Some(raw) = req.tool_choice.as_ref() {
+    if let Some(raw) = req.tool_choice.get() {
         let text = raw.get();
         kind = match text.as_bytes().first()? {
             b'"' => match &*decode_literal(text)? {
@@ -790,16 +793,16 @@ fn push_tool_choice(out: &mut Vec<u8>, req: &Request<'_>, has_tools: bool) -> Op
             // null, numbers and booleans select nothing.
             b'n' | b't' | b'f' | b'-' | b'0'..=b'9' => None,
             b'{' => {
-                let choice: Choice<'_> = serde_json::from_str(text).ok()?;
-                match choice.ty.as_ref().map(|t| &**t).unwrap_or("") {
+                let choice: Obj<Choice<'_>> = serde_json::from_str(text).ok()?;
+                match choice.ty.get().map(|t| &**t).unwrap_or("") {
                     "allowed_tools" => return None,
                     "none" => Some(ChoiceKind::None),
                     "auto" => Some(ChoiceKind::Auto),
                     "required" | "any" => Some(ChoiceKind::Any),
                     "function" => {
-                        let mut name = choice.function.as_ref().and_then(|f| f.name.as_ref()).map(|n| n.to_string()).unwrap_or_default();
+                        let mut name = choice.function.get().and_then(|f| f.name.get()).map(|n| n.to_string()).unwrap_or_default();
                         if name.is_empty() {
-                            name = choice.name.as_ref().map(|n| n.to_string()).unwrap_or_default();
+                            name = choice.name.get().map(|n| n.to_string()).unwrap_or_default();
                         }
                         Some(if name.is_empty() { ChoiceKind::None } else { ChoiceKind::Tool(name) })
                     }
@@ -811,7 +814,7 @@ fn push_tool_choice(out: &mut Vec<u8>, req: &Request<'_>, has_tools: bool) -> Op
     }
     // Without any tools the mapping still applies when the client sent a choice (the general
     // path only forces `none` for allowed_tools).
-    let parallel_off = req.parallel_tool_calls.as_ref().is_some_and(|p| p.get() == "false");
+    let parallel_off = req.parallel_tool_calls.get().is_some_and(|p| p.get() == "false");
     let (kind, disable) = match (kind, parallel_off) {
         (Some(k), off) => {
             let disable = off && !matches!(k, ChoiceKind::None);
