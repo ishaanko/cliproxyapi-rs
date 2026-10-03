@@ -40,6 +40,7 @@ pub fn is_available() -> bool {
 
 /// Opens `url` in the default browser. The browser process is detached.
 pub fn open_url(url: &str) -> Result<(), String> {
+    println!("Attempting to open URL in browser: {url}");
     let (program, args) = opener().ok_or_else(|| "no suitable browser found".to_string())?;
     Command::new(program)
         .args(args)

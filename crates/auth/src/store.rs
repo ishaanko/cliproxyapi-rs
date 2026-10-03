@@ -37,6 +37,10 @@ pub enum StoreError {
     },
     #[error(transparent)]
     Storage(#[from] StorageError),
+    /// Failure reported by a remote-backed store (postgres, object storage, repository); the
+    /// message already carries the store's own prefix, e.g. `postgres store: ...`.
+    #[error("{0}")]
+    Backend(String),
 }
 
 impl StoreError {

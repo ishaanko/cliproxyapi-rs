@@ -31,6 +31,7 @@ use super::plugins::ServicePlugins;
 use super::sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 use crate::conductor::{CooldownStateStore, FileCooldownStateStore, Manager, SharedManager};
 use crate::executor::{DynExecutor, ExecError};
+use super::persist::StoreBackend;
 use crate::usage::UsageTracker;
 
 /// Builds an executor for a provider key no registered executor handles (Go: the default branch
@@ -129,6 +130,7 @@ pub struct ServiceBuilder {
     dotenv_dir: Option<PathBuf>,
     watch: bool,
     antigravity_probe: bool,
+    backend: Option<StoreBackend>,
     initial_config: Option<Config>,
     home_hooks: Option<Arc<dyn HomeHooks>>,
     home_plugins: Option<Arc<dyn HomePlugins>>,
@@ -150,10 +152,18 @@ impl ServiceBuilder {
             dotenv_dir: std::env::current_dir().ok(),
             watch: true,
             antigravity_probe: true,
+            backend: None,
             initial_config: None,
             home_hooks: None,
             home_plugins: None,
         }
+    }
+
+    /// Uses a remote-backed token store (Postgres, repository, object storage) whose spool
+    /// directory replaces `auth-dir` (Go: the registered `sdkAuth` token store).
+    pub fn store_backend(mut self, backend: StoreBackend) -> Self {
+        self.backend = Some(backend);
+        self
     }
 
     /// Uses `config` instead of loading the config file (Home mode: the config came from Home).
@@ -260,6 +270,9 @@ impl ServiceBuilder {
             Ok(dir) => config.auth_dir = dir.to_string_lossy().into_owned(),
             Err(err) => tracing::error!("failed to resolve auth directory: {err}"),
         }
+        if let Some(backend) = &self.backend {
+            config.auth_dir = backend.auth_dir.to_string_lossy().into_owned();
+        }
         // Home owns the config: nothing to watch.
         let watch = self.watch && !config.home.enabled;
 
@@ -279,6 +292,7 @@ impl ServiceBuilder {
             applied_tx,
             started: AtomicBool::new(false),
             store,
+            backend: self.backend,
             manager,
             usage: self.usage.unwrap_or_default(),
             port,
@@ -294,6 +308,7 @@ impl ServiceBuilder {
             watch,
             config_watcher: Mutex::new(None),
             task: Mutex::new(None),
+            extras: Default::default(),
             home_supervisor: Mutex::new(None),
             home_state: Mutex::new(None),
             home_hooks: self.home_hooks,
@@ -312,6 +327,8 @@ struct Inner {
     applied_tx: watch::Sender<Applied>,
     started: AtomicBool,
     store: Arc<FileTokenStore>,
+    /// Remote-backed store: manager saves go through it and spool changes are pushed to it.
+    backend: Option<StoreBackend>,
     manager: SharedManager,
     usage: Arc<UsageTracker>,
     port: Arc<dyn ManagerPort>,
@@ -330,6 +347,8 @@ struct Inner {
     watch: bool,
     config_watcher: Mutex<Option<Arc<ConfigWatcher>>>,
     task: Mutex<Option<JoinHandle<()>>>,
+    /// pprof server and mDNS advertiser, driven by config.
+    extras: super::extras::Extras,
     home_supervisor: Mutex<Option<home::HomeSupervisor>>,
     /// The dispatch bundle the active Home lifetime published.
     home_state: Mutex<Option<Arc<crate::conductor::HomeDispatchBundle>>>,
@@ -393,6 +412,11 @@ impl Service {
         self.inner.store.clone()
     }
 
+    /// The registered token store: the remote backend when configured, else the auth-dir store.
+    pub fn token_store(&self) -> Arc<dyn Store> {
+        self.inner.manager_store()
+    }
+
     pub fn registry(&self) -> &'static ModelRegistry {
         self.inner.registry
     }
@@ -431,10 +455,10 @@ impl Service {
         }
         inner.store.set_base_dir(&cfg.auth_dir);
         inner.port.config_changed(&cfg);
-        inner.manager.set_store(Some(inner.store.clone()));
+        inner.manager.set_store(Some(inner.manager_store()));
         inner.manager.set_usage_tracker(Some(inner.usage.clone()));
         inner.usage.set_enabled(cfg.usage_statistics_enabled);
-        inner.manager.set_cooldown_state_store(cooldown_store_for(&cfg));
+        inner.manager.set_cooldown_state_store(cooldown_store_for(&cfg, inner.backend.as_ref()));
 
         let pending = std::mem::take(&mut *inner.pending_executors.lock());
         for executor in pending {
@@ -452,7 +476,7 @@ impl Service {
 
         // Go `Manager.Load`: the store's auths enter the manager first (with file mtimes as
         // `created_at`); synthesized auths then update them.
-        let store = inner.store.clone();
+        let store = inner.manager_store();
         match blocking(move || store.list()).await? {
             Ok(auths) => {
                 for auth in auths {
@@ -479,6 +503,7 @@ impl Service {
             *inner.task.lock() = Some(task);
             tracing::info!("file watcher started for config and auth directory changes");
         }
+        inner.extras.apply(&cfg).await;
         Ok(())
     }
 
@@ -552,6 +577,12 @@ impl Service {
         }
     }
 
+    /// Stops pprof and the mDNS advertiser (which says goodbye on the LAN), then the watchers.
+    pub async fn shutdown_graceful(&self) {
+        self.inner.extras.shutdown().await;
+        self.shutdown();
+    }
+
     /// Stops the watchers. Registered auths and models stay as they are.
     pub fn shutdown(&self) {
         if let Some(task) = self.inner.task.lock().take() {
@@ -586,8 +617,14 @@ impl Drop for Inner {
 const AUTO_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 /// The cooldown state store `save-cooldown-status` asks for: `.cds` files under the auth dir.
-fn cooldown_store_for(cfg: &Config) -> Option<Arc<dyn CooldownStateStore>> {
-    if !cfg.save_cooldown_status || cfg.auth_dir.is_empty() {
+fn cooldown_store_for(cfg: &Config, backend: Option<&StoreBackend>) -> Option<Arc<dyn CooldownStateStore>> {
+    if !cfg.save_cooldown_status {
+        return None;
+    }
+    if let Some(store) = backend.and_then(|b| b.cooldown.clone()) {
+        return Some(store);
+    }
+    if cfg.auth_dir.is_empty() {
         return None;
     }
     Some(Arc::new(FileCooldownStateStore::with_auth_dir(&cfg.auth_dir, &cfg.auth_dir)))
@@ -684,6 +721,42 @@ impl Inner {
         }
     }
 
+    /// The store the manager saves through: the remote backend when present.
+    fn manager_store(&self) -> Arc<dyn Store> {
+        match &self.backend {
+            Some(b) => b.store.clone(),
+            None => self.store.clone(),
+        }
+    }
+
+    /// Go `persistConfigAsync`: pushes the spool config to the remote backend in the background.
+    fn persist_config_async(&self) {
+        let Some(backend) = &self.backend else { return };
+        let persister = backend.persister.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = persister.persist_config() {
+                tracing::error!("failed to persist config change: {err}");
+            }
+        });
+    }
+
+    /// Go `persistAuthAsync`: pushes one changed spool auth file to the remote backend.
+    fn persist_auth_async(&self, action: &str, path: &str) {
+        let Some(backend) = &self.backend else { return };
+        let path = path.trim().to_string();
+        if path.is_empty() {
+            return;
+        }
+        let base = Path::new(&path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let message = format!("{action} {base}");
+        let persister = backend.persister.clone();
+        tokio::task::spawn_blocking(move || {
+            if let Err(err) = persister.persist_auth_files(&message, &[path]) {
+                tracing::error!("failed to persist auth changes: {err}");
+            }
+        });
+    }
+
     fn register_executor(&self, executor: DynExecutor) {
         self.registered_executors.lock().insert(executor.identifier().to_string());
         self.port.register_executor(executor);
@@ -732,17 +805,33 @@ impl Inner {
 
     async fn handle_auth_file_event(&self, event: AuthFileEvent) {
         let guard = self.apply_lock.lock().await;
-        let updates = match event {
+        // Content-identical events and failed syntheses are not pushed to the remote backend (Go
+        // skips unchanged hashes and errors); removals always are.
+        let (updates, persist) = match event {
             AuthFileEvent::Added(auth) | AuthFileEvent::Updated(auth) => {
                 let path = auth.attr(ATTRIBUTE_PATH);
                 let path = if path.is_empty() { auth.attr(ATTRIBUTE_SOURCE) } else { path };
                 if path.is_empty() {
                     return;
                 }
-                self.with_sync(move |sync| sync.file_changed(Path::new(&path))).await
+                let persisted = path.clone();
+                let (updates, synced) = self
+                    .with_sync(move |sync| {
+                        let updates = sync.file_changed(Path::new(&path));
+                        (updates, sync.last_synced())
+                    })
+                    .await;
+                (updates, synced.then_some(("Sync auth", persisted)))
             }
-            AuthFileEvent::Removed { path, .. } => self.with_sync(move |sync| sync.file_removed(&path)).await,
+            AuthFileEvent::Removed { path, .. } => {
+                let persisted = path.to_string_lossy().into_owned();
+                let updates = self.with_sync(move |sync| sync.file_removed(&path)).await;
+                (updates, Some(("Remove auth", persisted)))
+            }
         };
+        if let Some((action, path)) = persist {
+            self.persist_auth_async(action, &path);
+        }
         self.apply_updates_locked(&guard, updates).await;
     }
 
@@ -751,6 +840,15 @@ impl Inner {
     /// affected auths. Configs with invalid credential weights are rejected.
     async fn apply_config(&self, new: Arc<Config>) -> ConfigOutcome {
         let guard = self.apply_lock.lock().await;
+        // Go `mirroredAuthDir`: a remote-backed store pins the auth dir to its spool.
+        let new = match &self.backend {
+            Some(b) if new.auth_dir != b.auth_dir.to_string_lossy() => {
+                let mut pinned = (*new).clone();
+                pinned.auth_dir = b.auth_dir.to_string_lossy().into_owned();
+                Arc::new(pinned)
+            }
+            _ => new,
+        };
         if let Err(err) = new.validate_credential_weights() {
             tracing::warn!("rejected config update with invalid credential weights: {err}");
             return ConfigOutcome::rejected();
@@ -761,7 +859,7 @@ impl Inner {
         self.port.config_changed(&new);
         self.usage.set_enabled(new.usage_statistics_enabled);
         if old.save_cooldown_status != new.save_cooldown_status || (new.save_cooldown_status && old.auth_dir != new.auth_dir) {
-            self.manager.set_cooldown_state_store(cooldown_store_for(&new));
+            self.manager.set_cooldown_state_store(cooldown_store_for(&new, self.backend.as_ref()));
         }
         let mut new_watcher = None;
         // Home mode keeps no auth directory.
@@ -796,6 +894,8 @@ impl Inner {
             .await;
         self.apply_updates_locked(&guard, updates).await;
         self.restore_cooldowns(&new).await;
+        self.persist_config_async();
+        self.extras.apply(&new).await;
         ConfigOutcome { accepted: true, new_watcher }
     }
 

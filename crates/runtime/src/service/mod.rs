@@ -21,14 +21,21 @@
 //! - [`listing`]: `/v1/models` and `/v1beta/models` payloads over the registry.
 //! - [`antigravity`]: web-search capability probe for Antigravity auths.
 //!
+//! - [`discovery`], [`pprof`], `extras`: the mDNS advertiser and the profiling server, applied on
+//!   start and on every config reload.
+//!
 //! Home mode (`lifecycle/home.rs`): the config arrives over the Home subscription.
 //!
 //! Runtime-only auths (the aistudio websocket channels) enter through
-//! [`Service::apply_runtime_auth_update`]. Not ported: pprof and mDNS discovery.
+//! [`Service::apply_runtime_auth_update`].
 
 pub mod antigravity;
+pub mod discovery;
+mod extras;
+pub mod pprof;
 pub mod listing;
 pub mod models;
+mod persist;
 mod lifecycle;
 pub mod plugins;
 pub mod sync;
@@ -41,6 +48,7 @@ pub use listing::{
     is_anthropic_models_request, openai_models_response, resolve_claude_model_id_prefix, route_models_request,
 };
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
+pub use persist::{StoreBackend, StorePersister};
 pub use plugins::{PluginAuthModels, ServicePlugins};
 pub use lifecycle::{
     ExecutorFactory, HomeHooks, HomePluginWork, HomePlugins, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,

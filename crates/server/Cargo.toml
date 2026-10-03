@@ -23,12 +23,16 @@ tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
+cpa-misc = { path = "../misc" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
 cpa-home = { path = "../home" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }
+cpa-store = { path = "../store" }
+cpa-discovery = { path = "../discovery" }
+cpa-managementasset = { path = "../managementasset" }
 cpa-executors = { path = "../executors", default-features = false }
 cpa-plugin = { path = "../plugin" }
 cpa-pluginapi = { path = "../pluginapi" }

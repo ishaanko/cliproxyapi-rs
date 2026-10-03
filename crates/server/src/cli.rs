@@ -27,6 +27,13 @@ pub struct Cli {
     pub vertex_import_prefix: String,
     pub password: String,
     pub local_model: bool,
+    /// `-discover` / `-discover-json`: scan the LAN for AI gateways instead of serving.
+    pub discover: bool,
+    pub discover_json: bool,
+    pub discover_timeout: i64,
+    pub discover_service_type: String,
+    pub discover_include: Vec<String>,
+    pub discover_exclude: Vec<String>,
     /// `-home-jwt`: Home control plane JWT (config and credentials come from Home).
     pub home_jwt: String,
     pub home_disable_cluster_discovery: bool,
@@ -101,14 +108,7 @@ const VALUE_FLAGS: &[&str] = &[
 ];
 
 /// Flags that exist in Go but have no counterpart here.
-const UNSUPPORTED: &[&str] = &[
-    "discover",
-    "discover-json",
-    "discover-timeout",
-    "discover-service-type",
-    "discover-include",
-    "discover-exclude",
-];
+const UNSUPPORTED: &[&str] = &[];
 
 fn parse_bool(value: &str) -> Option<bool> {
     match value {
@@ -214,6 +214,15 @@ pub fn parse_with(args: &[String], extra: &[PluginFlag]) -> ParseOutcome {
             "vertex-import" => cli.vertex_import = value,
             "vertex-import-prefix" => cli.vertex_import_prefix = value,
             "password" => cli.password = value,
+            "discover" => cli.discover = flag_on(),
+            "discover-json" => cli.discover_json = flag_on(),
+            "discover-timeout" => match value.parse::<i64>() {
+                Ok(n) => cli.discover_timeout = n,
+                Err(e) => return ParseOutcome::Error(format!("invalid value {value:?} for flag -{name}: parse error ({e})")),
+            },
+            "discover-service-type" => cli.discover_service_type = value,
+            "discover-include" => cli.discover_include.extend(cpa_discovery::scan::parse_interface_list(&[value])),
+            "discover-exclude" => cli.discover_exclude.extend(cpa_discovery::scan::parse_interface_list(&[value])),
             other if plugin_flag.is_some() => cli.plugin_flags.push((other.to_string(), value)),
             "home-jwt" => cli.home_jwt = value,
             "home-disable-cluster-discovery" => cli.home_disable_cluster_discovery = flag_on(),
@@ -243,6 +252,12 @@ pub fn usage_with(program: &str, extra: &[PluginFlag]) -> String {
         ("codex-login", "", "Login to Codex using OAuth"),
         ("config", "string", "Configure File Path"),
         ("devin-login", "", "Login to Devin using OAuth"),
+        ("discover", "", "Discover local AI gateways and CPA instances on the LAN"),
+        ("discover-exclude", "value", "Comma-separated interface names to skip during LAN discovery"),
+        ("discover-include", "value", "Comma-separated interface names to scan during LAN discovery"),
+        ("discover-json", "", "Output discovered gateways in JSON format"),
+        ("discover-service-type", "string", "DNS-SD service type for LAN discovery (default _ai-gateway._tcp)"),
+        ("discover-timeout", "int", "Timeout in seconds for LAN discovery (default 3s) (default 3)"),
         ("home-disable-cluster-discovery", "", "Disable Home CLUSTER NODES discovery and keep using the configured -home-jwt address"),
         ("home-jwt", "string", "Home control plane JWT for mTLS certificate bootstrap and connection"),
         ("kimi-ai-login", "", "Login to Kimi.ai using OAuth"),
@@ -385,8 +400,19 @@ impl LoginKind {
 /// Exit code convention of the Go commands: 0 unless the callback port is taken (13).
 pub type ExitCode = i32;
 
-fn auth_store(cfg: &Config) -> Arc<FileTokenStore> {
-    Arc::new(FileTokenStore::with_dir(&cfg.auth_dir))
+/// The registered remote token store (Go: `sdkAuth.RegisterTokenStore`), if one is configured.
+static TOKEN_STORE: std::sync::OnceLock<Arc<dyn Store>> = std::sync::OnceLock::new();
+
+/// Routes CLI logins and imports through a remote-backed store instead of the auth dir.
+pub fn set_token_store(store: Arc<dyn Store>) {
+    let _ = TOKEN_STORE.set(store);
+}
+
+fn auth_store(cfg: &Config) -> Arc<dyn Store> {
+    match TOKEN_STORE.get() {
+        Some(store) => store.clone(),
+        None => Arc::new(FileTokenStore::with_dir(&cfg.auth_dir)),
+    }
 }
 
 /// `DoXLogin`: runs one login through `cpa_auth` and prints what the Go commands print.
@@ -551,10 +577,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_flags_are_recorded() {
-        let c = run("-tui -standalone=false -discover tok");
-        assert_eq!(c.unsupported, vec!["discover"]);
-        assert!(c.tui && !c.standalone);
+    fn tui_and_discover_flags_are_parsed() {
+        let c = run("-tui -standalone=false -discover");
+        assert!(c.tui && !c.standalone && c.discover);
+        assert!(c.unsupported.is_empty());
     }
 
     #[test]

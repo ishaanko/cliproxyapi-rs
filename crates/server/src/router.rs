@@ -274,15 +274,19 @@ async fn root(State(st): State<AppState>, headers: HeaderMap) -> Response {
     .into_response()
 }
 
-/// `GET /management.html` (`serveManagementControlPanel`): 404 when disabled or not embedded.
-async fn management_html(State(st): State<AppState>) -> Response {
-    if st.cfg().remote_management.disable_control_panel {
+/// `GET /management.html` (`serveManagementControlPanel`): 404 when disabled. The embedded UI is
+/// served when present; otherwise the panel downloaded to the static directory, fetched on the
+/// first request when missing.
+async fn management_html(State(st): State<AppState>, headers: HeaderMap) -> Response {
+    let cfg = st.cfg();
+    if cfg.home.enabled || cfg.remote_management.disable_control_panel {
         return Reply::new(404).into_response();
     }
-    match ui::index() {
-        Some(index) => index.into_response(),
-        None => Reply::new(404).into_response(),
+    if let Some(index) = ui::index() {
+        return index.into_response();
     }
+    let since = headers.get(axum::http::header::IF_MODIFIED_SINCE).and_then(|v| v.to_str().ok());
+    ui::downloaded_panel(&st.config_file_path, &cfg, since).await.into_response()
 }
 
 /// Unmatched routes: embedded UI assets, else an empty 404 (also used for wrong methods).

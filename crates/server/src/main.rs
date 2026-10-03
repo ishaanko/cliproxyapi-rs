@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use cpa_auth::OAuthSessions;
 use cpa_config::Config;
-use cpa_runtime::service::ServiceBuilder;
+use cpa_runtime::service::{ServiceBuilder, StoreBackend};
 use cpa_runtime::usage::UsageTracker;
 use cpa_server::aistudio;
 use cpa_server::cli::{self, Command, ParseOutcome};
@@ -47,6 +47,9 @@ async fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let program = std::env::args().next().unwrap_or_else(|| "cliproxy".into());
     let build = build_info();
+    if args.first().map(String::as_str) == Some("discover") {
+        return cpa_server::discover_cmd::run_subcommand(&args[1..], &build).await;
+    }
     let json_discover = args.iter().any(|a| a.trim_start_matches('-') == "discover-json");
     if !json_discover {
         println!("CLIProxyAPI Version: {}, Commit: {}, BuiltAt: {}", build.version, build.commit, build.build_date);
@@ -84,6 +87,9 @@ async fn run() -> i32 {
             return 2;
         }
     };
+    if cli.discover || cli.discover_json {
+        return cpa_server::discover_cmd::run_flags(&cli).await;
+    }
     for (name, value) in &cli.plugin_flags {
         if let Err(e) = plugin_host.set_command_line_flag(name, value) {
             eprintln!("invalid value {value:?} for flag -{name}: {e}");
@@ -118,12 +124,26 @@ async fn run() -> i32 {
     }
     let cloud_deploy = std::env::var("DEPLOY").is_ok_and(|v| v == "cloud");
 
-    let config_path = if cli.config.is_empty() {
+    let mut config_path = if cli.config.is_empty() {
         wd.join("config.yaml")
     } else {
         std::path::PathBuf::from(&cli.config)
     };
     let home_mode = !cli.home_jwt.trim().is_empty();
+    // PGSTORE_* / OBJECTSTORE_* / GITSTORE_*: the remote store owns the spool config and auth dir.
+    // Home mode disables local stores.
+    let store_backend = match cpa_store::open_from_env(&wd, home_mode) {
+        Ok(Some(opened)) => {
+            config_path = opened.config_path;
+            cli::set_token_store(opened.backend.store.clone());
+            Some(opened.backend)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 0;
+        }
+    };
     let mut home_boot = None;
     let mut cfg = if home_mode {
         match boot_home(&cli, &plugin_host).await {
@@ -176,6 +196,9 @@ async fn run() -> i32 {
         return 0;
     }
     tracing::info!("CLIProxyAPI Version: {}, Commit: {}, BuiltAt: {}", build.version, build.commit, build.build_date);
+    if let Some(backend) = &store_backend {
+        cfg.auth_dir = backend.auth_dir.to_string_lossy().into_owned();
+    }
     if let Err(e) = cli::resolve_auth_dir(&mut cfg) {
         tracing::error!("failed to resolve auth directory: {e}");
         return 0;
@@ -213,7 +236,7 @@ async fn run() -> i32 {
     }
     if cli.tui {
         return if cli.standalone {
-            run_standalone_tui(cfg, config_path, &cli, build, log, plugin_host).await
+            run_standalone_tui(cfg, config_path, store_backend, &cli, build, log, plugin_host).await
         } else {
             // Pure management client: the proxy server must already be running.
             let base_url = resolve_management_base_url(&cli.management_base_url, &cfg);
@@ -228,7 +251,7 @@ async fn run() -> i32 {
         keep_alive: !cli.password.is_empty(),
         handle_signals: true,
     };
-    serve_proxy(cfg, config_path, build, log, local, None, plugin_host).await
+    serve_proxy(cfg, config_path, store_backend, build, log, local, None, plugin_host).await
 }
 
 /// `resolveManagementBaseURL`: flag, then `remote-management.base-url`, then localhost.
@@ -250,6 +273,7 @@ fn resolve_management_base_url(flag_url: &str, cfg: &Config) -> String {
 async fn run_standalone_tui(
     cfg: Config,
     config_path: std::path::PathBuf,
+    store_backend: Option<StoreBackend>,
     cli: &cli::Cli,
     build: BuildInfo,
     log: Arc<LogControl>,
@@ -282,7 +306,7 @@ async fn run_standalone_tui(
     // cancel); the TUI handles them and then stops the server.
     let local = LocalManagement { password: password.clone(), keep_alive: false, handle_signals: false };
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx), plugin_host));
+    let server = tokio::spawn(serve_proxy(cfg, config_path, store_backend, build, log.clone(), local, Some(stop_rx), plugin_host));
 
     let client = cpa_tui::Client::new(port, &password);
     let mut ready = false;
@@ -498,6 +522,7 @@ struct LocalManagement {
 async fn serve_proxy(
     cfg: Config,
     config_path: std::path::PathBuf,
+    store_backend: Option<StoreBackend>,
     build: BuildInfo,
     log: Arc<LogControl>,
     local: LocalManagement,
@@ -510,6 +535,14 @@ async fn serve_proxy(
             api_keys = %safemode::example_api_keys(&cfg.api_keys).join(","),
             "unsafe example API key configured; proxy API endpoints disabled until api-keys is updated"
         );
+    }
+
+    // Control panel asset: snapshot the config, then start the periodic updater (Go: SetCurrentConfig
+    // + StartAutoUpdater right before the service starts). A UI embedded in the binary replaces
+    // the downloaded panel, so there is nothing to update then.
+    cpa_managementasset::set_current_config(Some(Arc::new(cfg.clone())));
+    if cpa_server::ui::index().is_none() {
+        cpa_managementasset::start_auto_updater(tokio_util::sync::CancellationToken::new(), &config_path.to_string_lossy());
     }
 
     // The service owns config reload, the credential manager, the auth store and model
@@ -526,6 +559,9 @@ async fn serve_proxy(
         .usage(usage.clone())
         .executor_factory(compat_factory)
         .plugins(plugin_hooks);
+    if let Some(backend) = store_backend {
+        builder = builder.store_backend(backend);
+    }
     if cfg.home.enabled {
         builder = builder
             .home_plugins(cpa_server::plugin_home::ServerHomePlugins::new(plugin_host.clone()))
@@ -551,6 +587,7 @@ async fn serve_proxy(
         return 0;
     }
     let config_rx = service.subscribe_config();
+    cpa_managementasset::follow_config(config_rx.clone());
     for executor in cpa_executors::all_executors(config_rx.clone()) {
         service.register_executor(executor);
     }
@@ -566,6 +603,7 @@ async fn serve_proxy(
     let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
     state.build = build.clone();
     state.example_api_key_safe_mode = safe_mode;
+    state.config_file_path = config_path.to_string_lossy().into_owned();
     state.plugins = Some(plugin_host.clone());
     plugin_host.set_model_executor(Some(ServerModelExecutor::new(state.clone())));
     if !cfg.commercial_mode {
@@ -578,7 +616,9 @@ async fn serve_proxy(
         idle_shutdown = Some(rx);
     }
 
-    let login = cpa_auth::Manager::new(store.clone()).with_sessions(sessions.clone());
+    // Logins and management deletes go through the registered token store (Go: GetTokenStore).
+    let token_store: Arc<dyn cpa_auth::Store> = service.token_store();
+    let login = cpa_auth::Manager::new(token_store.clone()).with_sessions(sessions.clone());
     let reload_service = service.clone();
     let mut management = ManagementState::new(
         &config_path,
@@ -590,6 +630,7 @@ async fn serve_proxy(
         usage,
         logging::resolve_log_directory(&cfg),
     )
+    .with_token_store(token_store)
     .with_build_info(cpa_management::BuildInfo {
         version: build.version.clone(),
         commit: build.commit.clone(),
@@ -710,7 +751,7 @@ async fn serve_proxy(
         } => {}
     }
     service.shutdown_home().await;
-    service.shutdown();
+    service.shutdown_graceful().await;
     plugin_host.set_model_executor(None);
     plugin_host.shutdown_runtime(&service.manager(), service.registry()).await;
     0

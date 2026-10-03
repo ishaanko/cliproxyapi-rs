@@ -950,7 +950,8 @@ async fn delete_inner(st: ManagementState, uri: Uri, body: ApiResult<Bytes>) -> 
 
     if matches!(query_get(&uri, "all").as_deref(), Some("true" | "1" | "*")) {
         let dir_scan = dir.clone();
-        let removed = blocking(move || {
+        let token_store = st.token_store.clone();
+        let (removed, failure) = blocking(move || {
             let entries = std::fs::read_dir(&dir_scan)
                 .map_err(|e| ApiError::new(500, format!("failed to read auth dir: {e}")))?;
             let mut removed = Vec::new();
@@ -961,15 +962,22 @@ async fn delete_inner(st: ManagementState, uri: Uri, body: ApiResult<Bytes>) -> 
                 }
                 let full = abs_path(&dir_scan.join(&name));
                 if std::fs::remove_file(&full).is_ok() {
+                    // Go aborts the sweep when the token store cannot record the delete.
+                    if let Err(e) = token_store.delete(&full.to_string_lossy()) {
+                        return Ok((removed, Some(ApiError::new(500, e.to_string()))));
+                    }
                     removed.push(full);
                 }
             }
-            Ok(removed)
+            Ok((removed, None))
         })
         .await?;
         let deleted = removed.len();
         for full in removed {
             remove_auth(st, &full.to_string_lossy()).await;
+        }
+        if let Some(e) = failure {
+            return Err(e);
         }
         return Ok(ok_json(&json!({"status": "ok", "deleted": deleted})));
     }
@@ -1111,6 +1119,12 @@ async fn delete_by_name(
         } else {
             (500, format!("failed to remove file: {e}"))
         });
+    }
+    let (token_store, path) = (st.token_store.clone(), target.to_string_lossy().into_owned());
+    match tokio::task::spawn_blocking(move || token_store.delete(&path)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err((500, e.to_string())),
+        Err(e) => return Err((500, e.to_string())),
     }
     remove_auths_for_path(st, &target.to_string_lossy(), &target_id).await;
     Ok(base)

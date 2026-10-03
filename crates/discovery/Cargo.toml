@@ -1,0 +1,33 @@
+[package]
+name = "cpa-discovery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# mDNS / DNS-SD advertising and browsing (Go: internal/discovery, internal/cmd/discover.go).
+# The wire layer (DNS codec, multicast sockets, responder/browser) is a port of libp2p/zeroconf
+# on top of miekg/dns semantics, so announcements and scans interoperate with the Go build.
+[lib]
+name = "cpa_discovery"
+
+[dependencies]
+cpa-config = { path = "../config" }
+cpa-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng = "0.10"
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tokio-util = "0.7"
+async-trait = "0.1"
+tracing.workspace = true
+rand.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", features = ["net", "socket", "uio", "hostname"] }
+libc = "0.2"
+socket2 = { version = "0.6", features = ["all"] }
+
+[dev-dependencies]
+tempfile = "3"
