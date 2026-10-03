@@ -1,7 +1,8 @@
 //! Provider-independent executor helpers (Go: internal/runtime/executor/helps plus the shared
 //! helpers of internal/runtime/executor/*.go).
 //!
-//! - HTTP: [`proxy`] (proxy-aware cached reqwest clients), [`sse`] (`bufio.Scanner` style line
+//! - HTTP: [`proxy`] (proxy-aware cached reqwest clients), [`tls_fingerprint`] (Claude Code and
+//!   Chrome ClientHello transports, Go: utls_client), [`sse`] (`bufio.Scanner` style line
 //!   reader), [`status`] (upstream non-2xx to `ExecError`, `Retry-After`).
 //! - Payload: [`payload`] (config payload rules), [`codex_tool_integers`], [`openai_compat`]
 //!   (max tokens, tool results), [`openai_responses_signature`], [`responses_usage`].
@@ -17,7 +18,7 @@
 //!   scope, prompt cache ids).
 //!
 //! Helpers used by a single provider (claude_* identity, signing and cloaking, codex_*,
-//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*, utls_client, home_refresh,
+//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*, home_refresh,
 //! plugin_executor_usage) stay in the provider modules.
 
 pub mod apply_patch;
