@@ -39,21 +39,7 @@ impl UpstreamLog {
         headers: &HeaderMap,
         body: &[u8],
     ) {
-        let (auth_type, auth_value) = auth.account_info();
-        self.handle.record_api_request(
-            &self.cfg,
-            UpstreamRequestLog {
-                url: url.to_string(),
-                method: method.to_string(),
-                headers: headers.clone(),
-                body: body.to_vec(),
-                provider: provider.to_string(),
-                auth_id: auth.id.clone(),
-                auth_label: auth.label.clone(),
-                auth_type: auth_type.to_string(),
-                auth_value,
-            },
-        );
+        self.handle.record_api_request(&self.cfg, UpstreamRequestLog::from_auth(provider, Some(auth), method, url, headers, body));
     }
 
     /// `RecordAPIResponseMetadata`.

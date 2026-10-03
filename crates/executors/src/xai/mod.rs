@@ -104,21 +104,7 @@ impl XaiExecutor {
     /// Go: recordXAIRequest. Records the upstream request in the request log (always as POST,
     /// like Go, even for the video status GET).
     fn record_request(&self, cfg: &Config, auth: &Auth, opts: &Options, url: &str, headers: &HeaderMap, body: &[u8]) {
-        let (auth_type, auth_value) = auth.account_info();
-        opts.api_log.record_api_request(
-            cfg,
-            UpstreamRequestLog {
-                url: url.to_string(),
-                method: Method::POST.to_string(),
-                headers: headers.clone(),
-                body: body.to_vec(),
-                provider: IDENTIFIER.to_string(),
-                auth_id: auth.id.clone(),
-                auth_label: auth.label.clone(),
-                auth_type: auth_type.to_string(),
-                auth_value,
-            },
-        );
+        opts.api_log.record_api_request(cfg, UpstreamRequestLog::from_auth(IDENTIFIER, Some(auth), "POST", url, headers, body));
     }
 }
 

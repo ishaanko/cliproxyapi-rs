@@ -14,7 +14,8 @@ use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
 use super::CodexExecutor;
-use super::logging::{error_text, upstream_log};
+use super::logging::error_text;
+use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::logging::ApiLogHandle;
 use super::creds::{base_url, codex_creds};
@@ -103,7 +104,7 @@ impl CodexExecutor {
         headers: HeaderMap,
         body: Vec<u8>,
     ) -> Result<reqwest::Response, ExecError> {
-        opts.api_log.record_api_request(cfg, upstream_log(auth, url, "POST", &headers, &body));
+        opts.api_log.record_api_request(cfg, UpstreamRequestLog::from_auth("codex", Some(auth), "POST", url, &headers, &body));
         let fallback = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         let client = new_utls_http_client(&opts.proxy_url, Some(cfg), Some(auth), fallback);
         match client.post(url).headers(headers).body(body).send().await {

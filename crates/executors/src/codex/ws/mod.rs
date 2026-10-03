@@ -5,13 +5,13 @@
 //! on the upstream remembering the previous response on the same connection. A request flagged as
 //! requiring the existing upstream socket fails with the replay-required error when there is none.
 
-mod codec;
-mod conn;
+pub(crate) mod codec;
+pub(crate) mod conn;
 mod duplex;
 mod errors;
-mod session;
+pub(crate) mod session;
 mod stream;
-mod transport;
+pub(crate) mod transport;
 
 use std::sync::Arc;
 
@@ -25,9 +25,9 @@ use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 use tokio::sync::{OwnedMutexGuard, mpsc};
 
-use self::conn::{Read, ReadError, UNEXPECTED_BINARY, WsConn};
+use self::conn::{Read, ReadError, WsConn};
 use self::errors::{clear_replay_on_error_frame, map_read_error, map_write_error, parse_error_frame, should_retry_send};
-use self::session::Session;
+use self::session::{Provider, Session};
 use crate::helps::logging::{ApiLogHandle, UpstreamRequestLog};
 use crate::helps::websocket_observer::WsFrameObserver;
 use self::transport::DialFailure;
@@ -177,7 +177,12 @@ impl CodexExecutor {
             ProxySetting::Inherit
         });
         let frame = build_request_frame(&body);
-        let req_log = super::logging::upstream_log(auth, &ws_url, "WEBSOCKET", &headers, &frame);
+        // Only a logged request needs the handshake details (and the frame copy).
+        let req_log = if opts.api_log.get().is_some() {
+            UpstreamRequestLog::from_auth("codex", Some(auth), "WEBSOCKET", &ws_url, &headers, &frame)
+        } else {
+            UpstreamRequestLog::default()
+        };
         Ok(WsPlan {
             prepared,
             ws_url,
@@ -354,9 +359,9 @@ pub(super) const SESSION_READ_CLOSED: &str = "codex websockets executor: session
 
 /// Log stage of a failed read: the reader reports an unexpected binary frame as a read error,
 /// Go logs it under its own stage.
-pub(super) fn read_error_stage(err: &ReadError) -> &'static str {
+pub(crate) fn read_error_stage(err: &ReadError) -> &'static str {
     match err {
-        ReadError::Other(text) if text == UNEXPECTED_BINARY => "unexpected_binary",
+        ReadError::UnexpectedBinary(_) => "unexpected_binary",
         _ => "read",
     }
 }
@@ -382,9 +387,9 @@ fn dial_failure_error(plan: &WsPlan, failure: DialFailure) -> ExecError {
 /// first send fails (Go: the connect/send prologue of Execute and ExecuteStream).
 pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool) -> Result<WsCall, ExecError> {
     let session_id = execution_session_id(opts);
-    let (sess, ephemeral) = match Session::get_or_create(&session_id) {
+    let (sess, ephemeral) = match Session::get_or_create(Provider::Codex, &session_id) {
         Some(s) => (s, false),
-        None => (Session::ephemeral(), true),
+        None => (Session::ephemeral(Provider::Codex), true),
     };
     let guard = if ephemeral { None } else { Some(Arc::clone(&sess.req_mu).lock_owned().await) };
     plan.log_request();
@@ -488,7 +493,7 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool
 }
 
 /// Drops a connection whose lifecycle bind failed (Go: `closeWebsocketAfterBindFailure`).
-fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
+pub(crate) fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
     sess.invalidate(conn, "lifecycle_bind_failed", None, false);
 }
 

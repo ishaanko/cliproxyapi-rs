@@ -8,6 +8,7 @@
 //! secrets masked.
 
 use chrono::{DateTime, Local, Timelike};
+use cpa_auth::Auth;
 use cpa_config::Config;
 use cpa_core::util::{hide_api_key, mask_sensitive_header_value};
 use http::HeaderMap;
@@ -15,6 +16,9 @@ use parking_lot::Mutex;
 
 /// Cap on request bodies kept for deferred request logging (32 MiB).
 pub const MAX_DEFERRED_API_REQUEST_BODY_BYTES: usize = 32 << 20;
+/// Cap of the captured upstream response of one attempt and of the websocket timeline, like the
+/// handler-level response capture; bytes past it are dropped.
+pub const MAX_RESPONSE_CAPTURE: usize = 128 << 20;
 
 /// The outbound upstream request details for logging.
 #[derive(Debug, Clone, Default)]
@@ -30,6 +34,29 @@ pub struct UpstreamRequestLog {
     pub auth_type: String,
     /// API key (masked on output) or account for non-OAuth types.
     pub auth_value: String,
+}
+
+impl UpstreamRequestLog {
+    /// Request details with the auth identity Go derives from `auth.ID`, `auth.Label` and
+    /// `auth.AccountInfo()`; the single place executors build their request-log entries.
+    pub fn from_auth(provider: &str, auth: Option<&Auth>, method: &str, url: &str, headers: &HeaderMap, body: &[u8]) -> Self {
+        let mut info = UpstreamRequestLog {
+            url: url.to_string(),
+            method: method.to_string(),
+            headers: headers.clone(),
+            body: body.to_vec(),
+            provider: provider.to_string(),
+            ..Default::default()
+        };
+        if let Some(auth) = auth {
+            info.auth_id = auth.id.clone();
+            info.auth_label = auth.label.clone();
+            let (kind, value) = auth.account_info();
+            info.auth_type = kind.to_string();
+            info.auth_value = value;
+        }
+        info
+    }
 }
 
 fn request_log_capture_enabled(cfg: &Config) -> bool {
@@ -82,7 +109,7 @@ fn write_headers_as(out: &mut String, headers: &HeaderMap, name_of: impl Fn(&str
     }
     let mut entries: Vec<(String, String)> = headers
         .iter()
-        .map(|(k, v)| (name_of(k.as_str()), v.to_str().map(str::to_string).unwrap_or_default()))
+        .map(|(k, v)| (name_of(k.as_str()), String::from_utf8_lossy(v.as_bytes()).into_owned()))
         .collect();
     // Stable: values of one header keep their wire order.
     entries.sort_by(|a, b| a.0.cmp(&b.0));
@@ -613,13 +640,17 @@ impl LogState {
             return;
         }
         let existing = &mut self.websocket_timeline;
+        if existing.len() >= MAX_RESPONSE_CAPTURE {
+            return;
+        }
         if !existing.is_empty() {
             if !existing.ends_with(b"\n") {
                 existing.push(b'\n');
             }
             existing.push(b'\n');
         }
-        existing.extend_from_slice(data);
+        let room = MAX_RESPONSE_CAPTURE.saturating_sub(existing.len());
+        existing.extend_from_slice(&data[..data.len().min(room)]);
     }
 
     /// Writes response text to the latest attempt, emitting the `=== API RESPONSE n ===` intro
@@ -662,7 +693,8 @@ fn write_attempt_response(attempt: &mut Attempt, payload: &[u8]) {
         trailing += attempt.trailing_newlines;
     }
     attempt.trailing_newlines = trailing;
-    attempt.response.extend_from_slice(payload);
+    let room = MAX_RESPONSE_CAPTURE.saturating_sub(attempt.response.len());
+    attempt.response.extend_from_slice(&payload[..payload.len().min(room)]);
 }
 
 /// `strings.TrimSpace` over bytes.
