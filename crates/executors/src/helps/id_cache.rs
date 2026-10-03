@@ -3,16 +3,25 @@
 //! cloak_utils.go that the user-id cache needs).
 //!
 //! Entries live one hour from their last access and are purged lazily every 15 minutes (Go uses
-//! a cleanup goroutine). The Home KV backing used by Go in control-plane mode is not ported:
-//! these caches are in-memory only.
+//! a cleanup goroutine). In Home mode the ids and the Codex prompt cache live in Home KV instead
+//! (keys `cpa:claude:session-id:*`, `cpa:claude:user-id:*`, `cpa:codex:prompt-cache:*`), shared by
+//! every node. The `*_required` functions surface Home failures, the plain ones fall back like Go.
+//! The `async` functions suit async callers; the `*_blocking` and plain sync ones bridge through
+//! [`home_kv`] and only touch the runtime when Home mode is on.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
+use cpa_home::HomeError;
+use cpa_home::kv::{Kv, hash_key_part, is_home_mode, kv_del_required, kv_get_json_required, kv_set_json_best_effort, kv_set_json_required};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
+
+use crate::helps::home_kv;
 
 /// Lifetime of a session/user id after its last use.
 pub const ID_TTL: Duration = Duration::from_secs(3600);
@@ -119,14 +128,111 @@ impl Default for IdCaches {
 
 static GLOBAL: LazyLock<IdCaches> = LazyLock::new(IdCaches::new);
 
-/// Stable session UUID per API key (Go: CachedSessionID).
-pub fn cached_session_id(api_key: &str) -> String {
-    GLOBAL.session_id_at(api_key, Instant::now())
+/// Home KV key of an API key's session id (Go: claudeSessionIDKVKey).
+fn session_id_kv_key(api_key: &str) -> String {
+    format!("cpa:claude:session-id:{}", hash_key_part(api_key))
 }
 
-/// Stable fake Claude `user_id` per API key (Go: CachedUserID).
+/// Home KV key of an API key's fake user id (Go: claudeUserIDKVKey).
+fn user_id_kv_key(api_key: &str) -> String {
+    format!("cpa:claude:user-id:{}", hash_key_part(api_key))
+}
+
+/// Trimmed text of a stored value, `None` when absent or blank.
+fn stored_text(raw: Option<Vec<u8>>) -> Option<String> {
+    let raw = raw?;
+    let text = String::from_utf8_lossy(&raw);
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Home branch of [`cached_session_id_required`]: reuse and refresh the stored id, else
+/// `SET NX` a new one and read back the winner.
+async fn session_id_home(client: &cpa_home::Client, api_key: &str) -> Result<String, HomeError> {
+    let key = session_id_kv_key(api_key);
+    if let Some(id) = stored_text(client.kv_get(&key).await?) {
+        client.kv_expire(&key, ID_TTL).await?;
+        return Ok(id);
+    }
+    let new_id = Uuid::new_v4().to_string();
+    client.kv_set_nx(&key, new_id.as_bytes(), ID_TTL).await?;
+    stored_text(client.kv_get(&key).await?).ok_or_else(|| HomeError::other("home kv session id missing after set"))
+}
+
+/// Home branch of [`cached_user_id_required`]; a new id embeds the shared session id.
+async fn user_id_home(client: &cpa_home::Client, api_key: &str) -> Result<String, HomeError> {
+    let key = user_id_kv_key(api_key);
+    if let Some(id) = stored_text(client.kv_get(&key).await?).filter(|id| is_valid_user_id(id)) {
+        client.kv_expire(&key, ID_TTL).await?;
+        return Ok(id);
+    }
+    let session_id = cached_session_id_required(api_key).await?;
+    let new_id = generate_fake_user_id_with_session_id(&session_id);
+    client.kv_set_nx(&key, new_id.as_bytes(), ID_TTL).await?;
+    stored_text(client.kv_get(&key).await?)
+        .filter(|id| is_valid_user_id(id))
+        .ok_or_else(|| HomeError::other("home kv user id missing after set"))
+}
+
+/// Stable session UUID per API key for request-time paths (Go: CachedSessionIDRequired). A fresh
+/// UUID for an empty key; in Home mode the id is shared through Home KV and failures are errors.
+pub async fn cached_session_id_required(api_key: &str) -> Result<String, HomeError> {
+    if api_key.is_empty() {
+        return Ok(Uuid::new_v4().to_string());
+    }
+    match home_kv::client()? {
+        Some(client) => session_id_home(&client, api_key).await,
+        None => Ok(GLOBAL.session_id_at(api_key, Instant::now())),
+    }
+}
+
+/// [`cached_session_id_required`] for synchronous callers.
+pub fn cached_session_id_required_blocking(api_key: &str) -> Result<String, HomeError> {
+    if api_key.is_empty() {
+        return Ok(Uuid::new_v4().to_string());
+    }
+    match home_kv::client()? {
+        Some(client) => home_kv::call(session_id_home(&client, api_key)),
+        None => Ok(GLOBAL.session_id_at(api_key, Instant::now())),
+    }
+}
+
+/// Stable fake Claude `user_id` per API key for request-time paths (Go: CachedUserIDRequired).
+pub async fn cached_user_id_required(api_key: &str) -> Result<String, HomeError> {
+    if api_key.is_empty() {
+        return Ok(generate_fake_user_id());
+    }
+    match home_kv::client()? {
+        Some(client) => user_id_home(&client, api_key).await,
+        None => Ok(GLOBAL.user_id_at(api_key, Instant::now())),
+    }
+}
+
+/// [`cached_user_id_required`] for synchronous callers.
+pub fn cached_user_id_required_blocking(api_key: &str) -> Result<String, HomeError> {
+    if api_key.is_empty() {
+        return Ok(generate_fake_user_id());
+    }
+    match home_kv::client()? {
+        Some(client) => home_kv::call(user_id_home(&client, api_key)),
+        None => Ok(GLOBAL.user_id_at(api_key, Instant::now())),
+    }
+}
+
+/// Stable session UUID per API key (Go: CachedSessionID); a fresh UUID when Home fails.
+pub fn cached_session_id(api_key: &str) -> String {
+    match cached_session_id_required_blocking(api_key) {
+        Ok(id) if !id.is_empty() => id,
+        _ => Uuid::new_v4().to_string(),
+    }
+}
+
+/// Stable fake Claude `user_id` per API key (Go: CachedUserID); a fresh one when Home fails.
 pub fn cached_user_id(api_key: &str) -> String {
-    GLOBAL.user_id_at(api_key, Instant::now())
+    match cached_user_id_required_blocking(api_key) {
+        Ok(id) if !id.is_empty() => id,
+        _ => generate_fake_user_id(),
+    }
 }
 
 /// `metadata.user_id` in the JSON-string format of Claude Code 2.1.78+ with a random device id.
@@ -179,19 +285,100 @@ pub struct CodexCache {
 
 static CODEX_CACHE: LazyLock<TtlMap<CodexCache>> = LazyLock::new(TtlMap::new);
 
-/// The cached entry for `key`, `None` when absent or expired.
-pub fn get_codex_cache(key: &str) -> Option<CodexCache> {
-    CODEX_CACHE.get(key, Instant::now())
+/// Home KV value of a [`CodexCache`], with Go's field names and a wall-clock expiry
+/// (`{"ID":"...","Expire":"2026-01-02T03:04:05.678Z"}`). A missing `Expire` reads as expired.
+#[derive(Serialize, Deserialize)]
+struct CodexCacheWire {
+    #[serde(rename = "ID", default)]
+    id: String,
+    #[serde(rename = "Expire", default)]
+    expire: Option<DateTime<Utc>>,
 }
 
-/// Stores a cache entry; false (nothing stored) when it is already expired.
-pub fn set_codex_cache(key: &str, cache: CodexCache) -> bool {
+impl CodexCacheWire {
+    fn new(cache: &CodexCache, now: Instant) -> Self {
+        let remaining = chrono::Duration::from_std(cache.expire.saturating_duration_since(now)).unwrap_or_default();
+        Self { id: cache.id.clone(), expire: Some(Utc::now() + remaining) }
+    }
+
+    /// The entry with a monotonic expiry, `None` when its wall-clock expiry has passed.
+    fn into_live(self, now: Instant) -> Option<CodexCache> {
+        let remaining = (self.expire? - Utc::now()).to_std().ok()?;
+        Some(CodexCache { id: self.id, expire: now + remaining })
+    }
+}
+
+/// The cached entry for `key` for request-time paths (Go: GetCodexCacheRequired); `Ok(None)` when
+/// absent or expired. In Home mode an expired entry is deleted and failures are errors.
+pub async fn get_codex_cache_required(key: &str) -> Result<Option<CodexCache>, HomeError> {
+    match kv_get_json_required::<CodexCacheWire>(key).await {
+        Kv::NotHome => Ok(CODEX_CACHE.get(key, Instant::now())),
+        Kv::Home(Err(e)) => Err(e),
+        Kv::Home(Ok(None)) => Ok(None),
+        Kv::Home(Ok(Some(wire))) => {
+            let live = wire.into_live(Instant::now());
+            if live.is_none() {
+                let _ = kv_del_required(&[key.to_string()]).await;
+            }
+            Ok(live)
+        }
+    }
+}
+
+/// The cached entry for `key`, `None` when absent, expired or (Home mode) unreadable (Go:
+/// GetCodexCache).
+pub fn get_codex_cache(key: &str) -> Option<CodexCache> {
+    if !is_home_mode() {
+        return CODEX_CACHE.get(key, Instant::now());
+    }
+    home_kv::call(get_codex_cache_required(key)).ok().flatten()
+}
+
+/// Stores a cache entry for request-time paths (Go: SetCodexCacheRequired); an already expired
+/// entry is dropped. In Home mode the entry is written with its remaining lifetime as TTL and a
+/// failure is an error.
+pub async fn set_codex_cache_required(key: &str, cache: CodexCache) -> Result<(), HomeError> {
     let now = Instant::now();
-    if cache.expire <= now {
+    let ttl = cache.expire.saturating_duration_since(now);
+    if ttl.is_zero() {
+        return Ok(());
+    }
+    match kv_set_json_required(key, &CodexCacheWire::new(&cache, now), ttl).await {
+        Kv::NotHome => {
+            CODEX_CACHE.set(key, cache.clone(), cache.expire, now);
+            Ok(())
+        }
+        Kv::Home(result) => result,
+    }
+}
+
+/// Stores a cache entry without failing completed responses (Go: SetCodexCacheBestEffort); false
+/// when nothing was stored (already expired, or a Home failure that is logged).
+pub async fn set_codex_cache_best_effort(key: &str, cache: CodexCache) -> bool {
+    let now = Instant::now();
+    let ttl = cache.expire.saturating_duration_since(now);
+    if ttl.is_zero() {
         return false;
+    }
+    if is_home_mode() {
+        return kv_set_json_best_effort(key, &CodexCacheWire::new(&cache, now), ttl).await;
     }
     CODEX_CACHE.set(key, cache.clone(), cache.expire, now);
     true
+}
+
+/// Stores a cache entry; false (nothing stored) when it is already expired or Home failed (Go:
+/// SetCodexCache).
+pub fn set_codex_cache(key: &str, cache: CodexCache) -> bool {
+    if !is_home_mode() {
+        let now = Instant::now();
+        if cache.expire <= now {
+            return false;
+        }
+        CODEX_CACHE.set(key, cache.clone(), cache.expire, now);
+        return true;
+    }
+    home_kv::run_blocking(set_codex_cache_best_effort(key, cache)).unwrap_or(false)
 }
 
 /// Key of the prompt cache for a model and user scope (matches Go's Home KV key layout).

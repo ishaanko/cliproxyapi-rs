@@ -392,7 +392,11 @@ impl ReplayAccumulator {
             return;
         }
         let clear = |scope: &ReplayScope| {
-            delete_antigravity_reasoning_replay_items_if_unchanged(&scope.model_name, &scope.session_key, &scope.snapshot);
+            let _ = delete_antigravity_reasoning_replay_items_if_unchanged(
+                &scope.model_name,
+                &scope.session_key,
+                &scope.snapshot,
+            );
         };
         if self.overflow {
             clear(&self.scope);

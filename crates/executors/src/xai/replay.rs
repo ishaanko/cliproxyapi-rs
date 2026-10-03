@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::cache::{
-    XaiReasoningReplayStoreStatus, delete_xai_reasoning_replay_item, get_xai_reasoning_replay_items,
+    XaiReasoningReplayStoreStatus, delete_xai_reasoning_replay_item_required, get_xai_reasoning_replay_items_required,
     store_xai_reasoning_replay_items,
 };
 use cpa_core::thinking::parse_suffix;
@@ -186,8 +186,13 @@ pub fn apply_reasoning_replay_cache(from: Format, req: &Request, opts: &Options,
     if !scope.valid() {
         return scope;
     }
-    let Some(cached) = get_xai_reasoning_replay_items(&scope.model_name, &scope.session_key) else {
-        return scope;
+    let cached = match get_xai_reasoning_replay_items_required(&scope.model_name, &scope.session_key) {
+        Ok(Some(cached)) => cached,
+        Ok(None) => return scope,
+        Err(err) => {
+            tracing::warn!("xai reasoning replay cache read failed: {err}");
+            return scope;
+        }
     };
     let replay: Vec<Value> = filter_replay_items_for_input(body, &cached);
     if replay.is_empty() {
@@ -329,7 +334,9 @@ pub fn cache_reasoning_replay_from_completed(scope: &ReplayScope, completed: &Va
         XaiReasoningReplayStoreStatus::NoReplayableState => {
             // A completed turn without cacheable reasoning must not leave a previous turn's
             // encrypted state to be injected later.
-            delete_xai_reasoning_replay_item(&scope.model_name, &scope.session_key);
+            if let Err(err) = delete_xai_reasoning_replay_item_required(&scope.model_name, &scope.session_key) {
+                tracing::warn!("xai reasoning replay cache delete failed after non-replayable completed output: {err}");
+            }
         }
         XaiReasoningReplayStoreStatus::BackendError => {
             tracing::debug!("xai reasoning replay cache store backend error; retaining previous entry");
@@ -340,8 +347,10 @@ pub fn cache_reasoning_replay_from_completed(scope: &ReplayScope, completed: &Va
 
 /// Go: clearXAIReasoningReplayAfterCompaction.
 pub fn clear_reasoning_replay_after_compaction(scope: &ReplayScope) {
-    if scope.valid() {
-        delete_xai_reasoning_replay_item(&scope.model_name, &scope.session_key);
+    if scope.valid()
+        && let Err(err) = delete_xai_reasoning_replay_item_required(&scope.model_name, &scope.session_key)
+    {
+        tracing::warn!("xai reasoning replay cache delete failed after successful compaction: {err}");
     }
 }
 

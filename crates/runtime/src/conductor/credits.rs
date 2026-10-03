@@ -6,15 +6,20 @@
 //! [`ANTIGRAVITY_CREDITS_METADATA_KEY`] set in the request metadata so the executor injects the
 //! credits payload. Executors report credit availability through the hint store.
 
-use std::time::Instant;
+use std::future::Future;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
+use cpa_home::HomeError;
+use cpa_home::kv::{self, Kv};
+use serde::{Deserialize, Serialize};
 
 use super::cooldown::{ExecResult, is_disabled};
 use super::errors::{
-    CODE_AUTH_NOT_FOUND, CODE_AUTH_UNAVAILABLE, CODE_MODEL_COOLDOWN, result_error_from_error,
+    CODE_AUTH_NOT_FOUND, CODE_AUTH_UNAVAILABLE, CODE_MODEL_COOLDOWN, auth_error,
+    result_error_from_error,
 };
 use super::exec::{
     ensure_requested_model_metadata, publish_selected_auth_metadata, requested_model_alias,
@@ -30,15 +35,60 @@ use crate::executor::{DynExecutor, ExecError, Options, Request, Response, Stream
 /// Request metadata flag telling the Antigravity executor to inject `enabledCreditTypes`.
 pub const ANTIGRAVITY_CREDITS_METADATA_KEY: &str = "antigravity_use_credits";
 
-/// Latest known AI-credits state of one credential.
-#[derive(Debug, Clone, Default)]
+/// Latest known AI-credits state of one credential. Serialized with Go's field names so a Home
+/// shared with Go nodes reads the same JSON (`updated_at` is a Go `time.Time`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AntigravityCreditsHint {
+    #[serde(rename = "Known")]
     pub known: bool,
+    #[serde(rename = "Available")]
     pub available: bool,
+    #[serde(rename = "CreditAmount")]
     pub credit_amount: f64,
+    #[serde(rename = "MinCreditAmount")]
     pub min_credit_amount: f64,
+    #[serde(rename = "PaidTierID")]
     pub paid_tier_id: String,
+    #[serde(rename = "UpdatedAt", with = "go_time")]
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+/// Go's `time.Time` JSON: RFC 3339 with trimmed fractional seconds, zero time as `None`.
+mod go_time {
+    use chrono::{DateTime, SecondsFormat, Utc};
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    const ZERO: &str = "0001-01-01T00:00:00Z";
+
+    pub fn serialize<S: Serializer>(v: &Option<DateTime<Utc>>, s: S) -> Result<S::Ok, S::Error> {
+        match v {
+            None => s.serialize_str(ZERO),
+            Some(t) => {
+                let full = t.to_rfc3339_opts(SecondsFormat::Nanos, true);
+                // Trim trailing fractional zeros like RFC3339Nano.
+                let trimmed = match full.strip_suffix('Z') {
+                    Some(body) if body.contains('.') => {
+                        format!("{}Z", body.trim_end_matches('0').trim_end_matches('.'))
+                    }
+                    _ => full,
+                };
+                s.serialize_str(&trimmed)
+            }
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<DateTime<Utc>>, D::Error> {
+        let Some(raw) = Option::<String>::deserialize(d)? else {
+            return Ok(None);
+        };
+        if raw == ZERO {
+            return Ok(None);
+        }
+        DateTime::parse_from_rfc3339(&raw)
+            .map(|t| Some(t.with_timezone(&Utc)))
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 struct CreditsCandidate {
@@ -51,25 +101,138 @@ static HINTS: std::sync::LazyLock<
     parking_lot::Mutex<std::collections::HashMap<String, AntigravityCreditsHint>>,
 > = std::sync::LazyLock::new(Default::default);
 
-/// Records the latest known AI-credits state of a credential. Process-wide (Go: a global sync.Map)
-/// so executors can report it without a manager handle.
-pub fn set_antigravity_credits_hint(auth_id: &str, mut hint: AntigravityCreditsHint) {
+/// Home KV lifetime of a published hint.
+const HOME_HINT_TTL: Duration = Duration::from_secs(30 * 60);
+
+fn home_hint_key(auth_id: &str) -> String {
+    format!("cpa:antigravity:credits-hint:{}", auth_id.trim())
+}
+
+/// Drives a Home KV operation from synchronous code on a multi-thread runtime worker. Without
+/// one (no runtime, current-thread runtime) it yields `None`, which callers treat as a failed
+/// Home call.
+fn block_on_home<F: Future>(fut: F) -> Option<F::Output> {
+    let handle = tokio::runtime::Handle::try_current().ok()?;
+    match handle.runtime_flavor() {
+        tokio::runtime::RuntimeFlavor::MultiThread => {
+            Some(tokio::task::block_in_place(|| handle.block_on(fut)))
+        }
+        _ => None,
+    }
+}
+
+fn stamped(mut hint: AntigravityCreditsHint) -> AntigravityCreditsHint {
+    if hint.updated_at.is_none() {
+        hint.updated_at = Some(Utc::now());
+    }
+    hint
+}
+
+fn set_local_hint(id: &str, hint: AntigravityCreditsHint) {
+    HINTS.lock().insert(id.to_string(), stamped(hint));
+}
+
+/// Records the latest known AI-credits state of a credential (Go: SetAntigravityCreditsHint).
+/// Process-wide so executors can report it without a manager handle. In Home mode the hint goes
+/// to Home KV for 30 minutes (best effort) instead of the local map; from synchronous code that
+/// needs a multi-thread runtime, otherwise the write is dropped.
+pub fn set_antigravity_credits_hint(auth_id: &str, hint: AntigravityCreditsHint) {
     let id = auth_id.trim();
     if id.is_empty() {
         return;
     }
-    if hint.updated_at.is_none() {
-        hint.updated_at = Some(Utc::now());
+    if !cpa_home::kv::is_home_mode() {
+        set_local_hint(id, hint);
+        return;
     }
-    HINTS.lock().insert(id.to_string(), hint);
+    let hint = stamped(hint);
+    if block_on_home(kv::kv_set_json_best_effort(
+        &home_hint_key(id),
+        &hint,
+        HOME_HINT_TTL,
+    ))
+    .is_none()
+    {
+        tracing::error!(
+            "home kv best-effort set failed prefix=cpa:antigravity:*: no multi-thread runtime"
+        );
+    }
 }
 
+/// [`set_antigravity_credits_hint`] for async callers.
+pub async fn set_antigravity_credits_hint_async(auth_id: &str, hint: AntigravityCreditsHint) {
+    let id = auth_id.trim();
+    if id.is_empty() {
+        return;
+    }
+    if !cpa_home::kv::is_home_mode() {
+        set_local_hint(id, hint);
+        return;
+    }
+    kv::kv_set_json_best_effort(&home_hint_key(id), &stamped(hint), HOME_HINT_TTL).await;
+}
+
+/// Latest known state for request-time paths (Go: GetAntigravityCreditsHintRequired). In Home
+/// mode a KV failure is an error; `Ok(None)` is a miss.
+pub async fn get_antigravity_credits_hint_required(
+    auth_id: &str,
+) -> Result<Option<AntigravityCreditsHint>, HomeError> {
+    let id = auth_id.trim();
+    if id.is_empty() {
+        return Ok(None);
+    }
+    match kv::kv_get_json_required::<AntigravityCreditsHint>(&home_hint_key(id)).await {
+        Kv::Home(res) => res,
+        Kv::NotHome => Ok(HINTS.lock().get(id).cloned()),
+    }
+}
+
+/// Latest known state; a Home failure reads as unknown (Go: GetAntigravityCreditsHint). From
+/// synchronous code in Home mode this needs a multi-thread runtime, otherwise it reads as unknown.
 pub fn antigravity_credits_hint(auth_id: &str) -> Option<AntigravityCreditsHint> {
-    HINTS.lock().get(auth_id.trim()).cloned()
+    if !cpa_home::kv::is_home_mode() {
+        return HINTS.lock().get(auth_id.trim()).cloned();
+    }
+    block_on_home(get_antigravity_credits_hint_required(auth_id))
+        .and_then(Result::ok)
+        .flatten()
+}
+
+/// [`antigravity_credits_hint`] for async callers.
+pub async fn antigravity_credits_hint_async(auth_id: &str) -> Option<AntigravityCreditsHint> {
+    get_antigravity_credits_hint_required(auth_id)
+        .await
+        .ok()
+        .flatten()
 }
 
 pub fn has_known_antigravity_credits_hint(auth_id: &str) -> bool {
     antigravity_credits_hint(auth_id).is_some_and(|h| h.known)
+}
+
+/// [`has_known_antigravity_credits_hint`] for async callers.
+pub async fn has_known_antigravity_credits_hint_async(auth_id: &str) -> bool {
+    antigravity_credits_hint_async(auth_id)
+        .await
+        .is_some_and(|h| h.known)
+}
+
+/// Go: the `home_fallback_unsupported` error of the local credits fallback in Home mode.
+fn home_fallback_unsupported() -> ExecError {
+    auth_error(
+        "home_fallback_unsupported",
+        "Home does not support Antigravity credits fallback",
+        503,
+    )
+}
+
+/// Go: antigravityCreditsKVUnavailableError.
+fn kv_unavailable_error(cause: &HomeError) -> ExecError {
+    auth_error(
+        "home_kv_unavailable",
+        &format!("home kv store unavailable: {cause}"),
+        503,
+    )
 }
 
 impl Manager {
@@ -84,7 +247,9 @@ impl Manager {
         {
             return false;
         }
-        if !self.cfg().quota_exceeded.antigravity_credits {
+        let cfg = self.cfg();
+        // Home dispatches elsewhere; the local credits fallback never runs there.
+        if cfg.home.enabled || !cfg.quota_exceeded.antigravity_credits {
             return false;
         }
         match last_err.status {
@@ -98,33 +263,45 @@ impl Manager {
     }
 
     /// Antigravity credentials eligible for the credits fallback: known-with-credits first, then
-    /// unknown, each sorted by id (Go: findAllAntigravityCreditsCandidateAuths).
-    fn credits_candidates(&self, route_model: &str, opts: &Options) -> Vec<CreditsCandidate> {
-        if !route_model.trim().to_lowercase().contains("claude") {
-            return Vec::new();
+    /// unknown, each sorted by id (Go: findAllAntigravityCreditsCandidateAuths). Hints are read
+    /// with the request-time getter, so an unavailable Home KV store fails the lookup.
+    async fn credits_candidates(
+        &self,
+        route_model: &str,
+        opts: &Options,
+    ) -> Result<Vec<CreditsCandidate>, ExecError> {
+        if self.cfg().home.enabled || !route_model.trim().to_lowercase().contains("claude") {
+            return Ok(Vec::new());
         }
         let pinned = pinned_auth_id(&opts.metadata);
-        let st = self.state.read();
+        let mut candidates = Vec::new();
+        {
+            let st = self.state.read();
+            for auth in st.auths.values() {
+                if is_disabled(auth) || !auth.provider.trim().eq_ignore_ascii_case("antigravity") {
+                    continue;
+                }
+                if !pinned.is_empty() && auth.id != pinned {
+                    continue;
+                }
+                let key = executor_key_from_auth(auth);
+                let Some(executor) = executor_locked(&st, &key) else {
+                    continue;
+                };
+                candidates.push(CreditsCandidate {
+                    auth: auth.clone(),
+                    executor,
+                    provider: key,
+                });
+            }
+        }
         let mut known = Vec::new();
         let mut unknown = Vec::new();
-        let hints = HINTS.lock();
-        for auth in st.auths.values() {
-            if is_disabled(auth) || !auth.provider.trim().eq_ignore_ascii_case("antigravity") {
-                continue;
-            }
-            if !pinned.is_empty() && auth.id != pinned {
-                continue;
-            }
-            let key = executor_key_from_auth(auth);
-            let Some(executor) = executor_locked(&st, &key) else {
-                continue;
-            };
-            let cand = CreditsCandidate {
-                auth: auth.clone(),
-                executor,
-                provider: key,
-            };
-            match hints.get(&auth.id) {
+        for cand in candidates {
+            match get_antigravity_credits_hint_required(&cand.auth.id)
+                .await
+                .map_err(|e| kv_unavailable_error(&e))?
+            {
                 Some(h) if h.known => {
                     if h.available {
                         known.push(cand);
@@ -136,7 +313,7 @@ impl Manager {
         known.sort_by(|a, b| a.auth.id.cmp(&b.auth.id));
         unknown.sort_by(|a, b| a.auth.id.cmp(&b.auth.id));
         known.extend(unknown);
-        known
+        Ok(known)
     }
 
     pub(crate) async fn try_antigravity_credits_execute(
@@ -144,8 +321,11 @@ impl Manager {
         req: &Request,
         opts: &Options,
     ) -> Result<Option<Response>, ExecError> {
+        if self.cfg().home.enabled {
+            return Err(home_fallback_unsupported());
+        }
         let route_model = req.model.clone();
-        for mut c in self.credits_candidates(&route_model, opts) {
+        for mut c in self.credits_candidates(&route_model, opts).await? {
             let mut credits_opts = ensure_requested_model_metadata(opts.clone(), &route_model);
             credits_opts.metadata.insert(
                 ANTIGRAVITY_CREDITS_METADATA_KEY.into(),
@@ -233,8 +413,11 @@ impl Manager {
         req: &Request,
         opts: &Options,
     ) -> Result<Option<StreamResult>, ExecError> {
+        if self.cfg().home.enabled {
+            return Err(home_fallback_unsupported());
+        }
         let route_model = req.model.clone();
-        for mut c in self.credits_candidates(&route_model, opts) {
+        for mut c in self.credits_candidates(&route_model, opts).await? {
             let mut credits_opts = ensure_requested_model_metadata(opts.clone(), &route_model);
             credits_opts.metadata.insert(
                 ANTIGRAVITY_CREDITS_METADATA_KEY.into(),

@@ -178,7 +178,7 @@ impl CodexExecutor {
                     Step::ErrorFrame { err, frame } => {
                         call.invalidate_with("upstream_error", &err, true);
                         call.unlock();
-                        clear_replay_on_error_frame(&stream.plan.prepared.replay_scope, &frame);
+                        clear_replay_on_error_frame(&stream.plan.prepared.replay_scope, &frame)?;
                         if time_reached {
                             bootstrap_terminal_err = Some(err);
                             break;
@@ -192,7 +192,7 @@ impl CodexExecutor {
                         }
                         call.unlock();
                         call.invalidate_with("terminal_failure", &err, !failover);
-                        clear_replay_on_invalid_signature(&stream.plan.prepared.replay_scope, err.status, &body);
+                        clear_replay_on_invalid_signature(&stream.plan.prepared.replay_scope, err.status, &body)?;
                         if failover {
                             call.set_close_reason("bootstrap_overload");
                             return Err(new_bootstrap_overload_err(&body));
@@ -278,7 +278,7 @@ impl WsStream {
                 Step::ErrorFrame { err, frame } => {
                     call.set_close_reason("upstream_error");
                     call.invalidate_with("upstream_error", &err, true);
-                    clear_replay_on_error_frame(&self.plan.prepared.replay_scope, &frame);
+                    let err = clear_replay_on_error_frame(&self.plan.prepared.replay_scope, &frame).err().unwrap_or(err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
@@ -286,7 +286,9 @@ impl WsStream {
                     call.set_close_reason("upstream_error");
                     call.unlock();
                     call.invalidate_with("terminal_failure", &err, true);
-                    clear_replay_on_invalid_signature(&self.plan.prepared.replay_scope, err.status, &body);
+                    let err = clear_replay_on_invalid_signature(&self.plan.prepared.replay_scope, err.status, &body)
+                        .err()
+                        .unwrap_or(err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }

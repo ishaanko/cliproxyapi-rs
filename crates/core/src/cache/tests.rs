@@ -748,13 +748,13 @@ fn global_caches_work_through_the_go_named_functions() {
     let sig = "g".repeat(60);
     cache_signature("claude-global-test", "global think", &sig);
     assert_eq!(get_cached_signature("claude-3", "global think"), sig);
-    delete_cached_signature_required("claude-3", "global think");
-    assert_eq!(get_cached_signature_required("claude-3", "global think"), "");
+    delete_cached_signature_required("claude-3", "global think").unwrap();
+    assert_eq!(get_cached_signature_required("claude-3", "global think").unwrap(), "");
 
     let content = br#"[{"type":"thinking","signature":"global"}]"#;
     assert!(cache_kimi_thinking_replay_best_effort("global-model", "global-session", content));
-    assert_eq!(get_kimi_thinking_replay_required("global-model", "global-session").unwrap(), content);
-    delete_kimi_thinking_replay_required("global-model", "global-session");
+    assert_eq!(get_kimi_thinking_replay_required("global-model", "global-session").unwrap().unwrap(), content);
+    delete_kimi_thinking_replay_required("global-model", "global-session").unwrap();
     purge_expired_caches();
 
     let clock = Clock::real();

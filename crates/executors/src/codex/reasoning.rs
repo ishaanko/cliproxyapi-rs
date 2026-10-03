@@ -7,20 +7,21 @@
 use std::collections::{HashMap, HashSet};
 
 use cpa_core::cache::{
-    CODEX_REASONING_REPLAY_TURN_TYPE, append_codex_reasoning_replay_items_best_effort, delete_codex_reasoning_replay_item,
-    get_codex_reasoning_replay_items,
+    CODEX_REASONING_REPLAY_TURN_TYPE, append_codex_reasoning_replay_items_best_effort,
+    delete_codex_reasoning_replay_item_required, get_codex_reasoning_replay_items_required,
 };
 use cpa_core::signature::inspect_gpt_reasoning_signature;
 use cpa_core::thinking::parse_suffix;
 use cpa_core::util::sanitize_claude_tool_id;
 use cpa_json::{J, Value};
-use cpa_runtime::executor::{Metadata, Options, Request, meta};
+use cpa_runtime::executor::{ExecError, Metadata, Options, Request, meta};
 use cpa_translator::Format;
 use http::HeaderMap;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::headers::header_value;
+use crate::helps::home_kv::kv_exec_error;
 use crate::helps::session::claude_code_execution_scope;
 use super::terminal::status_error_classification;
 
@@ -43,18 +44,26 @@ fn is_claude(from: Format) -> bool {
 }
 
 /// Re-inserts cached reasoning and tool-call items into `body.input` for Claude-sourced requests.
-/// Returns the (possibly unchanged) body and the scope used to cache this turn's output.
-pub fn apply_replay_cache(from: Format, req: &Request, opts: &Options, body: Vec<u8>) -> (Vec<u8>, ReplayScope) {
+/// Returns the (possibly unchanged) body and the scope used to cache this turn's output. A Home
+/// KV failure fails the request, as in Go (`applyCodexReasoningReplayCacheRequired`).
+pub fn apply_replay_cache(
+    from: Format,
+    req: &Request,
+    opts: &Options,
+    body: Vec<u8>,
+) -> Result<(Vec<u8>, ReplayScope), ExecError> {
     let scope = scope_from_request(from, req, opts, &body);
     if !scope.valid() {
-        return (body, scope);
+        return Ok((body, scope));
     }
-    let Some(items) = get_codex_reasoning_replay_items(&scope.model_name, &scope.session_key) else {
-        return (body, scope);
+    let items = get_codex_reasoning_replay_items_required(&scope.model_name, &scope.session_key)
+        .map_err(|err| kv_exec_error(&err))?;
+    let Some(items) = items else {
+        return Ok((body, scope));
     };
     match insert_replay_turns(&body, &items) {
-        Some(updated) => (updated, scope),
-        None => (body, scope),
+        Some(updated) => Ok((updated, scope)),
+        None => Ok((body, scope)),
     }
 }
 
@@ -701,14 +710,17 @@ pub fn cache_replay_from_completed(scope: &ReplayScope, completed: &Value) {
     append_codex_reasoning_replay_items_best_effort(&scope.model_name, &scope.session_key, &items);
 }
 
-/// Drops the cached state when upstream rejected it as an invalid thinking signature.
-pub fn clear_replay_on_invalid_signature(scope: &ReplayScope, status: u16, body: &[u8]) {
+/// Drops the cached state when upstream rejected it as an invalid thinking signature. A Home KV
+/// failure is returned and replaces the upstream error at the call sites, as in Go.
+pub fn clear_replay_on_invalid_signature(scope: &ReplayScope, status: u16, body: &[u8]) -> Result<(), ExecError> {
     if !scope.valid() {
-        return;
+        return Ok(());
     }
     if matches!(status_error_classification(status, body), Some((code, _)) if code == "thinking_signature_invalid") {
-        delete_codex_reasoning_replay_item(&scope.model_name, &scope.session_key);
+        delete_codex_reasoning_replay_item_required(&scope.model_name, &scope.session_key)
+            .map_err(|err| kv_exec_error(&err))?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -744,7 +756,7 @@ mod tests {
         clear_codex_reasoning_replay_cache();
         let (req, opts) = claude_request("abc-1");
         let body = br#"{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}"#.to_vec();
-        let (_, scope) = apply_replay_cache(Format::Claude, &req, &opts, body.clone());
+        let (_, scope) = apply_replay_cache(Format::Claude, &req, &opts, body.clone()).expect("replay");
         assert!(scope.valid());
         let completed = cpa_json::parse(
             br#"{"type":"response.completed","response":{"output":[
@@ -758,7 +770,7 @@ mod tests {
             {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
             {"type":"function_call_output","call_id":"call_1","output":"ok"}]}"#
             .to_vec();
-        let (patched, _) = apply_replay_cache(Format::Claude, &req, &opts, next);
+        let (patched, _) = apply_replay_cache(Format::Claude, &req, &opts, next).expect("replay");
         let parsed = cpa_json::parse(&patched);
         let types: Vec<String> = parsed.g("input").array().iter().map(|i| i.g("type").str()).collect();
         assert_eq!(types, ["message", "function_call", "function_call_output"]);
@@ -767,7 +779,7 @@ mod tests {
     #[test]
     fn non_claude_sources_never_replay() {
         let (req, opts) = claude_request("x");
-        let (body, scope) = apply_replay_cache(Format::OpenAI, &req, &opts, b"{}".to_vec());
+        let (body, scope) = apply_replay_cache(Format::OpenAI, &req, &opts, b"{}".to_vec()).expect("replay");
         assert!(!scope.valid());
         assert_eq!(body, b"{}");
     }

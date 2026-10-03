@@ -14,6 +14,7 @@ cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth" }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 async-trait = "0.1"
 serde.workspace = true
 serde_json.workspace = true
