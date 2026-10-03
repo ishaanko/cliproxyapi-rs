@@ -9,6 +9,7 @@
 //! source of tokens, response model and tier, reasoning effort, latency and failure.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -68,7 +69,15 @@ pub trait UsageSink: Send + Sync {
 /// Per-attempt record store: shared between the conductor (which drains it) and every reporter
 /// the executor creates from the attempt's options.
 #[derive(Clone, Default)]
-pub struct UsageCollector(Arc<Mutex<Vec<Record>>>);
+pub struct UsageCollector(Arc<CollectorInner>);
+
+#[derive(Default)]
+struct CollectorInner {
+    records: Mutex<Vec<Record>>,
+    /// Set once an executor created a reporter on this collector: the executor reports its own
+    /// usage, so the conductor need not scan the response for token counts.
+    reporter_attached: AtomicBool,
+}
 
 impl UsageCollector {
     pub fn new() -> Self {
@@ -77,13 +86,23 @@ impl UsageCollector {
 
     /// Removes and returns the records published so far, oldest first.
     pub fn take(&self) -> Vec<Record> {
-        std::mem::take(&mut *self.0.lock())
+        std::mem::take(&mut *self.0.records.lock())
+    }
+
+    /// Marks that an executor reporter publishes into this collector (called by the reporter).
+    pub fn mark_reporter_attached(&self) {
+        self.0.reporter_attached.store(true, Ordering::Release);
+    }
+
+    /// Whether an executor reporter publishes into this collector.
+    pub fn has_reporter(&self) -> bool {
+        self.0.reporter_attached.load(Ordering::Acquire)
     }
 }
 
 impl UsageSink for UsageCollector {
     fn publish(&self, record: Record) {
-        self.0.lock().push(record);
+        self.0.records.lock().push(record);
     }
 }
 
@@ -97,47 +116,58 @@ fn millis(d: Duration) -> i64 {
     i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
 }
 
+/// `s` without surrounding whitespace, reusing the allocation when already trimmed.
+fn trimmed(s: String) -> String {
+    if s.trim().len() == s.len() { s } else { s.trim().to_string() }
+}
+
 impl Record {
     /// The tracker record this report describes, without conductor-only facts (endpoint, client
     /// metadata, response headers); callers add those (see `conductor::usage` for the full
     /// overlay). The usage queue's `execution_id` is the report's request id.
     pub fn to_usage_record(&self) -> UsageRecord {
-        let d = &self.detail;
-        let model = self.model.trim();
-        let alias = self.alias.trim();
-        let non_empty = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
+        self.clone().into_usage_record()
+    }
+
+    /// [`to_usage_record`](Self::to_usage_record) consuming the report, so its strings move
+    /// instead of being cloned.
+    pub fn into_usage_record(self) -> UsageRecord {
+        let tokens = TokenUsage::from_detail(&self.detail);
+        let model = trimmed(self.model);
+        let alias = trimmed(self.alias);
+        let non_empty = |s: String| Some(trimmed(s)).filter(|s| !s.is_empty());
         UsageRecord {
             timestamp: self.requested_at,
             latency_ms: millis(self.latency),
             ttft_ms: millis(self.ttft),
             source: self.source.clone(),
-            auth_index: self.auth_index.clone(),
-            auth_type: self.auth_type.clone(),
-            provider: self.provider.clone(),
-            executor_type: self.executor_type.clone(),
-            model: model.to_string(),
-            alias: if alias != model { alias.to_string() } else { String::new() },
+            auth_index: self.auth_index,
+            auth_type: self.auth_type,
+            provider: self.provider,
+            executor_type: self.executor_type,
+            alias: if alias != model { alias } else { String::new() },
+            model,
             endpoint: String::new(),
-            api_key: self.api_key.clone(),
+            api_key: self.api_key,
             request_id: String::new(),
             failed: self.failed,
             stream: self.stream,
-            fail: UsageFailure { status_code: self.fail.status_code, body: self.fail.body.clone() },
-            tokens: TokenUsage::from_detail(d),
+            fail: UsageFailure { status_code: self.fail.status_code, body: self.fail.body },
+            tokens,
             extra: UsageExtra {
-                session_id: self.session_id.clone(),
-                parent_session_id: self.parent_session_id.clone(),
-                trace_id: self.trace_id.clone(),
-                base_url: self.base_url.clone(),
-                auth_id: self.auth_id.clone(),
-                execution_id: self.request_id.clone(),
-                response_service_tier: self.response_service_tier.trim().to_string(),
-                response_model: self.response_model.trim().to_string(),
-                detail: d.clone(),
-                queue_source: self.source.clone(),
-                access_token_sha256: self.access_token_sha256.clone(),
-                reasoning_effort: non_empty(&self.reasoning_effort),
-                service_tier: non_empty(&self.service_tier),
+                session_id: self.session_id,
+                parent_session_id: self.parent_session_id,
+                trace_id: self.trace_id,
+                base_url: self.base_url,
+                auth_id: self.auth_id,
+                execution_id: self.request_id,
+                response_service_tier: trimmed(self.response_service_tier),
+                response_model: trimmed(self.response_model),
+                detail: self.detail,
+                queue_source: self.source,
+                access_token_sha256: self.access_token_sha256,
+                reasoning_effort: non_empty(self.reasoning_effort),
+                service_tier: non_empty(self.service_tier),
                 generate: Some(self.generate),
                 ..Default::default()
             },

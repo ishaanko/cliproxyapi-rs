@@ -60,7 +60,10 @@ struct State {
     first_packet_set: bool,
     ttft_start: Option<Instant>,
     ttft_set: bool,
+    /// The published record, kept only for reporters without a sink (the sink owns it otherwise).
     record: Option<Record>,
+    /// Usage detail of the published record (what `published_detail` returns).
+    published_detail: Option<Detail>,
 }
 
 struct Inner {
@@ -203,7 +206,12 @@ impl UsageReporter {
             auth_index = if auth.index.trim().is_empty() { auth.clone().ensure_index() } else { auth.index.trim().to_string() };
             token_hash = access_token_sha256(auth);
         }
-        let sink = sink.or_else(|| opts.and_then(|o| o.usage_collector.clone()).map(|c| Arc::new(c) as Arc<dyn UsageSink>));
+        let sink = sink.or_else(|| {
+            opts.and_then(|o| o.usage_collector.clone()).map(|c| {
+                c.mark_reporter_attached();
+                Arc::new(c) as Arc<dyn UsageSink>
+            })
+        });
         let generate = !matches!(opts.and_then(|o| o.metadata.get(meta::GENERATE)), Some(Value::Bool(false)));
         let inner = Inner {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -527,16 +535,29 @@ impl UsageReporter {
             return;
         }
         let record = build();
-        self.inner.state.lock().record = Some(record.clone());
-        if let Some(sink) = &self.inner.sink {
-            sink.publish(record);
+        match &self.inner.sink {
+            Some(sink) => {
+                self.inner.state.lock().published_detail = Some(record.detail.clone());
+                sink.publish(record);
+            }
+            None => {
+                let mut s = self.inner.state.lock();
+                s.published_detail = Some(record.detail.clone());
+                s.record = Some(record);
+            }
         }
         self.warn_model_substitution();
     }
 
-    /// The published record, once published.
+    /// The published record, once published. Only reporters without a sink keep it (with a sink
+    /// the record moves to the sink); use [`published_detail`](Self::published_detail) then.
     pub fn record(&self) -> Option<Record> {
         self.inner.state.lock().record.clone()
+    }
+
+    /// The usage detail of the published record, once published (any reporter).
+    pub fn published_detail(&self) -> Option<Detail> {
+        self.inner.state.lock().published_detail.clone()
     }
 
     fn build_record(&self, detail: Detail, failed: bool, fail: Failure) -> Record {

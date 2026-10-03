@@ -63,7 +63,8 @@ fn plugin_usage_record(r: &UsageRecord) -> PluginUsageRecord {
         base_url: x.base_url.clone(),
         executor_type: r.executor_type.clone(),
         model: r.model.clone(),
-        alias: r.alias.clone(),
+        // Go records always carry an alias (the model when none was requested).
+        alias: if r.alias.trim().is_empty() { r.model.clone() } else { r.alias.clone() },
         api_key: r.api_key.clone(),
         session_id: x.session_id.trim().to_string(),
         parent_session_id: x.parent_session_id.trim().to_string(),
@@ -117,5 +118,19 @@ impl Host {
         for key in stale {
             tracker.unregister_listener(&key);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Go usage records always carry an alias: the model when no other model was requested.
+    #[test]
+    fn plugin_record_alias_falls_back_to_the_model() {
+        let mut r = UsageRecord { model: "gpt-5".into(), ..Default::default() };
+        assert_eq!(plugin_usage_record(&r).alias, "gpt-5");
+        r.alias = "gpt-5(high)".into();
+        assert_eq!(plugin_usage_record(&r).alias, "gpt-5(high)");
     }
 }

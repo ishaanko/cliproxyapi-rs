@@ -412,7 +412,9 @@ impl Manager {
                 match res {
                     Ok(mut resp) => {
                         result.response_headers = resp.headers.clone();
-                        facts.tokens = tokens_from_response(exec_opts.response_format_or_source(), &resp.payload, &resp.metadata);
+                        if facts.reports.is_empty() {
+                            facts.tokens = tokens_from_response(exec_opts.response_format_or_source(), &resp.payload, &resp.metadata);
+                        }
                         self.report_home_result(result, Some(&prepared), (kind == Kind::Execute).then_some(facts));
                         guard.release();
                         let attempt_alias =

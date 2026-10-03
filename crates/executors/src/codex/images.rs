@@ -253,12 +253,12 @@ impl CodexExecutor {
     }
 
     /// Reads a whole response body into the request log (`RecordAPIResponseError` on failure,
-    /// `AppendAPIResponseChunk` on success).
-    async fn read_logged_body(&self, cfg: &cpa_config::Config, opts: &Options, resp: reqwest::Response) -> Result<bytes::Bytes, ExecError> {
-        match resp.bytes().await {
+    /// `AppendAPIResponseChunk` on success), marking TTFT at the first body byte.
+    async fn read_logged_body(&self, cfg: &cpa_config::Config, opts: &Options, resp: reqwest::Response, reporter: &UsageReporter) -> Result<bytes::Bytes, ExecError> {
+        match super::exec_http::read_all_marking(resp, reporter).await {
             Ok(data) => {
                 opts.api_log.append_api_response_chunk(cfg, &data);
-                Ok(data)
+                Ok(bytes::Bytes::from(data))
             }
             Err(e) => {
                 let err = crate::helps::status::transport_error(&e);
@@ -278,8 +278,7 @@ impl CodexExecutor {
             let resp = self.send_http(&cfg, auth, &opts, &url, headers, body, &reporter).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data = self.read_logged_body(&cfg, &opts, resp).await?;
-            reporter.mark_first_response_byte();
+            let data = self.read_logged_body(&cfg, &opts, resp, &reporter).await?;
             if !(200..300).contains(&status) {
                 return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
             }
@@ -310,7 +309,7 @@ impl CodexExecutor {
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let err = match self.read_logged_body(&cfg, &opts, resp).await {
+            let err = match self.read_logged_body(&cfg, &opts, resp, &reporter).await {
                 Ok(data) => new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling),
                 Err(err) => err,
             };
