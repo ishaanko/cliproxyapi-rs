@@ -58,6 +58,8 @@ pub enum Msg {
     },
     LogsTick,
     LogLine(String),
+    /// The terminal input reader failed; the loop ends with this error.
+    InputClosed(String),
 }
 
 /// Everything the API Keys tab shows.

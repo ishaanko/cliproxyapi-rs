@@ -147,6 +147,21 @@ fn standalone_tui_starts_navigates_and_exits_cleanly() {
     app.send("\x03");
     assert!(app.wait_exit(), "TUI exits with status 0");
     assert!(!app.in_alternate_screen(), "alternate screen is released");
+    // The embedded server's startup line goes to /dev/null, never to the terminal.
+    assert!(!app.screen().contains("API server started"), "{}", app.screen());
+}
+
+#[test]
+fn external_sigint_ends_the_tui_and_the_embedded_server_together() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let config = write_config(dir.path(), free_port());
+    let mut app = PtyApp::spawn(&["--config", config.to_str().expect("utf8"), "--tui", "--standalone"], dir.path());
+    app.wait_for("● Connected");
+    let pid = app.child.process_id().expect("pid");
+    let status = std::process::Command::new("kill").args(["-INT", &pid.to_string()]).status().expect("kill");
+    assert!(status.success());
+    assert!(app.wait_exit(), "SIGINT quits the TUI cleanly");
+    assert!(!app.in_alternate_screen());
 }
 
 #[test]

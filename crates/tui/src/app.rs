@@ -32,7 +32,8 @@ pub const TAB_API_KEYS: usize = 3;
 pub const TAB_OAUTH: usize = 4;
 pub const TAB_LOGS: usize = 5;
 
-/// Rows taken by the tab bar and the status bar.
+/// Rows taken by the tab bar and the status bar. Go reserves four rows (`height - 4`), leaving
+/// two blank lines; one row each is enough here and keeps more content on screen.
 const CHROME_ROWS: u16 = 2;
 
 pub struct App {
@@ -251,15 +252,12 @@ impl App {
         false
     }
 
-    /// Password gate keys: `q`/ctrl+c quit, `L` language, Enter connects, the rest edit the input.
+    /// Password gate keys: ctrl+c quits, Enter connects, everything else edits the input. Go also
+    /// binds `q` (quit) and `L` (language) here, which made passwords containing them untypeable;
+    /// printable keys always go to the input instead.
     fn on_gate_key(&mut self, key: Key) -> bool {
         match key.as_str() {
-            "ctrl+c" | "q" => return true,
-            "L" => {
-                toggle_locale();
-                self.refresh_tabs();
-                self.set_auth_input_prompt();
-            }
+            "ctrl+c" => return true,
             "enter" => {
                 if self.auth_connecting {
                     return false;
@@ -304,8 +302,8 @@ impl App {
         }
     }
 
-    /// Data messages go to their owning tab even when another tab is showing, so a fetch that
-    /// finishes after a tab switch is not lost.
+    /// Go routes every non-key message to the active tab only, so a fetch finishing after a tab
+    /// switch is dropped. Data messages go to their owning tab here instead, so it is not lost.
     fn route(&mut self, msg: &Msg) {
         match msg {
             Msg::DashboardData { .. } => self.dashboard.update(msg),
@@ -388,7 +386,9 @@ impl App {
         let status = Rect { y: area.y + area.height - 1, height: 1, ..area };
 
         f.render_widget(Paragraph::new(self.render_tab_bar()), tab_bar);
-        self.logs.flush();
+        if self.active_tab == TAB_LOGS {
+            self.logs.flush();
+        }
         match self.active_tab {
             TAB_DASHBOARD => f.render_widget(&self.dashboard.viewport, content),
             TAB_CONFIG => f.render_widget(&self.config.viewport, content),

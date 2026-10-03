@@ -24,7 +24,7 @@ pub mod styles;
 pub mod text;
 pub mod widgets;
 
-use std::io::{self, Stdout};
+use std::io::{self, IsTerminal, Write as _};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -48,13 +48,28 @@ pub async fn run(port: i64, secret_key: &str, hook: Option<LogHook>) -> io::Resu
     run_with_base_url(&format!("http://127.0.0.1:{port}"), secret_key, hook).await
 }
 
+/// Like [`run`] but draws to `output` instead of stdout (standalone mode points stdout at
+/// /dev/null for the embedded server and hands the TUI the real terminal).
+pub async fn run_with_output<W: io::Write>(
+    port: i64,
+    secret_key: &str,
+    hook: Option<LogHook>,
+    output: W,
+) -> io::Result<()> {
+    run_loop(&format!("http://127.0.0.1:{port}"), secret_key, hook, output).await
+}
+
 /// `RunWithBaseURL`: takes over the terminal (alternate screen) until the user quits. A `hook`
 /// selects standalone mode: no password gate, logs come from the in-process hook.
 pub async fn run_with_base_url(base_url: &str, secret_key: &str, hook: Option<LogHook>) -> io::Result<()> {
+    run_loop(base_url, secret_key, hook, io::stdout()).await
+}
+
+async fn run_loop<W: io::Write>(base_url: &str, secret_key: &str, hook: Option<LogHook>, output: W) -> io::Result<()> {
     let (tx, mut rx) = mpsc::unbounded_channel::<Msg>();
     let mut app = App::new(base_url, secret_key, hook, tx.clone());
 
-    let mut terminal = TerminalGuard::enter()?;
+    let mut terminal = TerminalGuard::enter(output)?;
     let stop = Arc::new(AtomicBool::new(false));
     let reader = spawn_event_reader(tx.clone(), stop.clone());
 
@@ -63,23 +78,26 @@ pub async fn run_with_base_url(base_url: &str, secret_key: &str, hook: Option<Lo
     app.init();
 
     let mut term_signal = termination_signal();
-    let result = loop {
-        terminal.draw(&mut app)?;
+    let result = 'main: loop {
+        // A failed draw still falls through to the cleanup below.
+        if let Err(e) = terminal.draw(&mut app) {
+            break Err(e);
+        }
         let first = tokio::select! {
             msg = rx.recv() => msg,
             _ = &mut term_signal => break Ok(()),
         };
         let Some(first) = first else { break Ok(()) };
         // Apply everything already queued before redrawing.
-        let mut quit = app.update(first);
-        while !quit {
-            match rx.try_recv() {
-                Ok(msg) => quit = app.update(msg),
-                Err(_) => break,
+        let mut next = Some(first);
+        while let Some(msg) = next {
+            if let Msg::InputClosed(e) = msg {
+                break 'main Err(io::Error::other(e));
             }
-        }
-        if quit {
-            break Ok(());
+            if app.update(msg) {
+                break 'main Ok(());
+            }
+            next = rx.try_recv().ok();
         }
     };
 
@@ -89,14 +107,18 @@ pub async fn run_with_base_url(base_url: &str, secret_key: &str, hook: Option<Lo
     result
 }
 
-/// Resolves on SIGTERM (bubbletea quits on it); never resolves elsewhere.
+/// Resolves on SIGTERM or an external SIGINT (bubbletea quits the program on both); never
+/// resolves elsewhere. In raw mode Ctrl+C is a key, not a signal.
 fn termination_signal() -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        if let Ok(mut term) = signal(SignalKind::terminate()) {
+        if let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) {
             return Box::pin(async move {
-                term.recv().await;
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = int.recv() => {}
+                }
             });
         }
     }
@@ -110,14 +132,20 @@ fn spawn_event_reader(tx: mpsc::UnboundedSender<Msg>, stop: Arc<AtomicBool>) -> 
             match event::poll(Duration::from_millis(100)) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                Err(_) => break,
+                Err(e) => {
+                    let _ = tx.send(Msg::InputClosed(e.to_string()));
+                    break;
+                }
             }
             let msg = match event::read() {
                 Ok(Event::Key(k)) => keys::Key::from_event(&k).map(Msg::Key),
                 Ok(Event::Paste(text)) => Some(Msg::Paste(text)),
                 Ok(Event::Resize(w, h)) => Some(Msg::Resize(w, h)),
                 Ok(_) => None,
-                Err(_) => break,
+                Err(e) => {
+                    let _ = tx.send(Msg::InputClosed(e.to_string()));
+                    break;
+                }
             };
             if let Some(msg) = msg
                 && tx.send(msg).is_err()
@@ -128,20 +156,21 @@ fn spawn_event_reader(tx: mpsc::UnboundedSender<Msg>, stop: Arc<AtomicBool>) -> 
     })
 }
 
-/// Raw mode + alternate screen + bracketed paste, restored on drop (also on panic unwinding).
-struct TerminalGuard {
-    terminal: Terminal<CrosstermBackend<Stdout>>,
+/// Raw mode + alternate screen + bracketed paste, restored on drop and by a panic hook (so a
+/// panic message lands on the normal screen instead of being swallowed).
+struct TerminalGuard<W: io::Write> {
+    terminal: Terminal<CrosstermBackend<W>>,
 }
 
-impl TerminalGuard {
-    fn enter() -> io::Result<Self> {
+impl<W: io::Write> TerminalGuard<W> {
+    fn enter(mut output: W) -> io::Result<Self> {
         enable_raw_mode()?;
-        let mut stdout = io::stdout();
-        if let Err(e) = execute!(stdout, EnterAlternateScreen, EnableBracketedPaste) {
+        if let Err(e) = execute!(output, EnterAlternateScreen, EnableBracketedPaste) {
             let _ = disable_raw_mode();
             return Err(e);
         }
-        let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
+        install_panic_hook();
+        let terminal = Terminal::new(CrosstermBackend::new(output))?;
         Ok(TerminalGuard { terminal })
     }
 
@@ -150,7 +179,28 @@ impl TerminalGuard {
     }
 }
 
-impl Drop for TerminalGuard {
+/// Chains a panic hook that leaves raw mode and the alternate screen before the previous hook
+/// prints. Writes to stderr, which in standalone mode is the redirected stream, so it also tries
+/// the controlling terminal.
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        // Prefer the controlling terminal: stdout/stderr may point at /dev/null (standalone).
+        let tty = std::fs::OpenOptions::new().write(true).open("/dev/tty").ok();
+        let mut out: Box<dyn io::Write> = match tty {
+            Some(f) => Box::new(f),
+            None => Box::new(io::stdout()),
+        };
+        let _ = execute!(out, DisableBracketedPaste, LeaveAlternateScreen);
+        if !io::stderr().is_terminal() {
+            let _ = writeln!(out, "{info}");
+        }
+        previous(info);
+    }));
+}
+
+impl<W: io::Write> Drop for TerminalGuard<W> {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = execute!(self.terminal.backend_mut(), DisableBracketedPaste, LeaveAlternateScreen);

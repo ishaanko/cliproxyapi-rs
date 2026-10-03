@@ -362,7 +362,9 @@ impl OAuthTab {
             } else {
                 DEFAULT_POLL_TIMEOUT
             };
-            let deadline = tokio::time::Instant::now() + timeout;
+            let now = tokio::time::Instant::now();
+            // A huge server-provided expires_in must not overflow the clock.
+            let deadline = now.checked_add(timeout).unwrap_or(now + DEFAULT_POLL_TIMEOUT);
             let mut consecutive_errors = 0;
             let result = |done: bool, message: String, err: Option<String>| {
                 Some(Msg::OAuthPoll(OAuthPoll { state: state.clone(), generation, done, message, err }))
@@ -395,10 +397,10 @@ impl OAuthTab {
         });
     }
 
-    pub fn set_size(&mut self, w: usize, _h: usize) {
+    pub fn set_size(&mut self, w: usize, h: usize) {
         self.width = w;
         self.viewport.width = w;
-        self.viewport.height = _h;
+        self.viewport.height = h;
         self.callback_input.width = w.saturating_sub(16);
         self.refresh_view();
     }
