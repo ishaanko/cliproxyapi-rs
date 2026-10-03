@@ -440,7 +440,8 @@ impl Host {
                 let outcome = self.load_plugin(ctx, &file, &item, &request).await;
                 let LoadOutcome { loaded, info: load_info, err, completed } = outcome;
                 if !completed {
-                    // Canceled mid-load: the library is discarded once the load finishes.
+                    // Canceled mid-load: nothing was handed back (a late open is closed by `load_plugin`)
+                    // unless registration was interrupted, in which case `loaded` is discarded here.
                     if let Some(old) = &replaced {
                         self.cleanup_load(&file.id, &request, loaded).await;
                         self.rollback_replacement(old, &item).await;
@@ -485,7 +486,7 @@ impl Host {
                 };
                 match verdict {
                     1 => {
-                        self.discard_loaded(&new_lp);
+                        self.discard_loaded(&new_lp).await;
                         if let Some(old) = &replaced {
                             self.rollback_replacement(old, &item).await;
                         }
@@ -605,10 +606,18 @@ impl Host {
         }
         let f = file.clone();
         let inst = instance.clone();
-        let open = tokio::task::spawn_blocking(move || loader.open(&f, host_cb, inst));
+        let mut open = tokio::task::spawn_blocking(move || loader.open(&f, host_cb, inst));
         let raw = tokio::select! {
-            r = open => r,
+            r = &mut open => r,
             () = ctx.cancelled() => {
+                // The blocking open cannot be interrupted: close whatever it returns once it
+                // finishes (Go: `finishPluginLoadCleanup`). Unlike Go the loading token is
+                // cleared right away instead of being held until then.
+                tokio::spawn(async move {
+                    if let Ok(Ok(raw)) = open.await {
+                        GuardedClient::new(raw).shutdown_async(Some(Duration::from_secs(5))).await;
+                    }
+                });
                 return LoadOutcome { completed: false, ..Default::default() };
             }
         };
@@ -647,14 +656,14 @@ impl Host {
             self.bridges.close_http_callback_instance(id, Some(i));
         }
         if let Some(lp) = loaded {
-            self.discard_loaded(&lp);
+            self.discard_loaded(&lp).await;
         }
         self.clear_loading(id, request);
     }
 
-    fn discard_loaded(&self, lp: &Arc<LoadedPlugin>) {
+    async fn discard_loaded(&self, lp: &Arc<LoadedPlugin>) {
         self.bridges.close_http_callback_instance(&lp.id, Some(&lp.client.instance()));
-        lp.client.shutdown(Some(Duration::from_secs(5)));
+        lp.client.shutdown_async(Some(Duration::from_secs(5))).await;
     }
 
     // ---- registration ----
@@ -800,7 +809,7 @@ impl Host {
         self.arc().refresh_thinking_providers(&records);
         self.arc().register_frontend_auth_providers();
         for t in &targets {
-            t.client.shutdown(Some(Duration::from_secs(5)));
+            t.client.shutdown_async(Some(Duration::from_secs(5))).await;
             tracing::info!(plugin_id = %t.id, plugin_name = %t.name(), version = %t.version(), path = %t.path.display(), "pluginhost: plugin unloaded");
         }
         for t in &targets {
@@ -857,7 +866,7 @@ impl Host {
         self.arc().refresh_thinking_providers(&[]);
         self.arc().register_frontend_auth_providers();
         for t in &targets {
-            t.client.shutdown(Some(Duration::from_secs(5)));
+            t.client.shutdown_async(Some(Duration::from_secs(5))).await;
             tracing::info!(plugin_id = %t.id, plugin_name = %t.name(), version = %t.version(), path = %t.path.display(), "pluginhost: plugin unloaded");
         }
         self.bridges.cancel_all_http();

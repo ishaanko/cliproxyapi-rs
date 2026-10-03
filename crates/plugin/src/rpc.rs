@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use cpa_pluginapi::abi;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -111,6 +110,3 @@ impl Host {
         (!id.is_empty()).then_some(id)
     }
 }
-
-#[allow(dead_code)]
-const _: &str = abi::METHOD_PLUGIN_REGISTER;

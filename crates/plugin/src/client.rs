@@ -9,7 +9,7 @@ use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use cpa_pluginapi::abi::{self, RpcErrorBody};
+use cpa_pluginapi::abi::RpcErrorBody;
 use crate::ctx::CallCtx;
 
 /// Failure of a plugin call. `code` is set for errors the plugin reported itself; `status` is the
@@ -169,6 +169,12 @@ impl GuardedClient {
         self.wait_done(wait);
     }
 
+    /// [`Self::shutdown`] off the async worker: the wait blocks the calling thread.
+    pub async fn shutdown_async(self: &Arc<Self>, wait: Option<std::time::Duration>) {
+        let me = self.clone();
+        let _ = tokio::task::spawn_blocking(move || me.shutdown(wait)).await;
+    }
+
     fn wait_done(&self, wait: Option<std::time::Duration>) {
         let mut done = self.shutdown_done.lock();
         match wait {
@@ -277,7 +283,3 @@ pub fn empty_request() -> serde_json::Value {
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct Empty {}
 
-#[allow(dead_code)]
-fn _assert_abi_used() -> u32 {
-    abi::ABI_VERSION
-}

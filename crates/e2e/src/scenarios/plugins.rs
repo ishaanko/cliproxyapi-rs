@@ -349,6 +349,23 @@ fn access(out: &mut Vec<Scenario>) {
         )
         .profile(exclusive_ready),
     );
+    // The realtime middlewares run the same access chain, so an exclusive provider also replaces
+    // the configured keys there and its credential is accepted.
+    let rt = |path: &str| HttpReq::post(path, json!({}));
+    let plugin_cred = |req: HttpReq| Req::Http(req.auth(Auth::None).header("X-Example-Frontend-Auth", "exclusive"));
+    out.push(
+        s(
+            "frontend_auth_exclusive_realtime",
+            "an exclusive frontend auth provider guards the realtime routes",
+            vec![
+                Req::Http(rt("/v1/realtime/transcription_sessions")),
+                plugin_cred(rt("/v1/realtime/transcription_sessions")),
+                Req::Http(rt("/v1/realtime/translations")),
+                plugin_cred(rt("/v1/realtime/translations")),
+            ],
+        )
+        .profile(exclusive_ready),
+    );
 }
 
 fn translation(out: &mut Vec<Scenario>) {

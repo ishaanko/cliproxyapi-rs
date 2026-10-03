@@ -511,15 +511,22 @@ impl StreamBridge {
         self.map.lock().insert(id.clone(), tx);
         let me = self.clone();
         let cid = id.clone();
+        // Cancelled by `cleanup` so the ctx watcher below ends with the stream instead of living
+        // as long as a ctx that may never be cancelled.
+        let done = tokio_util::sync::CancellationToken::new();
+        let done_flag = done.clone();
         let cleanup: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
             me.map.lock().remove(&cid);
+            done_flag.cancel();
         });
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let c = cleanup.clone();
             let ctx = ctx.clone();
             handle.spawn(async move {
-                ctx.cancelled().await;
-                c();
+                tokio::select! {
+                    () = ctx.cancelled() => c(),
+                    () = done.cancelled() => {}
+                }
             });
         }
         (id, rx, cleanup)

@@ -9,7 +9,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use cpa_core::util::mask_sensitive_query;
 
-use crate::access::{self, AuthFailure};
+use crate::access::{self, AuthFailure, Principal};
 use crate::bodytee::TeeBody;
 use crate::clientip;
 use crate::logging::{self, REQUEST_ID, go_duration_string};
@@ -109,9 +109,14 @@ pub async fn safe_mode(State(st): State<AppState>, req: Request, next: Next) -> 
     .into_response()
 }
 
-/// `AuthMiddleware` for the proxy route groups: API-key check, open when no provider is
-/// registered; plugin frontend auth providers extend (or, when exclusive, replace) the chain.
-pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
+/// Largest request body buffered for plugin frontend auth. Go reads without a limit; this only
+/// bounds unauthenticated memory use at a size no real request approaches.
+const PLUGIN_AUTH_BODY_LIMIT: usize = 256 * 1024 * 1024;
+
+/// `Manager.Authenticate` over the config api-keys and plugin frontend auth providers (shared by
+/// the proxy and realtime middlewares). The body is buffered and restored when a plugin provider
+/// needs it (Go: `readAndRestoreRequestBody`). `Ok(None)` means no provider is registered.
+pub async fn authenticate_request(st: &AppState, req: &mut Request) -> Result<Option<Principal>, AuthFailure> {
     let cfg = st.cfg();
     let query = parse_query(req.uri().query().unwrap_or(""));
     let (plugins, exclusive) = match &st.plugins {
@@ -119,19 +124,11 @@ pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Ne
         None => (Vec::new(), false),
     };
     if plugins.is_empty() {
-        return match access::authenticate(req.headers(), &query, &cfg.api_keys) {
-            Ok(Some(principal)) => {
-                req.extensions_mut().insert(AuthenticatedKey(principal));
-                next.run(req).await
-            }
-            Ok(None) => next.run(req).await,
-            Err(failure) => auth_failure_reply(failure).into_response(),
-        };
+        return access::authenticate(req.headers(), &query, &cfg.api_keys);
     }
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
     let headers = req.headers().clone();
-    // The body is buffered and restored when a plugin provider needs it (Go: `readAndRestoreRequestBody`).
     let mut buffered: Option<bytes::Bytes> = None;
     let outcome = {
         let body_slot = &mut buffered;
@@ -139,7 +136,7 @@ pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Ne
         let access_req = access::AccessRequest { method: &method, path: &path, headers: &headers, query: &query };
         access::authenticate_chain(&access_req, &cfg.api_keys, &plugins, exclusive, || async move {
             let taken = std::mem::take(req_body);
-            let bytes = axum::body::to_bytes(taken, usize::MAX).await.map_err(|e| e.to_string())?;
+            let bytes = axum::body::to_bytes(taken, PLUGIN_AUTH_BODY_LIMIT).await.map_err(|e| e.to_string())?;
             *body_slot = Some(bytes.clone());
             Ok(bytes)
         })
@@ -148,7 +145,13 @@ pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Ne
     if let Some(bytes) = buffered {
         *req.body_mut() = axum::body::Body::from(bytes);
     }
-    match outcome {
+    outcome
+}
+
+/// `AuthMiddleware` for the proxy route groups: API-key check, open when no provider is
+/// registered; plugin frontend auth providers extend (or, when exclusive, replace) the chain.
+pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
+    match authenticate_request(&st, &mut req).await {
         Ok(Some(principal)) => {
             req.extensions_mut().insert(AuthenticatedKey(principal));
             next.run(req).await

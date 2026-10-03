@@ -14,18 +14,19 @@ use cpa_live::endpoints;
 use cpa_live::{Caller, ClientSecretCaller, Handler, RequestParts, UpstreamLog};
 use serde_json::json;
 
-use crate::access::{self, DEFAULT_ACCESS_PROVIDER_NAME};
 use crate::reply::Reply;
-use crate::req::{AuthenticatedKey, ReqInfo, parse_query};
+use crate::middleware;
+use crate::req::{AuthenticatedKey, ReqInfo};
 use crate::reqlog::ApiLog;
 use crate::state::AppState;
 
-/// Identity established by the realtime auth middleware when a local client secret was used.
+/// Identity established by the realtime auth middlewares (`userApiKey` / `accessProvider`),
+/// with the client-secret session when a local `ek_` secret was used.
 #[derive(Clone)]
 pub struct SecretIdentity {
     principal: String,
     provider: String,
-    secret: ClientSecretCaller,
+    secret: Option<ClientSecretCaller>,
 }
 
 /// Request log capture for upstream calls made on behalf of one inbound request.
@@ -53,18 +54,10 @@ fn caller(info: &ReqInfo, identity: Option<SecretIdentity>) -> Caller {
         log: Some(Arc::new(ReqLog(info.api_log.clone()))),
         ..Caller::default()
     };
-    match identity {
-        Some(id) => {
-            caller.principal = id.principal;
-            caller.provider = id.provider;
-            caller.client_secret = Some(id.secret);
-        }
-        None => {
-            if let Some(key) = &info.api_key {
-                caller.principal = key.clone();
-                caller.provider = DEFAULT_ACCESS_PROVIDER_NAME.to_string();
-            }
-        }
+    if let Some(id) = identity {
+        caller.principal = id.principal;
+        caller.provider = id.provider;
+        caller.client_secret = id.secret;
     }
     caller
 }
@@ -77,17 +70,28 @@ fn realtime_auth_error(status: u16, message: &str, kind: &str, code: &str) -> Re
     Reply::json_value(status, &json!({"error": {"message": message, "type": kind, "param": null, "code": code}})).into_response()
 }
 
-/// `realtimeStandardAuthMiddleware`: API-key auth with realtime-shaped errors.
+/// `realtimeStandardAuthMiddleware`: the shared access chain (config keys and plugin frontend
+/// auth providers) with realtime-shaped errors.
 async fn standard_auth(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
-    let cfg = st.cfg();
-    let query = parse_query(req.uri().query().unwrap_or(""));
-    match access::authenticate(req.headers(), &query, &cfg.api_keys) {
+    match middleware::authenticate_request(&st, &mut req).await {
         Ok(Some(principal)) => {
+            req.extensions_mut().insert(SecretIdentity {
+                principal: principal.principal.clone(),
+                provider: principal.provider.clone(),
+                secret: None,
+            });
             req.extensions_mut().insert(AuthenticatedKey(principal));
             next.run(req).await
         }
         Ok(None) => next.run(req).await,
-        Err(failure) => realtime_auth_error(failure.status(), failure.message(), "authentication_error", "invalid_api_key"),
+        Err(failure) => {
+            let status = failure.status();
+            if status >= 500 {
+                realtime_auth_error(status, failure.message(), "server_error", "authentication_service_error")
+            } else {
+                realtime_auth_error(status, failure.message(), "authentication_error", "invalid_api_key")
+            }
+        }
     }
 }
 
@@ -108,7 +112,7 @@ async fn secret_or_standard_auth(State((st, live)): State<(AppState, Handler)>, 
     req.extensions_mut().insert(SecretIdentity {
         principal,
         provider,
-        secret: ClientSecretCaller { principal: authorization.principal, session: authorization.session },
+        secret: Some(ClientSecretCaller { principal: authorization.principal, session: authorization.session }),
     });
     next.run(req).await
 }
