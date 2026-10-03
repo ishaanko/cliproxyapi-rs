@@ -92,6 +92,10 @@ fn scheduler_pick(s: &mut ConfigSpec) {
     s.plugins.push(PluginSpec::new("scheduler").priority(1).setting("auth_id", json!("")).setting("delegate", json!("fill-first")));
 }
 
+fn scheduler_round_robin(s: &mut ConfigSpec) {
+    s.plugins.push(PluginSpec::new("scheduler").priority(1).setting("delegate", json!("round-robin")));
+}
+
 fn scheduler_deny(s: &mut ConfigSpec) {
     s.plugins.push(PluginSpec::new("scheduler").priority(1).setting("deny", json!(true)));
 }
@@ -416,6 +420,14 @@ fn execution(out: &mut Vec<Scenario>) {
         )
         .profile(scheduler_pick),
     );
+    out.push(
+        s(
+            "scheduler_round_robin",
+            "a scheduler plugin delegating to the round-robin selector",
+            vec![Req::Http(chat(Family::Claude)), Req::Http(chat(Family::Claude)), Req::Http(chat(Family::Claude)), Req::Http(chat(Family::Claude))],
+        )
+        .profile(scheduler_round_robin),
+    );
     out.push(s("scheduler_deny", "a scheduler plugin that rejects every pick", vec![Req::Http(chat(Family::Claude))]).profile(scheduler_deny));
     out.push(s("usage_plugin", "a usage plugin observing a request", vec![Req::Http(chat(Family::Compat)), get(&format!("{V0}/usage-queue"))]).profile(usage_with_statistics));
 }
@@ -435,6 +447,14 @@ fn lifecycle(out: &mut Vec<Scenario>) {
         )
         .profile(request_lifecycle),
     );
+    // The plugin admits two requests at a time: only the terminal `request.complete` events
+    // keep a sequence of requests flowing.
+    let mut sequence = vec![];
+    for i in 0..5 {
+        sequence.push(Req::Http(if i % 2 == 0 { chat(Family::Compat) } else { chat_stream(Family::Compat) }));
+        sequence.push(Req::Pause(150));
+    }
+    out.push(s("slot_release", "completion events release the interceptor's concurrency slots", sequence).profile(request_lifecycle));
     out.push(
         s(
             "reject_keyword_stream",
