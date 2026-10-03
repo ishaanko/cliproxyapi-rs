@@ -15,7 +15,7 @@ use tokio::task::JoinHandle;
 const INPUT_QUEUE: usize = 16;
 
 enum Kind {
-    Direct(WebSocket),
+    Direct(Box<WebSocket>),
     Duplex { sink: SplitSink<WebSocket, Message>, input: WebsocketInput, reader: JoinHandle<()> },
     /// Torn down by [`Conn::close`]: writes fail, reads see the end of the stream.
     Closed,
@@ -25,7 +25,7 @@ pub struct Conn(Kind);
 
 impl Conn {
     pub fn direct(socket: WebSocket) -> Self {
-        Conn(Kind::Direct(socket))
+        Conn(Kind::Direct(Box::new(socket)))
     }
 
     /// Splits the socket and starts the single reader; the returned input is also handed to

@@ -15,8 +15,10 @@ use futures_util::Stream;
 use tokio::sync::oneshot;
 
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
+use crate::helps::gemini_log::UpstreamLog;
+use super::log::{ResponseLog, stream_summary};
 use super::wire::{
-    CONNECT_FLAG_END_STREAM, ConnectFrameReader, FrameError, FrameResult, ToolCallDelta, Usage,
+    CONNECT_FLAG_END_STREAM, ConnectFrameReader, FrameError, FrameResult, ToolCall, ToolCallDelta, Usage,
     Utf8SplitBuffer, go_lossy, parse_frame, parse_response_dimension_groups, parse_trailer_error,
 };
 use crate::helps::apply_patch::{
@@ -160,6 +162,8 @@ pub struct StreamParams {
     pub response_format: Format,
     pub chat_model_uid: String,
     pub reporter: UsageReporter,
+    /// Recorder of the inbound request's upstream log.
+    pub log: UpstreamLog,
 }
 
 /// A tool call being streamed: its step index and the identity seen so far.
@@ -196,6 +200,8 @@ struct StreamState {
     /// Text after tool calls, flushed once the tools are closed so tool items precede the
     /// assistant message in Responses clients.
     post_tool_buffered_content: Vec<String>,
+    /// The next logged event opens the `INTERMEDIATE INTERACTIONS STREAM` block.
+    first_stream_event: bool,
 }
 
 impl StreamState {
@@ -222,6 +228,7 @@ impl StreamState {
                 "event_type": "interaction.created",
                 "interaction": {"id": self.interaction_id, "model": self.p.model},
             });
+            self.log_event(&created);
             if !self.deliver(&created).await {
                 return false;
             }
@@ -229,7 +236,18 @@ impl StreamState {
         if event_type == "interaction.created" {
             self.created_sent = true;
         }
+        self.log_event(&event);
         self.deliver(&event).await
+    }
+
+    /// Records one interactions event in the request log (the first one under a header).
+    fn log_event(&mut self, event: &Value) {
+        if std::mem::take(&mut self.first_stream_event) {
+            self.p.log.chunk(b"=== INTERMEDIATE INTERACTIONS STREAM ===\n");
+        }
+        let mut line = cpa_json::to_vec(event);
+        line.push(b'\n');
+        self.p.log.chunk(&line);
     }
 
     async fn deliver(&mut self, event: &Value) -> bool {
@@ -552,6 +570,7 @@ pub async fn stream_frames<S, E>(
         tool_call_count: 0,
         pending_actions: Vec::new(),
         post_tool_buffered_content: Vec::new(),
+        first_stream_event: true,
         p,
     };
 
@@ -561,6 +580,9 @@ pub async fn stream_frames<S, E>(
     let mut stream_err: Option<FrameError> = None;
     let mut last_stop_reason = 0u64;
     let mut saw_eos = false;
+    // What the summary block reports (Go: accumulatedThinking, accumulatedContent, ...).
+    let mut summary = ResponseLog { status: "completed".into(), ..Default::default() };
+    let (mut acc_thinking, mut acc_content): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
 
     // 1. Consume frames.
     loop {
@@ -574,6 +596,7 @@ pub async fn stream_frames<S, E>(
             }
         };
 
+        summary.frames_count += 1;
         if frame.flag & CONNECT_FLAG_END_STREAM != 0 {
             if let Some(trailer) = parse_trailer_error(&frame.payload) {
                 if st.end_apply_patch().await {
@@ -590,6 +613,7 @@ pub async fn stream_frames<S, E>(
                     trailer.status,
                     trailer.message
                 );
+                st.p.log.error(&trailer.message);
                 st.send_failed_event(&trailer.message, &trailer.status.to_string())
                     .await;
                 st.emit_stream_error(err).await;
@@ -612,6 +636,12 @@ pub async fn stream_frames<S, E>(
             st.p.reporter.set_response_model(&name);
         }
         merge_dimension_groups(&mut final_usage, &res.response_dimension_groups);
+        summary.signature.extend_from_slice(&res.delta_signature);
+        if !res.delta_signature_type.is_empty() {
+            summary.signature_type = res.delta_signature_type.clone();
+        }
+        acc_thinking.extend_from_slice(&res.thinking_text);
+        acc_content.extend_from_slice(&res.content_text);
 
         if !handle_frame(&mut st, &res, &mut thinking_buf, &mut content_buf).await {
             return;
@@ -630,6 +660,7 @@ pub async fn stream_frames<S, E>(
     // Abnormal read failure mid-flight.
     if let Some(err) = stream_err {
         let msg = err.to_string();
+        st.p.log.error(&msg);
         st.send_failed_event(&msg, "stream_read_error").await;
         st.emit_stream_error(plain_error(msg)).await;
         return;
@@ -637,6 +668,7 @@ pub async fn stream_frames<S, E>(
     // A Connect stream must end with an EOS trailer; a bare close is a truncated response.
     if !saw_eos {
         let msg = "devin stream terminated prematurely before EOS trailer";
+        st.p.log.error(msg);
         st.send_failed_event(msg, "stream_truncated").await;
         st.emit_stream_error(plain_error(msg)).await;
         return;
@@ -668,6 +700,12 @@ pub async fn stream_frames<S, E>(
     if let Some(detail) = parse_interactions_stream_usage(&cpa_json::to_vec(&completed)) {
         let _ = usage_tx.send(UsageReporter::usage_metadata(&detail));
         st.p.reporter.publish(detail);
+    }
+    if final_usage.is_some() || !summary.signature.is_empty() {
+        summary.thinking = go_lossy(&acc_thinking);
+        summary.content = go_lossy(&acc_content);
+        summary.usage = final_usage.clone();
+        st.p.log.chunk(&stream_summary(&summary));
     }
 
     // 4. Terminate the stream with [DONE].
@@ -786,12 +824,13 @@ struct ToolBuilder {
 }
 
 /// Reads every frame of the response into one interactions response. `original` is the request
-/// whose declarations identify apply_patch tools.
+/// whose declarations identify apply_patch tools. The log describes what was decoded, also when
+/// the read failed (Go: the `DevinUpstreamResponseLog` returned beside the error).
 pub async fn consume_frames_to_interactions<S, E>(
     mut reader: ConnectFrameReader<S>,
     model: &str,
     original: &[u8],
-) -> Result<Consumed, ExecError>
+) -> (Result<Consumed, ExecError>, Option<ResponseLog>)
 where
     S: Stream<Item = Result<Bytes, E>> + Unpin,
     E: std::fmt::Display,
@@ -811,16 +850,47 @@ where
     let mut signature: Vec<u8> = Vec::new();
     let mut last_stop_reason = 0u64;
     let mut saw_eos = false;
+    let mut frames_count = 0i64;
+    let mut unknown_fields: Vec<i32> = Vec::new();
+    let mut signature_type = String::new();
+
+    // The log of the state so far, tagged with how the read ended.
+    macro_rules! response_log {
+        ($status:expr) => {{
+            let mut content = pre_tool_text.clone();
+            content.extend_from_slice(&post_tool_text);
+            Some(ResponseLog {
+                status: $status,
+                frames_count,
+                content: go_lossy(&content),
+                thinking: go_lossy(&thinking),
+                signature: signature.clone(),
+                signature_type: signature_type.clone(),
+                tool_calls: builders
+                    .iter()
+                    .filter(|b| !(b.id.is_empty() && b.name.is_empty() && b.args.is_empty()))
+                    .map(|b| ToolCall { id: b.id.clone(), name: b.name.clone(), arguments: b.args.clone() })
+                    .collect(),
+                usage: final_usage.clone(),
+                unknown_fields: unknown_fields.clone(),
+            })
+        }};
+    }
 
     loop {
         let frame = match reader.read_frame().await {
             Ok(f) => f,
             Err(FrameError::Eof) => break,
-            Err(e) => return Err(plain_error(e.to_string())),
+            Err(e) => {
+                let message = e.to_string();
+                return (Err(plain_error(message.clone())), response_log!(format!("read_error: {message}")));
+            }
         };
+        frames_count += 1;
         if frame.flag & CONNECT_FLAG_END_STREAM != 0 {
             if let Some(trailer) = parse_trailer_error(&frame.payload) {
-                return Err(status_err(trailer.status, trailer.message));
+                let log = response_log!(format!("trailer_error({}): {}", trailer.status, trailer.message));
+                return (Err(status_err(trailer.status, trailer.message)), log);
             }
             saw_eos = true;
             break;
@@ -831,11 +901,19 @@ where
         if res.stop_reason != 0 {
             last_stop_reason = res.stop_reason;
         }
+        for field in &res.unknown_field_numbers {
+            if !unknown_fields.contains(field) {
+                unknown_fields.push(*field);
+            }
+        }
         if let Some(u) = res.usage.clone() {
             merge_usage(&mut final_usage, u);
         }
         merge_dimension_groups(&mut final_usage, &res.response_dimension_groups);
         signature.extend_from_slice(&res.delta_signature);
+        if !res.delta_signature_type.is_empty() {
+            signature_type = res.delta_signature_type.clone();
+        }
         if !res.thinking_text.is_empty() {
             have_thinking = true;
             thinking.extend_from_slice(&res.thinking_text);
@@ -899,14 +977,13 @@ where
     if !original.is_empty() {
         for b in &builders {
             if b.legacy && is_apply_patch_upstream_tool(original, &b.name) {
-                return Err(gateway_error());
+                return (Err(gateway_error()), None);
             }
         }
     }
     if !saw_eos {
-        return Err(plain_error(
-            "devin upstream stream terminated prematurely before EOS trailer",
-        ));
+        let err = plain_error("devin upstream stream terminated prematurely before EOS trailer");
+        return (Err(err), response_log!("premature_eof_before_eos".to_string()));
     }
 
     let (status, finish_reason) = completion_status(last_stop_reason);
@@ -965,10 +1042,8 @@ where
     if let Some(u) = &final_usage {
         set_usage(&mut out, "", u);
     }
-    Ok(Consumed {
-        interactions: out,
-        usage: final_usage,
-    })
+    let log = response_log!("completed".to_string());
+    (Ok(Consumed { interactions: out, usage: final_usage }), log)
 }
 
 /// Collects a whole byte slice as a single-chunk body (tests and small mock bodies).

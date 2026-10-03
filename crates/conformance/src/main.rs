@@ -200,17 +200,16 @@ fn mask(v: &mut Value, ids: &mut Vec<String>) {
                     *val = Value::String("<ts>".into());
                     continue;
                 }
-                if is_id_key(k) {
-                    if let Value::String(s) = val {
-                        if looks_generated(s) {
-                            let n = ids.iter().position(|x| x == s).unwrap_or_else(|| {
-                                ids.push(s.clone());
-                                ids.len() - 1
-                            });
-                            *val = Value::String(format!("<id#{n}>"));
-                            continue;
-                        }
-                    }
+                if is_id_key(k)
+                    && let Value::String(s) = val
+                    && looks_generated(s)
+                {
+                    let n = ids.iter().position(|x| x == s).unwrap_or_else(|| {
+                        ids.push(s.clone());
+                        ids.len() - 1
+                    });
+                    *val = Value::String(format!("<id#{n}>"));
+                    continue;
                 }
                 mask(val, ids);
             }

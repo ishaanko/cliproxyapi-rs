@@ -55,6 +55,7 @@ impl XaiExecutor {
     }
 
     /// POST of `body` with TTFT tracking; transport failures become status-less errors.
+    #[allow(clippy::too_many_arguments)]
     async fn send(
         &self,
         cfg: &Config,

@@ -449,6 +449,7 @@ impl Writer {
 impl CodexExecutor {
     /// Hands the socket with its first `response.create` already written over to the duplex
     /// streams. `call` keeps the session locked and routed until both tasks are done.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn stream_duplex(
         &self,
         cfg: Arc<Config>,

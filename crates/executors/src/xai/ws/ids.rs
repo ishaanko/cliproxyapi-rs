@@ -331,13 +331,12 @@ fn rewrite_string(value: &str, key: &str, ids: &Ids<'_>) -> String {
                 return value.replace(ids.upstream_response_id, ids.downstream_response_id);
             }
         }
-        "previous_response_id" => {
+        "previous_response_id"
             if !ids.upstream_previous_id.is_empty()
                 && !ids.downstream_previous_id.is_empty()
-                && value == ids.upstream_previous_id
-            {
-                return ids.downstream_previous_id.to_string();
-            }
+                && value == ids.upstream_previous_id =>
+        {
+            return ids.downstream_previous_id.to_string();
         }
         _ => {}
     }

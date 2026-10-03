@@ -5,7 +5,8 @@
 //! websocket (Codex / xAI with `websockets: true`) frames pass through unchanged and continuations
 //! must reuse that credential's live socket ([`upstream`]); otherwise frames are normalized into
 //! full Responses requests ([`requests`]) and each upstream SSE event is written back as one JSON
-//! text frame. Duplex steering (`codex-response-steering`) is not implemented.
+//! text frame. With `codex.response-steering` a dedicated reader ([`conn`]) feeds client frames to
+//! the Codex duplex stream, which keeps the upstream socket across responses.
 
 mod conn;
 pub mod requests;

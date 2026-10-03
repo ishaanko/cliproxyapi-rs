@@ -35,14 +35,14 @@ fn kind_label(kind: &Kind) -> &'static str {
 
 /// Incremental decoder fed with compressed chunks.
 enum Push {
-    Gzip(flate2::write::GzDecoder<Vec<u8>>),
+    Gzip(Box<flate2::write::GzDecoder<Vec<u8>>>),
     Zstd(Box<zstd::stream::write::Decoder<'static, Vec<u8>>>),
 }
 
 impl Push {
     fn new(kind: &Kind) -> Result<Self, String> {
         match kind {
-            Kind::Gzip => Ok(Push::Gzip(flate2::write::GzDecoder::new(Vec::new()))),
+            Kind::Gzip => Ok(Push::Gzip(Box::new(flate2::write::GzDecoder::new(Vec::new())))),
             Kind::Zstd => zstd::stream::write::Decoder::new(Vec::new())
                 .map(|d| Push::Zstd(Box::new(d)))
                 .map_err(|e| format!("magic-byte zstd: failed to create reader: {e}")),
