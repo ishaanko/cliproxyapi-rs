@@ -787,6 +787,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpa-managementasset"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "cpa-auth",
+ "cpa-config",
+ "cpa-core",
+ "cpa-misc",
+ "hex",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "cpa-misc"
 version = "0.1.0"
 dependencies = [
