@@ -406,6 +406,12 @@ impl Client {
         self.enabled() && self.heartbeat_ok.load(Ordering::SeqCst)
     }
 
+    /// Forces the heartbeat flag for tests that need a "healthy" client without a subscriber.
+    #[doc(hidden)]
+    pub fn set_heartbeat_ok_for_tests(&self, ok: bool) {
+        self.heartbeat_ok.store(ok, Ordering::SeqCst);
+    }
+
     pub fn recovery_state(&self) -> u32 {
         self.recovery_state.load(Ordering::SeqCst)
     }
