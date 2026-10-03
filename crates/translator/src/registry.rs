@@ -107,6 +107,18 @@ pub struct Registry {
     hooks: RwLock<Option<Arc<dyn PluginHooks>>>,
 }
 
+/// True when `body` is a well-formed JSON object whose single top-level `model` is exactly
+/// `model`: the passthrough model rewrite is then a no-op and the body needs no parse and
+/// re-serialization. Anything else (missing, other type, duplicates, malformed) answers false.
+fn body_has_model(body: &[u8], model: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Probe<'a> {
+        #[serde(default, borrow)]
+        model: crate::common::fast::Field<crate::common::fast::Str<'a>>,
+    }
+    serde_json::from_slice::<Probe>(body).is_ok_and(|p| p.model.as_ref().is_some_and(|m| &**m == model))
+}
+
 /// Raw JSON of the Responses `configuration_update` input items (Go: `configurationUpdates`).
 fn configuration_updates(body: &[u8]) -> Vec<String> {
     cpa_json::raw_children(body, "input")
@@ -205,7 +217,7 @@ impl Registry {
             }
             None => {
                 // Fallback: pass through, normalising the model field (Go does the same).
-                if !req.model.is_empty() {
+                if !req.model.is_empty() && !body_has_model(&req.body, &req.model) {
                     let mut v = cpa_json::parse(&req.body);
                     // sjson turns an empty, null or scalar body into `{"model":...}` and refuses arrays.
                     if v.g("model").str() != req.model && !v.is_array() {

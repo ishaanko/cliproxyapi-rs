@@ -183,7 +183,8 @@ fn main() {
     let stop_profiler = profiler();
     let filter = std::env::args().nth(1).unwrap_or_default();
     let ctx = Ctx::default();
-    let std_scn = scenarios::standard();
+    let mut std_scn = scenarios::standard();
+    std_scn.extend(scenarios::extras());
     let get = |id: &str| std_scn.iter().find(|s| s.id == id).map(|s| s.body.to_vec()).unwrap_or_default();
     let chat_claude = get("chat-claude-stream");
     let resp_codex = get("responses-codex-stream");
@@ -197,6 +198,23 @@ fn main() {
     });
     bench("req claude->gemini", &filter, 5000, || {
         black_box(translate_request(Format::Claude, Format::Gemini, "gemini-2.5-flash", &claude_gemini, false));
+    });
+
+    let agent_claude = get("agent-claude-native-stream");
+    let gemini_native = get("gemini-native-stream");
+    let agent_chat = get("agent-chat-claude-stream");
+    let agent_resp = get("agent-responses-codex-stream");
+    bench("req claude->claude agent250k", &filter, 200, || {
+        black_box(translate_request(Format::Claude, Format::Claude, "claude-sonnet-4-5-20250929", &agent_claude, true));
+    });
+    bench("req gemini->gemini small", &filter, 3000, || {
+        black_box(translate_request(Format::Gemini, Format::Gemini, "gemini-2.5-flash", &gemini_native, true));
+    });
+    bench("req chat->claude agent250k", &filter, 200, || {
+        black_box(translate_request(Format::OpenAI, Format::Claude, "claude-sonnet-4-5-20250929", &agent_chat, true));
+    });
+    bench("req responses->codex agent250k", &filter, 200, || {
+        black_box(translate_request(Format::OpenAIResponse, Format::Codex, "gpt-5.5", &agent_resp, true));
     });
 
     let translated_chat = translate_request(Format::OpenAI, Format::Claude, "claude-sonnet-4-5-20250929", &chat_claude, true);
