@@ -6,6 +6,9 @@
 //! * Chrome: one dedicated connection per request, protocol chosen by ALPN (`h2`, `http/1.1` or
 //!   none), the connection closes with the response body.
 //!
+//! Known gap: HTTP/2 pseudo-headers go out in the `h2` crate's order (`:method, :scheme,
+//! :authority, :path`), not Go's (`:authority, :method, :path, :scheme`); see `send_h2`.
+//!
 //! Requests come in as `reqwest::Request` and go out as `reqwest::Response`, so call sites keep
 //! building requests with reqwest and only swap `send()` for [`FingerprintClient::execute`].
 //! Like Go's transports, no proxy environment variables are consulted: the proxy comes from the
@@ -32,8 +35,8 @@ use tokio::time::Instant;
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::dial::{BoxIo, Dialer};
-use crate::ordered::{HeaderOrder, OrderedConn};
-use crate::profile::{Profile, SessionCache, TlsConnector};
+use crate::ordered::{HeaderOrder, HeaderRewriter, OrderedConn};
+use crate::profile::{Profile, TlsConnector};
 
 /// Request or transport failure; the text carries the full cause chain.
 #[derive(Debug, thiserror::Error)]
@@ -126,24 +129,37 @@ pub fn claude_oauth_header_order(method: &str, target: &str) -> &'static [&'stat
     if method == "GET" && INSPECT_TARGETS.iter().any(|t| target.starts_with(t)) { INSPECT } else { REFRESH }
 }
 
-/// Global per-proxy session caches of the OAuth profile (Go: `claudeOAuthSessionCaches`). Clients
-/// are built per operation there, so the cache must outlive them to ever resume.
-static OAUTH_SESSIONS: Mutex<Vec<(String, Arc<SessionCache>)>> = Mutex::new(Vec::new());
+/// Global per-proxy OAuth TLS connectors (Go: `claudeOAuthSessionCaches`), keyed by proxy and
+/// extra trusted roots (empty outside tests). Clients are built per operation there, so the
+/// session cache must outlive them to ever resume. A cached session is only valid for the SSL
+/// context that produced it, so the whole [`TlsConnector`] (context plus its private session
+/// cache) is shared; each client still gets its own connection pool.
+type OauthKey = (String, Vec<Vec<u8>>);
+static OAUTH_TLS: Mutex<Vec<(OauthKey, TlsConnector)>> = Mutex::new(Vec::new());
 
-fn oauth_session_cache(proxy: &str) -> Arc<SessionCache> {
-    let mut caches = OAUTH_SESSIONS.lock();
-    if let Some(pos) = caches.iter().position(|(p, _)| p == proxy) {
+/// The shared OAuth connector for `proxy`, built on first use.
+fn oauth_tls(proxy: &str, extra_roots: &[Vec<u8>]) -> Result<TlsConnector, crate::profile::TlsError> {
+    let hit = |caches: &mut Vec<(OauthKey, TlsConnector)>| {
+        let pos = caches.iter().position(|((p, roots), _)| p == proxy && roots == extra_roots)?;
         let entry = caches.remove(pos);
-        let cache = Arc::clone(&entry.1);
+        let tls = entry.1.clone();
         caches.push(entry);
-        return cache;
+        Some(tls)
+    };
+    if let Some(tls) = hit(&mut OAUTH_TLS.lock()) {
+        return Ok(tls);
     }
-    let cache = SessionCache::new(CLAUDE_OAUTH_SESSIONS);
-    caches.push((proxy.to_string(), Arc::clone(&cache)));
+    // Built outside the lock; a racing builder's entry wins so all clients share one context.
+    let fresh = TlsConnector::new(Profile::ClaudeOAuth, Some(CLAUDE_OAUTH_SESSIONS), extra_roots)?;
+    let mut caches = OAUTH_TLS.lock();
+    if let Some(tls) = hit(&mut caches) {
+        return Ok(tls);
+    }
+    caches.push(((proxy.to_string(), extra_roots.to_vec()), fresh.clone()));
     if caches.len() > CLAUDE_OAUTH_PROXY_CACHES {
         caches.remove(0);
     }
-    cache
+    Ok(fresh)
 }
 
 /// Dial + handshake for one profile; the hyper connector of the pooled clients and the
@@ -292,49 +308,46 @@ pub struct FingerprintClient {
 impl FingerprintClient {
     /// Claude Code inference profile for api.anthropic.com (Go: `newClaudeCodeRoundTripper`).
     pub fn claude_inference(cfg: ClientConfig) -> Result<Self, crate::profile::TlsError> {
-        let sessions = SessionCache::new(CLAUDE_INFERENCE_SESSIONS);
-        Self::pooled(Profile::ClaudeInference, Some(claude_code_header_order), Some(sessions), cfg)
+        let tls = TlsConnector::new(Profile::ClaudeInference, Some(CLAUDE_INFERENCE_SESSIONS), &cfg.extra_roots)?;
+        Self::pooled(Profile::ClaudeInference, Some(claude_code_header_order), tls, cfg)
     }
 
-    /// Claude OAuth control plane profile (Go: `newUtlsRoundTripper` in auth/claude).
+    /// Claude OAuth control plane profile (Go: `newUtlsRoundTripper` in auth/claude). Clients of
+    /// one proxy share the TLS context and session cache but not the connection pool.
     pub fn claude_oauth(cfg: ClientConfig) -> Result<Self, crate::profile::TlsError> {
-        let sessions = oauth_session_cache(cfg.proxy.trim());
-        Self::pooled(Profile::ClaudeOAuth, Some(claude_oauth_header_order), Some(sessions), cfg)
+        let tls = oauth_tls(cfg.proxy.trim(), &cfg.extra_roots)?;
+        Self::pooled(Profile::ClaudeOAuth, Some(claude_oauth_header_order), tls, cfg)
     }
 
     /// Chrome 133 profile, one connection per request (Go: `utlsRoundTripper`).
     pub fn chrome(cfg: ClientConfig) -> Result<Self, crate::profile::TlsError> {
-        let connector = Self::connector(Profile::Chrome, None, None, &cfg)?;
+        let tls = TlsConnector::new(Profile::Chrome, None, &cfg.extra_roots)?;
+        let connector = Self::connector(Profile::Chrome, None, tls, &cfg);
         Ok(Self { mode: Arc::new(Mode::Dedicated(connector)), timeout: cfg.timeout })
     }
 
-    fn connector(
-        profile: Profile,
-        order: Option<HeaderOrder>,
-        sessions: Option<Arc<SessionCache>>,
-        cfg: &ClientConfig,
-    ) -> Result<Connector, crate::profile::TlsError> {
+    fn connector(profile: Profile, order: Option<HeaderOrder>, tls: TlsConnector, cfg: &ClientConfig) -> Connector {
         let label = match profile {
             Profile::Chrome => "utls",
             Profile::ClaudeInference => "claude tls",
             Profile::ClaudeOAuth => "claude oauth tls",
         };
-        Ok(Connector {
+        Connector {
             profile,
             dialer: Arc::new(Dialer::from_setting(&cfg.proxy, label)),
-            tls: TlsConnector::new(profile, sessions, &cfg.extra_roots)?,
+            tls,
             order,
             handshake_timeout: cfg.handshake_timeout,
-        })
+        }
     }
 
     fn pooled(
         profile: Profile,
         order: Option<HeaderOrder>,
-        sessions: Option<Arc<SessionCache>>,
+        tls: TlsConnector,
         cfg: ClientConfig,
     ) -> Result<Self, crate::profile::TlsError> {
-        let connector = Self::connector(profile, order, sessions, &cfg)?;
+        let connector = Self::connector(profile, order, tls, &cfg);
         let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new())
             .http1_title_case_headers(true)
             .pool_max_idle_per_host(2)
@@ -378,10 +391,18 @@ impl FingerprintClient {
         }
     }
 
+    /// HTTP/1.1 on a dedicated connection. hyper writes the headers in map order; the transport's
+    /// `Connection: close` is injected after the last one, like Go's extra headers.
     async fn send_h1(&self, tls: Tls, p: Prepared) -> Result<(http::Response<Incoming>, Option<AbortOnDrop>), Error> {
+        let rewriter = HeaderRewriter::new(|_, _| &[]);
+        let io = if p.close_after {
+            OrderedOrPlain::Ordered(OrderedConn::with_rewriter(tls, rewriter.with_trailing_header("Connection: close")))
+        } else {
+            OrderedOrPlain::Plain(tls)
+        };
         let (mut sender, conn) = hyper::client::conn::http1::Builder::new()
             .title_case_headers(true)
-            .handshake(TokioIo::new(tls))
+            .handshake(TokioIo::new(io))
             .await
             .map_err(|e| Error::Transport(chain(&e)))?;
         let guard = AbortOnDrop(tokio::spawn(async move {
@@ -393,6 +414,11 @@ impl FingerprintClient {
 
     /// HTTP/2 with the settings of Go's `http2.Transport` (ENABLE_PUSH 0, 4 MiB stream window,
     /// 1 MiB max frame, 10 MiB header list, 1 GiB connection window).
+    ///
+    /// Known gap: the `h2` crate always emits the pseudo-headers as `:method, :scheme,
+    /// :authority, :path`, while Go's transport sends `:authority, :method, :path, :scheme`. The
+    /// order is not configurable without forking `h2`, so the Chrome HTTP/2 frame differs from
+    /// Go in that one respect (settings, window updates and regular header order do match).
     async fn send_h2(&self, tls: Tls, p: Prepared) -> Result<(http::Response<Incoming>, Option<AbortOnDrop>), Error> {
         let (mut sender, conn) = hyper::client::conn::http2::Builder::new(TokioExecutor::new())
             .initial_stream_window_size(4 << 20)
@@ -446,6 +472,19 @@ struct Prepared {
     body: Bytes,
     /// No User-Agent was given and the Go default was substituted.
     ua_defaulted: bool,
+    /// HTTP/1.1 only: the transport's own `Connection: close` goes after the last header (Go:
+    /// the `DisableKeepAlives` extra header). A caller's `Connection` header stays in the sorted
+    /// block.
+    close_after: bool,
+}
+
+/// Whether any value of the `Connection` header contains `token` (Go: `HeaderValuesContainsToken`).
+fn connection_has(headers: &http::HeaderMap, token: &str) -> bool {
+    headers
+        .get_all(CONNECTION)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case(token)))
 }
 
 impl Prepared {
@@ -470,13 +509,13 @@ impl Prepared {
         let method = req.method().clone();
         let src = req.headers();
         let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::with_capacity(src.len() + 4);
-        // Go writes Host, User-Agent, Connection: close, Content-Length, then the rest sorted by
-        // name, then the transport's own Accept-Encoding.
+        // Go writes Host, User-Agent, Content-Length, then the rest sorted by name, then the
+        // transport's own extra headers sorted (Accept-Encoding, Connection: close).
         let ua_defaulted = !src.contains_key(USER_AGENT);
         headers.push((USER_AGENT, src.get(USER_AGENT).cloned().unwrap_or_else(|| HeaderValue::from_static("Go-http-client/1.1"))));
-        if dedicated {
-            headers.push((CONNECTION, HeaderValue::from_static("close")));
-        }
+        // Go: no extra `Connection: close` when the request already wants close or switches protocol.
+        let protocol_switch = src.contains_key("upgrade") && connection_has(src, "upgrade");
+        let close_after = dedicated && !connection_has(src, "close") && !protocol_switch;
         let expects_body = matches!(method, Method::POST | Method::PUT | Method::PATCH);
         if !body.is_empty() || expects_body {
             headers.push((CONTENT_LENGTH, HeaderValue::from(body.len())));
@@ -484,9 +523,7 @@ impl Prepared {
         let mut rest: Vec<(&HeaderName, &HeaderValue)> = src
             .iter()
             .filter(|(n, _)| {
-                ![USER_AGENT, CONTENT_LENGTH, HOST].contains(*n)
-                    && n.as_str() != "transfer-encoding"
-                    && !(dedicated && **n == CONNECTION)
+                ![USER_AGENT, CONTENT_LENGTH, HOST].contains(*n) && n.as_str() != "transfer-encoding"
             })
             .collect();
         // Stable sort keeps the values of a repeated header in their original order.
@@ -495,7 +532,7 @@ impl Prepared {
         if !src.contains_key(ACCEPT_ENCODING) && !src.contains_key(RANGE) && method != Method::HEAD {
             headers.push((ACCEPT_ENCODING, HeaderValue::from_static("gzip")));
         }
-        Ok(Self { method, uri, host, port, authority, headers, body, ua_defaulted })
+        Ok(Self { method, uri, host, port, authority, headers, body, ua_defaulted, close_after })
     }
 
     /// HTTP/1.1 request: origin-form target with an explicit Host header first.
