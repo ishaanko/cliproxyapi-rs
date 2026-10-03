@@ -3,13 +3,18 @@
 //! Request preparation (Claude, and others) is a chain of `&[u8] -> Vec<u8>` stages that each
 //! parse the whole body, read or edit a few fields and serialize it again, and the read-only
 //! helpers (probe detection, beta header assembly, ...) re-read the same bytes several times. The
-//! parse dominates, so this memo keeps the last few `(bytes, Value)` pairs of the current thread:
+//! parse dominates, so this memo keeps the last `(bytes, Value)` pair of the current thread:
 //! a stage that receives bytes it (or a previous stage) already parsed skips the parse, and
 //! [`edit`] stores the value it just edited next to its serialization so the next stage hits.
 //!
 //! Lookups compare the full bytes, so a hit is exact. Caching is only active between
 //! [`scope`] and the drop of its guard (one synchronous request preparation on one thread); the
 //! entries are released with the guard, so nothing outlives a request.
+//!
+//! Only the newest pair is kept: every stage replaces the body it reads, and measurements showed
+//! older pairs (the original and pre-cloaking copies) are not looked up again, while each costs a
+//! body copy plus its tree for the whole preparation (~25% of the live heap of a 2 MB request).
+//! A [`scope`] also stops `cpa_json`'s own memo from storing trees for the same bodies.
 //!
 //! Memory is bounded: an entry costs its bytes plus the estimated heap of its tree
 //! ([`cpa_json::tree_cost`]), a thread keeps at most [`MAX_THREAD_BYTES`] and all threads together
@@ -26,8 +31,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cpa_json::Value;
 
-/// Entries kept per thread: the working body plus the original and pre-cloaking copies.
-const CAPACITY: usize = 3;
+/// Entries kept per thread: the working body.
+const CAPACITY: usize = 1;
 
 /// Heap one thread's entries may hold, and the same across all threads (so many large requests in
 /// flight cannot multiply it; `cpa_json`'s memo has the same shape of limits).
@@ -94,13 +99,13 @@ thread_local! {
 /// Keeps the memo active on this thread until dropped. `!Send`, so holding it across an `.await`
 /// (where the task may resume on another thread) fails to compile.
 #[must_use = "the memo is released when the guard is dropped"]
-pub struct Scope(PhantomData<*const ()>);
+pub struct Scope(PhantomData<*const ()>, cpa_json::NoTrees);
 
 /// Enables the memo for the current thread (nestable). Call from synchronous request
 /// preparation only: the memo is per thread and must not be held across an `.await`.
 pub fn scope() -> Scope {
     CACHE.with(|c| c.borrow_mut().depth += 1);
-    Scope(PhantomData)
+    Scope(PhantomData, cpa_json::suspend_trees())
 }
 
 impl Drop for Scope {

@@ -107,10 +107,10 @@ pub fn sanitize_claude_messages_for_claude_upstream_with_debug(
     preserve_empty_thinking_blocks: bool,
 ) -> Vec<u8> {
     use cpa_core::signature::{SignatureProvider, sanitize_claude_messages_for_claude_upstream, signature_provider_from_model_name};
-    let mut sanitized = body.to_vec();
+    let mut sanitized = std::borrow::Cow::Borrowed(body);
     if signature_provider_from_model_name(base_model) == SignatureProvider::Claude || preserve_empty_thinking_blocks {
         let (out, report) = sanitize_claude_messages_for_claude_upstream(body, base_model, preserve_empty_thinking_blocks);
-        sanitized = out;
+        sanitized = std::borrow::Cow::Owned(out);
         if report.dropped_blocks != 0 || report.dropped_signatures != 0 || report.replaced_signatures != 0 {
             tracing::debug!(
                 component = "signature_sanitizer",
@@ -237,6 +237,8 @@ impl ClaudeExecutor {
         body = cloaked_body;
         let system_placement_state = capture_claude_code_system_placement(&body_before_cloaking, &body, cloaked);
         let fable_state = capture_claude_code_fable_state(&body_before_cloaking, &body, cloaked);
+        // Last use; the copy would otherwise stay resident through every later stage.
+        drop(body_before_cloaking);
         // Only the Messages endpoint on Anthropic itself was captured.
         let mut diagnostics_state = ClaudeDiagnosticsRequestState::default();
         if !is_probe_or_helper {
@@ -302,6 +304,7 @@ impl ClaudeExecutor {
             &["context_management", "fallbacks", "thinking.display", "diagnostics"],
         );
         body = payload_body;
+        drop(original_translated);
         context_management_state.payload_rule_touched = touched_payload_paths.contains("context_management");
         body = reconcile_claude_code_system_placement_after_payload(&body, &system_placement_state);
         let was_probe_or_helper = is_probe_or_helper;

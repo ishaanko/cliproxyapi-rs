@@ -13,8 +13,9 @@
 //! digest is only as safe as its seeds staying unknown to whoever sends the bodies, and 128 bits
 //! keep accidental collisions out of reach.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::future::Future;
+use std::marker::PhantomData;
 use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -91,7 +92,7 @@ impl Memo {
             return;
         }
         while !self.trees.is_empty()
-            && (self.trees.len() >= MAX_TREES || self.trees.iter().map(|t| t.cost).sum::<usize>() + cost > MAX_TREE_BYTES)
+            && (self.trees.len() >= max_trees() || self.trees.iter().map(|t| t.cost).sum::<usize>() + cost > MAX_TREE_BYTES)
         {
             self.drop_tree(0);
         }
@@ -126,6 +127,36 @@ pub fn tree_cost(v: &Value) -> usize {
 
 tokio::task_local! {
     static MEMO: RefCell<Memo>;
+}
+
+thread_local! {
+    /// Nesting depth of [`suspend_trees`] guards on this thread.
+    static NO_TREES: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Trees kept per scope while a [`NoTrees`] guard is alive on the thread.
+const SUSPENDED_TREES: usize = 1;
+
+/// Trees the memo of the current thread may hold now.
+fn max_trees() -> usize {
+    if NO_TREES.with(Cell::get) == 0 { MAX_TREES } else { SUSPENDED_TREES }
+}
+
+/// While alive, the memo keeps at most one tree on this thread (digests and validity verdicts are
+/// unaffected). For synchronous sections that keep their own parse cache: more trees would only
+/// add copies to the resident set. `!Send`, so it cannot be held across an `.await`.
+#[must_use = "the full tree budget returns when the guard is dropped"]
+pub struct NoTrees(PhantomData<*const ()>);
+
+pub fn suspend_trees() -> NoTrees {
+    NO_TREES.with(|d| d.set(d.get() + 1));
+    NoTrees(PhantomData)
+}
+
+impl Drop for NoTrees {
+    fn drop(&mut self) {
+        NO_TREES.with(|d| d.set(d.get().saturating_sub(1)));
+    }
 }
 
 /// Runs `fut` with a fresh memo; every `parse`/`valid` made by it (on this task) may reuse
