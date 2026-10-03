@@ -259,17 +259,38 @@ async fn relay_bridges_audio_and_data_channel() {
     send_test_rtp(&upstream_audio, &[0xf8, 0xfe, 0xfd], &mut client.payloads).await;
 
     session.close_with_reason("closed");
-    // The slot is released once the peers are closed.
-    let mut released = false;
-    for _ in 0..100 {
-        if limiter.acquire() {
-            released = true;
-            limiter.release();
-            break;
+    // The slot is released synchronously on close, not after the peers finished closing.
+    assert!(limiter.acquire(), "shared capacity was not released");
+    limiter.release();
+}
+
+/// A `new_session` future dropped mid-setup (client disconnect) must not leak its slot.
+#[tokio::test]
+async fn cancelled_session_setup_releases_the_slot() {
+    let client = test_peer().await;
+    client.pc.create_data_channel(REALTIME_DATA_CHANNEL_LABEL, None).await.unwrap();
+    let client_offer = client.complete_offer().await;
+    let limiter = Arc::new(MediaLimiter::default());
+    let config = CodexLiveMediaRelayConfig { enabled: true, max_sessions: 1, ..Default::default() };
+    let relay = PionMediaRelay::new(&config, limiter.clone()).unwrap();
+    for micros in [0u64, 50, 500, 5000] {
+        let setup = relay.new_session(&client_offer, MediaRoute::default());
+        if let Ok(Ok((session, _))) = tokio::time::timeout(Duration::from_micros(micros), setup).await {
+            session.close_with_reason("test_complete");
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(limiter.acquire(), "slot leaked after cancelling setup at {micros}us");
+        limiter.release();
     }
-    assert!(released, "shared capacity was not released");
+}
+
+#[test]
+fn udp_port_range_exhaustion_fails() {
+    let taken = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
+    let port = taken.local_addr().unwrap().port();
+    let config = CodexLiveMediaRelayConfig { udp_port_min: port, udp_port_max: port, ..Default::default() };
+    assert!(pick_udp_port(&config).is_err());
+    drop(taken);
+    assert_eq!(pick_udp_port(&config), Ok(port));
 }
 
 #[test]
@@ -286,6 +307,9 @@ fn public_remote_ip_filter() {
         ("fe80::1", false),
         ("ff02::1", false),
         ("0.0.0.0", false),
+        ("::ffff:127.0.0.1", false),
+        ("::ffff:10.0.0.1", false),
+        ("::ffff:8.8.8.8", true),
     ] {
         assert_eq!(is_public_remote_ip(&raw.parse().unwrap()), want, "{raw}");
     }

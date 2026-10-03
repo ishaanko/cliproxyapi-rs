@@ -15,7 +15,7 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use crate::call::auth_account_type;
 use crate::reply::{Reply, content_type_of, live_error, realtime_error};
 use crate::session::{Claim, LiveSession, SessionStore};
-use crate::upstream::{call_response_headers, copy_handshake_headers, headers_for_logging, prepare_request_headers, protocol_headers, set_account_header};
+use crate::upstream::{MAX_WS_MESSAGE_SIZE, call_response_headers, copy_handshake_headers, headers_for_logging, prepare_request_headers, protocol_headers, set_account_header};
 use crate::util::is_call_id;
 use crate::ws_client::{self, DialFailure, Dialed, UpstreamStream};
 use crate::{Caller, Handler, RequestParts, live_selection_headers, proxy_url_for_auth, selection_error};
@@ -319,8 +319,8 @@ impl Handler {
         let guard_slot = Arc::new(parking_lot::Mutex::new(Some(guard)));
         let failed_slot = guard_slot.clone();
         let resp = ws
-            .max_message_size(usize::MAX)
-            .max_frame_size(usize::MAX)
+            .max_message_size(MAX_WS_MESSAGE_SIZE)
+            .max_frame_size(MAX_WS_MESSAGE_SIZE)
             .on_failed_upgrade(move |_| {
                 failed_slot.lock().take();
             })

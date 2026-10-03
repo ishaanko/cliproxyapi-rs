@@ -249,23 +249,27 @@ pub async fn prepare_proxied_upstream_answer(
     }
 
     let expected_user = format!("{}:{}", remote_credentials.ufrag, local_credentials.ufrag);
-    let mut tunnels: Vec<TcpCandidateTunnel> = Vec::with_capacity(plans.len());
+    // Closes the tunnels created so far on an error or when this future is cancelled mid-loop.
+    let mut tunnels = TunnelsGuard(Vec::with_capacity(plans.len()));
     for plan in &plans {
-        let tunnel = match TcpCandidateTunnel::new(plan.target, dialer.clone(), &expected_user, &remote_credentials.password).await {
-            Ok(t) => t,
-            Err(e) => {
-                tunnels.iter().for_each(|t| t.close());
-                return Err(e);
-            }
-        };
+        let tunnel = TcpCandidateTunnel::new(plan.target, dialer.clone(), &expected_user, &remote_credentials.password).await?;
         let listener = tunnel.listener_addr();
         let mut fields = plan.fields.clone();
         fields[4] = listener.ip().to_string();
         fields[5] = listener.port().to_string();
         remote.media_descriptions[plan.media_index].attributes[plan.attribute_index].value = Some(fields.join(" "));
-        tunnels.push(tunnel);
+        tunnels.0.push(tunnel);
     }
-    Ok((remote.marshal(), tunnels))
+    Ok((remote.marshal(), std::mem::take(&mut tunnels.0)))
+}
+
+/// Tunnels owned by `prepare_proxied_upstream_answer` until it returns them to the caller.
+struct TunnelsGuard(Vec<TcpCandidateTunnel>);
+
+impl Drop for TunnelsGuard {
+    fn drop(&mut self) {
+        close_candidate_tunnels(&self.0);
+    }
 }
 
 /// Closes every tunnel.

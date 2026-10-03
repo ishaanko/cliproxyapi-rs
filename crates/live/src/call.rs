@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use cpa_executors::helps::logging::UpstreamRequestLog;
-use http::{HeaderMap, HeaderName, HeaderValue, Method};
+use http::{HeaderValue, Method};
 use serde_json::Value;
 
 use crate::media::{MediaRelaySession, MediaRoute};
@@ -333,9 +333,9 @@ impl Handler {
             Ok(r) => r,
             Err(e) => {
                 if let Some(log) = caller.log() {
-                    log.response_error(&e);
+                    log.response_error(&e.message);
                 }
-                return live_error(path, 502, &e);
+                return live_error(path, e.status_or(502), &e.message);
             }
         };
         let mut response_headers = call_response_headers(&response.headers);
@@ -406,7 +406,9 @@ impl Handler {
             let stored = self.inner.sessions.put(&call_id, session);
             if let Some(media) = &guard.session {
                 let store = self.inner.sessions.clone();
-                let stored = stored.clone();
+                // `complete` only needs the call id and token. Capturing the stored session would
+                // pin the media session (and so the close handler) in a reference cycle.
+                let stored = LiveSession { call_id: stored.call_id.clone(), token: stored.token, ..Default::default() };
                 media.set_close_handler(Box::new(move |reason| store.complete(&stored, reason)));
                 guard.retained = true;
             }
@@ -430,9 +432,6 @@ pub(crate) fn auth_account_type(auth: &cpa_auth::Auth) -> (String, String) {
     let email = auth.metadata.get("email").and_then(Value::as_str).unwrap_or("").to_string();
     ("oauth".into(), email)
 }
-
-#[allow(dead_code)]
-fn _assert_types(_: &HeaderMap, _: &HeaderName) {}
 
 #[cfg(test)]
 mod tests {
