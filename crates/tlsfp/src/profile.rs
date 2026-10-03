@@ -41,7 +41,8 @@ pub enum Profile {
 pub enum TlsError {
     #[error("{0}")]
     Setup(String),
-    #[error("TLS handshake: {0}")]
+    /// Handshake failure; the caller adds its own prefix (`utls: TLS handshake: ...`).
+    #[error("{0}")]
     Handshake(String),
 }
 
@@ -159,13 +160,14 @@ pub(crate) fn install_roots(b: &mut rama_boring::ssl::SslContextBuilder, extra: 
 }
 
 /// Bounded LRU of resumable sessions keyed by server name (Go: `tls.NewLRUClientSessionCache`).
-pub struct SessionCache {
+/// Owned by one [`TlsConnector`], so every cached session comes from that connector's context.
+struct SessionCache {
     capacity: usize,
     entries: Mutex<VecDeque<(String, SslSession)>>,
 }
 
 impl SessionCache {
-    pub fn new(capacity: usize) -> Arc<Self> {
+    fn new(capacity: usize) -> Arc<Self> {
         Arc::new(Self { capacity: capacity.max(1), entries: Mutex::new(VecDeque::new()) })
     }
 
@@ -186,18 +188,11 @@ impl SessionCache {
         entries.push_back(entry);
         Some(session)
     }
-
-    pub fn len(&self) -> usize {
-        self.entries.lock().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
-/// A configured BoringSSL context for one profile. Cheap to clone; every connection draws its own
-/// GREASE values and extension permutation.
+/// A configured BoringSSL context for one profile plus the session cache it feeds. Cheap to
+/// clone (clones share both); every connection draws its own GREASE values and extension
+/// permutation.
 #[derive(Clone)]
 pub struct TlsConnector {
     profile: Profile,
@@ -216,9 +211,10 @@ fn setup<T, E: std::fmt::Display>(what: &str, r: Result<T, E>) -> Result<T, TlsE
 }
 
 impl TlsConnector {
-    /// Builds the context for `profile`. `sessions` enables TLS session resumption (the Claude
-    /// profiles; the Chrome profile keeps no cache, like Go).
-    pub fn new(profile: Profile, sessions: Option<Arc<SessionCache>>, extra_roots: &[Vec<u8>]) -> Result<Self, TlsError> {
+    /// Builds the context for `profile`. `session_capacity` enables TLS session resumption with
+    /// an LRU of that size (the Claude profiles; the Chrome profile keeps no cache, like Go).
+    pub fn new(profile: Profile, session_capacity: Option<usize>, extra_roots: &[Vec<u8>]) -> Result<Self, TlsError> {
+        let sessions = session_capacity.map(SessionCache::new);
         let mut b = setup("new context", SslConnector::no_default_verify_builder(SslMethod::tls_client()))?;
         install_roots(&mut b, extra_roots)?;
         b.set_verify(SslVerifyMode::PEER);
@@ -272,10 +268,6 @@ impl TlsConnector {
         Ok(Self { profile, connector: b.build(), sessions })
     }
 
-    pub fn profile(&self) -> Profile {
-        self.profile
-    }
-
     fn configure(&self, host: &str) -> Result<ConnectConfiguration, TlsError> {
         let mut cfg = setup("configure", self.connector.configure())?;
         if self.profile == Profile::Chrome {
@@ -286,9 +278,9 @@ impl TlsConnector {
         if let Some(cache) = &self.sessions
             && let Some(session) = cache.get(host)
         {
-            // SAFETY: the session was produced by a connection of this very context (the cache
-            // is only fed by this context's new-session callback), which is the requirement of
-            // SSL_set_session.
+            // SAFETY: the cache is private to this connector and only fed by the new-session
+            // callback of this connector's context, so the session comes from this very context,
+            // which is the requirement of SSL_set_session.
             #[allow(unsafe_code)]
             let _ = unsafe { cfg.set_session(&session) };
         }

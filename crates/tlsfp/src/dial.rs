@@ -23,7 +23,8 @@ pub type BoxIo = Box<dyn Io>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialer {
     Direct,
-    Socks5 { addr: (String, u16), auth: Option<(String, String)> },
+    /// `port` stays unset when the URL has none; dialing then fails like Go (`missing port in address`).
+    Socks5 { host: String, port: Option<u16>, auth: Option<(String, String)> },
     HttpConnect { addr: (String, u16), tls: bool, authorization: Option<String> },
 }
 
@@ -90,7 +91,7 @@ impl Dialer {
         let userinfo = (!url.username().is_empty() || url.password().is_some())
             .then(|| (decode(url.username()), decode(url.password().unwrap_or_default())));
         match url.scheme() {
-            "socks5" | "socks5h" => Ok(Dialer::Socks5 { addr: (host, url.port().unwrap_or(1080)), auth: userinfo }),
+            "socks5" | "socks5h" => Ok(Dialer::Socks5 { host, port: url.port(), auth: userinfo }),
             scheme @ ("http" | "https") => {
                 let tls = scheme == "https";
                 let port = url.port().unwrap_or(if tls { 443 } else { 80 });
@@ -107,8 +108,11 @@ impl Dialer {
     pub async fn dial(&self, host: &str, port: u16) -> io::Result<BoxIo> {
         match self {
             Dialer::Direct => Ok(Box::new(tcp(host, port).await?)),
-            Dialer::Socks5 { addr, auth } => {
-                let proxy = tcp(&addr.0, addr.1).await.map_err(|e| io::Error::new(e.kind(), format!("dial proxy: {e}")))?;
+            Dialer::Socks5 { host: proxy_host, port: proxy_port, auth } => {
+                let Some(proxy_port) = *proxy_port else {
+                    return Err(io::Error::other(format!("dial proxy: dial tcp: address {proxy_host}: missing port in address")));
+                };
+                let proxy = tcp(proxy_host, proxy_port).await.map_err(|e| io::Error::new(e.kind(), format!("dial proxy: {e}")))?;
                 let target = (host, port);
                 let stream = match auth {
                     Some((user, pass)) => Socks5Stream::connect_with_password_and_socket(proxy, target, user, pass).await,
@@ -197,10 +201,11 @@ mod tests {
         assert_eq!(Dialer::parse(" Direct ").unwrap(), Dialer::Direct);
         assert_eq!(
             Dialer::parse("socks5://u:p%40@h:1081").unwrap(),
-            Dialer::Socks5 { addr: ("h".into(), 1081), auth: Some(("u".into(), "p@".into())) }
+            Dialer::Socks5 { host: "h".into(), port: Some(1081), auth: Some(("u".into(), "p@".into())) }
         );
         assert!(matches!(Dialer::parse("http://h").unwrap(), Dialer::HttpConnect { addr, tls: false, .. } if addr.1 == 80));
         assert!(matches!(Dialer::parse("https://h").unwrap(), Dialer::HttpConnect { addr, tls: true, .. } if addr.1 == 443));
+        assert_eq!(Dialer::parse("socks5://h").unwrap(), Dialer::Socks5 { host: "h".into(), port: None, auth: None });
         assert!(Dialer::parse("ftp://h:1").is_err());
         assert!(Dialer::parse("nohost").is_err());
         assert_eq!(redact("http://user:pw@proxy:8080/x"), "http://redacted@proxy:8080");

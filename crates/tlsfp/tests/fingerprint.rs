@@ -6,8 +6,10 @@
 //! the random key share). The Chrome profile randomizes GREASE and extension order per
 //! connection, so the order-invariant JA4 and the per-extension contents are compared instead.
 
-use cpa_tlsfp::clienthello::{ClientHello, is_grease};
-use cpa_tlsfp::profile::{Profile, SessionCache, TlsConnector};
+mod common;
+
+use common::clienthello::{ClientHello, is_grease};
+use cpa_tlsfp::profile::{Profile, TlsConnector};
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
@@ -75,7 +77,7 @@ fn masked(hello: &ClientHello) -> Vec<(u16, Vec<u8>)> {
 
 async fn assert_deterministic_match(profile: Profile, host: &str, golden: &str) {
     let go = fixture(golden);
-    let connector = TlsConnector::new(profile, Some(SessionCache::new(8)), &[]).unwrap();
+    let connector = TlsConnector::new(profile, Some(8), &[]).unwrap();
     let raw = capture(&connector, host).await;
     let rust = ClientHello::parse(&raw).unwrap();
     assert_eq!(rust.ciphers, go.ciphers, "ciphers");
@@ -114,14 +116,9 @@ async fn chrome_matches_go() {
     assert_eq!(a, b, "extension set");
     assert_eq!(rust.extensions.first().map(|e| is_grease(e.0)), Some(true), "leading GREASE extension");
     assert_eq!(rust.extensions.last().map(|e| is_grease(e.0)), Some(true), "trailing GREASE extension");
-    for ty in [0u16, 5, 10, 11, 13, 16, 18, 23, 27, 35, 43, 45, 65281, 17613] {
-        let strip = |h: &ClientHello| h.extension(ty).map(|d| {
-            d.chunks(1).flat_map(|c| c.to_vec()).collect::<Vec<u8>>()
-        });
-        if ty == 10 || ty == 43 {
-            continue; // GREASE values differ per connection; checked via JA4 below
-        }
-        assert_eq!(strip(&rust), strip(&go), "extension {ty}");
+    // Groups (10) and supported versions (43) carry per-connection GREASE values; JA4 covers them.
+    for ty in [0u16, 5, 11, 13, 16, 18, 23, 27, 35, 45, 65281, 17613] {
+        assert_eq!(rust.extension(ty), go.extension(ty), "extension {ty}");
     }
     assert_eq!(rust.key_share_groups(), go.key_share_groups(), "key share groups");
     eprintln!("Chrome ja4={} (go {})", rust.ja4(), go.ja4());

@@ -4,8 +4,10 @@
 //! The native clients emit headers in a fixed order and casing that a generic HTTP client cannot
 //! reproduce. [`OrderedConn`] wraps the TLS stream, buffers each request head and rewrites it:
 //! listed headers come first in the listed order and casing, unlisted headers follow in their
-//! original order and casing, and the request line and body bytes are untouched.
+//! original order and casing, and the request line and body bytes are untouched. An optional
+//! trailing header line is appended after the last header (the Chrome profile's `Connection: close`).
 
+use std::borrow::Cow;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
@@ -21,6 +23,8 @@ pub type HeaderOrder = fn(method: &str, target: &str) -> &'static [&'static str]
 /// Stateful request rewriter; feed it everything the HTTP client writes.
 pub struct HeaderRewriter {
     order: HeaderOrder,
+    /// Header line (without CRLF) appended after the last header of every request head.
+    trailing: Option<&'static str>,
     header: Vec<u8>,
     body_remaining: i64,
     chunked: Option<ChunkTracker>,
@@ -28,14 +32,21 @@ pub struct HeaderRewriter {
 
 impl HeaderRewriter {
     pub fn new(order: HeaderOrder) -> Self {
-        Self { order, header: Vec::new(), body_remaining: 0, chunked: None }
+        Self { order, trailing: None, header: Vec::new(), body_remaining: 0, chunked: None }
+    }
+
+    /// Appends `line` (for example `Connection: close`) after the last header of each request.
+    pub fn with_trailing_header(mut self, line: &'static str) -> Self {
+        self.trailing = Some(line);
+        self
     }
 
     /// Consumes one client write and returns the bytes to send on the wire (possibly none while a
     /// request head is still incomplete).
     pub fn rewrite(&mut self, input: &[u8]) -> io::Result<Vec<u8>> {
         let mut out = Vec::with_capacity(input.len());
-        let mut buf: Vec<u8> = input.to_vec();
+        // Borrowed until a request head ends mid-write; only then is the tail copied.
+        let mut buf: Cow<'_, [u8]> = Cow::Borrowed(input);
         let mut pos = 0usize;
         while pos < buf.len() {
             let remaining = &buf[pos..];
@@ -68,9 +79,9 @@ impl HeaderRewriter {
             };
             let end = end + 4;
             let head = std::mem::take(&mut self.header);
-            let (ordered, content_length, chunked) = order_request_header(&head[..end], self.order);
+            let (ordered, content_length, chunked) = order_request_header(&head[..end], self.order, self.trailing);
             out.extend_from_slice(&ordered);
-            buf = head[end..].to_vec();
+            buf = Cow::Owned(head[end..].to_vec());
             pos = 0;
             if chunked {
                 self.chunked = Some(ChunkTracker::default());
@@ -140,20 +151,17 @@ fn request_uses_chunked(lines: &[&[u8]]) -> bool {
 
 /// Reorders and re-cases one request head (including the final blank line). Returns the new head,
 /// the declared content length and whether the body is chunked.
-fn order_request_header(header: &[u8], order: HeaderOrder) -> (Vec<u8>, i64, bool) {
+fn order_request_header(header: &[u8], order: HeaderOrder, trailing: Option<&str>) -> (Vec<u8>, i64, bool) {
     let body = &header[..header.len() - 4];
     let lines = split_crlf(body);
     let header_lines = &lines[1..];
-    let unchanged = || (header.to_vec(), request_content_length(header_lines), request_uses_chunked(header_lines));
     let request_line = String::from_utf8_lossy(lines[0]);
     let mut parts = request_line.splitn(3, ' ');
-    let (Some(method), Some(target), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
-        return unchanged();
+    // A malformed request line keeps the original header order.
+    let desired = match (parts.next(), parts.next(), parts.next()) {
+        (Some(method), Some(target), Some(_)) => order(method, target),
+        _ => &[],
     };
-    let desired = order(method, target);
-    if desired.is_empty() {
-        return unchanged();
-    }
     let mut used = vec![false; header_lines.len()];
     let mut ordered: Vec<Vec<u8>> = vec![lines[0].to_vec()];
     for name in desired {
@@ -177,7 +185,10 @@ fn order_request_header(header: &[u8], order: HeaderOrder) -> (Vec<u8>, i64, boo
             ordered.push(line.to_vec());
         }
     }
-    let mut out = Vec::with_capacity(header.len());
+    if let Some(line) = trailing {
+        ordered.push(line.as_bytes().to_vec());
+    }
+    let mut out = Vec::with_capacity(header.len() + trailing.map_or(0, |l| l.len() + 2));
     for line in ordered {
         out.extend_from_slice(&line);
         out.extend_from_slice(b"\r\n");
@@ -297,7 +308,11 @@ pub struct OrderedConn<T> {
 
 impl<T> OrderedConn<T> {
     pub fn new(inner: T, order: HeaderOrder) -> Self {
-        Self { inner, rewriter: HeaderRewriter::new(order), pending: Vec::new(), pending_pos: 0 }
+        Self::with_rewriter(inner, HeaderRewriter::new(order))
+    }
+
+    pub fn with_rewriter(inner: T, rewriter: HeaderRewriter) -> Self {
+        Self { inner, rewriter, pending: Vec::new(), pending_pos: 0 }
     }
 }
 
@@ -362,6 +377,16 @@ mod tests {
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "POST /v1/messages HTTP/1.1\r\nAccept: */*\r\nX-Stainless-OS: Linux\r\nanthropic-beta: b\r\nHost: h\r\nContent-Length: 5\r\nUser-Agent: ua\r\n\r\nhello"
+        );
+    }
+
+    #[test]
+    fn appends_trailing_header_after_the_last_header() {
+        let mut rw = HeaderRewriter::new(|_, _| &[]).with_trailing_header("Connection: close");
+        let req = b"GET / HTTP/1.1\r\nHost: h\r\nConnection: Keep-Alive\r\nAccept-Encoding: gzip\r\n\r\n";
+        assert_eq!(
+            rw.rewrite(req).unwrap(),
+            b"GET / HTTP/1.1\r\nHost: h\r\nConnection: Keep-Alive\r\nAccept-Encoding: gzip\r\nConnection: close\r\n\r\n"
         );
     }
 
