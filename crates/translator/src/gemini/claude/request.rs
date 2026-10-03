@@ -18,6 +18,10 @@ use crate::common::{
 };
 use crate::gemini::common::attach_default_safety_settings;
 
+mod fast;
+#[cfg(test)]
+mod fast_tests;
+
 const GEMINI_CLAUDE_THOUGHT_SIGNATURE: &str = "skip_thought_signature_validator";
 
 /// Converts a Claude Messages request into a Gemini request body.
@@ -35,35 +39,21 @@ fn content_with_parts(role: &str, parts: Vec<Value>) -> Value {
     json!({ "role": role, "parts": parts })
 }
 
-fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
+fn convert(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
+    if !preserve_empty_thinking_blocks
+        && let Some(out) = fast::convert(model_name, raw, stream)
+    {
+        return out;
+    }
+    convert_general(model_name, raw, stream, preserve_empty_thinking_blocks)
+}
+
+/// The general conversion through `Value`s; the reference for every body the fast path declines.
+fn convert_general(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
     let root = cpa_json::parse(raw);
     let mut out = json!({ "contents": [] });
     cpa_json::set(&mut out, "model", model_name);
-
-    // system instruction
-    let system = root.g("system");
-    if system.is_array() {
-        let mut system_parts = Vec::new();
-        for prompt in system.array() {
-            if prompt.g("type").str() == "text" {
-                let text = prompt.g("text");
-                if let Some(text) = text.as_str() {
-                    if is_claude_code_attribution_system_text(text) {
-                        continue;
-                    }
-                    system_parts.push(text_part(text));
-                }
-            }
-        }
-        if !system_parts.is_empty() {
-            let mut instruction = json!({ "role": "user", "parts": [] });
-            cpa_json::set(&mut instruction, "parts", Value::Array(system_parts));
-            cpa_json::set(&mut out, "systemInstruction", instruction);
-        }
-    } else if let Some(text) = system.as_str().filter(|t| !is_claude_code_attribution_system_text(t)) {
-        let instruction = json!({ "parts": [text_part(text)] });
-        cpa_json::set(&mut out, "systemInstruction", instruction);
-    }
+    apply_system_instruction(&mut out, &root);
 
     // contents
     let messages = root.g("messages");
@@ -235,7 +225,41 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         }
     }
 
-    // tools
+
+    apply_tail(&mut out, &root, model_name);
+
+    attach_default_safety_settings(&cpa_json::to_vec(&out), "safetySettings")
+}
+
+/// `systemInstruction` from the request `system` (string or text blocks).
+pub(super) fn apply_system_instruction(out: &mut Value, root: &Value) {
+    let system = root.g("system");
+    if system.is_array() {
+        let mut system_parts = Vec::new();
+        for prompt in system.array() {
+            if prompt.g("type").str() == "text" {
+                let text = prompt.g("text");
+                if let Some(text) = text.as_str() {
+                    if is_claude_code_attribution_system_text(text) {
+                        continue;
+                    }
+                    system_parts.push(text_part(text));
+                }
+            }
+        }
+        if !system_parts.is_empty() {
+            let mut instruction = json!({ "role": "user", "parts": [] });
+            cpa_json::set(&mut instruction, "parts", Value::Array(system_parts));
+            cpa_json::set(out, "systemInstruction", instruction);
+        }
+    } else if let Some(text) = system.as_str().filter(|t| !is_claude_code_attribution_system_text(t)) {
+        let instruction = json!({ "parts": [text_part(text)] });
+        cpa_json::set(out, "systemInstruction", instruction);
+    }
+}
+
+/// Tools, tool choice, thinking and sampling settings: everything after the contents.
+pub(super) fn apply_tail(out: &mut Value, root: &Value, model_name: &str) {
     let mut tool_items: Vec<Value> = Vec::new();
     let mut has_strict_tool = false;
     let tools = root.g("tools");
@@ -272,7 +296,7 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         if !tool_items.is_empty() {
             let mut tools_out = json!([{ "functionDeclarations": [] }]);
             cpa_json::set(&mut tools_out, "0.functionDeclarations", Value::Array(tool_items.clone()));
-            cpa_json::set(&mut out, "tools", tools_out);
+            cpa_json::set(out, "tools", tools_out);
         }
     }
 
@@ -290,19 +314,19 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
         }
         match tool_choice_type.as_str() {
             "auto" => {
-                cpa_json::set(&mut out, mode_path, if has_strict_tool { "VALIDATED" } else { "AUTO" });
+                cpa_json::set(out, mode_path, if has_strict_tool { "VALIDATED" } else { "AUTO" });
             }
             "none" => {
-                cpa_json::set(&mut out, mode_path, "NONE");
+                cpa_json::set(out, mode_path, "NONE");
             }
             "any" => {
-                cpa_json::set(&mut out, mode_path, "ANY");
+                cpa_json::set(out, mode_path, "ANY");
             }
             "tool" => {
-                cpa_json::set(&mut out, mode_path, "ANY");
+                cpa_json::set(out, mode_path, "ANY");
                 if !tool_choice_name.is_empty() {
                     cpa_json::set(
-                        &mut out,
+                        out,
                         "toolConfig.functionCallingConfig.allowedFunctionNames",
                         json!([sanitize_function_name(&tool_choice_name)]),
                     );
@@ -311,7 +335,7 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
             _ => {}
         }
     } else if has_strict_tool && !tool_items.is_empty() {
-        cpa_json::set(&mut out, mode_path, "VALIDATED");
+        cpa_json::set(out, mode_path, "VALIDATED");
     }
 
     // Map Anthropic thinking -> Gemini thinking config when enabled. Capability validation
@@ -322,7 +346,7 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
             "enabled" => {
                 let budget = thinking.g("budget_tokens");
                 if budget.is_number() {
-                    cpa_json::set(&mut out, "generationConfig.thinkingConfig.thinkingBudget", budget.int());
+                    cpa_json::set(out, "generationConfig.thinkingConfig.thinkingBudget", budget.int());
                 }
             }
             "adaptive" | "auto" => {
@@ -334,15 +358,15 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
                     effort = s.trim().to_lowercase();
                 }
                 if !effort.is_empty() {
-                    cpa_json::set(&mut out, "generationConfig.thinkingConfig.thinkingLevel", effort);
+                    cpa_json::set(out, "generationConfig.thinkingConfig.thinkingLevel", effort);
                 } else {
                     let max_budget = lookup_model_info(model_name, Some("gemini"))
                         .and_then(|mi| mi.thinking.map(|t| t.max))
                         .unwrap_or(0);
                     if max_budget > 0 {
-                        cpa_json::set(&mut out, "generationConfig.thinkingConfig.thinkingBudget", max_budget);
+                        cpa_json::set(out, "generationConfig.thinkingConfig.thinkingBudget", max_budget);
                     } else {
-                        cpa_json::set(&mut out, "generationConfig.thinkingConfig.thinkingLevel", "high");
+                        cpa_json::set(out, "generationConfig.thinkingConfig.thinkingLevel", "high");
                     }
                 }
             }
@@ -356,11 +380,9 @@ fn convert(model_name: &str, raw: &[u8], _stream: bool, preserve_empty_thinking_
     ] {
         let v = root.g(src);
         if v.is_number() {
-            cpa_json::set(&mut out, dst, cpa_json::num_f64(v.float()));
+            cpa_json::set(out, dst, cpa_json::num_f64(v.float()));
         }
     }
-
-    attach_default_safety_settings(&cpa_json::to_vec(&out), "safetySettings")
 }
 
 fn is_base64_image(block: &Value) -> bool {

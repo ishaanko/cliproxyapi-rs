@@ -2,14 +2,14 @@
 
 use cpa_core::registry::lookup_model_info;
 use cpa_core::thinking::{
-    apply_translated_summary_to_claude, convert_budget_to_level, convert_level_to_budget, has_level,
+    convert_budget_to_level, convert_level_to_budget, has_level,
     level as thinking_level, map_to_claude_effort,
 };
 use cpa_core::util::{go_json_sorted, sanitize_claude_function_name, walk, GoJsonStyle};
 use cpa_json::{json, Res, Value, J};
 
 use crate::common::{
-    derive_claude_user_id, is_gemini_thought_part, join_raw_array, ClaudeMessageAccumulator,
+    apply_translated_summary_to_claude, derive_claude_user_id, is_gemini_thought_part, join_raw_array, ClaudeMessageAccumulator,
 };
 
 /// Converts a Gemini `generateContent` request into a Claude Messages request. Tool call ids

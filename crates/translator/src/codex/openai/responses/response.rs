@@ -18,8 +18,11 @@ pub fn convert_codex_response_to_openai_responses(
     let original_event = raw;
     let sse = raw.starts_with(b"data:");
     let raw = if sse { raw[5..].trim_ascii() } else { raw };
-    let updated = set_responses_model(raw, model_name, original_request, request);
     // Only an executor-owned param can enable bridging on this shared translator.
+    if param.get::<ApplyPatchResponsesBridge>().is_none() && !may_need_model(raw) {
+        return vec![original_event.to_vec()];
+    }
+    let updated = set_responses_model(raw, model_name, original_request, request);
     let Some(bridge) = param.get::<ApplyPatchResponsesBridge>() else {
         // Native Codex never opts in, even when configuration supplies the bridge schema.
         return match updated {
@@ -45,6 +48,22 @@ pub fn convert_codex_response_to_openai_responses(
         param.tool_input_error = tool_input_error;
     }
     outputs
+}
+
+/// False when `raw` certainly is not a `response.created`/`response.in_progress` event, so the
+/// model fill (a full parse) can be skipped: text without any JSON container (`event:` lines,
+/// blank keep-alives), or an object whose leading `"type"` is another plain string. Anything
+/// else (type not first, escapes, unusual spacing) answers true and takes the parsing path.
+fn may_need_model(raw: &[u8]) -> bool {
+    if !raw.iter().any(|&b| b == b'{' || b == b'[') {
+        return false;
+    }
+    const LEAD: &[u8] = br#"{"type":""#;
+    let Some(rest) = raw.strip_prefix(LEAD) else { return true };
+    match rest.iter().position(|&b| b == b'"' || b == b'\\') {
+        Some(end) if rest[end] == b'"' => matches!(&rest[..end], b"response.created" | b"response.in_progress"),
+        _ => true,
+    }
 }
 
 /// Fills `response.model` on created/in_progress events lacking it. `None` when unchanged.
