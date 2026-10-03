@@ -1198,6 +1198,19 @@ mod tests {
     }
 
     #[test]
+    fn upstream_disconnect_notices_map_to_close_frames() {
+        let replay = disconnect_error(r#"{"error":{"code":"upstream_http_replay_required"}}"#);
+        assert_eq!(close_frame_for_upstream_error(&replay).map(|f| f.code), Some(1012));
+        let too_big = disconnect_error(r#"{"error":{"code":"message_too_big","message":"too large"}}"#);
+        let frame = close_frame_for_upstream_error(&too_big).unwrap();
+        assert_eq!((frame.code, frame.reason.as_str()), (1009, "too large"));
+        // Anything else is a plain 500: no close frame, nothing exposed to the client.
+        let plain = disconnect_error("websocket: close 1006: unexpected EOF");
+        assert!(close_frame_for_upstream_error(&plain).is_none());
+        assert!(!should_expose_upstream_error(&plain));
+    }
+
+    #[test]
     fn pending_tool_calls_follow_calls_and_outputs() {
         let mut pending = BTreeSet::new();
         record_pending_tool_calls(

@@ -102,6 +102,15 @@ pub fn codex_websockets(s: &mut ConfigSpec) {
     }
 }
 
+/// xAI keys (two, like the other families) with the upstream websocket enabled. The mock only
+/// serves xAI over websocket for text, so scenarios using this profile stay on the socket.
+pub fn xai_websockets(s: &mut ConfigSpec) {
+    let base = s.codex[0].base_url.replace("/codex", "/xai");
+    s.xai = (1..=2)
+        .map(|i| KeyEntry { api_key: format!("sk-xai-{i}"), base_url: base.clone(), websockets: Some(true), ..Default::default() })
+        .collect();
+}
+
 /// Codex websockets with `codex.response-steering` on: the client socket has a dedicated reader
 /// and Codex turns run as duplex streams.
 pub fn codex_steering(s: &mut ConfigSpec) {
