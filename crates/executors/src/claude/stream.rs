@@ -106,6 +106,44 @@ impl ClaudeExecutor {
     }
 }
 
+/// True when the per-line observers (message id and completion, served model, usage) cannot find
+/// anything in `line`: not a JSON object frame at all (event names, blanks, `[DONE]`), or a
+/// well-formed object whose single `type` is a content/ping/delta-less event and which has no
+/// `message`, `model` or `usage` member. Decided from the top-level keys without a parse.
+fn observers_inert(line: &[u8]) -> bool {
+    let Some(payload) = crate::helps::text::json_payload(line) else { return true };
+    let (mut types, mut recognized, mut carries) = (0usize, false, false);
+    let complete = cpa_runtime::conductor::session::lazy::visit_top_level(payload, |key, raw| {
+        match key {
+            "type" => {
+                types += 1;
+                recognized = matches!(
+                    raw,
+                    b"\"content_block_delta\"" | b"\"content_block_start\"" | b"\"content_block_stop\"" | b"\"ping\""
+                );
+            }
+            "message" | "model" | "usage" => carries = true,
+            _ => {}
+        }
+        true
+    });
+    complete && types == 1 && recognized && !carries
+}
+
+/// The line with OAuth tool aliases and the substituted model restored, `None` when neither
+/// applies (the usual case) so the caller keeps using the line itself.
+fn restore_line(
+    p: &Prepared,
+    line: &[u8],
+    restore_error: impl Fn(super::tool_remap::ClaudeMcpAliasRestoreError) -> ExecError,
+) -> Result<Option<Vec<u8>>, StreamEnd> {
+    if p.tool_reverse_map.is_empty() && p.restore_model.is_none() {
+        return Ok(None);
+    }
+    let restored = restore_claude_oauth_tool_names_from_stream_line(line, &p.tool_reverse_map).map_err(restore_error)?;
+    Ok(Some(p.restore_response_model(restored)))
+}
+
 /// Why a stream pump stopped early.
 enum StreamEnd {
     /// The client went away on an OAuth credential (Go: `claudeOAuthCancellationError`): recorded
@@ -169,15 +207,20 @@ async fn run_stream(
                     break;
                 }
             };
-            observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+            let inert = observers_inert(&line);
+            if !inert {
+                observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+            }
             api_log.append_api_response_chunk(cfg, &line);
-            reporter.observe_response_model(&line);
-            usage.observe_claude_stream(&line);
-            let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
-            let restored = p.restore_response_model(restored);
-            event.extend_from_slice(&restored);
+            if !inert {
+                reporter.observe_response_model(&line);
+                usage.observe_claude_stream(&line);
+            }
+            let restored = restore_line(p, &line, restore_error)?;
+            let restored: &[u8] = restored.as_deref().unwrap_or(&line);
+            event.extend_from_slice(restored);
             event.push(b'\n');
-            if trim_space(&restored).is_empty() {
+            if trim_space(restored).is_empty() {
                 if !event.is_empty() && tx.send(Ok(Bytes::from(std::mem::take(&mut event)))).await.is_err() {
                     return client_gone(p);
                 }
@@ -211,12 +254,17 @@ async fn run_stream(
                 break;
             }
         };
-        observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+        let inert = observers_inert(&line);
+        if !inert {
+            observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+        }
         api_log.append_api_response_chunk(cfg, &line);
-        reporter.observe_response_model(&line);
-        usage.observe_claude_stream(&line);
-        let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
-        let restored = p.restore_response_model(restored);
+        if !inert {
+            reporter.observe_response_model(&line);
+            usage.observe_claude_stream(&line);
+        }
+        let restored = restore_line(p, &line, restore_error)?;
+        let restored: &[u8] = restored.as_deref().unwrap_or(&line);
         let mut chunks = cpa_translator::translate_stream(
             &Ctx::default(),
             to,
@@ -224,7 +272,7 @@ async fn run_stream(
             &p.req.model,
             original_request,
             &p.body_for_translation,
-            &restored,
+            restored,
             &mut param,
         );
         if response_format == Format::OpenAIResponse && apply_patch_translation_error(&param).is_none() {
@@ -257,4 +305,28 @@ async fn run_stream(
         commit_claude_continuity_state(&p.diagnostics_state, &upstream_message_id, &header_value(resp_headers, "request-id"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::observers_inert;
+
+    #[test]
+    fn only_frames_that_cannot_carry_id_model_or_usage_are_inert() {
+        assert!(observers_inert(b"event: content_block_delta"));
+        assert!(observers_inert(b""));
+        assert!(observers_inert(br#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#));
+        assert!(observers_inert(br#"data: {"type":"ping"}"#));
+        for live in [
+            br#"data: {"type":"message_start","message":{"id":"m","model":"x"}}"#.as_slice(),
+            br#"data: {"type":"message_delta","usage":{"output_tokens":1}}"#,
+            br#"data: {"type":"message_stop"}"#,
+            br#"data: {"type":"ping","model":"x"}"#,
+            br#"data: {"type":"ping","type":"message_stop"}"#,
+            br#"data: {"type":"ping"} trailing"#,
+            br#"data: {"index":0}"#,
+        ] {
+            assert!(!observers_inert(live), "{}", String::from_utf8_lossy(live));
+        }
+    }
 }

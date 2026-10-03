@@ -34,7 +34,8 @@ use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::tls_fingerprint::new_utls_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
-use crate::helps::ttft::observe_responses_token_event;
+use crate::helps::ttft::observe_responses_token_event_doc;
+use cpa_runtime::conductor::session::lazy::Doc;
 use crate::helps::usage::{parse::parse_codex_usage, parse::parse_openai_usage, reporter::UsageReporter};
 
 /// Message of the 502 recorded when the upstream closes before any payload.
@@ -536,8 +537,8 @@ impl HttpStream {
             return Step::Frame { chunks, handshake: true, terminal_success: false };
         };
         let mut data = restore_response(payload, self.prepared.optimize_multi_agent_v2);
-        observe_responses_token_event(&self.reporter, &data);
-        let event = cpa_json::parse(&data);
+        let event = Doc::new(&data);
+        observe_responses_token_event_doc(&self.reporter, &data, &event);
         let event_type = event.g("type").str();
         if let Some((err, body)) = terminal_failure_err(&event, self.model_level_cooling) {
             self.api_log.record_api_response_error(&self.cfg, &error_text(&err));

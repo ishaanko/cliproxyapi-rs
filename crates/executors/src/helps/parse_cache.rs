@@ -60,7 +60,8 @@ impl Drop for Scope {
     }
 }
 
-fn active() -> bool {
+/// Whether a [`scope`] is open on this thread.
+pub fn active() -> bool {
     CACHE.with(|c| c.borrow().depth) > 0
 }
 

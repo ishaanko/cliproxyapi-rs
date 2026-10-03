@@ -309,6 +309,22 @@ impl Manager {
         let Some(scheduler) = self.active_plugin_scheduler() else {
             return self.pick_next_mixed(providers, route_model, &opts.headers, &opts.original_request, &mut opts.metadata, tried, eligibility);
         };
+        Box::pin(self.pick_via_scheduler(scheduler, scheduler_provider, providers, route_model, opts, tried, eligibility)).await
+    }
+
+    /// The plugin-scheduler branch of [`Self::pick_next_mixed_plugin`], boxed by the caller so the
+    /// common (no plugin) path carries none of its state.
+    #[allow(clippy::too_many_arguments)]
+    async fn pick_via_scheduler(
+        &self,
+        scheduler: std::sync::Arc<dyn super::PluginScheduler>,
+        scheduler_provider: &str,
+        providers: &[String],
+        route_model: &str,
+        opts: &mut crate::executor::Options,
+        tried: &HashSet<String>,
+        eligibility: &Eligibility,
+    ) -> Result<Picked, ExecError> {
         let across = scheduler.wants_across_priorities();
         let mut available: Vec<Auth> = Vec::new();
         let mut md = opts.metadata.clone();

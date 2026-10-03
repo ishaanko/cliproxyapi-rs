@@ -417,8 +417,12 @@ impl GeminiExecutor {
                     }
                 };
                 log.chunk(&line);
-                reporter.observe_response_model(&line);
-                let filtered = filter_sse_usage_metadata(&line);
+                // The observers below read the same frame: share one parse (dropped before the await).
+                let filtered = {
+                    let _parse_scope = crate::helps::parse_cache::scope();
+                    reporter.observe_response_model(&line);
+                    filter_sse_usage_metadata(&line)
+                };
                 let Some(payload) = json_payload(&filtered) else { continue };
                 if let Some(detail) = parse_gemini_stream_usage(payload) {
                     pump.usage.observe(detail, true);

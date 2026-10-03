@@ -10,7 +10,7 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use cpa_core::thinking::parse_suffix;
-use cpa_json::Value;
+use cpa_json::{J, Value};
 use cpa_runtime::conductor::session::lazy::Doc;
 use parking_lot::Mutex;
 
@@ -31,18 +31,31 @@ pub fn extract_response_model_event(payload: &[u8], provider: &str) -> (String, 
     let Some(data) = json_payload(payload) else {
         return (String::new(), false);
     };
+    if crate::helps::parse_cache::active() && is_gemini_family(provider) {
+        // Gemini frames are parsed whole by the usage filter right after: share that parse.
+        let v = crate::helps::parse_cache::parse(data);
+        return gemini_response_model(&*v, !v.is_null());
+    }
+    extract_response_model_event_doc(&Doc::new(data), provider)
+}
+
+fn is_gemini_family(provider: &str) -> bool {
+    matches!(provider.trim().to_lowercase().as_str(), "gemini" | "gemini-interactions" | "vertex" | "aistudio" | "antigravity")
+}
+
+/// [`extract_response_model_event`] for a frame whose JSON object (`json_payload` of the line)
+/// is already indexed, so several observers can share one scan.
+pub fn extract_response_model_event_doc(v: &Doc<'_>, provider: &str) -> (String, bool) {
     match provider.trim().to_lowercase().as_str() {
-        "codex" => extract_codex_response_model_event(payload),
-        "claude" => extract_claude_response_model_event(data),
-        "gemini" | "gemini-interactions" | "vertex" | "aistudio" | "antigravity" => {
-            extract_gemini_response_model_event(data)
-        }
-        _ => extract_generic_response_model_event(data),
+        "codex" => extract_codex_response_model_doc(v),
+        "claude" => extract_claude_response_model_doc(v),
+        "gemini" | "gemini-interactions" | "vertex" | "aistudio" | "antigravity" => gemini_response_model(v, v.exists()),
+        _ => extract_generic_response_model_doc(v),
     }
 }
 
 /// Trimmed string at `path` when it is a JSON string within the length bound.
-fn bounded_model(v: &Doc<'_>, path: &str) -> Option<String> {
+fn bounded_model(v: &impl J, path: &str) -> Option<String> {
     match v.g(path).v() {
         Some(Value::String(s)) => {
             let s = s.trim();
@@ -52,26 +65,29 @@ fn bounded_model(v: &Doc<'_>, path: &str) -> Option<String> {
     }
 }
 
-fn is_string_at(v: &Doc<'_>, path: &str) -> bool {
+fn is_string_at(v: &impl J, path: &str) -> bool {
     matches!(v.g(path).v(), Some(Value::String(_)))
 }
 
 /// Response model of an Anthropic message stream or non-stream message.
 pub fn extract_claude_response_model_event(data: &[u8]) -> (String, bool) {
-    let v = Doc::new(data);
+    extract_claude_response_model_doc(&Doc::new(data))
+}
+
+fn extract_claude_response_model_doc(v: &Doc<'_>) -> (String, bool) {
     match v.g("type").str().as_str() {
-        "message_start" => (bounded_model(&v, "message.model").unwrap_or_default(), false),
+        "message_start" => (bounded_model(v, "message.model").unwrap_or_default(), false),
         "message_stop" => (String::new(), true),
-        "message" => (bounded_model(&v, "model").unwrap_or_default(), true),
+        "message" => (bounded_model(v, "model").unwrap_or_default(), true),
         _ => {
             if !v.exists() {
                 return (String::new(), false);
             }
             // The first string-typed location wins even when it is too long.
-            let model = if is_string_at(&v, "message.model") {
-                bounded_model(&v, "message.model")
-            } else if is_string_at(&v, "model") {
-                bounded_model(&v, "model")
+            let model = if is_string_at(v, "message.model") {
+                bounded_model(v, "message.model")
+            } else if is_string_at(v, "model") {
+                bounded_model(v, "model")
             } else {
                 None
             };
@@ -83,13 +99,17 @@ pub fn extract_claude_response_model_event(data: &[u8]) -> (String, bool) {
 /// Response model of a Gemini / Vertex / AI Studio / interactions frame.
 pub fn extract_gemini_response_model_event(data: &[u8]) -> (String, bool) {
     let v = Doc::new(data);
-    if !v.exists() {
+    gemini_response_model(&v, v.exists())
+}
+
+fn gemini_response_model(v: &impl J, exists: bool) -> (String, bool) {
+    if !exists {
         return (String::new(), false);
     }
     let path = ["response.modelVersion", "modelVersion", "interaction.model", "model"]
         .into_iter()
-        .find(|p| is_string_at(&v, p));
-    let served = path.and_then(|p| bounded_model(&v, p)).unwrap_or_default();
+        .find(|p| is_string_at(v, p));
+    let served = path.and_then(|p| bounded_model(v, p)).unwrap_or_default();
     let mut finish = v.g("candidates.0.finishReason");
     if !finish.exists() {
         finish = v.g("response.candidates.0.finishReason");
@@ -107,19 +127,22 @@ pub fn extract_gemini_response_model_event(data: &[u8]) -> (String, bool) {
 
 /// Response model of standard chat / responses / interactions / Gemini-shaped JSON.
 pub fn extract_generic_response_model_event(data: &[u8]) -> (String, bool) {
-    let v = Doc::new(data);
+    extract_generic_response_model_doc(&Doc::new(data))
+}
+
+fn extract_generic_response_model_doc(v: &Doc<'_>) -> (String, bool) {
     if !v.exists() {
         return (String::new(), false);
     }
     let event_type_of = |key: &str| v.g(key).str();
-    if is_string_at(&v, "response.model")
-        && let Some(served) = bounded_model(&v, "response.model")
+    if is_string_at(v, "response.model")
+        && let Some(served) = bounded_model(v, "response.model")
     {
         let t = event_type_of("type");
         return (served, matches!(t.as_str(), "response.completed" | "response.done" | "response.incomplete"));
     }
-    if is_string_at(&v, "interaction.model")
-        && let Some(served) = bounded_model(&v, "interaction.model")
+    if is_string_at(v, "interaction.model")
+        && let Some(served) = bounded_model(v, "interaction.model")
     {
         let mut t = event_type_of("event_type");
         if t.is_empty() {
@@ -127,25 +150,25 @@ pub fn extract_generic_response_model_event(data: &[u8]) -> (String, bool) {
         }
         return (served, is_interactions_terminal(&t, &v.g("interaction.status").str()));
     }
-    if is_string_at(&v, "modelVersion")
-        && let Some(served) = bounded_model(&v, "modelVersion")
+    if is_string_at(v, "modelVersion")
+        && let Some(served) = bounded_model(v, "modelVersion")
     {
         let cand = v.g("candidates.0.finishReason");
         return (served, cand.exists() && !cand.str().is_empty());
     }
-    if is_string_at(&v, "response.modelVersion")
-        && let Some(served) = bounded_model(&v, "response.modelVersion")
+    if is_string_at(v, "response.modelVersion")
+        && let Some(served) = bounded_model(v, "response.modelVersion")
     {
         let cand = v.g("response.candidates.0.finishReason");
         return (served, cand.exists() && !cand.str().is_empty());
     }
-    if is_string_at(&v, "message.model")
-        && let Some(served) = bounded_model(&v, "message.model")
+    if is_string_at(v, "message.model")
+        && let Some(served) = bounded_model(v, "message.model")
     {
         return (served, false);
     }
-    if is_string_at(&v, "model")
-        && let Some(served) = bounded_model(&v, "model")
+    if is_string_at(v, "model")
+        && let Some(served) = bounded_model(v, "model")
     {
         let object_type = v.g("object").str();
         let finish_reason = v.g("choices.0.finish_reason").str();
@@ -179,7 +202,10 @@ pub fn extract_codex_response_model_event(payload: &[u8]) -> (String, bool) {
     let Some(data) = json_payload(payload) else {
         return (String::new(), false);
     };
-    let v = Doc::new(data);
+    extract_codex_response_model_doc(&Doc::new(data))
+}
+
+fn extract_codex_response_model_doc(v: &Doc<'_>) -> (String, bool) {
     let (carries_model, terminal) = match v.g("type").str().trim() {
         "response.created" | "response.in_progress" => (true, false),
         "response.completed" | "response.incomplete" | "response.done" => (true, true),
@@ -189,7 +215,7 @@ pub fn extract_codex_response_model_event(payload: &[u8]) -> (String, bool) {
         return (String::new(), false);
     }
     // Upstream-controlled: reject non-string and oversized names.
-    (bounded_model(&v, "response.model").unwrap_or_default(), terminal)
+    (bounded_model(v, "response.model").unwrap_or_default(), terminal)
 }
 
 /// Lower-cases a model id and drops its thinking suffix (which never reaches the upstream).

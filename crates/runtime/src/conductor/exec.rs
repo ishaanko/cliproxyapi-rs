@@ -240,7 +240,7 @@ impl Manager {
             return Err(provider_not_found("no provider supplied"));
         }
         if self.home_enabled() {
-            return self.execute_home(kind, req, opts).await;
+            return Box::pin(self.execute_home(kind, req, opts)).await;
         }
         let rs = self.retry_settings();
         let retry_model = auth_selection_model(&opts, &req.model);
@@ -283,7 +283,7 @@ impl Manager {
                     if !retry {
                         break fail;
                     }
-                    self.wait_for_cooldown(wait, rs.max_retry_interval).await;
+                    Box::pin(self.wait_for_cooldown(wait, rs.max_retry_interval)).await;
                     attempt += 1;
                 }
             }
@@ -291,7 +291,7 @@ impl Manager {
         let last = preferred(last, preferred_upstream.as_ref());
         if kind == Kind::Execute
             && self.should_attempt_antigravity_credits_fallback(&last.err, &normalized)
-            && let Some(resp) = self.try_antigravity_credits_execute(&req, &opts).await?
+            && let Some(resp) = Box::pin(self.try_antigravity_credits_execute(&req, &opts)).await?
         {
             return Ok(resp);
         }
@@ -311,7 +311,7 @@ impl Manager {
             return Err(provider_not_found("no provider supplied"));
         }
         if self.home_enabled() {
-            return self.execute_home_stream(req, opts).await;
+            return Box::pin(self.execute_home_stream(req, opts)).await;
         }
         let rs = self.retry_settings();
         let retry_model = auth_selection_model(&opts, &req.model);
@@ -361,9 +361,7 @@ impl Manager {
         };
         let last = preferred(last, preferred_upstream.as_ref());
         if self.should_attempt_antigravity_credits_fallback(&last.err, &normalized)
-            && let Some(stream) = self
-                .try_antigravity_credits_execute_stream(&req, &opts)
-                .await?
+            && let Some(stream) = Box::pin(self.try_antigravity_credits_execute_stream(&req, &opts)).await?
         {
             return Ok(stream);
         }

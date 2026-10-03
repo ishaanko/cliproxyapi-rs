@@ -284,6 +284,11 @@ impl Manager {
         if !Failure::of_exec(err).is_unauthorized() || !auth_has_refresh_credential(auth) {
             return None;
         }
+        // The refresh itself is rare and large; keep it out of the callers' future size.
+        Box::pin(self.refresh_after_unauthorized(auth)).await
+    }
+
+    async fn refresh_after_unauthorized(&self, auth: &Auth) -> Option<Auth> {
         tracing::debug!(
             "unauthorized response for {} ({}), refreshing credentials before fallback",
             auth.provider,
@@ -590,6 +595,14 @@ impl Manager {
         if !executor.should_prepare_request_auth(auth) {
             return Ok(auth.clone());
         }
+        Box::pin(self.prepare_request_auth_slow(executor, auth)).await
+    }
+
+    async fn prepare_request_auth_slow(
+        &self,
+        executor: &DynExecutor,
+        auth: &Auth,
+    ) -> Result<Auth, ExecError> {
         let id = auth.id.trim().to_string();
         if id.is_empty() {
             return Ok(executor
