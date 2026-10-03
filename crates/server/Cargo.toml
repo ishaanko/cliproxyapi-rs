@@ -32,6 +32,8 @@ cpa-tui = { path = "../tui" }
 cpa-executors = { path = "../executors", default-features = false }
 cpa-plugin = { path = "../plugin" }
 cpa-pluginapi = { path = "../pluginapi" }
+cpa-pluginstore = { path = "../pluginstore" }
+serde_yaml_ng = "0.10"
 cpa-live = { path = "../live" }
 serde.workspace = true
 serde_json.workspace = true

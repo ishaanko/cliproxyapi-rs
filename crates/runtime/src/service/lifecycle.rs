@@ -20,7 +20,7 @@ use tokio::task::JoinHandle;
 
 mod home;
 
-pub use home::{HomeHooks, force_home_runtime_config, merge_home_config};
+pub use home::{HomeHooks, HomePluginWork, HomePlugins, force_home_runtime_config, merge_home_config};
 
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
 use super::models::{
@@ -131,6 +131,7 @@ pub struct ServiceBuilder {
     antigravity_probe: bool,
     initial_config: Option<Config>,
     home_hooks: Option<Arc<dyn HomeHooks>>,
+    home_plugins: Option<Arc<dyn HomePlugins>>,
 }
 
 impl ServiceBuilder {
@@ -151,6 +152,7 @@ impl ServiceBuilder {
             antigravity_probe: true,
             initial_config: None,
             home_hooks: None,
+            home_plugins: None,
         }
     }
 
@@ -162,6 +164,12 @@ impl ServiceBuilder {
     }
 
     /// Observer of the Home lifetime (log forwarding).
+    /// Attaches the plugin host's Home sync (Go: `syncHomePlugins` in the Home overlay).
+    pub fn home_plugins(mut self, plugins: Arc<dyn HomePlugins>) -> Self {
+        self.home_plugins = Some(plugins);
+        self
+    }
+
     pub fn home_hooks(mut self, hooks: Arc<dyn HomeHooks>) -> Self {
         self.home_hooks = Some(hooks);
         self
@@ -289,6 +297,7 @@ impl ServiceBuilder {
             home_supervisor: Mutex::new(None),
             home_state: Mutex::new(None),
             home_hooks: self.home_hooks,
+            home_plugins: self.home_plugins,
             home_fatal: tokio::sync::Notify::new(),
         };
         Ok(Service { inner: Arc::new(inner) })
@@ -325,6 +334,7 @@ struct Inner {
     /// The dispatch bundle the active Home lifetime published.
     home_state: Mutex<Option<Arc<crate::conductor::HomeDispatchBundle>>>,
     home_hooks: Option<Arc<dyn HomeHooks>>,
+    home_plugins: Option<Arc<dyn HomePlugins>>,
     /// Signalled when Home lifecycle recovery failed in a way that requires restarting the process.
     home_fatal: tokio::sync::Notify,
 }

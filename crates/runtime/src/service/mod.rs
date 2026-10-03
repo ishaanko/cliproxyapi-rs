@@ -43,7 +43,7 @@ pub use listing::{
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
 pub use plugins::{PluginAuthModels, ServicePlugins};
 pub use lifecycle::{
-    ExecutorFactory, HomeHooks, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,
+    ExecutorFactory, HomeHooks, HomePluginWork, HomePlugins, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,
     merge_home_config,
 };
 pub use sync::{AuthSync, AuthUpdate, AuthUpdateAction};

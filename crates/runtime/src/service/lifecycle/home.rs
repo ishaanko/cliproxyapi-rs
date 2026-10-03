@@ -36,6 +36,23 @@ pub trait HomeHooks: Send + Sync {
     fn deactivate(&self, client: &Arc<Client>);
 }
 
+/// Plugin work riding on Home configs (Go: `homePluginFinalization`): the plugin host installs
+/// what Home assigns before a config is applied and reports once it took effect.
+#[async_trait::async_trait]
+pub trait HomePlugins: Send + Sync {
+    /// Before `merged` is applied: installs the plugins Home assigns and stages the status
+    /// reports and delete tasks. `sync_cfg` is `merged` with the `plugins.store-auth` Home sent.
+    /// An `Err` keeps the config from being applied; it is retried.
+    async fn stage(&self, client: &Arc<Client>, sync_cfg: &Config, merged: &Config) -> Result<Box<dyn HomePluginWork>, String>;
+}
+
+/// The part of [`HomePlugins::stage`] that runs after the config was applied.
+#[async_trait::async_trait]
+pub trait HomePluginWork: Send {
+    /// Records load results, reports statuses and processes delete tasks. An `Err` is retried.
+    async fn finalize(&mut self, client: &Arc<Client>) -> Result<(), String>;
+}
+
 /// A running supervisor.
 pub(super) struct HomeSupervisor {
     cancel: Arc<Kill>,
@@ -314,7 +331,21 @@ async fn config_worker(
             }
         };
         let base = service.config();
-        let merged = Arc::new(merge_home_config(&base, parsed));
+        let remote_store_auth = parsed.plugins.store_auth.clone();
+        let merged = merge_home_config(&base, parsed);
+        let mut plugin_work = None;
+        if let Some(plugins) = &service.home_plugins {
+            let mut sync_cfg = merged.clone();
+            sync_cfg.plugins.store_auth = remote_store_auth;
+            match plugins.stage(&life.client, &sync_cfg, &merged).await {
+                Ok(work) => plugin_work = Some(work),
+                Err(e) => {
+                    tracing::warn!("failed to stage home config; retrying: {e}");
+                    continue;
+                }
+            }
+        }
+        let merged = Arc::new(merged);
         if life.cancel.is_dead() || supervisor_cancel.is_dead() {
             return;
         }
@@ -322,6 +353,23 @@ async fn config_worker(
         if !outcome.accepted {
             tracing::warn!("failed to apply config update from home control center");
             continue;
+        }
+        if let Some(mut work) = plugin_work {
+            loop {
+                if life.cancel.is_dead() {
+                    return;
+                }
+                match work.finalize(&life.client).await {
+                    Ok(()) => break,
+                    Err(e) => {
+                        tracing::warn!("failed to finalize home plugins; retrying: {e}");
+                        tokio::select! {
+                            _ = life.cancel.wait() => return,
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+                }
+            }
         }
         if life.cancel.is_dead() {
             return;

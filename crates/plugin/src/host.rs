@@ -19,7 +19,7 @@ use crate::caps::{PluginIdentifier, PluginInfo, Record, Registration};
 use crate::client::{CallbackInstance, Empty, GuardedClient, PluginError, RawClient, call_plugin, empty_request};
 use crate::config::{RuntimeConfig, RuntimeItem, default_runtime_item, desired_versions, runtime_config_from_config};
 use crate::ctx::CallCtx;
-use crate::loader::{DynClient, HostCallbacks};
+use crate::loader::HostCallbacks;
 use crate::platform::{PluginFile, clean_path, cleanup_unselected_files, select_plugin_files};
 
 /// Opens plugin binaries (Go: `pluginLoader`); replaceable in tests.
@@ -42,8 +42,16 @@ impl PluginLoader for DynLoader {
         host: Arc<dyn HostCallbacks>,
         instance: Arc<CallbackInstance>,
     ) -> Result<Arc<dyn RawClient>, PluginError> {
-        let client = DynClient::open(&file.path, &file.id, host, instance)?;
-        Ok(client)
+        #[cfg(unix)]
+        {
+            let client = crate::loader::DynClient::open(&file.path, &file.id, host, instance)?;
+            Ok(client)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (file, host, instance);
+            Err(PluginError::msg("plugins are not supported on this platform"))
+        }
     }
 }
 

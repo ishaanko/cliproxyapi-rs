@@ -123,9 +123,14 @@ async fn run() -> i32 {
         std::path::PathBuf::from(&cli.config)
     };
     let home_mode = !cli.home_jwt.trim().is_empty();
+    let mut home_boot = None;
     let mut cfg = if home_mode {
-        match boot_home(&cli).await {
-            Ok(c) => c,
+        match boot_home(&cli, &plugin_host).await {
+            Ok(boot) => {
+                let cfg = boot.cfg.clone();
+                home_boot = Some(boot);
+                cfg
+            }
             Err(()) => return 0,
         }
     } else {
@@ -176,6 +181,11 @@ async fn run() -> i32 {
     }
 
     plugin_host.apply_config(&cpa_plugin::CallCtx::background(), Some(Arc::new(cfg.clone()))).await;
+    if let Some(boot) = home_boot.take()
+        && !finish_home_boot(boot, &plugin_host).await
+    {
+        return 0;
+    }
     if plugin_host.has_triggered_command_line_flags() {
         let builtin = cli.builtin_flag_values();
         let (code, handled) = plugin_host
@@ -362,10 +372,20 @@ impl StdioRedirect {
     fn restore(self) {}
 }
 
-/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, report the
-/// (empty) plugin status and hand the parsed config to the service. `Err` means the process
-/// should exit after the error was logged.
-async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
+/// What the Home boot hands to the rest of the start: the config plus the bootstrap client and
+/// plugin report that are finished once the plugins are loaded.
+struct HomeBoot {
+    cfg: Config,
+    client: Arc<cpa_home::Client>,
+    node_id: String,
+    report: cpa_pluginstore::homeplugins::SyncReport,
+    report_ready: bool,
+}
+
+/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, install the
+/// plugins Home assigns, report the result and hand the parsed config to the service. `Err`
+/// means the process should exit after the error was logged.
+async fn boot_home(cli: &cli::Cli, plugin_host: &Arc<cpa_plugin::Host>) -> Result<HomeBoot, ()> {
     let timeout = Duration::from_secs(30);
     let mut home_cfg = match tokio::time::timeout(timeout, cpa_home::certificate::config_from_jwt(&cli.home_jwt)).await {
         Ok(Ok(c)) => c,
@@ -381,7 +401,7 @@ async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
     if cli.home_disable_cluster_discovery {
         home_cfg.disable_cluster_discovery = true;
     }
-    let client = cpa_home::Client::new(home_cfg.clone());
+    let client = Arc::new(cpa_home::Client::new(home_cfg.clone()));
     let raw = match tokio::time::timeout(timeout, client.get_config()).await {
         Ok(Ok(raw)) => raw,
         Ok(Err(e)) => {
@@ -406,18 +426,45 @@ async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
     parsed.home = home_cfg.clone();
     parsed.port = cpa_config::normalize_home_port(parsed.port);
     parsed.usage_statistics_enabled = true;
+    // The sync keeps `plugins.store-auth`; the running config must not.
+    let sync_cfg = parsed.clone();
+    parsed.plugins.store_auth.clear();
     cpa_runtime::service::force_home_runtime_config(&mut parsed);
-    // No plugin host in this build: report that nothing needed installing, twice like Go (after
-    // the sync and after the load step).
-    for what in ["sync", "load"] {
-        let report = cpa_home::plugin_status::completed_sync_report(cpa_home::plugin_status::Platform::current(), None);
-        if let Err(e) = cpa_home::plugin_status::report_plugin_status(&client, &home_cfg.node_id, report).await {
-            tracing::warn!("failed to report home plugin {what} status: {e}");
+    let sync = cpa_server::plugin_home::startup_sync(&client, &sync_cfg, plugin_host).await;
+    if let Some(e) = &sync.error {
+        tracing::error!("failed to sync plugins from home: {e}");
+    }
+    if sync.ready
+        && let Err(e) = cpa_server::plugin_home::push_status(&client, &home_cfg.node_id, sync.report.clone()).await
+    {
+        tracing::warn!("failed to report home plugin sync status: {e}");
+    }
+    if sync.error.is_some() {
+        client.close();
+        return Err(());
+    }
+    Ok(HomeBoot { cfg: parsed, client, node_id: home_cfg.node_id, report: sync.report, report_ready: sync.ready })
+}
+
+/// Go: after `pluginHost.ApplyConfig(cfg)` in Home mode: record which synced plugins loaded, report
+/// that and release the bootstrap client. `false` means the start must stop.
+async fn finish_home_boot(boot: HomeBoot, plugin_host: &Arc<cpa_plugin::Host>) -> bool {
+    let mut report = boot.report;
+    let mut ok = true;
+    if boot.report_ready {
+        let inspector = cpa_server::plugin_home::HostRuntime(plugin_host.clone());
+        let load_error = cpa_pluginstore::homeplugins::mark_load_results(&mut report, Some(&inspector));
+        if let Err(e) = cpa_server::plugin_home::push_status(&boot.client, &boot.node_id, report).await {
+            tracing::warn!("failed to report home plugin load status: {e}");
+        }
+        if let Some(e) = load_error {
+            tracing::error!("failed to load home plugins: {e}");
+            ok = false;
         }
     }
     // The bootstrap client is not owned by the service; release its connection.
-    client.close();
-    Ok(parsed)
+    boot.client.close();
+    ok
 }
 
 /// Starts the app-log forwarder with the Home lifetime (Go: `startHomeLogForwarder`).
@@ -476,6 +523,7 @@ async fn serve_proxy(
         .plugins(plugin_hooks);
     if cfg.home.enabled {
         builder = builder
+            .home_plugins(cpa_server::plugin_home::ServerHomePlugins::new(plugin_host.clone()))
             .initial_config(cfg.clone())
             .home_hooks(Arc::new(ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder::start(0))));
     }
