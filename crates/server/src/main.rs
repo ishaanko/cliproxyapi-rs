@@ -67,6 +67,16 @@ async fn run() -> i32 {
         eprintln!("flag -{flag} is not supported by this build");
         return 2;
     }
+    let mut cli = cli;
+    // Go: `lookupEnv("HOME_JWT", "home_jwt")` when the flag is empty.
+    if cli.home_jwt.trim().is_empty() {
+        cli.home_jwt = ["HOME_JWT", "home_jwt"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .map(|v| v.trim().to_string())
+            .find(|v| !v.is_empty())
+            .unwrap_or_default();
+    }
 
     let wd = match std::env::current_dir() {
         Ok(d) => d,
@@ -85,15 +95,23 @@ async fn run() -> i32 {
     } else {
         std::path::PathBuf::from(&cli.config)
     };
-    let mut cfg = match cpa_config::load_config_optional(&config_path, cloud_deploy) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("failed to load config: {e}");
-            return 0;
+    let home_mode = !cli.home_jwt.trim().is_empty();
+    let mut cfg = if home_mode {
+        match boot_home(&cli).await {
+            Ok(c) => c,
+            Err(()) => return 0,
+        }
+    } else {
+        match cpa_config::load_config_optional(&config_path, cloud_deploy) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("failed to load config: {e}");
+                return 0;
+            }
         }
     };
 
-    if cloud_deploy {
+    if cloud_deploy && !home_mode {
         let usable = match std::fs::metadata(&config_path) {
             Err(_) => {
                 tracing::info!("Cloud deploy mode: No configuration file detected; standing by for configuration");
@@ -146,8 +164,79 @@ async fn run() -> i32 {
     serve_proxy(cfg, config_path, &cli, build, log).await
 }
 
+/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, report the
+/// (empty) plugin status and hand the parsed config to the service. `Err` means the process
+/// should exit after the error was logged.
+async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
+    let timeout = Duration::from_secs(30);
+    let mut home_cfg = match tokio::time::timeout(timeout, cpa_home::certificate::config_from_jwt(&cli.home_jwt)).await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            tracing::error!("invalid -home-jwt: {e}");
+            return Err(());
+        }
+        Err(_) => {
+            tracing::error!("invalid -home-jwt: context deadline exceeded");
+            return Err(());
+        }
+    };
+    if cli.home_disable_cluster_discovery {
+        home_cfg.disable_cluster_discovery = true;
+    }
+    let client = cpa_home::Client::new(home_cfg.clone());
+    let raw = match tokio::time::timeout(timeout, client.get_config()).await {
+        Ok(Ok(raw)) => raw,
+        Ok(Err(e)) => {
+            tracing::error!("failed to fetch config from home: {e}");
+            client.close();
+            return Err(());
+        }
+        Err(_) => {
+            tracing::error!("failed to fetch config from home: context deadline exceeded");
+            client.close();
+            return Err(());
+        }
+    };
+    let mut parsed = match cpa_config::parse_config_bytes(&raw) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to parse config payload from home: {e}");
+            client.close();
+            return Err(());
+        }
+    };
+    parsed.home = home_cfg.clone();
+    parsed.port = cpa_config::normalize_home_port(parsed.port);
+    parsed.usage_statistics_enabled = true;
+    cpa_runtime::service::force_home_runtime_config(&mut parsed);
+    // No plugin host in this build: report that nothing needed installing, twice like Go (after
+    // the sync and after the load step).
+    for what in ["sync", "load"] {
+        let report = cpa_home::plugin_status::completed_sync_report(cpa_home::plugin_status::Platform::current(), None);
+        if let Err(e) = cpa_home::plugin_status::report_plugin_status(&client, &home_cfg.node_id, report).await {
+            tracing::warn!("failed to report home plugin {what} status: {e}");
+        }
+    }
+    // The bootstrap client is not owned by the service; release its connection.
+    client.close();
+    Ok(parsed)
+}
+
+/// Starts the app-log forwarder with the Home lifetime (Go: `startHomeLogForwarder`).
+struct ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder);
+
+impl cpa_runtime::service::HomeHooks for ServerHomeHooks {
+    fn bind(&self, client: Arc<cpa_home::Client>) {
+        self.0.bind(client);
+    }
+
+    fn deactivate(&self, client: &Arc<cpa_home::Client>) {
+        self.0.deactivate(client);
+    }
+}
+
 async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cli, build: BuildInfo, log: Arc<LogControl>) -> i32 {
-    let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
+    let safe_mode = !cfg.home.enabled && safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
             api_keys = %safemode::example_api_keys(&cfg.api_keys).join(","),
@@ -163,12 +252,16 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     cpa_home::queue::set_usage_statistics_enabled(cfg.usage_statistics_enabled);
     cpa_home::queue::set_retention_seconds(cfg.redis_usage_queue_retention_seconds);
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
-    let service = match ServiceBuilder::new(&config_path)
+    let mut builder = ServiceBuilder::new(&config_path)
         .dotenv_dir(None)
         .usage(usage.clone())
-        .executor_factory(compat_factory)
-        .build()
-    {
+        .executor_factory(compat_factory);
+    if cfg.home.enabled {
+        builder = builder
+            .initial_config(cfg.clone())
+            .home_hooks(Arc::new(ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder::start(0))));
+    }
+    let service = match builder.build() {
         Ok(s) => Arc::new(s),
         Err(e) => {
             tracing::error!("failed to build proxy service: {e}");
@@ -303,6 +396,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         }
         _ = shutdown_signal() => {}
         _ = idle => {}
+        _ = service.home_fatal() => {}
     }
     service.shutdown();
     0
