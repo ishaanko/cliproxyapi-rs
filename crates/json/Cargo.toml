@@ -10,6 +10,8 @@ serde = "1"
 serde_stacker = "0.1"
 memchr = "2"
 simdutf8 = "0.1"
+foldhash = "0.2"
+tokio.workspace = true
 
 [dev-dependencies]
 indexmap.workspace = true

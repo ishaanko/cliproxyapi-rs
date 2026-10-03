@@ -23,6 +23,9 @@
 use std::borrow::Cow;
 
 mod fast;
+mod memo;
+
+pub use memo::{scope, scope_sync};
 
 pub use serde_json::{json, Map, Number, Value};
 
@@ -330,6 +333,23 @@ impl J for Value {
 /// Parse bytes; invalid JSON yields `Value::Null` (gjson is lenient, so callers must not
 /// rely on errors).
 pub fn parse(bytes: &[u8]) -> Value {
+    memo::parse(bytes, parse_uncached)
+}
+
+/// `valid(bytes)` followed by `parse(bytes)` in one pass: `Some` for valid JSON, else `None`.
+pub fn parse_valid(bytes: &[u8]) -> Option<Value> {
+    if bytes.len() >= memo::MIN_LEN {
+        // Large documents go through the per-request memo, which keys `valid` and `parse` apart.
+        return valid(bytes).then(|| parse(bytes));
+    }
+    match fast::parse(bytes) {
+        Ok(v) => Some(v),
+        Err(fast::Fail::Syntax) => None,
+        Err(_) => valid(bytes).then(|| parse(bytes)),
+    }
+}
+
+fn parse_uncached(bytes: &[u8]) -> Value {
     // The direct reader covers every ordinary document; the serde path below only runs for
     // nesting beyond its limit, serde-special keys, and as the base of the lenient fallbacks.
     let mut deep = false;
@@ -747,6 +767,10 @@ fn nesting_depth(bytes: &[u8]) -> usize {
 
 /// gjson `ValidBytes`.
 pub fn valid(bytes: &[u8]) -> bool {
+    memo::valid(bytes, valid_uncached)
+}
+
+fn valid_uncached(bytes: &[u8]) -> bool {
     match fast::validate(bytes) {
         Ok(()) => return true,
         Err(fast::Fail::Syntax) => return false,
@@ -1277,3 +1301,6 @@ mod tests;
 
 #[cfg(test)]
 mod fast_tests;
+
+#[cfg(test)]
+mod memo_tests;
