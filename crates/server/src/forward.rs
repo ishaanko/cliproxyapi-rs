@@ -12,7 +12,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use tokio::sync::mpsc;
 use http_body::{Body, Frame};
-use tokio::time::{Instant, Interval, interval_at};
+use tokio::time::{Instant, Interval, Sleep, interval_at, sleep_until};
 
 use crate::error::{ErrorMessage, claude_error_body, error_body, retry_after_seconds};
 use crate::exec::{ExecRx, ExecStream};
@@ -52,9 +52,15 @@ pub trait StreamHooks: Send + Unpin {
 /// Stop coalescing queued chunks into one write once this many bytes are pending.
 const BATCH_LIMIT: usize = 32 * 1024;
 
+/// Writes to one client are spaced at least this far apart. The first chunk after a quiet period
+/// goes out at once (token streams, where events are milliseconds apart, see no change); a dense
+/// burst, which would otherwise cost one socket write per event, is flushed once per gap. The tokio
+/// timer wheel rounds the wait up to a millisecond tick.
+const FLUSH_GAP: Duration = Duration::from_millis(1);
+
 /// SSE response body (Go: `ForwardStream`): pulls chunks from the stream when hyper polls the
 /// body, writes them through the dialect hooks and hands over everything that is already queued
-/// as one frame (one socket write, no added latency). It ends after the stream ends, errors, or a
+/// as one frame (one socket write; see [`FLUSH_GAP`] for dense bursts). It ends after the stream ends, errors, or a
 /// chunk reports a terminal failure; dropping it (client gone) drops the chunk source, which
 /// releases the upstream. Runs in the connection's own task: no pump task or channel per stream.
 pub struct SseBody<H: StreamHooks> {
@@ -65,12 +71,16 @@ pub struct SseBody<H: StreamHooks> {
     ticker: Option<Pin<Box<Interval>>>,
     buf: Vec<u8>,
     finished: bool,
+    /// When the last frame was handed to hyper.
+    last_flush: Option<Instant>,
+    /// Wait for the end of the flush gap while a dense burst accumulates in `buf`.
+    hold: Option<Pin<Box<Sleep>>>,
 }
 
 impl<H: StreamHooks> SseBody<H> {
     pub fn new(hooks: H, rx: ExecRx, initial: Vec<u8>, keepalive: Duration) -> Self {
         let ticker = (!keepalive.is_zero()).then(|| Box::pin(interval_at(Instant::now() + keepalive, keepalive)));
-        SseBody { hooks, rx, initial, ticker, buf: Vec::new(), finished: false }
+        SseBody { hooks, rx, initial, ticker, buf: Vec::new(), finished: false, last_flush: None, hold: None }
     }
 
     fn terminal(&mut self, err: &ErrorMessage) {
@@ -134,6 +144,16 @@ impl<H: StreamHooks> Body for SseBody<H> {
             }
         }
         if !this.buf.is_empty() {
+            let due = this.finished || this.buf.len() >= BATCH_LIMIT || this.last_flush.is_none_or(|t| t.elapsed() >= FLUSH_GAP);
+            if !due && let Some(last) = this.last_flush {
+                let deadline = last + FLUSH_GAP;
+                let hold = this.hold.get_or_insert_with(|| Box::pin(sleep_until(deadline)));
+                hold.as_mut().reset(deadline);
+                if hold.as_mut().poll(cx).is_pending() {
+                    return Poll::Pending;
+                }
+            }
+            this.last_flush = Some(Instant::now());
             return Poll::Ready(Some(Ok(Frame::data(Bytes::from(std::mem::take(&mut this.buf))))));
         }
         if this.finished { Poll::Ready(None) } else { Poll::Pending }
