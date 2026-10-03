@@ -17,6 +17,7 @@ rand.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 itoa = "1"
+memchr = "2"
 
 [features]
 # In-process SIGPROF sampling for the perf example (`--features prof`, PROF=1).

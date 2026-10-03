@@ -52,3 +52,6 @@ pub use util::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub mod test_gen;

@@ -1520,6 +1520,7 @@ dependencies = [
  "hex",
  "hyper",
  "itoa",
+ "memchr",
  "perf-event2",
  "pprof",
  "rand 0.9.5",
