@@ -37,3 +37,7 @@ url = "2"
 brotli = "9"
 rustls-native-certs = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+
+[dev-dependencies]
+flate2 = "1"
+hyper = { version = "1", features = ["server"] }
