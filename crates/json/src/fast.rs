@@ -261,7 +261,7 @@ impl Parser<'_> {
         let end = self.scan_number()?;
         // The token is ASCII by construction. serde_json (arbitrary_precision) keeps the text
         // but spells exponents as `e` plus an explicit sign, and reads `-0` as the integer 0.
-        let token = std::str::from_utf8(&self.b[self.i..end]).map_err(|_| Fail::Syntax)?;
+        let token = utf8(&self.b[self.i..end])?;
         self.i = end;
         let text = match token.find(['e', 'E']) {
             Some(at) => {
@@ -303,7 +303,7 @@ impl Parser<'_> {
     fn string(&mut self) -> Result<String, Fail> {
         let (end, escaped) = self.scan_string()?;
         // Escape sequences are ASCII, so validating the raw span validates every segment.
-        let raw = simdutf8::basic::from_utf8(&self.b[self.i + 1..end]).map_err(|_| Fail::Syntax)?;
+        let raw = utf8(&self.b[self.i + 1..end])?;
         self.i = end + 1;
         if !escaped {
             return Ok(raw.to_owned());
@@ -316,7 +316,7 @@ impl Parser<'_> {
     /// Like [`Parser::string`] without building the text (UTF-8 and escapes still checked).
     fn skip_string(&mut self) -> Result<(), Fail> {
         let (end, escaped) = self.scan_string()?;
-        let raw = simdutf8::basic::from_utf8(&self.b[self.i + 1..end]).map_err(|_| Fail::Syntax)?;
+        let raw = utf8(&self.b[self.i + 1..end])?;
         self.i = end + 1;
         if escaped {
             unescape(raw, None)?;
@@ -374,6 +374,17 @@ impl Parser<'_> {
             _ => Err(Fail::Syntax),
         }
     }
+}
+
+/// UTF-8 check with an ASCII shortcut: ASCII is checked at word speed and needs no decoding,
+/// which is most keys and identifiers; other text goes to the SIMD validator.
+#[inline]
+fn utf8(b: &[u8]) -> Result<&str, Fail> {
+    if b.is_ascii() {
+        // SAFETY: every byte is below 0x80, and ASCII bytes are valid UTF-8 on their own.
+        return Ok(unsafe { std::str::from_utf8_unchecked(b) });
+    }
+    simdutf8::basic::from_utf8(b).map_err(|_| Fail::Syntax)
 }
 
 fn hex4(b: &[u8], at: usize) -> Result<u32, Fail> {

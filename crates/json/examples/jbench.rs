@@ -137,6 +137,11 @@ fn main() {
     bench("sse/start parse", f, 200_000, || {
         std::hint::black_box(cpa_json::parse(std::hint::black_box(start)));
     });
+    for doc in [&br#"{}"#[..], br#"[]"#, br#"[1]"#, br#"[1,2]"#, br#"[1,2,3,4]"#, br#"{"a":"b"}"#, br#"{"a":1}"#, br#"{"type":"x"}"#, br#"{"type":"x","b":"y","c":"z","d":"w"}"#, br#"[1,2,3,4,5,6,7,8]"#, br#""abcdefghijklmnopqrstuvwxyz""#] {
+        bench(&format!("tiny/valid {}", String::from_utf8_lossy(doc)), f, 200_000, || {
+            std::hint::black_box(cpa_json::valid(std::hint::black_box(doc)));
+        });
+    }
     let root = cpa_json::parse(ev);
     bench("sse/get x4", f, 500_000, || {
         let r = std::hint::black_box(&root);
@@ -152,6 +157,9 @@ fn main() {
         cpa_json::set(&mut out, "model", "claude-sonnet-4-5");
         cpa_json::set(&mut out, "choices.0.delta.content", r.g("delta.text").str());
         std::hint::black_box(cpa_json::to_vec(&out));
+    });
+    bench("req/valid small", f, 100_000, || {
+        std::hint::black_box(cpa_json::valid(std::hint::black_box(chat_req)));
     });
     bench("req/parse small", f, 100_000, || {
         std::hint::black_box(cpa_json::parse(std::hint::black_box(chat_req)));
