@@ -17,6 +17,7 @@
 //! lenient string edits on them).
 
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 
 use cpa_json::{J, Map, Value};
 
@@ -186,8 +187,68 @@ fn with_stack_for<R>(text: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
+/// Cleaned schemas keyed by (options, input). Agents resend the same tool schemas on every
+/// request and cleaning is a pure function of its input, so repeats are served from memory.
+/// Bounded: a full cache is dropped wholesale.
+struct SchemaCache {
+    by_options: HashMap<u16, HashMap<String, String>>,
+    entries: usize,
+    bytes: usize,
+}
+
+const SCHEMA_CACHE_MAX_ENTRIES: usize = 1024;
+const SCHEMA_CACHE_MAX_BYTES: usize = 8 << 20;
+/// Larger schemas are cleaned directly; they are rare and their copies would dominate the cache.
+const SCHEMA_CACHE_MAX_INPUT: usize = 64 << 10;
+
+static SCHEMA_CACHE: LazyLock<Mutex<SchemaCache>> =
+    LazyLock::new(|| Mutex::new(SchemaCache { by_options: HashMap::new(), entries: 0, bytes: 0 }));
+
+impl CleanOptions {
+    fn cache_key(self) -> u16 {
+        [
+            self.add_placeholder,
+            self.add_missing_array_items,
+            self.antigravity_semantics,
+            self.remove_tool_title,
+            self.remove_gemini_metadata,
+            self.flatten_unions,
+            self.force_enum_string_type,
+            self.drop_all_enums,
+            self.drop_boolean_enums,
+            self.preserve_additional_properties_false,
+            self.preserve_all_additional_properties,
+            self.preserve_standard_constraints,
+        ]
+        .iter()
+        .fold(0u16, |acc, &b| acc << 1 | u16::from(b))
+    }
+}
+
 fn clean_json_schema(json_str: &str, options: CleanOptions) -> String {
-    with_stack_for(json_str, || clean_json_schema_inner(json_str, options))
+    if json_str.len() > SCHEMA_CACHE_MAX_INPUT {
+        return with_stack_for(json_str, || clean_json_schema_inner(json_str, options));
+    }
+    let key = options.cache_key();
+    if let Ok(cache) = SCHEMA_CACHE.lock() {
+        if let Some(hit) = cache.by_options.get(&key).and_then(|m| m.get(json_str)) {
+            return hit.clone();
+        }
+    }
+    let out = with_stack_for(json_str, || clean_json_schema_inner(json_str, options));
+    if let Ok(mut cache) = SCHEMA_CACHE.lock() {
+        let cost = json_str.len() + out.len();
+        if cache.entries >= SCHEMA_CACHE_MAX_ENTRIES || cache.bytes + cost > SCHEMA_CACHE_MAX_BYTES {
+            cache.by_options.clear();
+            cache.entries = 0;
+            cache.bytes = 0;
+        }
+        if cache.by_options.entry(key).or_default().insert(json_str.to_owned(), out.clone()).is_none() {
+            cache.entries += 1;
+            cache.bytes += cost;
+        }
+    }
+    out
 }
 
 fn clean_json_schema_inner(json_str: &str, options: CleanOptions) -> String {
