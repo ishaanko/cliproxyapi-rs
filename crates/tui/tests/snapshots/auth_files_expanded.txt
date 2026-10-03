@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+🔑 Auth Files
+
+ [↑↓/jk] Navigate • [Enter] Expand • [e] Enable/Disable • [d] Delete • [r] Refresh • [R] Refresh Tok
+ [1] Edit prefix • [2] Edit proxy_url • [3] Edit priority
+────────────────────────────────────────────────────────────────────────────────────────────────────
+▸ ● claude-test@example.c... claude       test@example.com             active
+    │ Name        : claude-test@example.com.json
+    │ Channel     : claude
+    │ Email       : test@example.com
+    │ Status      : active
+    │ Auth Type   : oauth
+    │ Prefix      : (not set) ✎
+    │ Proxy URL   : (not set) ✎
+    │ Priority    : 5 ✎
+    │ Disabled    : false
+  ○ codex-a-very-long-cre... codex        someone-with-a-long-addre... disabled
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit

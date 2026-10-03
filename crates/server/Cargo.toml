@@ -21,6 +21,7 @@ cpa-auth = { path = "../auth" }
 cpa-runtime = { path = "../runtime" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
+cpa-tui = { path = "../tui" }
 cpa-executors = { path = "../executors" }
 serde.workspace = true
 serde_json.workspace = true
@@ -58,6 +59,9 @@ multer = "3"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 base64 = "0.22"
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["stdio"] }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
@@ -65,3 +69,5 @@ tokio-tungstenite = "0.29"
 futures-util = "0.3"
 tempfile = "3"
 async-trait = "0.1"
+portable-pty = "0.9"
+vt100 = "0.16"

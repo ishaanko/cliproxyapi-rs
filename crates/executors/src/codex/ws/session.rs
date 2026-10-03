@@ -130,6 +130,19 @@ impl Session {
         }
     }
 
+    /// Hands a terminal error to the active request of `conn_id` without waiting and stops routing,
+    /// so a connection closed locally never strands its in-flight request. A full buffer still
+    /// ends the request: dropping the sender makes the receiver drain and then see the channel close.
+    pub fn fail_active(&self, conn_id: u64, error: ReadError) {
+        let active = {
+            let mut active = self.active.lock();
+            if active.as_ref().is_some_and(|a| a.conn_id == conn_id) { active.take() } else { None }
+        };
+        if let Some(active) = active {
+            let _ = active.tx.try_send(Read::Err(error));
+        }
+    }
+
     /// Delivers a terminal read error to the active request, then invalidates the connection.
     pub async fn deliver_terminal(self: &Arc<Self>, conn: &Arc<WsConn>, error: ReadError, reason: &str) {
         let text = error.to_string();
@@ -328,4 +341,38 @@ pub fn close_sessions_for_auth_id(auth_id: &str, reason: &str) {
 /// Receiver of the disconnect notification of an execution session (created on demand).
 pub fn upstream_disconnect_receiver(session_id: &str) -> Option<watch::Receiver<Option<String>>> {
     Session::get_or_create(session_id).map(|s| s.disconnect_receiver())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::codex::ws::codec::{Deflate, split};
+
+    async fn dialed_session() -> (Arc<Session>, Arc<WsConn>, tokio::io::DuplexStream) {
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (reader, writer) = split(Box::new(client), &[], Deflate::default());
+        let session = Session::ephemeral();
+        let dialed = Dialed { reader, writer, response_headers: HeaderMap::new() };
+        let (conn, _) = session.ensure_conn("a", "wss://x", "", || async move { Ok(dialed) }).await.unwrap();
+        (session, conn, server)
+    }
+
+    #[tokio::test]
+    async fn closing_the_session_ends_the_in_flight_request() {
+        let (session, conn, _server) = dialed_session().await;
+        let (_generation, mut rx) = session.activate(&conn);
+        session.close("test");
+        let read = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.expect("request stranded");
+        assert!(matches!(read, Some(Read::Err(_))));
+        assert!(tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.expect("sender kept").is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidating_the_connection_ends_the_in_flight_request() {
+        let (session, conn, _server) = dialed_session().await;
+        let (_generation, mut rx) = session.activate(&conn);
+        session.invalidate(&conn, "test", None, false);
+        let read = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.expect("request stranded");
+        assert!(matches!(read, Some(Read::Err(_))));
+    }
 }

@@ -138,13 +138,188 @@ async fn run() -> i32 {
         };
     }
 
-    if cli.local_model {
+    if cli.local_model && (!cli.tui || cli.standalone) {
         tracing::info!("Local model mode: using embedded model catalogs, remote model updates disabled");
     }
-    serve_proxy(cfg, config_path, &cli, build, log).await
+    if cli.tui {
+        return if cli.standalone {
+            run_standalone_tui(cfg, config_path, &cli, build, log).await
+        } else {
+            // Pure management client: the proxy server must already be running.
+            let base_url = resolve_management_base_url(&cli.management_base_url, &cfg);
+            if let Err(e) = cpa_tui::run_with_base_url(&base_url, &cli.password, None).await {
+                eprintln!("TUI error: {e}");
+            }
+            0
+        };
+    }
+    let local = LocalManagement {
+        password: cli.password.clone(),
+        keep_alive: !cli.password.is_empty(),
+        handle_signals: true,
+    };
+    serve_proxy(cfg, config_path, build, log, local, None).await
 }
 
-async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cli, build: BuildInfo, log: Arc<LogControl>) -> i32 {
+/// `resolveManagementBaseURL`: flag, then `remote-management.base-url`, then localhost.
+fn resolve_management_base_url(flag_url: &str, cfg: &Config) -> String {
+    let flag_url = flag_url.trim();
+    if !flag_url.is_empty() {
+        return flag_url.to_string();
+    }
+    let configured = cfg.remote_management.base_url.trim();
+    if !configured.is_empty() {
+        return configured.to_string();
+    }
+    let port = if cfg.port > 0 { cfg.port } else { 8317 };
+    format!("http://127.0.0.1:{port}")
+}
+
+/// `--tui --standalone`: runs the server in-process, waits for the management API, then attaches
+/// the TUI (logs flow to it through the log tap) and stops the server when the TUI exits.
+async fn run_standalone_tui(
+    cfg: Config,
+    config_path: std::path::PathBuf,
+    cli: &cli::Cli,
+    build: BuildInfo,
+    log: Arc<LogControl>,
+) -> i32 {
+    let hook = cpa_tui::LogHook::new(2000);
+    let tap_hook = hook.clone();
+    log.attach_tui(Arc::new(move |line| tap_hook.push(line)));
+    // Like Go, point stdout/stderr at /dev/null so nothing the embedded server prints can draw
+    // over the TUI; the TUI keeps the original terminal.
+    let stdio = StdioRedirect::new().ok();
+    let tui_output: Box<dyn std::io::Write> = match stdio.as_ref().and_then(|s| s.terminal().ok()) {
+        Some(terminal) => Box::new(terminal),
+        None => Box::new(std::io::stdout()),
+    };
+
+    let password = if cli.password.is_empty() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        format!("tui-{}-{}", std::process::id(), nanos)
+    } else {
+        cli.password.clone()
+    };
+    let port = if cfg.port > 0 { cfg.port } else { 8317 };
+
+    // No keep-alive endpoint here: the TUI's lifetime owns the server.
+    // The embedded server also ignores SIGINT/SIGTERM (Go's background service only stops on
+    // cancel); the TUI handles them and then stops the server.
+    let local = LocalManagement { password: password.clone(), keep_alive: false, handle_signals: false };
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx)));
+
+    let client = cpa_tui::Client::new(port, &password);
+    let mut ready = false;
+    let mut backoff = Duration::from_millis(100);
+    for _ in 0..30 {
+        if client.get_config().await.is_ok() {
+            ready = true;
+            break;
+        }
+        // The server task ending (bind failure, bad config) means it will never become ready.
+        if server.is_finished() {
+            break;
+        }
+        tokio::time::sleep(backoff).await;
+        if backoff < Duration::from_secs(1) {
+            backoff = backoff.mul_f64(1.5);
+        }
+    }
+
+    if !ready {
+        log.detach_tui();
+        let _ = stop_tx.send(());
+        let _ = server.await;
+        drop(tui_output);
+        if let Some(stdio) = stdio {
+            stdio.restore();
+        }
+        eprintln!("TUI error: embedded server is not ready");
+        return 0;
+    }
+    let tui_result = cpa_tui::run_with_output(port, &password, Some(hook), tui_output).await;
+    log.detach_tui();
+    if let Some(stdio) = stdio {
+        stdio.restore();
+    }
+    if let Err(e) = tui_result {
+        eprintln!("TUI error: {e}");
+    }
+    let _ = stop_tx.send(());
+    let _ = server.await;
+    0
+}
+
+/// Redirects fd 1 and 2 to /dev/null (Go reassigns `os.Stdout`/`os.Stderr` the same way) and keeps
+/// the originals so the TUI can draw to the real terminal and the streams can be restored.
+#[cfg(unix)]
+struct StdioRedirect {
+    out: std::os::fd::OwnedFd,
+    err: std::os::fd::OwnedFd,
+}
+
+#[cfg(unix)]
+impl StdioRedirect {
+    fn new() -> std::io::Result<Self> {
+        let out = rustix::io::dup(std::io::stdout())?;
+        let err = rustix::io::dup(std::io::stderr())?;
+        let devnull = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null")?;
+        rustix::stdio::dup2_stdout(&devnull)?;
+        rustix::stdio::dup2_stderr(&devnull)?;
+        Ok(StdioRedirect { out, err })
+    }
+
+    /// A handle on the original stdout for the TUI.
+    fn terminal(&self) -> std::io::Result<std::fs::File> {
+        Ok(std::fs::File::from(self.out.try_clone()?))
+    }
+
+    fn restore(self) {
+        let _ = rustix::stdio::dup2_stdout(&self.out);
+        let _ = rustix::stdio::dup2_stderr(&self.err);
+    }
+}
+
+/// Windows has no fd-level redirect here; the TUI keeps using stdout.
+#[cfg(not(unix))]
+struct StdioRedirect;
+
+#[cfg(not(unix))]
+impl StdioRedirect {
+    fn new() -> std::io::Result<Self> {
+        Err(std::io::Error::other("unsupported"))
+    }
+
+    fn terminal(&self) -> std::io::Result<std::fs::File> {
+        Err(std::io::Error::other("unsupported"))
+    }
+
+    fn restore(self) {}
+}
+
+/// Local management password, whether the idle-shutdown keep-alive endpoint is enabled, and
+/// whether SIGINT/SIGTERM stop the server.
+struct LocalManagement {
+    password: String,
+    keep_alive: bool,
+    handle_signals: bool,
+}
+
+/// Serves the proxy until the listener fails, a signal arrives, keep-alive idles out, or `stop`
+/// fires (standalone TUI exit).
+async fn serve_proxy(
+    cfg: Config,
+    config_path: std::path::PathBuf,
+    build: BuildInfo,
+    log: Arc<LogControl>,
+    local: LocalManagement,
+    stop: Option<tokio::sync::oneshot::Receiver<()>>,
+) -> i32 {
     let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
@@ -190,9 +365,9 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         state.request_logger = Some(Arc::new(RequestLogger::new(config_rx.clone(), config_path.parent().map(|p| p.to_path_buf()))));
     }
     let mut idle_shutdown: Option<tokio::sync::mpsc::Receiver<()>> = None;
-    if !cli.password.is_empty() {
+    if local.keep_alive {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
-        state.keep_alive = Some(KeepAlive { password: cli.password.clone(), heartbeat: tx });
+        state.keep_alive = Some(KeepAlive { password: local.password.clone(), heartbeat: tx });
         idle_shutdown = Some(rx);
     }
 
@@ -219,8 +394,8 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
             service.reload_config().await;
         })
     }));
-    if !cli.password.is_empty() {
-        management = management.with_local_password(cli.password.clone());
+    if !local.password.is_empty() {
+        management = management.with_local_password(local.password.clone());
     }
 
     // Log level / destination follow config reloads.
@@ -265,8 +440,22 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
                 tracing::error!("proxy service exited with error: {e}");
             }
         }
-        _ = shutdown_signal() => {}
+        _ = async {
+            if local.handle_signals {
+                shutdown_signal().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {}
         _ = idle => {}
+        _ = async {
+            match stop {
+                Some(rx) => {
+                    let _ = rx.await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        } => {}
     }
     service.shutdown();
     0

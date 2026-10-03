@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+⚙ Configuration
+
+  [↑↓/jk] Navigate • [Enter/Space] Edit • [r] Refresh
+  Bool: Enter to toggle • String/Int: Enter to type, Enter to confirm, Esc to cancel
+
+
+  ── Server
+▸ Port                              8317
+  Host                              127.0.0.1
+  Debug                             ○ OFF
+  Proxy URL
+  Request Retry                     3
+  Max Retry Interval (s)            30
+  Force Model Prefix
+
+  ── Logging & Stats
+  Logging to File                   ● ON
+  Logs Max Total Size (MB)          0
+  Error Logs Max Files              10
+  Usage Stats Enabled               ● ON
+  Request Log                       ○ OFF
+
+  ── Quota Exceeded Handling
+  Switch Project on Quota           ● ON
+  Switch Preview Model              ○ OFF
+
+  ── Routing
+  Routing Strategy                  round-robin
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit

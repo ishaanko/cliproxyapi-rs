@@ -28,7 +28,7 @@ use cpa_translator::Format;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::helpers::{claude_code_execution_scope, header_value};
+use crate::helps::session::{claude_code_execution_scope, header_value_case_insensitive};
 use super::request::generate_stable_session_id;
 use super::signature::{normalize_function_response_roles, uses_reasoning_replay_cache};
 use crate::helps::session::derived_session_id;
@@ -134,7 +134,7 @@ fn client_session_key(req: &Request, opts: &Options) -> String {
         }
     }
     for name in ["Session-Id", "Session_id"] {
-        let value = header_value(&opts.headers, name);
+        let value = header_value_case_insensitive(&opts.headers, name);
         if !value.is_empty() {
             return format!("responses:{value}");
         }

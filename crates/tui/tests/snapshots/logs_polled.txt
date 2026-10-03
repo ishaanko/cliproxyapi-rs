@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+ 📋 Logs  ● AUTO-SCROLL  Filter: ALL  Lines: 4
+
+ [a] Auto-scroll • [c] Clear • [1] All [2] info+ [3] warn+ [4] error • [↑↓] Scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-10-02 10:00:00] [--------] [info ] [main.rs:1] server started
+[2026-10-02 10:00:01] [--------] [debug] [main.rs:2] debug detail
+[2026-10-02 10:00:02] [--------] [warn ] [main.rs:3] slow upstream
+[2026-10-02 10:00:03] [--------] [error] [main.rs:4] upstream failed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit
