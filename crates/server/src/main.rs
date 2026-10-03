@@ -25,9 +25,24 @@ use cpa_server::{AppState, BuildInfo, KeepAlive, ServerModelExecutor, build_rout
 // mimalloc cut CPU per request by ~20% and raised throughput ~30% against glibc malloc in the
 // bench harness (jemalloc: ~17%, with more resident memory). Plugins are unaffected: the plugin
 // ABI frees buffers with libc `free`, never through the Rust allocator.
-#[cfg(feature = "mimalloc")]
+#[cfg(feature = "alloc-trace")]
+mod alloc_trace;
+#[cfg(feature = "alloc-trace")]
+#[global_allocator]
+static GLOBAL: alloc_trace::Trace<mimalloc::MiMalloc> = alloc_trace::Trace(mimalloc::MiMalloc);
+
+#[cfg(all(feature = "mimalloc", not(feature = "alloc-stats"), not(feature = "alloc-trace")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// Benchmark hook (`--features alloc-stats`): counts allocations around the chosen allocator.
+#[cfg(all(feature = "mimalloc", feature = "alloc-stats"))]
+#[global_allocator]
+static GLOBAL: cpa_allocstats::Counting<mimalloc::MiMalloc> = cpa_allocstats::Counting::new(mimalloc::MiMalloc);
+
+#[cfg(all(not(feature = "mimalloc"), feature = "alloc-stats"))]
+#[global_allocator]
+static GLOBAL: cpa_allocstats::Counting<std::alloc::System> = cpa_allocstats::Counting::new(std::alloc::System);
 
 /// `pprof` feature: samples all threads for `CPA_PPROF_SECS` seconds and writes folded stacks
 /// (root first, `;` separated, one line per distinct stack) to `CPA_PPROF_OUT`.
@@ -98,8 +113,12 @@ fn reexec_with_lazy_arena_commit() {
 fn main() {
     #[cfg(all(feature = "mimalloc", unix))]
     reexec_with_lazy_arena_commit();
+    #[cfg(feature = "alloc-stats")]
+    cpa_allocstats::serve_from_env();
     #[cfg(feature = "pprof")]
     start_pprof();
+    #[cfg(feature = "alloc-trace")]
+    alloc_trace::start();
     let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
         Ok(rt) => rt,
         Err(e) => {

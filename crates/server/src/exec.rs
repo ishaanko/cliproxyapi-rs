@@ -305,14 +305,13 @@ impl Pipeline {
     /// `ExecuteWithAuthManager`: non-streaming execution.
     pub async fn execute(&self, a: ExecArgs<'_>) -> Result<ExecOk, ErrorMessage> {
         if let Some(pcx) = self.plugin_cx(&a) {
-            return self.execute_plugins(&pcx, a, false).await;
+            return Box::pin(self.execute_plugins(&pcx, a, false)).await;
         }
         let (providers, normalized) = self.providers(&a)?;
         let (req, opts) = self.build_request(&a, &normalized, false, false);
-        let resp = self
-            .state
-            .manager
-            .execute(&providers, req, opts)
+        // The conductor futures are tens of KB; boxing keeps the handler's own future small
+        // (every await point of a handler would otherwise carry and move them inline).
+        let resp = Box::pin(self.state.manager.execute(&providers, req, opts))
             .await
             .map_err(|e| exec_error_message(&enrich_auth_selection_error(&e, &providers, &normalized)))?;
         Ok(self.finish_ok(resp.payload, &resp.headers))
@@ -321,14 +320,11 @@ impl Pipeline {
     /// `ExecuteCountWithAuthManager`.
     pub async fn execute_count(&self, a: ExecArgs<'_>) -> Result<ExecOk, ErrorMessage> {
         if let Some(pcx) = self.plugin_cx(&a) {
-            return self.execute_plugins(&pcx, a, true).await;
+            return Box::pin(self.execute_plugins(&pcx, a, true)).await;
         }
         let (providers, normalized) = self.providers(&a)?;
         let (req, opts) = self.build_request(&a, &normalized, false, true);
-        let resp = self
-            .state
-            .manager
-            .execute_count(&providers, req, opts)
+        let resp = Box::pin(self.state.manager.execute_count(&providers, req, opts))
             .await
             .map_err(|e| exec_error_message(&enrich_auth_selection_error(&e, &providers, &normalized)))?;
         Ok(self.finish_ok(resp.payload, &resp.headers))
@@ -347,7 +343,7 @@ impl Pipeline {
     /// before the first deliverable payload when `streaming.bootstrap-retries` allows).
     pub async fn execute_stream(&self, a: ExecArgs<'_>) -> ExecStream {
         if let Some(pcx) = self.plugin_cx(&a) {
-            return self.execute_stream_plugins(&pcx, a).await;
+            return Box::pin(self.execute_stream_plugins(&pcx, a)).await;
         }
         let (providers, normalized) = match self.providers(&a) {
             Ok(v) => v,
@@ -356,7 +352,9 @@ impl Pipeline {
         let (req, opts) = self.build_request(&a, &normalized, true, false);
         let enrich = |e: &ExecError| enrich_auth_selection_error(e, &providers, &normalized);
 
-        let first = self.state.manager.execute_stream(&providers, req.clone(), opts.clone()).await;
+        // Retries (only with `streaming.bootstrap-retries`) need their own copy of the request.
+        let retry_src = (self.settings.bootstrap_retries > 0).then(|| (req.clone(), opts.clone()));
+        let first = Box::pin(self.state.manager.execute_stream(&providers, req, opts)).await;
         let mut stream: StreamResult = match first {
             Ok(s) => s,
             Err(e) => return ExecStream::failed(exec_error_message(&enrich(&e))),
@@ -387,7 +385,11 @@ impl Pipeline {
                         break;
                     }
                     retries += 1;
-                    match self.state.manager.execute_stream(&providers, req.clone(), opts.clone()).await {
+                    let Some((retry_req, retry_opts)) = retry_src.clone() else {
+                        bootstrap_err = Some(exec_error_message(&err));
+                        break;
+                    };
+                    match Box::pin(self.state.manager.execute_stream(&providers, retry_req, retry_opts)).await {
                         Err(retry_err) => {
                             // No credential left to retry with: keep the original upstream failure.
                             let original = exec_error_message(&err);
