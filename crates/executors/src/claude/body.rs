@@ -6,12 +6,7 @@ use cpa_json::{J, Value};
 
 /// Parses `payload`, applies `f`, and re-serializes only when `f` reports a change.
 fn edit(payload: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
-    let mut v = cpa_json::parse(payload);
-    if f(&mut v) {
-        cpa_json::to_vec(&v)
-    } else {
-        payload.to_vec()
-    }
+    crate::helps::parse_cache::edit(payload, f)
 }
 
 /// Removes a top-level key (order-preserving); true when it existed.
@@ -30,29 +25,31 @@ fn num_field(v: &Value, path: &str) -> Option<f64> {
 /// Go: `extractAndRemoveBetas`. Pulls the body `betas` (array or single string, trimmed, blanks
 /// dropped) out of the body and returns them with the body minus the `betas` key.
 pub fn extract_and_remove_betas(body: &[u8]) -> (Vec<String>, Vec<u8>) {
-    let mut v = cpa_json::parse(body);
     let mut betas = Vec::new();
-    {
-        let r = v.g("betas");
-        if !r.exists() {
-            return (betas, body.to_vec());
-        }
-        if r.is_array() {
-            for item in r.array() {
-                let s = item.str();
+    let out = edit(body, |v| {
+        {
+            let r = v.g("betas");
+            if !r.exists() {
+                return false;
+            }
+            if r.is_array() {
+                for item in r.array() {
+                    let s = item.str();
+                    if !s.trim().is_empty() {
+                        betas.push(s.trim().to_string());
+                    }
+                }
+            } else {
+                let s = r.str();
                 if !s.trim().is_empty() {
                     betas.push(s.trim().to_string());
                 }
             }
-        } else {
-            let s = r.str();
-            if !s.trim().is_empty() {
-                betas.push(s.trim().to_string());
-            }
         }
-    }
-    cpa_json::delete(&mut v, "betas");
-    (betas, cpa_json::to_vec(&v))
+        cpa_json::delete(v, "betas");
+        true
+    });
+    (betas, out)
 }
 
 /// Go: `disableThinkingIfToolChoiceForced`. `tool_choice.type` of `any`/`tool` removes
@@ -114,7 +111,7 @@ pub fn normalize_claude_sampling_for_upstream(body: &[u8], native_owned: bool) -
 /// Go: `claudePayloadHasMidSystemMessage`. True when `messages` holds a `system` role turn
 /// (case and surrounding whitespace ignored).
 pub fn claude_payload_has_mid_system_message(payload: &[u8]) -> bool {
-    let v = cpa_json::parse(payload);
+    let v = crate::helps::parse_cache::parse(payload);
     v.get("messages")
         .and_then(Value::as_array)
         .is_some_and(|ms| ms.iter().any(is_system_role))
@@ -233,7 +230,7 @@ pub fn restore_claude_response_model(payload: &[u8], model: &str) -> Vec<u8> {
 /// Go: `setClaudeResponseModel` (`Some(updated)` is Go's `changed == true`). Outer
 /// whitespace of the payload is kept.
 pub fn set_claude_response_model(payload: &[u8], model: &str) -> Option<Vec<u8>> {
-    if !cpa_json::valid(payload) {
+    if !crate::helps::parse_cache::valid(payload) {
         return None;
     }
     let mut v = cpa_json::parse(payload);

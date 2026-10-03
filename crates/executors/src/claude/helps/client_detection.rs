@@ -159,7 +159,7 @@ pub fn detect_claude_code_request(
         ..Default::default()
     };
 
-    let root = cpa_json::parse(payload);
+    let root = crate::helps::parse_cache::parse(payload);
     let metadata_user_id = root.g("metadata.user_id");
     detection.metadata_user_id =
         metadata_user_id.exists() && metadata_user_id.is_string() && is_valid_user_id(&metadata_user_id.str());
@@ -286,7 +286,7 @@ fn measured_helper_session_matches(headers: &HeaderMap, payload: &[u8], root: &s
     {
         return false;
     }
-    let session_id = cpa_json::parse(identity_raw).g("session_id").str();
+    let session_id = crate::helps::parse_cache::parse(identity_raw).g("session_id").str();
     header_value(headers, CLAUDE_CODE_SESSION_HEADER) == session_id
 }
 
@@ -408,7 +408,7 @@ fn measured_helper_system_matches(payload: &[u8], root: &serde_json::Value) -> b
         return false;
     }
     for raw in &blocks {
-        let block = cpa_json::parse(raw.as_bytes());
+        let block = crate::helps::parse_cache::parse(raw.as_bytes());
         if !claude_json_object_has_keys(raw.as_bytes(), &["type", "text"]) || block.g("type").str() != "text" {
             return false;
         }

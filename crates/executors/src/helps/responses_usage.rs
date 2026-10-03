@@ -1,6 +1,7 @@
 //! Responses API usage normalization (Go: helps/responses_usage_helpers.go).
 
 use cpa_json::{J, Kind, Value};
+use cpa_runtime::conductor::session::lazy::Doc;
 
 use super::text::trim_space;
 
@@ -55,6 +56,13 @@ fn contains_data_prefix(payload: &[u8]) -> bool {
 
 /// Patches one JSON object; `None` when nothing changed (or it is a compaction object).
 fn patch_json(json: &[u8]) -> Option<Vec<u8>> {
+    // Most frames (deltas) carry neither `usage` nor `response`: decide from the top-level index.
+    if let Some(doc) = Doc::lazy(json)
+        && !doc.has("usage")
+        && !doc.has("response")
+    {
+        return None;
+    }
     let mut v = cpa_json::parse(json);
     if v.g("object").str() == "response.compaction" {
         return None;

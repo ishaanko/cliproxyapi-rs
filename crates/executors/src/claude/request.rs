@@ -123,7 +123,7 @@ fn requested(set: &RequestedBetas, beta: &str) -> bool {
 /// Assembles the Anthropic-Beta baseline the way Claude Code 2.1.280 does (Go: claudeCodeCLIBetas).
 /// The order of the 29 slots is the wire order; see the Go spec comment.
 pub fn claude_code_cli_betas(body: &[u8], requested_set: &RequestedBetas, oauth_token: bool) -> String {
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let mut betas: Vec<&str> = Vec::with_capacity(20);
     betas.push(CLAUDE_CODE_BETA);
     if oauth_token {
@@ -378,7 +378,7 @@ pub fn claude_request_supports_effort(body: &[u8]) -> bool {
     if is_claude_probe_or_helper_request(body) {
         return false;
     }
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let model = root.g("model").str().trim().to_lowercase();
     if is_claude_haiku_model(&model) {
         return false;
@@ -412,7 +412,7 @@ fn claude_body_uses_advanced_tool_use(root: &Value) -> bool {
 
 /// Whether the body declares an advisor server tool (Go: claudeBodyHasAdvisorTool).
 pub fn claude_body_has_advisor_tool_bytes(body: &[u8]) -> bool {
-    claude_body_has_advisor_tool(&cpa_json::parse(body))
+    claude_body_has_advisor_tool(&crate::helps::parse_cache::parse(body))
 }
 
 fn claude_body_has_advisor_tool(root: &Value) -> bool {
@@ -432,7 +432,7 @@ fn claude_thinking_display_set(root: &Value) -> bool {
 
 /// Whether the request selects the fast service tier (Go: claudeRequestUsesFastMode).
 pub fn claude_request_uses_fast_mode(body: &[u8], requested_set: &RequestedBetas) -> bool {
-    claude_request_uses_fast_mode_value(&cpa_json::parse(body), requested_set)
+    claude_request_uses_fast_mode_value(&crate::helps::parse_cache::parse(body), requested_set)
 }
 
 fn claude_request_uses_fast_mode_value(root: &Value, requested_set: &RequestedBetas) -> bool {
@@ -725,7 +725,7 @@ struct BetaCtx<'a> {
 /// closure). Mutates `base_betas` so later steps see the fixed list.
 fn apply_beta_header(headers: &mut HeaderMap, base_betas: &mut String, ctx: &BetaCtx<'_>) {
     let body = ctx.body;
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     // Enforce native model and turn beta gating.
     if !claude_request_supports_effort(body) {
         *base_betas = without_claude_beta(base_betas, CLAUDE_EFFORT_BETA);
@@ -899,7 +899,7 @@ pub fn apply_claude_headers_with_native_profile(
     if preserve_caller_fingerprint {
         // Caller-owned mode preserves header and body-lifted betas verbatim; an explicit
         // speed=fast request still needs its protocol beta.
-        if cpa_json::parse(body).g("speed").str().trim().eq_ignore_ascii_case("fast") {
+        if crate::helps::parse_cache::parse(body).g("speed").str().trim().eq_ignore_ascii_case("fast") {
             append_beta(&mut base_betas, CLAUDE_FAST_MODE_BETA);
         }
         for beta in extra_betas {
@@ -1083,20 +1083,22 @@ pub fn apply_claude_headers_with_native_profile(
 
 /// Sets a top-level string field unless it already holds that value (Go: helps.SetStringIfDifferent).
 pub fn set_string_if_different_bytes(body: &[u8], path: &str, value: &str) -> Vec<u8> {
-    let mut root = cpa_json::parse(body);
-    if root.g(path).as_str() == Some(value) {
-        return body.to_vec();
-    }
-    cpa_json::set(&mut root, path, value);
-    cpa_json::to_vec(&root)
+    crate::helps::parse_cache::edit(body, |root| {
+        if root.g(path).as_str() == Some(value) {
+            return false;
+        }
+        cpa_json::set(root, path, value);
+        true
+    })
 }
 
 /// Sets a boolean field unless it already holds that value (Go: helps.SetBoolIfDifferent).
 pub fn set_bool_if_different_bytes(body: &[u8], path: &str, value: bool) -> Vec<u8> {
-    let mut root = cpa_json::parse(body);
-    if root.g(path).v() == Some(&Value::Bool(value)) {
-        return body.to_vec();
-    }
-    cpa_json::set(&mut root, path, value);
-    cpa_json::to_vec(&root)
+    crate::helps::parse_cache::edit(body, |root| {
+        if root.g(path).v() == Some(&Value::Bool(value)) {
+            return false;
+        }
+        cpa_json::set(root, path, value);
+        true
+    })
 }

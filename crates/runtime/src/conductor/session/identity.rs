@@ -13,9 +13,10 @@ use sha2::{Digest, Sha256};
 use cpa_translator::Format;
 
 use super::info::{
-    LCP_AFFINITY_SESSION_ID, bound_session_identity, claude_metadata_identities,
-    extract_session_info, normalize_explicit_id,
+    LCP_AFFINITY_SESSION_ID, Roots, bound_session_identity, extract_session_info,
+    normalize_explicit_id,
 };
+use super::lazy::{Doc, MemberKind};
 use crate::executor::{Metadata, Options, Request, meta};
 
 const IDENTITY_VERSION: &str = "cpa-session-root-v1";
@@ -340,39 +341,25 @@ pub fn has_explicit_session(headers: &HeaderMap, payload: &[u8]) -> bool {
     if payload.is_empty() {
         return false;
     }
-    let root = cpa_json::parse(payload);
-    let req = root.g("request");
-    let nested = if req.exists() && !root.g("contents").exists() {
-        req.into_value()
-    } else {
-        None
-    };
-    let probe = |path: &str| -> bool {
-        !normalize_explicit_id(&root.g(path).str()).is_empty()
-            || nested
-                .as_ref()
-                .is_some_and(|n| !normalize_explicit_id(&n.g(path).str()).is_empty())
-    };
-    if EXPLICIT_BODY_PATHS.iter().any(|p| probe(p)) {
+    let r = Roots::new(payload);
+    if EXPLICIT_BODY_PATHS.iter().any(|p| !r.pick(p).is_empty()) {
         return true;
     }
-    if !claude_metadata_identities(payload).0.is_empty() {
+    if !r.claude_ids().0.is_empty() {
         return true;
     }
-    let mut user_id = root.g("metadata.user_id").str().trim().to_string();
+    let mut user_id = r.root.g("metadata.user_id").str().trim().to_string();
     if user_id.is_empty()
-        && let Some(n) = &nested
+        && let Some(n) = &r.nested
     {
         user_id = n.g("metadata.user_id").str().trim().to_string();
     }
     if !normalize_explicit_id(&user_id).is_empty() {
         return true;
     }
-    let mut conversation = root.g("conversation").into_value();
+    let mut conversation = r.root.g("conversation").into_value();
     if conversation.is_none() {
-        conversation = nested
-            .as_ref()
-            .and_then(|n| n.g("conversation").into_value());
+        conversation = r.nested.as_ref().and_then(|n| n.g("conversation").into_value());
     }
     match conversation {
         Some(c) => {
@@ -401,6 +388,14 @@ fn normalized_string(v: Option<&Value>) -> String {
 
 fn first_field<'a>(obj: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a Value> {
     keys.iter().find_map(|k| obj.get(*k))
+}
+
+/// [`string_field`] over a lazily parsed document.
+fn doc_string(doc: &Doc<'_>, keys: &[&str]) -> String {
+    doc.first(keys)
+        .and_then(Value::as_str)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 fn string_field(obj: &Map<String, Value>, keys: &[&str]) -> String {
@@ -573,14 +568,14 @@ fn append_instruction(instructions: &mut Vec<String>, value: &Value) {
 
 type Root = (Vec<String>, Vec<Part>);
 
-fn messages_root(body: &Map<String, Value>, include_top_level_system: bool) -> Root {
+fn messages_root(body: &Doc<'_>, include_top_level_system: bool) -> Root {
     let mut instructions = Vec::new();
     if include_top_level_system && let Some(system) = body.get("system") {
         append_instruction(&mut instructions, system);
     }
-    if let Some(Value::Array(messages)) = body.get("messages") {
+    if let Some(messages) = body.elements("messages") {
         for raw in messages {
-            let Value::Object(message) = raw else {
+            let Value::Object(message) = raw.as_ref() else {
                 continue;
             };
             match normalized_string(message.get("role")).as_str() {
@@ -601,20 +596,24 @@ fn messages_root(body: &Map<String, Value>, include_top_level_system: bool) -> R
     (instructions, Vec::new())
 }
 
-fn responses_root(body: &Map<String, Value>) -> Root {
+fn responses_root(body: &Doc<'_>) -> Root {
     let mut instructions = Vec::new();
     if let Some(v) = body.get("instructions") {
         append_instruction(&mut instructions, v);
     }
-    let Some(input) = body.get("input") else {
-        return (instructions, Vec::new());
-    };
-    if let Value::String(_) = input {
-        return (instructions, canonical_parts(input));
+    match body.member_kind("input") {
+        MemberKind::String => {
+            let parts = body.get("input").map(canonical_parts).unwrap_or_default();
+            return (instructions, parts);
+        }
+        MemberKind::Array => {}
+        _ => return (instructions, Vec::new()),
     }
-    if let Value::Array(items) = input {
+    if let Some(items) = body.elements("input") {
         for raw in items {
-            let Value::Object(item) = raw else { continue };
+            let Value::Object(item) = raw.as_ref() else {
+                continue;
+            };
             match normalized_string(item.get("role")).as_str() {
                 "system" | "developer" => append_instruction(
                     &mut instructions,
@@ -633,24 +632,31 @@ fn responses_root(body: &Map<String, Value>) -> Root {
     (instructions, Vec::new())
 }
 
-fn gemini_root(body: &Map<String, Value>) -> Root {
-    let body = match body.get("request") {
-        Some(Value::Object(req)) => req,
-        _ => body,
-    };
+/// The object under `request` when there is one (Gemini CLI wrapping), else the body itself.
+fn request_or_self<'a>(body: &Doc<'a>) -> Option<Doc<'a>> {
+    if body.member_kind("request") == MemberKind::Object {
+        body.sub("request")
+    } else {
+        None
+    }
+}
+
+fn gemini_root(body: &Doc<'_>) -> Root {
+    let nested = request_or_self(body);
+    let body = nested.as_ref().unwrap_or(body);
     let mut instructions = Vec::new();
-    if let Some(v) = first_field(body, &["systemInstruction", "system_instruction"]) {
+    if let Some(v) = body.first(&["systemInstruction", "system_instruction"]) {
         append_instruction(&mut instructions, &content_value(v));
     }
-    if let Some(Value::Array(contents)) = body.get("contents") {
+    if let Some(contents) = body.elements("contents") {
         for raw in contents {
-            let Value::Object(content) = raw else {
+            let Value::Object(content) = raw.as_ref() else {
                 continue;
             };
             if normalized_string(content.get("role")) != "user" {
                 continue;
             }
-            let parts = canonical_parts(&content_value(raw));
+            let parts = canonical_parts(&content_value(&raw));
             if !parts.is_empty() {
                 return (instructions, parts);
             }
@@ -688,9 +694,9 @@ fn flatten_interaction_entries(value: &Value) -> Vec<Value> {
     out
 }
 
-fn interactions_root(body: &Map<String, Value>) -> Root {
+fn interactions_root(body: &Doc<'_>) -> Root {
     let mut instructions = Vec::new();
-    if let Some(v) = first_field(body, &["system_instruction", "systemInstruction"]) {
+    if let Some(v) = body.first(&["system_instruction", "systemInstruction"]) {
         append_instruction(&mut instructions, &content_value(v));
     }
     let Some(input) = body.get("input") else {
@@ -778,24 +784,33 @@ pub fn derive_id(format: Format, payload: &[u8], caller_scope: &str) -> String {
     if payload.is_empty() {
         return String::new();
     }
-    let Ok(Value::Object(body)) = serde_json::from_slice::<Value>(payload) else {
-        return String::new();
+    let lazy = Doc::new(payload);
+    // A body the lazy scan could not index must still be a strictly valid JSON object.
+    let doc = if lazy.is_lazy() {
+        lazy
+    } else {
+        match serde_json::from_slice::<Value>(payload) {
+            Ok(v @ Value::Object(_)) => Doc::owned(v),
+            _ => return String::new(),
+        }
     };
+    derive_id_from(format, &doc, caller_scope)
+}
+
+fn derive_id_from(format: Format, doc: &Doc<'_>, caller_scope: &str) -> String {
     let mut resource = String::new();
     let gemini_like = matches!(format, Format::Gemini | Format::Antigravity);
     if gemini_like {
-        let req_body = match body.get("request") {
-            Some(Value::Object(req)) => req,
-            _ => &body,
-        };
-        resource = string_field(req_body, &["cachedContent", "cached_content"]);
+        let nested = request_or_self(doc);
+        let req_body = nested.as_ref().unwrap_or(doc);
+        resource = doc_string(req_body, &["cachedContent", "cached_content"]);
     }
     let root = match format {
-        Format::Gemini | Format::Antigravity => gemini_root(&body),
-        Format::Interactions => interactions_root(&body),
-        Format::OpenAIResponse | Format::Codex => responses_root(&body),
-        Format::Claude => messages_root(&body, true),
-        _ => messages_root(&body, false),
+        Format::Gemini | Format::Antigravity => gemini_root(doc),
+        Format::Interactions => interactions_root(doc),
+        Format::OpenAIResponse | Format::Codex => responses_root(doc),
+        Format::Claude => messages_root(doc, true),
+        _ => messages_root(doc, false),
     };
     if root.1.is_empty() {
         return String::new();
@@ -833,6 +848,33 @@ fn extract_conversation_alias(payload: &[u8]) -> String {
     String::new()
 }
 
+/// Explicit identities of a request plus the metadata hints they imply.
+struct ExplicitIds {
+    primary: String,
+    fallback: String,
+    is_fork: bool,
+    parent: String,
+}
+
+/// Client- or execution-provided identities, `None` when the request carries none (or only an
+/// LCP binding, which is not an explicit id). Does not touch the metadata.
+fn explicit_ids(headers: &HeaderMap, payload: &[u8], metadata: &Metadata) -> Option<ExplicitIds> {
+    let info = extract_session_info(headers, payload, metadata)?;
+    if info.client_type == "lcp" {
+        return None;
+    }
+    let mut fallback = info.parent_session_id.clone();
+    if fallback.is_empty() && info.session_id.starts_with("pck:") && !payload.is_empty() {
+        fallback = extract_conversation_alias(payload);
+    }
+    Some(ExplicitIds {
+        primary: info.session_id,
+        fallback,
+        is_fork: info.is_fork,
+        parent: info.parent_session_id,
+    })
+}
+
 /// Client- or execution-provided identities only, as `(primary, fallback)`. Records fork/parent
 /// hints in `metadata`.
 pub fn explicit_session_ids(
@@ -840,26 +882,29 @@ pub fn explicit_session_ids(
     payload: &[u8],
     metadata: &mut Metadata,
 ) -> (String, String) {
-    let Some(info) = extract_session_info(headers, payload, metadata) else {
+    let Some(ids) = explicit_ids(headers, payload, metadata) else {
         return Default::default();
     };
-    if info.client_type == "lcp" {
-        return Default::default();
-    }
-    if info.is_fork {
+    if ids.is_fork {
         metadata.insert(meta::IS_FORK.into(), Value::Bool(true));
     }
-    if !info.parent_session_id.is_empty() {
-        metadata.insert(
-            meta::PARENT_SESSION_ID.into(),
-            Value::String(info.parent_session_id.clone()),
-        );
+    if !ids.parent.is_empty() {
+        metadata.insert(meta::PARENT_SESSION_ID.into(), Value::String(ids.parent));
     }
-    let mut fallback = info.parent_session_id.clone();
-    if fallback.is_empty() && info.session_id.starts_with("pck:") && !payload.is_empty() {
-        fallback = extract_conversation_alias(payload);
+    (ids.primary, ids.fallback)
+}
+
+/// The non-explicit part of [`session_ids`]: derived metadata id, else a hash of the first
+/// system/user/assistant messages.
+fn implicit_session_ids(payload: &[u8], metadata: &Metadata) -> (String, String) {
+    let derived = normalize_explicit_id(&derived_id(metadata));
+    if !derived.is_empty() {
+        return (format!("derived:{derived}"), String::new());
     }
-    (info.session_id, fallback)
+    if payload.is_empty() {
+        return Default::default();
+    }
+    extract_message_hash_ids(payload)
 }
 
 /// `(primary, fallback)` affinity ids: explicit ids, else derived metadata id, else a hash of
@@ -873,22 +918,17 @@ pub fn session_ids(
     if !primary.is_empty() {
         return (primary, fallback);
     }
-    let derived = normalize_explicit_id(&derived_id(metadata));
-    if !derived.is_empty() {
-        return (format!("derived:{derived}"), String::new());
-    }
-    if payload.is_empty() {
-        return Default::default();
-    }
-    extract_message_hash_ids(payload)
+    implicit_session_ids(payload, metadata)
 }
 
-/// The single authoritative session identity of a request (Go: CanonicalSessionID).
+/// The single authoritative session identity of a request (Go: CanonicalSessionID). Explicit ids
+/// win, then identities already in the metadata, then derived ones. The metadata is not
+/// modified, so the explicit lookup runs once.
 pub fn canonical_session_id(headers: &HeaderMap, payload: &[u8], metadata: &Metadata) -> String {
-    let mut scratch = metadata.clone();
-    let (explicit, _) = explicit_session_ids(headers, payload, &mut scratch);
-    if !explicit.is_empty() {
-        return bound_session_identity(&explicit);
+    if let Some(ids) = explicit_ids(headers, payload, metadata)
+        && !ids.primary.is_empty()
+    {
+        return bound_session_identity(&ids.primary);
     }
     for key in [meta::CANONICAL_SESSION_ID, LCP_AFFINITY_SESSION_ID] {
         if let Some(Value::String(s)) = metadata.get(key)
@@ -897,7 +937,7 @@ pub fn canonical_session_id(headers: &HeaderMap, payload: &[u8], metadata: &Meta
             return bound_session_identity(s.trim());
         }
     }
-    bound_session_identity(&session_ids(headers, payload, &mut scratch).0)
+    bound_session_identity(&implicit_session_ids(payload, metadata).0)
 }
 
 fn fnv64a(data: &[u8]) -> u64 {
@@ -1159,6 +1199,34 @@ mod tests {
             },
             opts,
         )
+    }
+
+    /// The lazy scan must derive the same id as a fully parsed body.
+    #[test]
+    fn lazy_derivation_matches_a_full_parse() {
+        let bodies: &[(Format, &str)] = &[
+            (Format::OpenAI, r#"{"model":"m","messages":[{"role":"system","content":"s"},{"role":"assistant","content":"x"},{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image_url","image_url":"u"}]},{"role":"user","content":"later"}]}"#),
+            (Format::OpenAI, r#"{"messages":[{"role":"user","content":""},{"role":"user","content":"second"}]}"#),
+            (Format::OpenAI, r#"{"messages":"no array","system":"s"}"#),
+            (Format::Claude, r#"{"system":[{"type":"text","text":"sys prompt"}],"messages":[{"role":"user","content":"q"}]}"#),
+            (Format::OpenAIResponse, r#"{"instructions":"i","input":"plain string input"}"#),
+            (Format::OpenAIResponse, r#"{"instructions":"i","input":[{"role":"developer","content":"d"},{"role":"user","content":[{"type":"input_text","text":"u"}]}]}"#),
+            (Format::OpenAIResponse, r#"{"input":{"not":"array"}}"#),
+            (Format::Gemini, r#"{"cachedContent":"cc","systemInstruction":{"parts":[{"text":"si"}]},"contents":[{"role":"model","parts":[{"text":"m"}]},{"role":"user","parts":[{"text":"g"}]}]}"#),
+            (Format::Gemini, r#"{"request":{"cached_content":"c2","contents":[{"role":"user","parts":[{"text":"wrapped"}]}]}}"#),
+            (Format::Antigravity, r#"{"request":"not an object","contents":[{"role":"user","parts":[{"text":"top"}]}]}"#),
+            (Format::Interactions, r#"{"system_instruction":"si","input":[{"role":"user","content":"hello"}]}"#),
+            (Format::OpenAI, r#"{}"#),
+            (Format::OpenAI, r#"{"messages":[]}"#),
+        ];
+        for (format, body) in bodies {
+            let lazy = derive_id(*format, body.as_bytes(), "scope");
+            let full = match serde_json::from_slice::<Value>(body.as_bytes()) {
+                Ok(v @ Value::Object(_)) => derive_id_from(*format, &Doc::owned(v), "scope"),
+                _ => String::new(),
+            };
+            assert_eq!(lazy, full, "{format:?} {body}");
+        }
     }
 
     #[test]

@@ -223,7 +223,7 @@ pub fn resolve_claude_continuity_tags(
 /// The first user text used for the build fingerprint, skipping the injected date and context
 /// reminders (Go: claudeBillingFingerprintMessageText).
 pub fn claude_billing_fingerprint_message_text(payload: &[u8]) -> String {
-    let root = cpa_json::parse(payload);
+    let root = crate::helps::parse_cache::parse(payload);
     billing_fingerprint_message_text(&root)
 }
 
@@ -396,7 +396,7 @@ pub fn claude_uses_legacy_system_reminder(root: &Value) -> bool {
 
 /// [`claude_uses_legacy_system_reminder`] over body bytes.
 pub fn claude_uses_legacy_system_reminder_bytes(payload: &[u8]) -> bool {
-    claude_uses_legacy_system_reminder(&cpa_json::parse(payload))
+    claude_uses_legacy_system_reminder(&crate::helps::parse_cache::parse(payload))
 }
 
 /// A caller system block Claude cannot carry in any system slot; request scoped
@@ -435,7 +435,7 @@ pub fn validate_claude_mid_system_message_model(
     if confirmed_claude_code || !first_party_anthropic {
         return Ok(());
     }
-    let root = cpa_json::parse(payload);
+    let root = crate::helps::parse_cache::parse(payload);
     if !claude_uses_legacy_system_reminder(&root) || !super::body::claude_payload_has_mid_system_message(payload) {
         return Ok(());
     }
@@ -677,7 +677,7 @@ pub struct ClaudeCodeSystemPlacementState {
 /// Records CPA's modern-model system placement right after cloaking
 /// (Go: captureClaudeCodeSystemPlacement).
 pub fn capture_claude_code_system_placement(before: &[u8], after: &[u8], cloaked: bool) -> ClaudeCodeSystemPlacementState {
-    let before_root = cpa_json::parse(before);
+    let before_root = crate::helps::parse_cache::parse(before);
     if !cloaked || claude_uses_legacy_system_reminder(&before_root) {
         return ClaudeCodeSystemPlacementState::default();
     }
@@ -685,7 +685,7 @@ pub fn capture_claude_code_system_placement(before: &[u8], after: &[u8], cloaked
     if texts.is_empty() {
         return ClaudeCodeSystemPlacementState::default();
     }
-    let after_root = cpa_json::parse(after);
+    let after_root = crate::helps::parse_cache::parse(after);
     let before_res = before_root.g("messages");
     let after_res = after_root.g("messages");
     let before_messages = before_res.array();
@@ -776,7 +776,7 @@ pub fn capture_claude_code_fable_state(before: &[u8], after: &[u8], cloaked: boo
     if !cloaked || before.is_empty() || after.is_empty() {
         return ClaudeCodeFableState::default();
     }
-    let (b, a) = (cpa_json::parse(before), cpa_json::parse(after));
+    let (b, a) = (crate::helps::parse_cache::parse(before), crate::helps::parse_cache::parse(after));
     ClaudeCodeFableState {
         injected_fallbacks: !b.g("fallbacks").exists() && a.g("fallbacks").exists(),
         injected_display: !b.g("thinking.display").exists() && a.g("thinking.display").exists(),
@@ -910,7 +910,7 @@ pub fn reconcile_claude_code_fable_model_after_payload(
 
 /// Index of the first `role=user` message (Go: firstClaudeUserMessageIndex; `-1` becomes `None`).
 pub fn first_claude_user_message_index(payload: &[u8]) -> Option<usize> {
-    first_claude_user_message_index_value(&cpa_json::parse(payload))
+    first_claude_user_message_index_value(&crate::helps::parse_cache::parse(payload))
 }
 
 fn first_claude_user_message_index_value(root: &Value) -> Option<usize> {
@@ -1060,7 +1060,7 @@ pub fn apply_cloaking_internal(
     }
     // Strict mode drops caller system prompts entirely, so an unusable block cannot lose information.
     if !settings.strict_mode {
-        validate_claude_caller_system_blocks(&cpa_json::parse(&payload).g("system").value())?;
+        validate_claude_caller_system_blocks(&crate::helps::parse_cache::parse(&payload).g("system").value())?;
     }
 
     let billing_version = default_claude_version(Some(cfg));

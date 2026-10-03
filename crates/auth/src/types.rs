@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::credmeta::{Metadata, parse_bool_any, parse_int_any};
 use crate::jwt::{normalise_unix, parse_jwt_exp};
 use crate::storage::TokenStorage;
-use crate::util::{abs_clean, trimmed_str, zero_time};
+use crate::util::{abs_clean, zero_time};
 
 // ---- Well-known attribute names and kinds ----
 
@@ -245,15 +245,22 @@ impl Auth {
     }
 
     pub fn attr(&self, key: &str) -> String {
-        self.attributes
-            .get(key)
-            .map(|v| v.trim().to_string())
-            .unwrap_or_default()
+        self.attr_ref(key).to_string()
+    }
+
+    /// [`Auth::attr`] without allocating (selection scans call this per credential per request).
+    pub fn attr_ref(&self, key: &str) -> &str {
+        self.attributes.get(key).map_or("", |v| v.trim())
     }
 
     /// Trimmed string metadata value, `""` for missing or non-string.
     pub fn meta_str(&self, key: &str) -> String {
-        trimmed_str(self.metadata.get(key))
+        self.meta_ref(key).to_string()
+    }
+
+    /// [`Auth::meta_str`] without allocating.
+    pub fn meta_ref(&self, key: &str) -> &str {
+        self.metadata.get(key).and_then(Value::as_str).map_or("", str::trim)
     }
 
     /// `access_token`, falling back to the legacy `accessToken` spelling.
@@ -280,13 +287,13 @@ impl Auth {
 
     /// `AuthKind()`: `apikey`, `oauth` or `""`.
     pub fn auth_kind(&self) -> &'static str {
-        if let Some(k) = normalize_auth_kind(&self.attr(ATTRIBUTE_AUTH_KIND)) {
+        if let Some(k) = normalize_auth_kind(self.attr_ref(ATTRIBUTE_AUTH_KIND)) {
             return k;
         }
-        if let Some(k) = normalize_auth_kind(&self.meta_str(ATTRIBUTE_AUTH_KIND)) {
+        if let Some(k) = normalize_auth_kind(self.meta_ref(ATTRIBUTE_AUTH_KIND)) {
             return k;
         }
-        if !self.attr(ATTRIBUTE_API_KEY).is_empty() {
+        if !self.attr_ref(ATTRIBUTE_API_KEY).is_empty() {
             return AUTH_KIND_API_KEY;
         }
         if self.has_oauth_metadata() {
@@ -308,7 +315,7 @@ impl Auth {
             "expires_at",
             "expired",
         ];
-        if KEYS.iter().any(|k| !self.meta_str(k).is_empty()) {
+        if KEYS.iter().any(|k| !self.meta_ref(k).is_empty()) {
             return true;
         }
         matches!(self.metadata.get("token"), Some(Value::Object(m)) if !m.is_empty())
@@ -317,22 +324,22 @@ impl Auth {
     /// `AuthSourceKind()`: where the credential came from.
     pub fn auth_source_kind(&self) -> &'static str {
         if self
-            .attr(ATTRIBUTE_RUNTIME_ONLY)
+            .attr_ref(ATTRIBUTE_RUNTIME_ONLY)
             .eq_ignore_ascii_case("true")
         {
             return AUTH_SOURCE_MEMORY;
         }
-        if let Some(s) = normalize_auth_source_kind(&self.attr(ATTRIBUTE_SOURCE_BACKEND)) {
+        if let Some(s) = normalize_auth_source_kind(self.attr_ref(ATTRIBUTE_SOURCE_BACKEND)) {
             return s;
         }
-        let source = self.attr(ATTRIBUTE_SOURCE);
+        let source = self.attr_ref(ATTRIBUTE_SOURCE);
         if !source.is_empty() {
             if source.to_lowercase().starts_with("config:") {
                 return AUTH_SOURCE_CONFIG;
             }
-            return normalize_auth_source_kind(&source).unwrap_or(AUTH_SOURCE_FILE);
+            return normalize_auth_source_kind(source).unwrap_or(AUTH_SOURCE_FILE);
         }
-        if !self.attr(ATTRIBUTE_PATH).is_empty() || !self.file_name.trim().is_empty() {
+        if !self.attr_ref(ATTRIBUTE_PATH).is_empty() || !self.file_name.trim().is_empty() {
             return AUTH_SOURCE_FILE;
         }
         ""
@@ -607,24 +614,37 @@ fn bucket_label(id: i64) -> String {
     format!("{}-{}", start.format("%H:%M"), end.format("%H:%M"))
 }
 
+/// `eq_ignore_ascii_case` against any of `names`; non-ASCII input folds like `to_lowercase`.
+fn eq_any_folded(s: &str, names: &[&str]) -> bool {
+    let s = s.trim();
+    if s.is_ascii() {
+        names.iter().any(|n| s.eq_ignore_ascii_case(n))
+    } else {
+        let lower = s.to_lowercase();
+        names.iter().any(|n| lower == *n)
+    }
+}
+
 fn normalize_auth_kind(kind: &str) -> Option<&'static str> {
-    match kind.trim().to_lowercase().as_str() {
-        "apikey" | "api_key" | "api-key" => Some(AUTH_KIND_API_KEY),
-        "oauth" | "oauth2" => Some(AUTH_KIND_OAUTH),
-        _ => None,
+    if eq_any_folded(kind, &["apikey", "api_key", "api-key"]) {
+        Some(AUTH_KIND_API_KEY)
+    } else if eq_any_folded(kind, &["oauth", "oauth2"]) {
+        Some(AUTH_KIND_OAUTH)
+    } else {
+        None
     }
 }
 
 fn normalize_auth_source_kind(source: &str) -> Option<&'static str> {
-    match source.trim().to_lowercase().as_str() {
-        "config" => Some(AUTH_SOURCE_CONFIG),
-        "file" | "filesystem" => Some(AUTH_SOURCE_FILE),
-        "git" => Some(AUTH_SOURCE_GIT),
-        "memory" | "runtime" | "runtime_only" => Some(AUTH_SOURCE_MEMORY),
-        "objectstore" | "object-store" => Some(AUTH_SOURCE_OBJECT_STORE),
-        "postgres" | "postgresql" | "database" | "db" => Some(AUTH_SOURCE_POSTGRES),
-        _ => None,
-    }
+    const KINDS: [(&[&str], &str); 6] = [
+        (&["config"], AUTH_SOURCE_CONFIG),
+        (&["file", "filesystem"], AUTH_SOURCE_FILE),
+        (&["git"], AUTH_SOURCE_GIT),
+        (&["memory", "runtime", "runtime_only"], AUTH_SOURCE_MEMORY),
+        (&["objectstore", "object-store"], AUTH_SOURCE_OBJECT_STORE),
+        (&["postgres", "postgresql", "database", "db"], AUTH_SOURCE_POSTGRES),
+    ];
+    KINDS.iter().find(|(names, _)| eq_any_folded(source, names)).map(|(_, k)| *k)
 }
 
 // ---- Expiry parsing ----

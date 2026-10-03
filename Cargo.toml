@@ -46,3 +46,7 @@ opt-level = 3
 [profile.release]
 lto = "fat"
 codegen-units = 1
+
+# serde_json with a flat insertion-ordered map instead of IndexMap (see crates/json/vendor/serde_json/src/flatmap.rs)
+[patch.crates-io]
+serde_json = { path = "crates/json/vendor/serde_json" }
