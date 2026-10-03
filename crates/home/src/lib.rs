@@ -2,10 +2,12 @@
 
 pub mod client;
 pub mod conn;
+pub mod certificate;
 pub mod concurrency_release;
 pub mod error;
 pub mod executionregistry;
 pub mod kv;
+pub mod plugin_status;
 pub mod queue;
 pub mod requests;
 pub mod resp;
