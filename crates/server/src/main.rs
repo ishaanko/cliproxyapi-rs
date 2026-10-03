@@ -22,6 +22,60 @@ use cpa_management::ManagementState;
 use cpa_plugin::adapters::service::ServiceHooks;
 use cpa_server::{AppState, BuildInfo, KeepAlive, ServerModelExecutor, build_router_with_management, safemode, serve};
 
+#[cfg(feature = "pgo-dump")]
+mod pgo_dump;
+
+// mimalloc cut CPU per request by ~20% and raised throughput ~30% against glibc malloc in the
+// bench harness (jemalloc: ~17%, with more resident memory). Plugins are unaffected: the plugin
+// ABI frees buffers with libc `free`, never through the Rust allocator.
+#[cfg(all(feature = "mimalloc", not(feature = "alloc-stats")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+// Benchmark hook (`--features alloc-stats`): counts allocations around the chosen allocator.
+#[cfg(all(feature = "mimalloc", feature = "alloc-stats"))]
+#[global_allocator]
+static GLOBAL: cpa_allocstats::Counting<mimalloc::MiMalloc> = cpa_allocstats::Counting::new(mimalloc::MiMalloc);
+
+#[cfg(all(not(feature = "mimalloc"), feature = "alloc-stats"))]
+#[global_allocator]
+static GLOBAL: cpa_allocstats::Counting<std::alloc::System> = cpa_allocstats::Counting::new(std::alloc::System);
+
+/// `pprof` feature: samples all threads for `CPA_PPROF_SECS` seconds and writes folded stacks
+/// (root first, `;` separated, one line per distinct stack) to `CPA_PPROF_OUT`.
+#[cfg(feature = "pprof")]
+fn start_pprof() {
+    use std::io::Write;
+    let (Ok(out), Ok(secs)) = (std::env::var("CPA_PPROF_OUT"), std::env::var("CPA_PPROF_SECS")) else {
+        return;
+    };
+    let Ok(secs) = secs.parse::<u64>() else {
+        return;
+    };
+    let Ok(guard) = pprof::ProfilerGuardBuilder::default().frequency(999).blocklist(&["libc", "libgcc", "pthread", "vdso"]).build() else {
+        return;
+    };
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(secs));
+        let Ok(report) = guard.report().build() else {
+            return;
+        };
+        let Ok(mut file) = std::fs::File::create(out) else {
+            return;
+        };
+        for (frames, count) in &report.data {
+            let mut line = frames.thread_name.clone();
+            for symbols in frames.frames.iter().rev() {
+                for sym in symbols.iter().rev() {
+                    line.push(';');
+                    line.push_str(&sym.name());
+                }
+            }
+            let _ = writeln!(file, "{line} {count}");
+        }
+    });
+}
+
 fn build_info() -> BuildInfo {
     BuildInfo {
         version: option_env!("CPA_VERSION").unwrap_or("dev").to_string(),
@@ -30,8 +84,41 @@ fn build_info() -> BuildInfo {
     }
 }
 
+/// mimalloc reserves its first 1 GiB arena fully committed on Linux, so freed memory is reset
+/// (MADV_FREE) instead of decommitted and the resident set stays ~25 MB higher under load with
+/// no CPU benefit. The option is read once at allocator init (before `main`), so a process that
+/// was started without it replaces itself once with it set (same pid, fds and arguments).
+#[cfg(all(feature = "mimalloc", unix))]
+fn reexec_with_lazy_arena_commit() {
+    use std::os::unix::process::CommandExt;
+    const KEY: &str = "MIMALLOC_ARENA_EAGER_COMMIT";
+    if std::env::var_os(KEY).is_some() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let mut args = std::env::args_os();
+    let mut cmd = std::process::Command::new(exe);
+    if let Some(arg0) = args.next() {
+        cmd.arg0(arg0);
+    }
+    // `exec` only returns on failure; the server then simply runs with the default option.
+    let _ = cmd.args(args).env(KEY, "0").exec();
+}
+
 fn main() {
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    #[cfg(all(feature = "mimalloc", unix))]
+    reexec_with_lazy_arena_commit();
+    #[cfg(feature = "alloc-stats")]
+    cpa_allocstats::serve_from_env();
+    #[cfg(feature = "pprof")]
+    start_pprof();
+    #[cfg(feature = "pgo-dump")]
+    pgo_dump::start();
+    // A longer event interval (default 61) polls the I/O driver less often under load: about 5%
+    // less CPU and a lower p99 on streaming workloads, no change for short requests.
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().event_interval(1024).build() {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("failed to start runtime: {e}");

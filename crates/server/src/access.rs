@@ -1,6 +1,6 @@
 //! Client API-key authentication (Go: sdk/access + internal/access/config_access).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use axum::http::HeaderMap;
 use cpa_plugin::CallCtx;
@@ -47,15 +47,9 @@ impl AuthFailure {
     }
 }
 
-/// `normalizeKeys`: trimmed, de-duplicated, non-empty.
-pub fn normalize_keys(keys: &[String]) -> Vec<String> {
-    let mut seen = HashSet::new();
-    keys.iter()
-        .map(|k| k.trim())
-        .filter(|k| !k.is_empty())
-        .filter(|k| seen.insert(*k))
-        .map(String::from)
-        .collect()
+/// `normalizeKeys` as an iterator: trimmed, non-empty keys (duplicates do not matter for lookups).
+fn usable_keys(keys: &[String]) -> impl Iterator<Item = &str> {
+    keys.iter().map(|k| k.trim()).filter(|k| !k.is_empty())
 }
 
 /// `extractBearerToken`: `Bearer <key>` (scheme case-insensitive), otherwise the whole value.
@@ -94,8 +88,7 @@ pub fn authenticate(
     query: &[(String, String)],
     api_keys: &[String],
 ) -> Result<Option<Principal>, AuthFailure> {
-    let keys = normalize_keys(api_keys);
-    if keys.is_empty() {
+    if usable_keys(api_keys).next().is_none() {
         return Ok(None);
     }
     let auth_header = first_header(headers, "authorization");
@@ -118,7 +111,7 @@ pub fn authenticate(
         if value.is_empty() {
             continue;
         }
-        if keys.iter().any(|k| k == value) {
+        if usable_keys(api_keys).any(|k| k == value) {
             return Ok(Some(Principal {
                 provider: DEFAULT_ACCESS_PROVIDER_NAME.to_string(),
                 principal: value.to_string(),
@@ -152,7 +145,7 @@ where
     B: FnOnce() -> F,
     F: std::future::Future<Output = Result<bytes::Bytes, String>>,
 {
-    let inline = !plugin_exclusive && !normalize_keys(api_keys).is_empty();
+    let inline = !plugin_exclusive && usable_keys(api_keys).next().is_some();
     if !inline && plugins.is_empty() {
         return Ok(None);
     }
