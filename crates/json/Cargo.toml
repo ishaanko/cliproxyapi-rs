@@ -8,3 +8,8 @@ license.workspace = true
 serde_json = { workspace = true, features = ["unbounded_depth"] }
 serde = "1"
 serde_stacker = "0.1"
+memchr = "2"
+simdutf8 = "0.1"
+
+[dev-dependencies]
+perf-event2 = "0.7"

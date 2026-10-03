@@ -22,6 +22,8 @@
 
 use std::borrow::Cow;
 
+mod fast;
+
 pub use serde_json::{json, Map, Number, Value};
 
 /// gjson's `Type`. Missing values report `Null`.
@@ -106,7 +108,7 @@ impl<'a> Res<'a> {
             Some(Value::Bool(b)) => b.to_string(),
             Some(Value::String(s)) => s.clone(),
             Some(Value::Number(n)) => number_string(n),
-            Some(v) => v.to_string(),
+            Some(v) => to_string(v),
         }
     }
 
@@ -117,7 +119,11 @@ impl<'a> Res<'a> {
             Some(Value::Bool(true)) => 1,
             Some(Value::String(s)) => go_parse_int(s).unwrap_or(0),
             Some(Value::Number(n)) => {
-                let raw = n.to_string();
+                // Integer literals inside the safe range convert exactly (no text copy).
+                if let Some(i) = n.as_i64().filter(|i| i.unsigned_abs() <= MAX_SAFE_INT) {
+                    return i;
+                }
+                let raw = n.as_str();
                 let f = raw.parse::<f64>().unwrap_or(0.0);
                 if f.abs() <= MAX_SAFE {
                     return f as i64;
@@ -134,7 +140,10 @@ impl<'a> Res<'a> {
             Some(Value::Bool(true)) => 1,
             Some(Value::String(s)) => go_parse_uint(s).unwrap_or(0),
             Some(Value::Number(n)) => {
-                let raw = n.to_string();
+                if let Some(u) = n.as_u64().filter(|u| *u <= MAX_SAFE_INT) {
+                    return u;
+                }
+                let raw = n.as_str();
                 let f = raw.parse::<f64>().unwrap_or(0.0);
                 if f.abs() <= MAX_SAFE && f >= 0.0 {
                     return f as u64;
@@ -150,7 +159,7 @@ impl<'a> Res<'a> {
         match self.v() {
             Some(Value::Bool(true)) => 1.0,
             Some(Value::String(s)) => s.parse::<f64>().unwrap_or(0.0),
-            Some(Value::Number(n)) => n.to_string().parse::<f64>().unwrap_or(0.0),
+            Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
             _ => 0.0,
         }
     }
@@ -160,7 +169,7 @@ impl<'a> Res<'a> {
         match self.v() {
             Some(Value::Bool(b)) => *b,
             Some(Value::String(s)) => matches!(s.to_lowercase().as_str(), "1" | "t" | "true"),
-            Some(Value::Number(n)) => n.to_string().parse::<f64>().map(|f| f != 0.0).unwrap_or(false),
+            Some(Value::Number(n)) => n.as_str().parse::<f64>().map(|f| f != 0.0).unwrap_or(false),
             _ => false,
         }
     }
@@ -169,7 +178,7 @@ impl<'a> Res<'a> {
     pub fn raw(&self) -> String {
         match self.v() {
             None => String::new(),
-            Some(v) => v.to_string(),
+            Some(v) => to_string(v),
         }
     }
 
@@ -241,6 +250,7 @@ impl<'a> Res<'a> {
 
 /// Largest integer exactly representable in f64 (gjson `safeInt` bound).
 const MAX_SAFE: f64 = 9007199254740991.0;
+const MAX_SAFE_INT: u64 = 9007199254740991;
 
 /// gjson `parseInt`: optional '-', digits only, wrapping on overflow.
 fn go_parse_int(s: &str) -> Option<i64> {
@@ -275,14 +285,14 @@ fn go_f64_to_u64(f: f64) -> u64 {
 
 /// gjson number `String()`: integer literals verbatim, everything else via shortest float.
 fn number_string(n: &Number) -> String {
-    let raw = n.to_string();
-    let digits = raw.strip_prefix('-').unwrap_or(&raw);
+    let raw = n.as_str();
+    let digits = raw.strip_prefix('-').unwrap_or(raw);
     if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
-        return raw;
+        return raw.to_owned();
     }
     match raw.parse::<f64>() {
         Ok(f) => format_float(f),
-        Err(_) => raw,
+        Err(_) => raw.to_owned(),
     }
 }
 
@@ -320,10 +330,23 @@ impl J for Value {
 /// Parse bytes; invalid JSON yields `Value::Null` (gjson is lenient, so callers must not
 /// rely on errors).
 pub fn parse(bytes: &[u8]) -> Value {
+    // The direct reader covers every ordinary document; the serde path below only runs for
+    // nesting beyond its limit, serde-special keys, and as the base of the lenient fallbacks.
+    let mut deep = false;
+    match fast::parse(bytes) {
+        Ok(v) => return v,
+        Err(fast::Fail::Syntax) => {}
+        Err(fast::Fail::Special) => {
+            if let Ok(v) = serde_json::from_slice::<Value>(bytes) {
+                return v;
+            }
+        }
+        Err(fast::Fail::Deep) => deep = true,
+    }
     if nesting_depth(bytes) > MAX_DEPTH {
         return Value::Null;
     }
-    match parse_strict(bytes) {
+    match if deep { parse_strict(bytes) } else { None } {
         Some(v) => v,
         // gjson decodes unpaired surrogate escapes as U+FFFD; serde_json rejects them.
         None => match replace_lone_surrogates(bytes) {
@@ -724,6 +747,12 @@ fn nesting_depth(bytes: &[u8]) -> usize {
 
 /// gjson `ValidBytes`.
 pub fn valid(bytes: &[u8]) -> bool {
+    match fast::validate(bytes) {
+        Ok(()) => return true,
+        Err(fast::Fail::Syntax) => return false,
+        Err(fast::Fail::Special) => return serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok(),
+        Err(fast::Fail::Deep) => {}
+    }
     if nesting_depth(bytes) > MAX_DEPTH {
         return false;
     }
@@ -737,11 +766,11 @@ pub fn valid(bytes: &[u8]) -> bool {
 
 /// Compact serialization.
 pub fn to_vec(v: &Value) -> Vec<u8> {
-    serde_json::to_vec(v).unwrap_or_default()
+    fast::to_vec(v)
 }
 
 pub fn to_string(v: &Value) -> String {
-    serde_json::to_string(v).unwrap_or_default()
+    String::from_utf8(fast::to_vec(v)).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------- path parsing
@@ -888,7 +917,28 @@ pub fn get<'a>(v: &'a Value, path: &str) -> Res<'a> {
     if path.is_empty() {
         return Res::NONE;
     }
+    if is_plain_get_path(path) {
+        return Res(eval_plain(v, path));
+    }
     Res(eval(v, &parse_comps(path)))
+}
+
+/// True for paths made only of literal `.`-separated keys/indexes (no escapes, wildcards,
+/// `#`, modifiers, queries or `|`), which can be walked without compiling components.
+fn is_plain_get_path(path: &str) -> bool {
+    !path.bytes().any(|b| matches!(b, b'\\' | b'*' | b'?' | b'|' | b'#' | b'(' | b')' | b'"' | b'@'))
+}
+
+/// [`get`] for plain paths: no allocation besides the lookups themselves.
+fn eval_plain<'a>(mut v: &'a Value, path: &str) -> Option<Cow<'a, Value>> {
+    for seg in path.split('.') {
+        v = match v {
+            Value::Object(m) => m.get(seg)?,
+            Value::Array(a) => a.get(seg.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(Cow::Borrowed(v))
 }
 
 fn eval<'a>(v: &'a Value, comps: &[Comp]) -> Option<Cow<'a, Value>> {
@@ -995,7 +1045,7 @@ impl Query {
                 }
             }
             Value::Number(n) => {
-                let a = n.to_string().parse::<f64>().unwrap_or(0.0);
+                let a = n.as_str().parse::<f64>().unwrap_or(0.0);
                 let Ok(b) = self.value.parse::<f64>() else { return false };
                 match op {
                     "==" => a == b,
@@ -1026,6 +1076,45 @@ fn set_keys(path: &str) -> Vec<String> {
     split_path(path).iter().map(|p| unescape(p)).collect()
 }
 
+/// The keys of a set/delete/get_mut path. Plain `a.b.0` paths are split lazily on `.` (no
+/// allocation); paths with escapes, `|` or query syntax are split once into owned keys.
+#[derive(Clone, Copy)]
+enum Keys<'a> {
+    /// Remaining text; `None` once every key is consumed (`Some("")` is one empty key).
+    Plain(Option<&'a str>),
+    Owned(&'a [String]),
+}
+
+impl<'a> Keys<'a> {
+    fn split_first(self) -> Option<(&'a str, Keys<'a>)> {
+        match self {
+            Keys::Plain(None) => None,
+            Keys::Plain(Some(r)) => Some(match r.split_once('.') {
+                Some((head, tail)) => (head, Keys::Plain(Some(tail))),
+                None => (r, Keys::Plain(None)),
+            }),
+            Keys::Owned(ks) => ks.split_first().map(|(k, rest)| (k.as_str(), Keys::Owned(rest))),
+        }
+    }
+
+    fn is_empty(self) -> bool {
+        match self {
+            Keys::Plain(r) => r.is_none(),
+            Keys::Owned(ks) => ks.is_empty(),
+        }
+    }
+}
+
+/// Runs `f` with the parsed keys of `path`.
+fn with_keys<R>(path: &str, f: impl FnOnce(Keys<'_>) -> R) -> R {
+    if path.bytes().any(|b| matches!(b, b'\\' | b'|' | b'(' | b'"')) {
+        let owned = set_keys(path);
+        f(Keys::Owned(&owned))
+    } else {
+        f(Keys::Plain(Some(path)))
+    }
+}
+
 fn is_index(k: &str) -> bool {
     k == "-1" || (!k.is_empty() && k.bytes().all(|b| b.is_ascii_digit()))
 }
@@ -1035,16 +1124,17 @@ fn is_index(k: &str) -> bool {
 /// Returns `false` and leaves `v` unchanged where sjson errors (a non-numeric key into an
 /// existing array); most Go callers ignore that error, so the result can be ignored too.
 pub fn set(v: &mut Value, path: &str, val: impl Into<Value>) -> bool {
-    let keys = set_keys(path);
-    if !settable(v, &keys) {
-        return false;
-    }
-    set_at(v, &keys, val.into());
-    true
+    with_keys(path, |keys| {
+        if !settable(v, keys) {
+            return false;
+        }
+        set_at(v, keys, val.into());
+        true
+    })
 }
 
 /// Walk the existing part of the path; fails on a non-numeric key into an array.
-fn settable(v: &Value, keys: &[String]) -> bool {
+fn settable(v: &Value, keys: Keys<'_>) -> bool {
     let Some((k, rest)) = keys.split_first() else { return true };
     match v {
         Value::Object(m) => m.get(k).is_none_or(|c| settable(c, rest)),
@@ -1073,7 +1163,7 @@ pub fn set_raw(v: &mut Value, path: &str, raw: &str) -> Result<(), serde_json::E
     }
 }
 
-fn set_at(v: &mut Value, keys: &[String], val: Value) {
+fn set_at(v: &mut Value, keys: Keys<'_>, val: Value) {
     let Some((k, rest)) = keys.split_first() else {
         *v = val;
         return;
@@ -1088,8 +1178,12 @@ fn set_at(v: &mut Value, keys: &[String], val: Value) {
     }
     match v {
         Value::Object(m) => {
-            let child = m.entry(k.clone()).or_insert(Value::Null);
-            set_at(child, rest, val);
+            if let Some(child) = m.get_mut(k) {
+                set_at(child, rest, val);
+            } else {
+                let child = m.entry(k).or_insert(Value::Null);
+                set_at(child, rest, val);
+            }
         }
         Value::Array(a) => {
             let idx = if k == "-1" {
@@ -1110,11 +1204,10 @@ fn set_at(v: &mut Value, keys: &[String], val: Value) {
 
 /// sjson `Delete`: order-preserving removal; missing paths are a no-op.
 pub fn delete(v: &mut Value, path: &str) {
-    let keys = set_keys(path);
-    del_at(v, &keys);
+    with_keys(path, |keys| del_at(v, keys));
 }
 
-fn del_at(v: &mut Value, keys: &[String]) {
+fn del_at(v: &mut Value, keys: Keys<'_>) {
     let Some((k, rest)) = keys.split_first() else { return };
     if rest.is_empty() {
         match v {
@@ -1152,15 +1245,19 @@ fn del_at(v: &mut Value, keys: &[String]) {
 
 /// Mutable access to an existing value at a plain dotted path (no queries).
 pub fn get_mut<'a>(v: &'a mut Value, path: &str) -> Option<&'a mut Value> {
-    let mut cur = v;
-    for k in set_keys(path) {
-        cur = match cur {
-            Value::Object(m) => m.get_mut(&k)?,
-            Value::Array(a) => a.get_mut(k.parse::<usize>().ok()?)?,
-            _ => return None,
-        };
-    }
-    Some(cur)
+    with_keys(path, |keys| {
+        let mut cur = v;
+        let mut rest = keys;
+        while let Some((k, tail)) = rest.split_first() {
+            cur = match cur {
+                Value::Object(m) => m.get_mut(k)?,
+                Value::Array(a) => a.get_mut(k.parse::<usize>().ok()?)?,
+                _ => return None,
+            };
+            rest = tail;
+        }
+        Some(cur)
+    })
 }
 
 /// Escape a literal key for use inside a path (sjson/gjson `\.` etc.).
@@ -1177,3 +1274,6 @@ pub fn escape_key(k: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod fast_tests;
