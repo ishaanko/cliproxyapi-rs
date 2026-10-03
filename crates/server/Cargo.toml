@@ -21,6 +21,7 @@ cpa-auth = { path = "../auth" }
 cpa-runtime = { path = "../runtime" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
+cpa-tui = { path = "../tui" }
 cpa-executors = { path = "../executors" }
 serde.workspace = true
 serde_json.workspace = true
@@ -62,3 +63,5 @@ tokio-tungstenite = "0.29"
 futures-util = "0.3"
 tempfile = "3"
 async-trait = "0.1"
+portable-pty = "0.9"
+vt100 = "0.16"

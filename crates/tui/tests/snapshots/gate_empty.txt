@@ -1,0 +1,6 @@
+🔐 Connect Management API
+
+ Enter management password and press Enter to connect
+
+  Password:
+ Enter: connect • q/Ctrl+C: quit • L: lang
