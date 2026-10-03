@@ -25,7 +25,7 @@ use crate::common::{
     normalize_line_endings, rel_path, skip_disabled_recreate, stamp_saved, value_as_string, write_auth_file,
     write_file_private,
 };
-use crate::pgconn::Conn;
+use crate::pgconn::{Conn, ErrText};
 use crate::postgres_cooldown::PostgresCooldownStore;
 use crate::rt;
 
@@ -75,8 +75,8 @@ pub struct PostgresStore {
     mu: Mutex<()>,
 }
 
-fn db_err(prefix: &str, err: impl std::fmt::Display) -> StoreError {
-    backend_err(format!("postgres store: {prefix}: {err}"))
+fn db_err(prefix: &str, err: impl ErrText) -> StoreError {
+    backend_err(format!("postgres store: {prefix}: {}", err.err_text()))
 }
 
 impl PostgresStore {
@@ -119,7 +119,7 @@ impl PostgresStore {
         let conn = Conn::new(&cfg.dsn).map_err(|e| db_err("open database connection", e))?;
         let shared = Arc::new(Shared { db: tokio::sync::Mutex::new(conn), cfg });
         let ping = shared.clone();
-        rt::block_on(async move {
+        rt::block_on_deadline(async move {
             let mut db = ping.db.lock().await;
             let client = db.client().await?;
             client.simple_query("SELECT 1").await.map(|_| ())
@@ -160,7 +160,11 @@ impl PostgresStore {
     /// `EnsureSchema`: creates the schema (when set) and the three tables.
     pub fn ensure_schema(&self) -> Result<(), StoreError> {
         let shared = self.shared.clone();
-        rt::block_on(async move { ensure_schema(&shared).await })
+        rt::block_on(async move {
+            tokio::time::timeout(rt::DEADLINE, ensure_schema(&shared))
+                .await
+                .unwrap_or_else(|_| Err(db_err("create schema", "context deadline exceeded".to_string())))
+        })
     }
 
     /// `Bootstrap`: syncs config and auth records between Postgres and the spool.
@@ -172,20 +176,20 @@ impl PostgresStore {
 
     fn query(&self, sql: String, params: Vec<DbParam>) -> Result<(), StoreError> {
         let shared = self.shared.clone();
-        rt::block_on(async move {
+        rt::block_on_deadline(async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params.iter().map(DbParam::as_sql).collect();
             client.execute(sql.as_str(), &refs).await.map(|_| ())
         })
-        .map_err(|e| backend_err(e.to_string()))
+        .map_err(backend_err)
     }
 
     fn sync_config_from_database(&self, example: &str) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.config_table);
         let shared = self.shared.clone();
         let sql = format!("SELECT content FROM {table} WHERE id = $1");
-        let row: Option<String> = rt::block_on(async move {
+        let row: Option<String> = rt::block_on_deadline(async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let row = client.query_opt(sql.as_str(), &[&DEFAULT_CONFIG_KEY]).await?;
@@ -255,7 +259,7 @@ impl PostgresStore {
         let order = if ordered { " ORDER BY id" } else { "" };
         let sql = format!("SELECT id, content::text, created_at, updated_at FROM {table}{order}");
         let shared = self.shared.clone();
-        rt::block_on(async move {
+        rt::block_on_deadline(async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let rows = client.query(sql.as_str(), &[]).await?;

@@ -32,8 +32,16 @@ pub(crate) struct S3Error {
 }
 
 impl S3Error {
-    fn transport(err: impl fmt::Display) -> Self {
-        Self { status: 0, code: String::new(), message: err.to_string() }
+    /// Wraps a client error with its full cause chain (reqwest's `Display` omits the cause).
+    fn transport(err: impl std::error::Error) -> Self {
+        let mut message = err.to_string();
+        let mut source = err.source();
+        while let Some(cause) = source {
+            message.push_str(": ");
+            message.push_str(&cause.to_string());
+            source = cause.source();
+        }
+        Self { status: 0, code: String::new(), message }
     }
 
     /// `isObjectNotFound`.
@@ -93,7 +101,14 @@ fn hmac(key: &[u8], data: &[u8]) -> Vec<u8> {
 
 impl S3Client {
     pub(crate) fn new(cfg: S3Config) -> Result<Arc<Self>, String> {
-        let http = reqwest::Client::builder().build().map_err(|e| e.to_string())?;
+        // minio-go refuses endpoints with a path.
+        if cfg.endpoint.trim_end_matches('/').contains('/') {
+            return Err("Endpoint url cannot have fully qualified paths.".to_string());
+        }
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .map_err(|e| e.to_string())?;
         let region = (!cfg.region.is_empty()).then(|| cfg.region.clone());
         Ok(Arc::new(Self { http, cfg, region: Mutex::new(region) }))
     }
@@ -188,16 +203,19 @@ impl S3Client {
         if let Some(r) = self.region.lock().clone() {
             return r;
         }
-        let discovered = match self.send(Method::GET, None, &[("location", "")], Vec::new(), None, DEFAULT_REGION).await {
+        let location = self.send(Method::GET, None, &[("location", "")], Vec::new(), None, DEFAULT_REGION).await;
+        match location {
             Ok(resp) if resp.status().is_success() => {
                 let body = resp.text().await.unwrap_or_default();
-                xml_text(&body, "LocationConstraint").filter(|r| !r.is_empty())
+                let region = xml_text(&body, "LocationConstraint")
+                    .filter(|r| !r.is_empty())
+                    .unwrap_or_else(|| DEFAULT_REGION.to_string());
+                *self.region.lock() = Some(region.clone());
+                region
             }
-            _ => None,
-        };
-        let region = discovered.unwrap_or_else(|| DEFAULT_REGION.to_string());
-        *self.region.lock() = Some(region.clone());
-        region
+            // A failed lookup is not cached, so a later call can still discover the real region.
+            _ => DEFAULT_REGION.to_string(),
+        }
     }
 
     /// `BucketExists`.

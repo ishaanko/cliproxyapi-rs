@@ -12,6 +12,7 @@ use chrono::{DateTime, DurationRound, TimeDelta, Utc};
 use cpa_runtime::conductor::{CooldownStateRecord, CooldownStateStore};
 use parking_lot::Mutex;
 
+use crate::pgconn::ErrText;
 use crate::postgres::Shared;
 use crate::rt;
 
@@ -53,7 +54,7 @@ impl CooldownStateStore for PostgresCooldownStore {
             let rows = client.query(sql.as_str(), &[]).await?;
             Ok::<_, tokio_postgres::Error>(rows.iter().map(|r| (r.get(0), r.get(1))).collect())
         })
-        .map_err(|e| format!("postgres cooldown store: load state: {e}"))?;
+        .map_err(|e| format!("postgres cooldown store: load state: {}", e.err_text()))?;
 
         let mut records = Vec::with_capacity(rows.len());
         let mut previous = HashMap::with_capacity(rows.len());
@@ -121,23 +122,23 @@ impl CooldownStateStore for PostgresCooldownStore {
         let shared = self.shared.clone();
         rt::block_on(async move {
             let mut db = shared.db.lock().await;
-            let client = db.client().await.map_err(|e| format!("postgres cooldown store: begin save: {e}"))?;
+            let client = db.client().await.map_err(|e| format!("postgres cooldown store: begin save: {}", e.err_text()))?;
             let tx = client
                 .transaction()
                 .await
-                .map_err(|e| format!("postgres cooldown store: begin save: {e}"))?;
+                .map_err(|e| format!("postgres cooldown store: begin save: {}", e.err_text()))?;
             for ((auth_id, model), content, updated_at) in &encoded {
                 tx.execute(upsert.as_str(), &[auth_id, model, content, updated_at])
                     .await
-                    .map_err(|e| format!("postgres cooldown store: save state for {auth_id:?}: {e}"))?;
+                    .map_err(|e| format!("postgres cooldown store: save state for {auth_id:?}: {}", e.err_text()))?;
             }
             let empty = serde_json::json!({});
             for ((auth_id, model), deleted_at, observed) in &clears {
                 tx.execute(delete.as_str(), &[auth_id, model, &empty, deleted_at, observed])
                     .await
-                    .map_err(|e| format!("postgres cooldown store: clear state for {auth_id:?}: {e}"))?;
+                    .map_err(|e| format!("postgres cooldown store: clear state for {auth_id:?}: {}", e.err_text()))?;
             }
-            tx.commit().await.map_err(|e| format!("postgres cooldown store: commit save: {e}"))
+            tx.commit().await.map_err(|e| format!("postgres cooldown store: commit save: {}", e.err_text()))
         })?;
         *self.previous.lock() = current;
         Ok(())
