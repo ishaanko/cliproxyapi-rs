@@ -669,6 +669,7 @@ dependencies = [
  "cpa-auth",
  "cpa-config",
  "cpa-core",
+ "cpa-home",
  "cpa-json",
  "cpa-runtime",
  "cpa-translator",
