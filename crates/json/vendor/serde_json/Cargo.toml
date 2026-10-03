@@ -69,7 +69,6 @@ default = ["std"]
 float_roundtrip = []
 preserve_order = [
     "hashbrown",
-    "foldhash",
     "std",
 ]
 raw_value = []
@@ -86,10 +85,6 @@ path = "src/lib.rs"
 [dependencies.hashbrown]
 version = "0.17"
 default-features = false
-optional = true
-
-[dependencies.foldhash]
-version = "0.2"
 optional = true
 
 [dependencies.itoa]
