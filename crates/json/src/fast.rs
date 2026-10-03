@@ -35,7 +35,10 @@ pub(crate) fn parse(bytes: &[u8]) -> Result<Value, Fail> {
     Ok(v)
 }
 
-/// Validity check with the same acceptance as [`parse`], without building a value.
+/// Validity check without building a value. Acceptance matches `serde::de::IgnoredAny` (and Go
+/// gjson `Valid`), which is looser than [`parse`] inside strings: invalid UTF-8 and unpaired
+/// surrogate escapes are accepted. Such documents must not be rejected, because the lenient
+/// parsers downstream read them (a surrogate becomes U+FFFD, bad bytes are replaced).
 pub(crate) fn validate(bytes: &[u8]) -> Result<(), Fail> {
     let mut p = Parser { b: bytes, i: 0 };
     p.ws();
@@ -309,17 +312,18 @@ impl Parser<'_> {
             return Ok(raw.to_owned());
         }
         let mut out = String::with_capacity(raw.len());
-        unescape(raw, Some(&mut out))?;
+        unescape(raw, &mut out)?;
         Ok(out)
     }
 
-    /// Like [`Parser::string`] without building the text (UTF-8 and escapes still checked).
+    /// Skips a string like `IgnoredAny`: control characters, escape letters and the four hex
+    /// digits of `\u` are checked; UTF-8 and surrogate pairing are not.
     fn skip_string(&mut self) -> Result<(), Fail> {
         let (end, escaped) = self.scan_string()?;
-        let raw = utf8(&self.b[self.i + 1..end])?;
+        let body = &self.b[self.i + 1..end];
         self.i = end + 1;
         if escaped {
-            unescape(raw, None)?;
+            check_escapes(body)?;
         }
         Ok(())
     }
@@ -376,14 +380,9 @@ impl Parser<'_> {
     }
 }
 
-/// UTF-8 check with an ASCII shortcut: ASCII is checked at word speed and needs no decoding,
-/// which is most keys and identifiers; other text goes to the SIMD validator.
+/// UTF-8 check (simdutf8 has its own ASCII fast path).
 #[inline]
 fn utf8(b: &[u8]) -> Result<&str, Fail> {
-    if b.is_ascii() {
-        // SAFETY: every byte is below 0x80, and ASCII bytes are valid UTF-8 on their own.
-        return Ok(unsafe { std::str::from_utf8_unchecked(b) });
-    }
     simdutf8::basic::from_utf8(b).map_err(|_| Fail::Syntax)
 }
 
@@ -424,15 +423,13 @@ fn unicode_escape(b: &[u8], at: usize) -> Result<(char, usize), Fail> {
 }
 
 /// Resolves the escapes of a string body (already UTF-8 validated), appending the result to
-/// `out` when given; with `None` it only checks them.
-fn unescape(raw: &str, mut out: Option<&mut String>) -> Result<(), Fail> {
+/// `out`.
+fn unescape(raw: &str, out: &mut String) -> Result<(), Fail> {
     let b = raw.as_bytes();
     let mut seg = 0;
     while let Some(rel) = memchr::memchr(b'\\', &b[seg..]) {
         let at = seg + rel;
-        if let Some(o) = out.as_deref_mut() {
-            o.push_str(&raw[seg..at]);
-        }
+        out.push_str(&raw[seg..at]);
         let mut next = at + 2;
         let ch = match *b.get(at + 1).ok_or(Fail::Syntax)? {
             b'"' => '"',
@@ -450,13 +447,27 @@ fn unescape(raw: &str, mut out: Option<&mut String>) -> Result<(), Fail> {
             }
             _ => return Err(Fail::Syntax),
         };
-        if let Some(o) = out.as_deref_mut() {
-            o.push(ch);
-        }
+        out.push(ch);
         seg = next;
     }
-    if let Some(o) = out {
-        o.push_str(&raw[seg..]);
+    out.push_str(&raw[seg..]);
+    Ok(())
+}
+
+/// Checks the escapes of a string body the way `IgnoredAny` does: a known escape letter, or `u`
+/// followed by four hex digits (any value, surrogates included).
+fn check_escapes(b: &[u8]) -> Result<(), Fail> {
+    let mut seg = 0;
+    while let Some(rel) = memchr::memchr(b'\\', &b[seg..]) {
+        let at = seg + rel;
+        seg = match *b.get(at + 1).ok_or(Fail::Syntax)? {
+            b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => at + 2,
+            b'u' => {
+                hex4(b, at + 2)?;
+                at + 6
+            }
+            _ => return Err(Fail::Syntax),
+        };
     }
     Ok(())
 }

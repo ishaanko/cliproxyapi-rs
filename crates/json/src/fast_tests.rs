@@ -1,8 +1,10 @@
-//! The direct reader/writer must accept and emit exactly what serde_json does. Seed documents
-//! are mutated (byte flips, inserts, deletes, truncation) and both outcomes are compared.
+//! The direct reader/writer must accept and emit exactly what serde_json does, and `validate`
+//! must accept exactly what `IgnoredAny` (the pre-fast `valid`, gjson-compatible) does. Seed
+//! documents are mutated (byte flips, inserts, deletes, truncation) and the outcomes compared.
 
 use crate::fast::{self, Fail};
 use crate::Value;
+use serde::de::IgnoredAny;
 
 #[test]
 fn fast_reader_and_writer_match_serde_json() {
@@ -23,6 +25,11 @@ fn fast_reader_and_writer_match_serde_json() {
         b"1.",
         b"1e",
         b"\"\\ud800\"",
+        b"{\"a\":\"\\ud800\"}",
+        b"{\"a\":\"\\udc00x\"}",
+        b"{\"a\":\"\xff\"}",
+        b"{\"a\":\"\xed\xa0\x80\"}",
+        br#"{"$serde_json::private::Number":"1","b":[{"$serde_json::private::RawValue":2}]}"#,
         b"{\"a\":1,}",
         b"[1,]",
     ];
@@ -53,6 +60,12 @@ fn fast_reader_and_writer_match_serde_json() {
             }
         }
         let serde = serde_json::from_slice::<Value>(&doc);
+        let ignored = serde_json::from_slice::<IgnoredAny>(&doc).is_ok();
+        match fast::validate(&doc) {
+            Ok(()) => assert!(ignored, "validate accepts, IgnoredAny rejects {:?}", String::from_utf8_lossy(&doc)),
+            Err(Fail::Syntax) => assert!(!ignored, "validate rejects, IgnoredAny accepts {:?}", String::from_utf8_lossy(&doc)),
+            Err(_) => {}
+        }
         match (fast::parse(&doc), serde) {
             (Ok(a), Ok(b)) => {
                 let text = String::from_utf8_lossy(&doc);
@@ -61,7 +74,7 @@ fn fast_reader_and_writer_match_serde_json() {
                 assert_eq!(fast::validate(&doc), Ok(()), "{text:?}");
                 checked_ok += 1;
             }
-            (Err(Fail::Syntax), Err(_)) => assert_eq!(fast::validate(&doc), Err(Fail::Syntax), "{:?}", String::from_utf8_lossy(&doc)),
+            (Err(Fail::Syntax), Err(_)) => {}
             (Err(Fail::Deep | Fail::Special), _) => {}
             (a, b) => panic!("mismatch on {:?}: fast {:?} serde {:?}", String::from_utf8_lossy(&doc), a.map(|_| ()), b.map(|_| ())),
         }

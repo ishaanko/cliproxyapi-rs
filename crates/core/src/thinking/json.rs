@@ -32,3 +32,20 @@ pub(crate) fn body_or_empty_object(body: &[u8]) -> Vec<u8> {
         b"{}".to_vec()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// gjson `Valid` accepts unpaired surrogate escapes and invalid UTF-8 inside strings, so
+    /// these bodies are kept and parsed rather than replaced with `{}`.
+    #[test]
+    fn lenient_strings_are_valid_bodies() {
+        let bodies: [&[u8]; 4] = [b"{\"a\":\"\\ud800\"}", b"{\"a\":\"\\udc00x\"}", b"{\"a\":\"\xff\"}", b"{\"a\":\"\xed\xa0\x80\"}"];
+        for body in bodies {
+            assert_eq!(body_or_empty_object(body), body);
+            assert!(parse_valid(body).is_some_and(|v| v.g("a").exists()), "{body:?}");
+        }
+        assert_eq!(body_or_empty_object(b"{\"a\":\"\\ud8\"}"), b"{}");
+    }
+}
