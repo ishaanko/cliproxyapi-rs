@@ -280,8 +280,19 @@ impl LoginKind {
 /// Exit code convention of the Go commands: 0 unless the callback port is taken (13).
 pub type ExitCode = i32;
 
-fn auth_store(cfg: &Config) -> Arc<FileTokenStore> {
-    Arc::new(FileTokenStore::with_dir(&cfg.auth_dir))
+/// The registered remote token store (Go: `sdkAuth.RegisterTokenStore`), if one is configured.
+static TOKEN_STORE: std::sync::OnceLock<Arc<dyn Store>> = std::sync::OnceLock::new();
+
+/// Routes CLI logins and imports through a remote-backed store instead of the auth dir.
+pub fn set_token_store(store: Arc<dyn Store>) {
+    let _ = TOKEN_STORE.set(store);
+}
+
+fn auth_store(cfg: &Config) -> Arc<dyn Store> {
+    match TOKEN_STORE.get() {
+        Some(store) => store.clone(),
+        None => Arc::new(FileTokenStore::with_dir(&cfg.auth_dir)),
+    }
 }
 
 /// `DoXLogin`: runs one login through `cpa_auth` and prints what the Go commands print.

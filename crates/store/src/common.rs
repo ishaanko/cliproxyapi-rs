@@ -151,6 +151,21 @@ pub(crate) fn rel_path(base: &Path, path: &Path) -> Option<PathBuf> {
     Some(out)
 }
 
+/// `filepath.WalkDir` over `*.json` files in lexical order; directory read errors abort the walk.
+pub(crate) fn walk_json_files(dir: &Path, visit: &mut dyn FnMut(&Path)) -> std::io::Result<()> {
+    let mut entries = fs::read_dir(dir)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            walk_json_files(&path, visit)?;
+        } else if entry.file_name().to_string_lossy().to_lowercase().ends_with(".json") {
+            visit(&path);
+        }
+    }
+    Ok(())
+}
+
 /// What the shared `Save` body did to the file.
 pub(crate) enum Written {
     /// Metadata-only credential whose content already matched the file on disk.

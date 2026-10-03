@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use cpa_auth::OAuthSessions;
 use cpa_config::Config;
-use cpa_runtime::service::ServiceBuilder;
+use cpa_runtime::service::{ServiceBuilder, StoreBackend};
 use cpa_runtime::usage::UsageTracker;
 use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
@@ -78,10 +78,23 @@ async fn run() -> i32 {
     }
     let cloud_deploy = std::env::var("DEPLOY").is_ok_and(|v| v == "cloud");
 
-    let config_path = if cli.config.is_empty() {
+    let mut config_path = if cli.config.is_empty() {
         wd.join("config.yaml")
     } else {
         std::path::PathBuf::from(&cli.config)
+    };
+    // PGSTORE_* / OBJECTSTORE_* / GITSTORE_*: the remote store owns the spool config and auth dir.
+    let store_backend = match cpa_store::open_from_env(&wd, false) {
+        Ok(Some(opened)) => {
+            config_path = opened.config_path;
+            cli::set_token_store(opened.backend.store.clone());
+            Some(opened.backend)
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::error!("{e}");
+            return 0;
+        }
     };
     let mut cfg = match cpa_config::load_config_optional(&config_path, cloud_deploy) {
         Ok(c) => c,
@@ -123,6 +136,9 @@ async fn run() -> i32 {
         return 0;
     }
     tracing::info!("CLIProxyAPI Version: {}, Commit: {}, BuiltAt: {}", build.version, build.commit, build.build_date);
+    if let Some(backend) = &store_backend {
+        cfg.auth_dir = backend.auth_dir.to_string_lossy().into_owned();
+    }
     if let Err(e) = cli::resolve_auth_dir(&mut cfg) {
         tracing::error!("failed to resolve auth directory: {e}");
         return 0;
@@ -141,10 +157,10 @@ async fn run() -> i32 {
     if cli.local_model {
         tracing::info!("Local model mode: using embedded model catalogs, remote model updates disabled");
     }
-    serve_proxy(cfg, config_path, &cli, build, log).await
+    serve_proxy(cfg, config_path, store_backend, &cli, build, log).await
 }
 
-async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cli, build: BuildInfo, log: Arc<LogControl>) -> i32 {
+async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, store_backend: Option<StoreBackend>, cli: &cli::Cli, build: BuildInfo, log: Arc<LogControl>) -> i32 {
     let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
@@ -157,7 +173,11 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
-    let service = match ServiceBuilder::new(&config_path)
+    let mut builder = ServiceBuilder::new(&config_path);
+    if let Some(backend) = store_backend {
+        builder = builder.store_backend(backend);
+    }
+    let service = match builder
         .dotenv_dir(None)
         .usage(usage.clone())
         .executor_factory(compat_factory)

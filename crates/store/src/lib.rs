@@ -3,10 +3,15 @@
 //! spool directory, so the watcher and file-based flows run unchanged on the spool.
 
 mod common;
+pub mod object;
 mod pgconn;
 pub mod postgres;
 mod postgres_cooldown;
 mod rt;
+mod s3;
+mod select;
 
 pub use common::copy_config_template;
+pub use object::{ObjectStoreConfig, ObjectTokenStore};
+pub use select::{OpenedStore, open_from_env};
 pub use postgres::{PostgresStore, PostgresStoreConfig};

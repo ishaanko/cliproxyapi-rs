@@ -790,6 +790,7 @@ dependencies = [
  "cpa-json",
  "cpa-management",
  "cpa-runtime",
+ "cpa-store",
  "cpa-translator",
  "flate2",
  "futures-util",
