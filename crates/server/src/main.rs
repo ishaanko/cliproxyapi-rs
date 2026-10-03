@@ -26,8 +26,15 @@ use cpa_server::{AppState, BuildInfo, KeepAlive, ServerModelExecutor, build_rout
 mod pgo_dump;
 
 // mimalloc cut CPU per request by ~20% and raised throughput ~30% against glibc malloc in the
-// bench harness (jemalloc: ~17%, with more resident memory). Plugins are unaffected: the plugin
-// ABI frees buffers with libc `free`, never through the Rust allocator.
+// bench harness (jemalloc: ~17%, with more resident memory). Plugins are unaffected: only
+// host-allocated buffers use libc `malloc`/`free` (the plugin releases them through the host's
+// `free_buffer`); buffers a plugin returns go back through the plugin's own `free_buffer`.
+//
+// mimalloc reserves its first 1 GiB arena fully committed on Linux, so freed memory is reset
+// (MADV_FREE) instead of decommitted and the resident set sits ~17 MB higher at idle (more under
+// load) with no CPU benefit. `.cargo/config.toml` compiles libmimalloc-sys with
+// `-DMI_DEFAULT_ARENA_EAGER_COMMIT=0`; the runtime option `MIMALLOC_ARENA_EAGER_COMMIT` still
+// overrides it.
 #[cfg(all(feature = "mimalloc", not(feature = "alloc-stats")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -84,41 +91,24 @@ fn build_info() -> BuildInfo {
     }
 }
 
-/// mimalloc reserves its first 1 GiB arena fully committed on Linux, so freed memory is reset
-/// (MADV_FREE) instead of decommitted and the resident set stays ~25 MB higher under load with
-/// no CPU benefit. The option is read once at allocator init (before `main`), so a process that
-/// was started without it replaces itself once with it set (same pid, fds and arguments).
-#[cfg(all(feature = "mimalloc", unix))]
-fn reexec_with_lazy_arena_commit() {
-    use std::os::unix::process::CommandExt;
-    const KEY: &str = "MIMALLOC_ARENA_EAGER_COMMIT";
-    if std::env::var_os(KEY).is_some() {
-        return;
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return;
-    };
-    let mut args = std::env::args_os();
-    let mut cmd = std::process::Command::new(exe);
-    if let Some(arg0) = args.next() {
-        cmd.arg0(arg0);
-    }
-    // `exec` only returns on failure; the server then simply runs with the default option.
-    let _ = cmd.args(args).env(KEY, "0").exec();
+/// Polls a worker runs between checks of the I/O driver and timers (tokio's `event_interval`,
+/// default 61). A longer interval polls the driver less often under load, which saves CPU on
+/// streaming workloads; the price is that under saturation (a worker never idle) timers and I/O
+/// readiness can be noticed up to this many polls late. `CPA_EVENT_INTERVAL` overrides the
+/// default; zero or unparsable values are ignored.
+fn event_interval() -> u32 {
+    const DEFAULT: u32 = 1024;
+    std::env::var("CPA_EVENT_INTERVAL").ok().and_then(|v| v.trim().parse().ok()).filter(|&n| n > 0).unwrap_or(DEFAULT)
 }
 
 fn main() {
-    #[cfg(all(feature = "mimalloc", unix))]
-    reexec_with_lazy_arena_commit();
     #[cfg(feature = "alloc-stats")]
     cpa_allocstats::serve_from_env();
     #[cfg(feature = "pprof")]
     start_pprof();
     #[cfg(feature = "pgo-dump")]
     pgo_dump::start();
-    // A longer event interval (default 61) polls the I/O driver less often under load: about 5%
-    // less CPU and a lower p99 on streaming workloads, no change for short requests.
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().event_interval(1024).build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().event_interval(event_interval()).build() {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("failed to start runtime: {e}");
