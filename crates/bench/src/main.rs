@@ -28,13 +28,6 @@ enum Cmd {
         #[arg(long, default_value = "bench/results.md")]
         out: PathBuf,
     },
-    /// Closed-loop load against an already running server (and mock), for profiling one scenario.
-    Load(run::LoadArgs),
-    /// Print the shared server config (for starting a server by hand under a profiler).
-    Config {
-        #[arg(long)]
-        auth_dir: PathBuf,
-    },
     /// Fast mock upstream (spawned by `run`).
     Mock {
         #[arg(long, default_value_t = 19090)]
@@ -48,11 +41,6 @@ async fn main() -> Result<()> {
         Cmd::Run(a) => run::run(*a).await,
         Cmd::Quick(a) => quick::quick(*a).await,
         Cmd::Report { input, out } => report::report(&input, &out),
-        Cmd::Load(a) => run::load_only(a).await,
-        Cmd::Config { auth_dir } => {
-            print!("{}", procs::server_config(&auth_dir));
-            Ok(())
-        }
         Cmd::Mock { port } => mock::serve(port).await,
     }
 }
