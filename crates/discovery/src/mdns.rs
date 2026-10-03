@@ -94,7 +94,7 @@ pub struct ServiceEntry {
 }
 
 impl ServiceEntry {
-    fn new(instance: &str, service: &str, domain: &str) -> Self {
+    pub fn new(instance: &str, service: &str, domain: &str) -> Self {
         Self {
             record: ServiceRecord::new(instance, service, domain),
             host_name: String::new(),

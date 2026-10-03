@@ -43,6 +43,9 @@ async fn run() -> i32 {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let program = std::env::args().next().unwrap_or_else(|| "cliproxy".into());
     let build = build_info();
+    if args.first().map(String::as_str) == Some("discover") {
+        return cpa_server::discover_cmd::run_subcommand(&args[1..], &build).await;
+    }
     let json_discover = args.iter().any(|a| a.trim_start_matches('-') == "discover-json");
     if !json_discover {
         println!("CLIProxyAPI Version: {}, Commit: {}, BuiltAt: {}", build.version, build.commit, build.build_date);
@@ -61,6 +64,9 @@ async fn run() -> i32 {
             return 2;
         }
     };
+    if cli.discover || cli.discover_json {
+        return cpa_server::discover_cmd::run_flags(&cli).await;
+    }
     if let Some(flag) = cli.unsupported.first() {
         eprintln!("flag -{flag} is not supported by this build");
         return 2;

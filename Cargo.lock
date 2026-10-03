@@ -802,6 +802,7 @@ dependencies = [
  "cpa-auth",
  "cpa-config",
  "cpa-core",
+ "cpa-discovery",
  "cpa-executors",
  "cpa-json",
  "cpa-management",

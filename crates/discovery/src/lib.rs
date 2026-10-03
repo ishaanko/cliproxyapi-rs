@@ -36,3 +36,6 @@ pub use service::{build_service_spec, resolve_discovery_state_dir};
 pub use txt::{TxtOptions, build_txt_records, parse_txt_records};
 pub use types::*;
 pub use zeroconf::{ZeroconfAdvertiser, ZeroconfBrowser};
+
+#[cfg(all(test, unix))]
+mod tests;
