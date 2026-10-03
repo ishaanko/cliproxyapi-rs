@@ -109,6 +109,13 @@ pub fn observe_claude_stream_line(line: &[u8], message_id: &mut String, complete
         return;
     }
     let payload = crate::helps::text::trim_space(&line[5..]);
+    // Only message_start / message_stop matter; other events (the bulk of a stream) are decided
+    // from the top-level `type` without validating or parsing the whole frame.
+    if let Some(doc) = cpa_runtime::conductor::session::lazy::Doc::lazy(payload)
+        && !matches!(doc.g("type").str().as_str(), "message_start" | "message_stop")
+    {
+        return;
+    }
     if !cpa_json::valid(payload) {
         return;
     }
