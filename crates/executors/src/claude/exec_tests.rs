@@ -343,3 +343,25 @@ async fn prepare_request_picks_header_by_origin_and_credential() {
     assert_eq!(third_party.headers()["authorization"], "Bearer sk-ant-api-test");
     assert!(!third_party.headers().contains_key("x-api-key"));
 }
+
+/// An embedded executor (Kimi's Anthropic-compatible path) sends the normalized model upstream
+/// and writes the client's model back into the response.
+#[tokio::test]
+async fn embedded_executor_normalizes_the_upstream_model_and_restores_the_client_model() {
+    let upstream = mock_upstream(200, "application/json", MESSAGE.to_string()).await;
+    let (_tx, rx) = watch::channel(Arc::new(Config::default()));
+    let embedded = super::new_embedded(
+        rx,
+        super::Embedding { request_log_provider: "kimi", upstream_model: |m| m.replace("alias-", "claude-") },
+    );
+    let req = Request {
+        model: "alias-opus-4-6".into(),
+        payload: Bytes::from_static(br#"{"model":"alias-opus-4-6","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}"#),
+        format: Format::Claude,
+        metadata: Default::default(),
+    };
+    let resp = embedded.execute(&api_key_auth(&upstream.base_url), req, Options::new(Format::Claude)).await.unwrap();
+    let sent = cpa_json::parse(&upstream.captured.lock()[0].body);
+    assert_eq!(sent.g("model").str(), "claude-opus-4-6");
+    assert_eq!(cpa_json::parse(&resp.payload).g("model").str(), "alias-opus-4-6");
+}
