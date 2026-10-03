@@ -1,10 +1,11 @@
 //! Capability stubs and call hangup (Go: capabilities.go).
 
-use bytes::Bytes;
+use axum::body::Body;
 use cpa_executors::helps::logging::UpstreamRequestLog;
 use http::{HeaderValue, Method};
 
 use crate::call::auth_account_type;
+use crate::endpoints::{BodyReadError, read_body};
 use crate::reply::{Reply, capability_not_supported, realtime_error};
 use crate::upstream::{
     BodyRead, MAX_BODY_SIZE, call_response_headers, copy_handshake_headers, headers_for_logging, prepare_request_headers,
@@ -30,8 +31,9 @@ impl Handler {
         capability_not_supported(&format!("Realtime SIP {action}"))
     }
 
-    /// `HandleHangup`: forwards the hangup of a local call using its pinned OAuth credential.
-    pub async fn handle_hangup(&self, caller: &Caller, parts: &RequestParts, body: Bytes) -> Reply {
+    /// `HandleHangup`: forwards the hangup of a local call using its pinned OAuth credential. The
+    /// request body is only read once the call id, owner and credential checks passed.
+    pub async fn handle_hangup(&self, caller: &Caller, parts: &RequestParts, body: Body) -> Reply {
         let call_id = parts.call_id.as_deref().unwrap_or("").trim().to_string();
         if !is_call_id(&call_id) {
             return realtime_error(400, "Invalid Realtime call ID", "invalid_request_error", "invalid_call_id");
@@ -54,9 +56,15 @@ impl Handler {
         };
         caller.record_trace(&mut selected);
 
-        if body.len() > MAX_BODY_SIZE {
-            return realtime_error(400, crate::call::ERR_BODY_TOO_LARGE, "invalid_request_error", "invalid_request");
-        }
+        let body = match read_body(body, MAX_BODY_SIZE).await {
+            Ok(b) => b,
+            Err(BodyReadError::TooLarge) => {
+                return realtime_error(400, crate::call::ERR_BODY_TOO_LARGE, "invalid_request_error", "invalid_request");
+            }
+            Err(BodyReadError::Failed(e)) => {
+                return realtime_error(400, &format!("failed to read Codex live request: {e}"), "invalid_request_error", "invalid_request");
+            }
+        };
         let upstream_url = format!("{}/realtime/calls/{}/hangup", self.realtime_http_base_url(), call_id);
         let mut headers = protocol_headers(&parts.headers);
         let content_type = parts.headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").trim().to_string();
@@ -86,9 +94,9 @@ impl Handler {
             Ok(r) => r,
             Err(e) => {
                 if let Some(log) = caller.log() {
-                    log.response_error(&e);
+                    log.response_error(&e.message);
                 }
-                return realtime_error(502, &e, "api_error", "realtime_upstream_unavailable");
+                return realtime_error(e.status_or(502), &e.message, "api_error", "realtime_upstream_unavailable");
             }
         };
         if let Some(log) = caller.log() {

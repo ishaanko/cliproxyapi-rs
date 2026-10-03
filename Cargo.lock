@@ -1025,6 +1025,7 @@ dependencies = [
  "futures-util",
  "hmac",
  "http",
+ "memchr",
  "parking_lot",
  "rand 0.9.5",
  "regex",
