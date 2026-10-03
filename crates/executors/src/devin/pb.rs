@@ -93,31 +93,39 @@ pub fn get_fixed32(data: &[u8]) -> Option<u32> {
 /// Bytes occupied by one field value of wire type `typ` whose tag (number `num`) was already
 /// consumed. Groups are skipped through their matching end tag.
 pub fn skip_field(num: u32, typ: u8, data: &[u8]) -> Option<usize> {
-    skip_field_depth(num, typ, data, 0)
-}
-
-fn skip_field_depth(num: u32, typ: u8, data: &[u8], depth: usize) -> Option<usize> {
     match typ {
         VARINT => get_varint(data).map(|(_, n)| n),
         FIXED64 => (data.len() >= 8).then_some(8),
         FIXED32 => (data.len() >= 4).then_some(4),
         BYTES => get_bytes(data).map(|(_, n)| n),
-        START_GROUP => {
-            if depth >= MAX_GROUP_DEPTH {
-                return None;
-            }
-            let mut pos = 0;
-            loop {
-                let (inner_num, inner_typ, n) = get_tag(data.get(pos..)?)?;
-                pos += n;
-                if inner_typ == END_GROUP {
-                    return (inner_num == num).then_some(pos);
-                }
-                pos += skip_field_depth(inner_num, inner_typ, data.get(pos..)?, depth + 1)?;
-            }
-        }
+        START_GROUP => skip_group(num, data),
         _ => None,
     }
+}
+
+/// Skips a group body through its matching end tag. Nested groups are tracked on an explicit
+/// stack, so hostile nesting costs memory but never call stack.
+fn skip_group(num: u32, data: &[u8]) -> Option<usize> {
+    let mut open = vec![num];
+    let mut pos = 0;
+    while let Some(&current) = open.last() {
+        let (inner_num, inner_typ, n) = get_tag(data.get(pos..)?)?;
+        pos += n;
+        match inner_typ {
+            END_GROUP if inner_num == current => {
+                open.pop();
+            }
+            END_GROUP => return None,
+            START_GROUP => {
+                if open.len() >= MAX_GROUP_DEPTH {
+                    return None;
+                }
+                open.push(inner_num);
+            }
+            _ => pos += skip_field(inner_num, inner_typ, data.get(pos..)?)?,
+        }
+    }
+    Some(pos)
 }
 
 #[cfg(test)]

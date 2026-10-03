@@ -271,18 +271,28 @@ enum Output {
     File(RotatingFile),
 }
 
+/// Receives every formatted log line (the TUI's log hook in standalone mode).
+pub type LogTap = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Swappable log destination shared with the subscriber.
 #[derive(Clone)]
 pub struct SwitchWriter {
     inner: Arc<Mutex<Output>>,
+    tap: Arc<Mutex<Option<LogTap>>>,
 }
 
+/// Writer for one log event. The tap sees the whole event once, when the guard is dropped.
 pub struct SwitchGuard {
     inner: Arc<Mutex<Output>>,
+    tap: Arc<Mutex<Option<LogTap>>>,
+    event: Vec<u8>,
 }
 
 impl Write for SwitchGuard {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.tap.lock().is_some() {
+            self.event.extend_from_slice(buf);
+        }
         match &mut *self.inner.lock() {
             Output::Stdout => io::stdout().write(buf),
             Output::File(f) => f.write(buf),
@@ -297,11 +307,27 @@ impl Write for SwitchGuard {
     }
 }
 
+impl Drop for SwitchGuard {
+    fn drop(&mut self) {
+        if self.event.is_empty() {
+            return;
+        }
+        let tap = self.tap.lock().clone();
+        if let Some(tap) = tap {
+            tap(&String::from_utf8_lossy(&self.event));
+        }
+    }
+}
+
 impl<'a> MakeWriter<'a> for SwitchWriter {
     type Writer = SwitchGuard;
 
     fn make_writer(&'a self) -> Self::Writer {
-        SwitchGuard { inner: self.inner.clone() }
+        SwitchGuard {
+            inner: self.inner.clone(),
+            tap: self.tap.clone(),
+            event: Vec::new(),
+        }
     }
 }
 
@@ -316,6 +342,7 @@ pub struct LogControl {
 pub fn init() -> Arc<LogControl> {
     let writer = SwitchWriter {
         inner: Arc::new(Mutex::new(Output::Stdout)),
+        tap: Arc::new(Mutex::new(None)),
     };
     let (filter, level) = reload::Layer::new(LevelFilter::INFO);
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -367,6 +394,16 @@ fn is_dir_writable(dir: &Path) -> bool {
 }
 
 impl LogControl {
+    /// Standalone TUI: mirrors every log event to `tap` (once per event).
+    pub fn attach_tui(&self, tap: LogTap) {
+        *self.writer.tap.lock() = Some(tap);
+    }
+
+    /// Undoes [`attach_tui`](Self::attach_tui) once the TUI has released the terminal.
+    pub fn detach_tui(&self) {
+        *self.writer.tap.lock() = None;
+    }
+
     /// `ConfigureLogOutput` + `util.SetLogLevel`.
     pub fn apply_config(&self, cfg: &Config) -> io::Result<()> {
         let _ = self.level.modify(|f| *f = if cfg.debug { LevelFilter::DEBUG } else { LevelFilter::INFO });

@@ -24,6 +24,9 @@ const DEFAULT_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 const ASSERTION_LIFETIME_SECS: i64 = 3600;
 
+/// Upper bound on cached service accounts; expired entries are also dropped on every insert.
+const MAX_CACHED_TOKENS: usize = 256;
+
 static TOKEN_CACHE: LazyLock<Mutex<HashMap<String, (String, Instant)>>> = LazyLock::new(Default::default);
 
 /// Access token for the (already normalized) service account JSON object, minted via `client`.
@@ -66,7 +69,15 @@ pub(crate) async fn access_token(
         return Err("oauth2: server response missing access_token".into());
     }
     if let Some(secs) = parsed.get("expires_in").and_then(Value::as_u64).filter(|s| *s > 0) {
-        TOKEN_CACHE.lock().insert(cache_key, (token.clone(), Instant::now() + Duration::from_secs(secs)));
+        let now = Instant::now();
+        let mut cache = TOKEN_CACHE.lock();
+        cache.retain(|_, (_, expires)| now + EXPIRY_MARGIN < *expires);
+        if cache.len() >= MAX_CACHED_TOKENS
+            && let Some(oldest) = cache.iter().min_by_key(|(_, (_, expires))| *expires).map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(cache_key, (token.clone(), now + Duration::from_secs(secs)));
     }
     Ok(token)
 }

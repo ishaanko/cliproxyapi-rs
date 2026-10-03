@@ -7,21 +7,22 @@ use std::future::Future;
 
 use bytes::Bytes;
 use cpa_auth::Auth;
+use cpa_config::Config;
 use cpa_core::registry::lookup_model_info;
 use cpa_core::thinking::ThinkingError;
 use cpa_json::{J, Value, json};
 use cpa_runtime::executor::{ExecError, Options, Request};
-use cpa_translator::{Ctx, Format, Param, RequestEnvelope};
+use cpa_translator::{Ctx, Format, Param};
 use futures_util::StreamExt;
 use http::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::Value as Json;
 use tokio::sync::{mpsc, oneshot};
 
-use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream, record_apply_patch_stream_failure,
+    ChunkSender, end_apply_patch_stream, gateway_error, record_apply_patch_stream_failure,
 };
-use crate::helps::codex_tool_integers::{is_codex_user_agent, normalize_codex_tool_integer_types};
+use crate::helps::translate::{RequestTranslation, translate_request as translate_request_shared};
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter};
@@ -49,11 +50,6 @@ pub(crate) fn upstream_error(status: u16, body: &[u8]) -> ExecError {
     status_err(status, String::from_utf8_lossy(body).into_owned())
 }
 
-/// The 502 raised when apply_patch arguments from upstream cannot be converted.
-pub(crate) fn apply_patch_gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
-
 /// `/responses/compact` is not supported by the Google executors.
 pub(crate) fn compact_unsupported() -> ExecError {
     pre_send(status_err(501, "/responses/compact not supported"))
@@ -71,13 +67,13 @@ pub(crate) fn original_payload<'a>(req: &'a Request, opts: &'a Options) -> &'a [
 
 // ---------------------------------------------------------------- request translation
 
-/// Translates a client payload to `to`. With `is_compat` (an API-key model flagged for
-/// compatibility) the Claude-to-Gemini/Interactions pairs use the compat converters (Go:
-/// TranslateRequestWithAPIKeyModelCompatibility). Codex clients get integer-typed tool schemas
-/// normalized first.
-///
-/// Not ported: the Codex multi-agent v2 input rewrites and plugin request normalizers.
+/// Translates a client payload to `to` through the shared stages (see
+/// [`crate::helps::translate`]). Only a native Gemini client's malformed JSON is special: Go's
+/// sjson-based normalizer leaves such a body as unusable fragments that the later body edits
+/// discard, so nothing from the normalizer (default safety settings) survives; pass it through.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn translate_request(
+    cfg: &Config,
     headers: &HeaderMap,
     from: Format,
     to: Format,
@@ -86,43 +82,18 @@ pub(crate) fn translate_request(
     stream: bool,
     is_compat: bool,
 ) -> Vec<u8> {
-    let payload = if is_codex_user_agent(Some(headers)) {
-        normalize_codex_tool_integer_types(payload, Some(headers))
-    } else {
-        payload.to_vec()
-    };
-    // A native Gemini client may send malformed JSON. Go's sjson-based normalizer leaves such a
-    // body as unusable fragments that the later body edits discard, so nothing from the
-    // normalizer (default safety settings) survives; pass it through untouched.
-    if from == Format::Gemini && to == Format::Gemini && !cpa_json::valid(&payload) {
-        return payload;
+    if from == Format::Gemini && to == Format::Gemini && !cpa_json::valid(payload) {
+        return payload.to_vec();
     }
-    if is_compat {
-        let compat = match (from, to) {
-            (Format::Claude, Format::Gemini) => Some(
-                cpa_translator::gemini::claude::convert_claude_request_to_gemini_with_compat(model, &payload, stream),
-            ),
-            (Format::Claude, Format::Interactions) => {
-                Some(cpa_translator::interactions::claude::convert_claude_request_to_interactions_with_compat(
-                    model, &payload, stream,
-                ))
-            }
-            _ => None,
-        };
-        if let Some(translated) = compat {
-            let summary = cpa_core::thinking::extract_translated_summary_config(&payload, from.as_str(), to.as_str());
-            return cpa_core::thinking::apply_summary_config_for_model(translated, to.as_str(), model, &summary);
-        }
-    }
-    let req = RequestEnvelope { model: model.to_string(), stream, body: payload, ..Default::default() };
-    cpa_translator::translate_request_envelope(&Ctx::default(), from, to, req).body
+    let translation = RequestTranslation::new(headers, Some(cfg), from, to, model, stream).compat(is_compat);
+    translate_request_shared(&translation, payload).0
 }
 
 /// Translates the payload-config baseline and the working payload; identical inputs are
-/// translated once (Go: TranslateRequestPairWithAPIKeyModelCompatibility). Returns
-/// `(original, working)`.
+/// translated once. Returns `(original, working)`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn translate_request_pair(
+    cfg: &Config,
     headers: &HeaderMap,
     from: Format,
     to: Format,
@@ -132,12 +103,12 @@ pub(crate) fn translate_request_pair(
     stream: bool,
     is_compat: bool,
 ) -> (Vec<u8>, Vec<u8>) {
-    let translated_original = translate_request(headers, from, to, model, original, stream, is_compat);
+    let translated_original = translate_request(cfg, headers, from, to, model, original, stream, is_compat);
     if original == working {
         let copy = translated_original.clone();
         return (translated_original, copy);
     }
-    let translated_working = translate_request(headers, from, to, model, working, stream, is_compat);
+    let translated_working = translate_request(cfg, headers, from, to, model, working, stream, is_compat);
     (translated_original, translated_working)
 }
 
@@ -234,32 +205,8 @@ pub(crate) fn apply_custom_headers(headers: &mut HeaderMap, auth: &Auth, opts: &
     cpa_core::util::apply_custom_headers_from_attrs(headers, &attrs_map(auth), Some(&opts.headers), session_id);
 }
 
-/// A transport error and its sources as one line, the way Go renders `net/http` and `io` errors
-/// (`dial tcp ...: connection refused`). A body cut short reads `unexpected EOF`, which the
-/// conductor recognizes as a transient transport failure to retry.
-pub(crate) fn error_chain_text(err: &(dyn std::error::Error + 'static)) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(err);
-    while let Some(e) = current {
-        let text = e.to_string();
-        if parts.last() != Some(&text) {
-            parts.push(text);
-        }
-        current = e.source();
-    }
-    let text = parts.join(": ");
-    let lower = text.to_lowercase();
-    if ["unexpected end of file", "connection closed before message completed", "unexpected eof"]
-        .iter()
-        .any(|needle| lower.contains(needle))
-    {
-        return "unexpected EOF".into();
-    }
-    text
-}
-
 fn transport_failure(err: &reqwest::Error) -> ExecError {
-    ExecError::new(0, error_chain_text(err))
+    crate::helps::status::transport_error(err)
 }
 
 /// Sends a JSON POST; transport failures carry no status.
@@ -280,17 +227,7 @@ pub(crate) async fn read_body(resp: reqwest::Response) -> Result<Bytes, ExecErro
 /// Line reader over a streaming response body that marks the first response byte for TTFT (Go:
 /// the TTFT-tracking round tripper). Takes the reporter by value so the stream is `'static`.
 pub(crate) fn observed_lines(reporter: UsageReporter, resp: reqwest::Response) -> LineReader {
-    reporter.start_response_ttft();
-    let mut marked = false;
-    let stream = resp
-        .bytes_stream()
-        .inspect(move |item| {
-            if !marked && item.as_ref().is_ok_and(|b| !b.is_empty()) {
-                marked = true;
-                reporter.mark_first_response_byte();
-            }
-        })
-        .map(|item| item.map_err(|e| error_chain_text(&e)));
+    let stream = reporter.observe_body_stream(resp.bytes_stream(), false).map(|item| item.map_err(|e| crate::helps::status::transport_message(&e)));
     LineReader::from_stream(stream, STREAM_SCANNER_BUFFER)
 }
 
@@ -360,7 +297,7 @@ impl StreamPump {
             body: setup.body,
             param: Param::default(),
             ctx: setup.ctx,
-            claude: ClaudeInputTokenState::new(setup.from, setup.upstream, setup.response, claude_request),
+            claude: ClaudeInputTokenState::new(setup.from, setup.upstream, setup.response, &claude_request),
             usage: StreamUsageBuffer::default(),
             usage_tx: Some(usage_tx),
             failed: false,
@@ -392,9 +329,9 @@ impl StreamPump {
             &self.body,
             payload,
             &mut self.param,
-            &mut self.claude,
+            Some(&mut self.claude),
         );
-        record_apply_patch_stream_failure(&self.param, &self.reporter, &apply_patch_gateway_error());
+        record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for line in lines {
             if self.tx.send(Ok(Bytes::from(rewrite(&line)))).await.is_err() {
                 return false;
@@ -407,7 +344,7 @@ impl StreamPump {
     /// true when the stream failed. (The `helps` async variants hold `&Param` across an await,
     /// which `Param` (not `Sync`) forbids inside spawned tasks.)
     fn stop_if_failed(&self) -> impl Future<Output = bool> + Send + use<> {
-        let err = apply_patch_gateway_error();
+        let err = gateway_error();
         let failed = record_apply_patch_stream_failure(&self.param, &self.reporter, &err);
         let tx = self.tx.clone();
         async move {
@@ -427,14 +364,7 @@ impl StreamPump {
 
     /// Fails an apply_patch stream that ended early; true when the caller must stop.
     pub async fn end_apply_patch(&mut self) -> bool {
-        let chunks = finalize_apply_patch_stream(&mut self.param);
-        record_apply_patch_stream_failure(&self.param, &self.reporter, &apply_patch_gateway_error());
-        for chunk in chunks {
-            if self.tx.send(Ok(Bytes::from(chunk))).await.is_err() {
-                return true;
-            }
-        }
-        self.stop_if_failed().await
+        end_apply_patch_stream(&mut self.param, &self.reporter, &self.tx, gateway_error()).await
     }
 
     /// Publishes a stream failure and delivers it to the client.

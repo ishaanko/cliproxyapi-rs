@@ -161,7 +161,7 @@ async fn api_key_passthrough_forwards_caller_body_to_custom_base_url() {
     let body = cpa_json::parse(&c.body);
     assert_eq!(body.g("model").str(), "claude-opus-4-6");
     assert!(!body.g("system").exists());
-    assert_eq!(body.g("stream").bool(), false);
+    assert!(!body.g("stream").bool());
     // CPA still owns cache_control placement for non-native callers (latest user block).
     assert_eq!(body.g("messages.0.content.0.text").str(), "hi");
     assert_eq!(body.g("messages.0.content.0.cache_control.type").str(), "ephemeral");
@@ -302,7 +302,7 @@ async fn openai_chat_client_gets_translated_non_stream_response_from_sse_upstrea
     let resp = executor().execute(&api_key_auth(&upstream.base_url), req, Options::new(Format::OpenAI)).await.unwrap();
     // A non-Claude client always streams upstream, even for a non-stream call.
     let c = upstream.captured.lock()[0].clone();
-    assert_eq!(cpa_json::parse(&c.body).g("stream").bool(), true);
+    assert!(cpa_json::parse(&c.body).g("stream").bool());
     let out = cpa_json::parse(&resp.payload);
     assert_eq!(out.g("choices.0.message.content").str(), "hello");
     assert_eq!(resp.metadata["usage"]["output_tokens"], 3);

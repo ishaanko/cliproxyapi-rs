@@ -17,7 +17,8 @@ use http::HeaderMap;
 use uuid::Uuid;
 
 use super::creds::{is_free_plan_auth, resolve_model_is_compat};
-use super::reasoning::{ReplayScope, apply_replay_cache, claude_code_execution_scope, prompt_cache_uuid_for_api_key};
+use super::reasoning::{ReplayScope, apply_replay_cache, prompt_cache_uuid_for_api_key};
+use crate::helps::session::claude_code_execution_scope;
 use super::terminal::status_error;
 use super::{input_ids, multi_agent_v2, tool_schema};
 use crate::helps::openai_responses_signature::sanitize_openai_responses_reasoning_encrypted_content_with_compat;
@@ -108,34 +109,6 @@ pub fn translate_pair(from: Format, to: Format, model: &str, original: &[u8], pa
     let (original_translated, _) = translate_one(from, to, model, original, stream, is_compat);
     let (body, changed) = translate_one(from, to, model, payload, stream, is_compat);
     (original_translated, body, changed)
-}
-
-/// Translation for token counting (Go: TranslateRequestWithAPIKeyModelCompatibilityAndUpdateIntentForExecutor
-/// with the Codex executor as target): Responses sources get the orphan-delegation rewrite
-/// first; compat Claude requests use the compat converter.
-pub fn translate_for_count(
-    cfg: &Config,
-    headers: &HeaderMap,
-    from: Format,
-    to: Format,
-    model: &str,
-    payload: &[u8],
-    is_compat: bool,
-) -> (Vec<u8>, bool) {
-    if !is_compat || (to == Format::Codex && from != Format::Claude) {
-        let mut body = payload.to_vec();
-        if from == Format::OpenAIResponse {
-            body = multi_agent_v2::rewrite_orphan_delegation_input_for_config(headers, &body, Some(cfg));
-        }
-        let env = cpa_translator::translate_request_envelope(
-            &Ctx::default(),
-            from,
-            to,
-            RequestEnvelope { model: model.to_string(), stream: false, body, ..Default::default() },
-        );
-        return (env.body, env.configuration_updates_changed);
-    }
-    translate_one(from, to, model, payload, false, is_compat)
 }
 
 /// Runs `edit` on the parsed body and re-serializes only when it reports a change.

@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+🔐 OAuth Login
+
+  ✦ Claude (Anthropic) OAuth
+
+  Authorization URL:
+  https://auth.example.com/authorize?client_id=abc&state=st-1
+
+  Remote browser mode: Open the URL above in browser, paste the callback URL below after authorizati
+
+  Callback URL:
+  回调 URL: http://localhost:.../auth/callback?code=...&state=...
+  Enter: Submit • Esc: Cancel
+
+  Waiting for authentication...
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit

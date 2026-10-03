@@ -426,13 +426,11 @@ fn merge_adjacent_input_reasoning_summaries(body: &mut Value) {
     for item in input {
         if let Some(last) = out.last_mut()
             && can_merge_reasoning_summary(last, item)
-        {
-            if let Some(Value::Array(summary)) = last.get_mut("summary") {
+            && let Some(Value::Array(summary)) = last.get_mut("summary") {
                 summary.extend(items(item, "summary").iter().cloned());
                 changed = true;
                 continue;
             }
-        }
         out.push(item.clone());
     }
     if changed {
@@ -505,13 +503,12 @@ pub fn normalize_reasoning_summary_data(event: &mut Value) {
                 normalize_reasoning_summary_index(event);
             }
         }
-        "response.content_part.done" => {
-            if s(event, "part.type") == "reasoning_text" {
+        "response.content_part.done"
+            if s(event, "part.type") == "reasoning_text" => {
                 cpa_json::set(event, "type", "response.reasoning_summary_part.done");
                 cpa_json::set(event, "part.type", "summary_text");
                 normalize_reasoning_summary_index(event);
             }
-        }
         _ => {}
     }
     if let Some(item) = at(event, "item").filter(|i| i.is_object() || i.is_array()).cloned() {

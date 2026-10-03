@@ -5,7 +5,6 @@
 //! `response.completed` event. Credentials are two-stage: a device-flow DCA token is exchanged for
 //! a long-lived API key on demand (`prepare_request_auth` / `refresh`).
 
-mod claude_input_tokens;
 mod codex;
 mod creds;
 mod errors;
@@ -19,9 +18,7 @@ use cpa_auth::Auth;
 use cpa_auth::meta::{MetaAuth, MintedKeyResponse, apply_mint_to_auth, extract_dca_token};
 use cpa_auth::singleflight::SingleFlight;
 use cpa_config::Config;
-use cpa_core::thinking::{
-    ThinkingError, apply_summary_config_for_model, extract_translated_summary_config, parse_suffix,
-};
+use cpa_core::thinking::{ThinkingError, parse_suffix};
 use cpa_json::J;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Metadata, Options, Request, Response, StreamResult};
 use cpa_translator::{Ctx, Format, Param};
@@ -30,12 +27,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::ConfigRx;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_translation_error, record_apply_patch_stream_failure,
+    gateway_error, patch_failure, apply_patch_translation_error, record_apply_patch_stream_failure,
 };
 use crate::helps::apply_patch_responses::{
     ApplyPatchResponsesState, normalize_apply_patch_responses_request_with_original,
 };
-use crate::helps::codex_tool_integers::{is_codex_user_agent, normalize_codex_tool_integer_types};
+use crate::helps::codex_tool_integers::normalize_codex_tool_integer_types;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::openai_responses_signature::sanitize_openai_responses_reasoning_encrypted_content;
 use crate::helps::payload::{
@@ -48,12 +45,13 @@ use crate::helps::session::ensure_session_id;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::{status_err, transport_error};
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
+use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::token_count::tokenizer_for_model;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
 
-use claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use codex::{
-    OutputItems, count_codex_input_tokens, normalize_codex_instructions, rewrite_orphan_delegation_input,
+    OutputItems, count_codex_input_tokens, normalize_codex_instructions,
 };
 use creds::{enrich_auth, meta_creds};
 use errors::{meta_as_completed_event, meta_stream_event_error, wrap_meta_upstream_error};
@@ -86,17 +84,6 @@ fn thinking_error(err: ThinkingError) -> ExecError {
     ExecError::new(err.status_code(), err.message)
 }
 
-fn gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
-
-/// The sanitized gateway error when the translator retained an `apply_patch` failure (published
-/// first). Synchronous so no `&Param` is held across an await.
-fn patch_failure(param: &Param, reporter: &UsageReporter) -> Option<ExecError> {
-    let err = gateway_error();
-    record_apply_patch_stream_failure(param, reporter, &err).then_some(err)
-}
-
 /// Request after translation and Meta-specific shaping.
 struct Prepared {
     apply_patch: ApplyPatchResponsesState,
@@ -108,34 +95,6 @@ struct Prepared {
 }
 
 const TO: Format = Format::Codex;
-
-/// Translation to the Codex dialect with the client compatibility rules of
-/// `TranslateRequestWithAPIKeyModelCompatibility` for a Codex target: Codex tool integers, orphan
-/// delegation rewrite for Responses sources, and the compat Claude converter.
-fn translate_request(
-    cfg: &Config,
-    headers: &HeaderMap,
-    from: Format,
-    model: &str,
-    payload: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> Vec<u8> {
-    let mut payload = if is_codex_user_agent(Some(headers)) {
-        normalize_codex_tool_integer_types(payload, Some(headers))
-    } else {
-        payload.to_vec()
-    };
-    if from == Format::OpenAIResponse {
-        payload = rewrite_orphan_delegation_input(headers, &payload, cfg.codex.orphan_delegation_compatibility);
-    }
-    if is_compat && from == Format::Claude {
-        let translated = cpa_translator::codex::claude::convert_claude_request_to_codex_with_compat(model, &payload, stream);
-        let summary = extract_translated_summary_config(&payload, from.as_str(), TO.as_str());
-        return apply_summary_config_for_model(translated, TO.as_str(), model, &summary);
-    }
-    cpa_translator::translate_request(from, TO, model, &payload, stream)
-}
 
 impl MetaExecutor {
     fn config(&self) -> Arc<Config> {
@@ -157,8 +116,10 @@ impl MetaExecutor {
         let original_source: &[u8] = if opts.original_request.is_empty() { &req.payload } else { &opts.original_request };
         let original_payload = original_source.to_vec();
         let is_compat = api_key_model_is_compat(req);
-        let original_translated = translate_request(cfg, &opts.headers, from, &base_model, &original_payload, stream, is_compat);
-        let mut body = translate_request(cfg, &opts.headers, from, &base_model, &req.payload, stream, is_compat);
+        // Go passes no target executor here, so Codex clients still get the integer tool fix.
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, TO, &base_model, stream).compat(is_compat);
+        let original_translated = translate_request(&translation, &original_payload).0;
+        let mut body = translate_request(&translation, &req.payload).0;
 
         body = apply_request_thinking(&body, req, opts, from.as_str(), TO.as_str(), PROVIDER, false).map_err(thinking_error)?;
 
@@ -492,16 +453,15 @@ impl StreamCtx {
         }
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         for l in &lines {
-            chunks.extend(translate_stream_with_claude_input_tokens(
-                TO,
+            chunks.extend(self.claude_tokens.translate_stream(
+            TO,
                 self.prepared.response_format,
                 &self.model,
                 &self.prepared.original_payload,
                 &self.prepared.body,
                 l,
                 &mut self.param,
-                &mut self.claude_tokens,
-            ));
+        ));
         }
         record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for chunk in chunks {
@@ -549,7 +509,7 @@ async fn run_stream(
     let mut items = OutputItems::default();
     let mut scan_err = None;
 
-    while let Some(line) = lines.next_line().await {
+    while let Some(line) = lines.next_line_or_closed(&sc.tx).await {
         let line = match line {
             Ok(line) => line,
             Err(e) => {
@@ -595,7 +555,7 @@ async fn run_stream(
         sc.reporter.publish_failure(&gateway_error());
     }
     for event in &finish_events {
-        let chunks = translate_stream_with_claude_input_tokens(
+        let chunks = sc.claude_tokens.translate_stream(
             TO,
             sc.prepared.response_format,
             &sc.model,
@@ -603,7 +563,6 @@ async fn run_stream(
             &sc.prepared.body,
             event,
             &mut sc.param,
-            &mut sc.claude_tokens,
         );
         for chunk in chunks {
             if sc.tx.send(Ok(Bytes::from(chunk))).await.is_err() {

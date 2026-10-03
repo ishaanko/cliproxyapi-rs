@@ -30,6 +30,12 @@ pub struct Cli {
     /// `-home-jwt`: Home control plane JWT (config and credentials come from Home).
     pub home_jwt: String,
     pub home_disable_cluster_discovery: bool,
+    /// `-tui`: start the terminal management UI instead of the server.
+    pub tui: bool,
+    /// `-standalone`: with `-tui`, run an embedded server in-process.
+    pub standalone: bool,
+    /// `-management-base-url`: remote management API for TUI client mode.
+    pub management_base_url: String,
     /// Flags accepted for compatibility but not implemented in this build.
     pub unsupported: Vec<String>,
 }
@@ -78,9 +84,6 @@ const VALUE_FLAGS: &[&str] = &[
 
 /// Flags that exist in Go but have no counterpart here.
 const UNSUPPORTED: &[&str] = &[
-    "tui",
-    "standalone",
-    "management-base-url",
     "discover",
     "discover-json",
     "discover-timeout",
@@ -158,6 +161,9 @@ pub fn parse(args: &[String]) -> ParseOutcome {
             "meta-login" => cli.meta_login = flag_on(),
             "no-browser" => cli.no_browser = flag_on(),
             "local-model" => cli.local_model = flag_on(),
+            "tui" => cli.tui = flag_on(),
+            "standalone" => cli.standalone = flag_on(),
+            "management-base-url" => cli.management_base_url = value,
             "oauth-callback-port" => match value.parse::<i64>() {
                 Ok(n) => cli.oauth_callback_port = n,
                 Err(e) => return ParseOutcome::Error(format!("invalid value {value:?} for flag -{name}: parse error ({e})")),
@@ -193,9 +199,12 @@ pub fn usage(program: &str) -> String {
         ("kimi-ai-login", "", "Login to Kimi.ai using OAuth"),
         ("kimi-login", "", "Login to Kimi (.com) using OAuth"),
         ("local-model", "", "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching"),
+        ("management-base-url", "string", "Base URL of remote management API for TUI client mode (e.g. https://proxy.example.com)"),
         ("meta-login", "", "Login to Meta using OAuth"),
         ("no-browser", "", "Don't open browser automatically for OAuth"),
         ("oauth-callback-port", "int", "Override OAuth callback port (defaults to provider-specific port)"),
+        ("standalone", "", "In TUI mode, start an embedded local server"),
+        ("tui", "", "Start with terminal management UI"),
         ("vertex-import", "string", "Import Vertex service account key JSON file"),
         ("vertex-import-prefix", "string", "Prefix for Vertex model namespacing (use with -vertex-import)"),
         ("xai-login", "", "Login to xAI using OAuth"),
@@ -453,7 +462,8 @@ mod tests {
     #[test]
     fn unsupported_flags_are_recorded() {
         let c = run("-tui -standalone=false -discover tok");
-        assert_eq!(c.unsupported, vec!["tui", "discover"]);
+        assert_eq!(c.unsupported, vec!["discover"]);
+        assert!(c.tui && !c.standalone);
     }
 
     #[test]

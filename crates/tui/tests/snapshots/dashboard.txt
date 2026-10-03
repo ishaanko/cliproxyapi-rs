@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+📊 Dashboard
+
+ [r] Refresh • [↑↓] Scroll
+
+● Connected  http://127.0.0.1:PORT
+
+🔑 2                                                📄 2
+Mgmt Keys                                           Auth Files (1 active)
+
+Current Config
+────────────────────────────────────────────────────────────
+  Debug Mode:              No
+  Usage Statistics:        Yes ✓
+  Log to File:             Yes ✓
+  Retry Count:             3
+  Routing Strategy:        round-robin
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit

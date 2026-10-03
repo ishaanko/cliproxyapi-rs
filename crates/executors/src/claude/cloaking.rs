@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::cache_control::strip_claude_cache_control_ttl;
-use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
+use crate::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::client_detection::{ClaudeCodeRequestDetection, detect_claude_code_request};
 use super::helps::credential_identity::*;
 use super::helps::device_profile::default_claude_version;

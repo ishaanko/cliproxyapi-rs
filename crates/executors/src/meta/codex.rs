@@ -1,12 +1,11 @@
 //! Codex-dialect helpers the Meta executor shares with the Codex and xAI executors in Go
 //! (codex_executor_request.go, codex_executor_terminal.go, codex_executor_tokens.go,
-//! xai_executor_response.go, optimize-multi-agent-v2/orphan_delegation.go). Kept local to this
+//! xai_executor_response.go). Kept local to this
 //! module so Meta does not depend on another provider's internals.
 
 use std::collections::BTreeMap;
 
 use cpa_json::{J, Res};
-use http::HeaderMap;
 use serde_json::Value;
 
 use crate::helps::token_count::Tokenizer;
@@ -161,80 +160,4 @@ pub fn count_codex_input_tokens(enc: &Tokenizer, body: &[u8]) -> i64 {
 
     let text = segments.join("\n");
     if text.is_empty() { 0 } else { enc.count(&text) as i64 }
-}
-
-// ---------------------------------------------------------------- orphan delegation
-
-const CODEX_APP_NAMESPACE: &str = "codex_app";
-const SUBAGENT_HEADER: &str = "X-Openai-Subagent";
-const COLLAB_SPAWN_SUBAGENT: &str = "collab_spawn";
-
-fn is_collab_spawn_subagent(headers: &HeaderMap) -> bool {
-    headers
-        .get_all(SUBAGENT_HEADER)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .map(str::trim)
-        .find(|v| !v.is_empty())
-        .is_some_and(|v| v.eq_ignore_ascii_case(COLLAB_SPAWN_SUBAGENT))
-}
-
-fn delegation_tool_label(item: &Value) -> Option<&'static str> {
-    if item.g("namespace").str() != CODEX_APP_NAMESPACE {
-        return None;
-    }
-    match item.g("name").str().as_str() {
-        "create_thread" => Some("codex_app__create_thread"),
-        "send_message_to_thread" => Some("codex_app__send_message_to_thread"),
-        _ => None,
-    }
-}
-
-/// Downgrades orphan Codex delegation outputs (no matching call in the request) to user messages
-/// when `orphan-delegation-compatibility` is on and the request has `X-Openai-Subagent:
-/// collab_spawn` (Go: RewriteCodexOrphanDelegationInputForConfig).
-pub fn rewrite_orphan_delegation_input(headers: &HeaderMap, payload: &[u8], enabled: bool) -> Vec<u8> {
-    if !enabled || payload.is_empty() || !is_collab_spawn_subagent(headers) {
-        return payload.to_vec();
-    }
-    let mut root = cpa_json::parse(payload);
-    let Some(Value::Array(items)) = root.g("input").v().cloned() else {
-        return payload.to_vec();
-    };
-    let mut available: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for item in &items {
-        if item.g("type").str() == "function_call" {
-            let call_id = item.g("call_id").str();
-            if !call_id.trim().is_empty() {
-                *available.entry(call_id).or_insert(0) += 1;
-            }
-        }
-    }
-    let mut changed = false;
-    for (index, item) in items.iter().enumerate() {
-        if item.g("type").str() != "function_call_output" {
-            continue;
-        }
-        let call_id = item.g("call_id").str();
-        if !call_id.trim().is_empty()
-            && let Some(count) = available.get_mut(&call_id)
-            && *count > 0
-        {
-            *count -= 1;
-            continue;
-        }
-        let Some(label) = delegation_tool_label(item) else {
-            continue;
-        };
-        let output = item.g("output");
-        let output_text = if output.exists() { value_text(&output) } else { String::new() };
-        let message = serde_json::json!({
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": format!("Tool output from {label}:\n{output_text}")}],
-        });
-        cpa_json::set(&mut root, &format!("input.{index}"), message);
-        changed = true;
-    }
-    if changed { cpa_json::to_vec(&root) } else { payload.to_vec() }
 }
