@@ -578,6 +578,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpa-bench"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures-util",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "memchr",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "cpa-config"
 version = "0.1.0"
 dependencies = [

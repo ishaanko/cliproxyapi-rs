@@ -1,0 +1,41 @@
+//! `cpa-bench`: Go vs Rust performance benchmark (see bench/README.md).
+
+mod load;
+mod mock;
+mod procs;
+mod report;
+mod run;
+mod scenarios;
+
+use std::path::PathBuf;
+
+use anyhow::Result;
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(about = "Benchmark the Go and Rust servers under identical configs")]
+enum Cmd {
+    /// Run the full benchmark and write raw samples to JSON.
+    Run(run::RunArgs),
+    /// Turn raw samples into the markdown tables.
+    Report {
+        #[arg(long, default_value = "bench/results/raw.json")]
+        input: PathBuf,
+        #[arg(long, default_value = "bench/results.md")]
+        out: PathBuf,
+    },
+    /// Fast mock upstream (spawned by `run`).
+    Mock {
+        #[arg(long, default_value_t = procs::MOCK_PORT)]
+        port: u16,
+    },
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    match Cmd::parse() {
+        Cmd::Run(a) => run::run(a).await,
+        Cmd::Report { input, out } => report::report(&input, &out),
+        Cmd::Mock { port } => mock::serve(port).await,
+    }
+}
