@@ -74,20 +74,21 @@ impl XaiExecutor {
         reporter.set_translated_reasoning_effort(&prepared.body, super::request::IDENTIFIER);
         let url = format!("{}/responses", base_url.trim_end_matches('/'));
         let headers = apply_chat_headers(Some(auth), token, true, &prepared.session_id, opts, session)?;
+        self.record_request(cfg, auth, opts, &url, &headers, &prepared.body);
         let resp = self
             .send(cfg, auth, opts, reporter, &url, headers, prepared.body.clone())
             .await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = read_body(reporter, resp).await?;
+            let data = read_body(cfg, opts, reporter, resp).await?;
             tracing::debug!(
                 "request error, error status: {status}, error message: {}",
                 crate::helps::logging::summarize_error_body(&content_type(&resp_headers), &data)
             );
             return Err(status_err_for_body(status, &data));
         }
-        let data = read_body(reporter, resp).await?;
+        let data = read_body(cfg, opts, reporter, resp).await?;
 
         let mut output_items_by_index = std::collections::BTreeMap::new();
         let mut output_items_fallback: Vec<Value> = Vec::new();
@@ -261,10 +262,11 @@ impl XaiExecutor {
             // Official API and custom compact endpoints use standard API headers, not the CLI
             // chat-proxy identity headers.
             let headers = apply_headers(Some(auth), &token, false, &prepared.session_id, opts, session.as_deref())?;
+            self.record_request(&cfg, auth, opts, &url, &headers, &prepared.body);
             let resp = self.send(&cfg, auth, opts, &reporter, &url, headers, prepared.body.clone()).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data = read_body(&reporter, resp).await?;
+            let data = read_body(&cfg, opts, &reporter, resp).await?;
             if !(200..300).contains(&status) {
                 tracing::debug!(
                     "request error, error status: {status}, error message: {}",
@@ -312,14 +314,28 @@ pub(super) fn content_type(headers: &HeaderMap) -> String {
     headers.get(http::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or_default().to_string()
 }
 
-/// Reads a whole upstream body, marking the first byte for TTFT.
-pub(super) async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
+/// Reads a whole upstream body, marking the first byte for TTFT, and records it in the
+/// request log (Go: `io.ReadAll` then `RecordAPIResponseError` / `AppendAPIResponseChunk`).
+pub(super) async fn read_body(
+    cfg: &cpa_config::Config,
+    opts: &Options,
+    reporter: &UsageReporter,
+    resp: reqwest::Response,
+) -> Result<Bytes, ExecError> {
     use futures_util::StreamExt;
     let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
     let mut buf = Vec::new();
     while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk.map_err(|e| transport_error(&e))?);
+        match chunk {
+            Ok(chunk) => buf.extend_from_slice(&chunk),
+            Err(e) => {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                return Err(err);
+            }
+        }
     }
+    opts.api_log.append_api_response_chunk(cfg, &buf);
     Ok(Bytes::from(buf))
 }
 

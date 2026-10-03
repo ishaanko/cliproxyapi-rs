@@ -24,6 +24,7 @@ use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, 
 use http::{HeaderMap, Method};
 
 use crate::ConfigRx;
+use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::proxy::{effective_proxy_url, new_proxy_aware_http_client};
 use crate::helps::usage::UsageReporter;
@@ -81,7 +82,37 @@ impl XaiExecutor {
             builder = builder.body(body);
         }
         reporter.start_response_ttft();
-        builder.send().await.map_err(|e| transport_error(&e))
+        match builder.send().await {
+            Ok(resp) => {
+                opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
+                Ok(resp)
+            }
+            Err(e) => {
+                let err = transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                Err(err)
+            }
+        }
+    }
+
+    /// Go: recordXAIRequest. Records the upstream request in the request log (always as POST,
+    /// like Go, even for the video status GET).
+    fn record_request(&self, cfg: &Config, auth: &Auth, opts: &Options, url: &str, headers: &HeaderMap, body: &[u8]) {
+        let (auth_type, auth_value) = auth.account_info();
+        opts.api_log.record_api_request(
+            cfg,
+            UpstreamRequestLog {
+                url: url.to_string(),
+                method: Method::POST.to_string(),
+                headers: headers.clone(),
+                body: body.to_vec(),
+                provider: IDENTIFIER.to_string(),
+                auth_id: auth.id.clone(),
+                auth_label: auth.label.clone(),
+                auth_type: auth_type.to_string(),
+                auth_value,
+            },
+        );
     }
 }
 

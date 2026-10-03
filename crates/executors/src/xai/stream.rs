@@ -6,9 +6,11 @@
 //! `data:` line is known because normalization can change the event name.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use bytes::Bytes;
 use cpa_auth::Auth;
+use cpa_config::Config;
 use cpa_json::Value;
 use cpa_runtime::executor::{ExecError, Options, Request, StreamResult};
 use cpa_translator::Param;
@@ -28,6 +30,7 @@ use super::util::s;
 use crate::helps::apply_patch::{
     ChunkSender, gateway_error, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
+use crate::helps::logging::ApiLogHandle;
 use crate::helps::session::ensure_session_id;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER, ScanError};
 use crate::helps::status::status_err;
@@ -62,11 +65,12 @@ impl XaiExecutor {
             reporter.set_translated_reasoning_effort(&prepared.body, IDENTIFIER);
             let url = format!("{}/responses", base_url.trim_end_matches('/'));
             let headers = apply_chat_headers(Some(auth), &token, true, &prepared.session_id, opts, session.as_deref())?;
+            self.record_request(&cfg, auth, opts, &url, &headers, &prepared.body);
             let resp = self.send(&cfg, auth, opts, &reporter, &url, headers, prepared.body.clone()).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
             if !(200..300).contains(&status) {
-                let data = read_body(&reporter, resp).await?;
+                let data = read_body(&cfg, opts, &reporter, resp).await?;
                 tracing::debug!(
                     "request error, error status: {status}, error message: {}",
                     crate::helps::logging::summarize_error_body(&content_type(&resp_headers), &data)
@@ -83,7 +87,7 @@ impl XaiExecutor {
                 return Err(err);
             }
         };
-        Ok(spawn_stream(resp, resp_headers, prepared, req.model.clone(), reporter))
+        Ok(spawn_stream(cfg, opts.api_log.clone(), resp, resp_headers, prepared, req.model.clone(), reporter))
     }
 }
 
@@ -110,6 +114,8 @@ impl Event {
 }
 
 struct XaiStream {
+    cfg: Arc<Config>,
+    api_log: ApiLogHandle,
     out: ChunkSender,
     reporter: UsageReporter,
     prepared: PreparedRequest,
@@ -218,6 +224,7 @@ impl XaiStream {
                     break;
                 }
             };
+            self.api_log.append_api_response_chunk(&self.cfg, &line);
             if line.starts_with(b"event:") {
                 if let Some(pending) = pending_event_line.take()
                     && !self.emit(&normalize_reasoning_summary_event_line(&pending, "")).await
@@ -305,6 +312,7 @@ impl XaiStream {
         }
         if let Some(err) = scan_err {
             let err = ExecError::from(err);
+            self.api_log.record_api_response_error(&self.cfg, &err.message);
             self.reporter.publish_failure(&err);
             let _ = self.out.send(Err(err)).await;
         }
@@ -327,6 +335,8 @@ impl TrimCrlf for Vec<u8> {
 }
 
 fn spawn_stream(
+    cfg: Arc<Config>,
+    api_log: ApiLogHandle,
     resp: reqwest::Response,
     headers: http::HeaderMap,
     prepared: PreparedRequest,
@@ -346,6 +356,8 @@ fn spawn_stream(
         let restorer = NamespaceRestorer::new(prepared.namespace_tools.clone());
         let replay_scope = prepared.replay_scope.clone();
         let mut stream = XaiStream {
+            cfg,
+            api_log,
             out: tx,
             reporter,
             prepared,
