@@ -62,7 +62,7 @@ impl fmt::Display for S3Error {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct S3Config {
     /// `host[:port][/path]` without scheme.
     pub endpoint: String,
@@ -71,6 +71,19 @@ pub(crate) struct S3Config {
     pub secret_key: String,
     pub region: String,
     pub use_ssl: bool,
+}
+
+impl fmt::Debug for S3Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("S3Config")
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("access_key", &self.access_key)
+            .field("secret_key", &"<redacted>")
+            .field("region", &self.region)
+            .field("use_ssl", &self.use_ssl)
+            .finish()
+    }
 }
 
 pub(crate) struct S3Client {

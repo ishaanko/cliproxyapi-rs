@@ -25,10 +25,16 @@ const FETCH_SPEC: &str = "+refs/heads/*:refs/remotes/origin/*";
 const FILEMODE_COMMIT: i32 = 0o160000;
 
 /// HTTP basic credentials (`gitClientOptions`).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct BasicAuth {
     pub(super) user: String,
     pub(super) pass: String,
+}
+
+impl std::fmt::Debug for BasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BasicAuth").field("user", &self.user).field("pass", &"<redacted>").finish()
+    }
 }
 
 /// Callbacks answering basic-auth challenges at most once, so wrong credentials fail instead of

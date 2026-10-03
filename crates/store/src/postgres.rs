@@ -35,7 +35,7 @@ const DEFAULT_COOLDOWN_TABLE: &str = "cooldown_store";
 const DEFAULT_CONFIG_KEY: &str = "config";
 
 /// Configuration required to initialize a Postgres-backed store.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct PostgresStoreConfig {
     pub dsn: String,
     pub schema: String,
@@ -43,6 +43,20 @@ pub struct PostgresStoreConfig {
     pub auth_table: String,
     pub cooldown_table: String,
     pub spool_dir: String,
+}
+
+/// The DSN carries the password, so Debug leaves it out.
+impl std::fmt::Debug for PostgresStoreConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PostgresStoreConfig")
+            .field("dsn", &"<redacted>")
+            .field("schema", &self.schema)
+            .field("config_table", &self.config_table)
+            .field("auth_table", &self.auth_table)
+            .field("cooldown_table", &self.cooldown_table)
+            .field("spool_dir", &self.spool_dir)
+            .finish()
+    }
 }
 
 pub(crate) struct Shared {
@@ -229,7 +243,9 @@ impl PostgresStore {
 
     fn sync_auth_from_database(&self) -> Result<(), StoreError> {
         let rows = self.fetch_auth_rows(false)?;
-        let _ = fs::remove_dir_all(&self.auth_dir);
+        fs::remove_dir_all(&self.auth_dir)
+            .or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+            .map_err(|e| backend_err(format!("postgres store: reset auth directory: {e}")))?;
         mkdir_all_private(&self.auth_dir)
             .map_err(|e| backend_err(format!("postgres store: recreate auth directory: {e}")))?;
         for (id, payload, _, _) in rows {
@@ -294,13 +310,15 @@ impl PostgresStore {
 
     fn persist_auth(&self, rel_id: &str, data: &[u8]) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.auth_table);
+        // The raw bytes go to Postgres as text so it parses them exactly like Go's RawMessage.
         let sql = format!(
-            "INSERT INTO {table} (id, content, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) \
+            "INSERT INTO {table} (id, content, created_at, updated_at) VALUES ($1, $2::text::jsonb, NOW(), NOW()) \
              ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()"
         );
-        let json: Value = serde_json::from_slice(data)
-            .map_err(|e| backend_err(format!("postgres store: upsert auth record: invalid input syntax for type json: {e}")))?;
-        self.query(sql, vec![DbParam::Text(rel_id.into()), DbParam::Json(json)])
+        let text = String::from_utf8(data.to_vec()).map_err(|_| {
+            backend_err("postgres store: upsert auth record: invalid byte sequence for encoding \"UTF8\"")
+        })?;
+        self.query(sql, vec![DbParam::Text(rel_id.into()), DbParam::Text(text)])
             .map_err(|e| backend_err(format!("postgres store: upsert auth record: {e}")))
     }
 
@@ -391,14 +409,12 @@ impl PostgresStore {
 /// A bind parameter owned across the `block_on` boundary.
 enum DbParam {
     Text(String),
-    Json(Value),
 }
 
 impl DbParam {
     fn as_sql(&self) -> &(dyn tokio_postgres::types::ToSql + Sync) {
         match self {
             DbParam::Text(s) => s,
-            DbParam::Json(v) => v,
         }
     }
 }

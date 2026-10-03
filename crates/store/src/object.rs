@@ -30,7 +30,7 @@ const CONFIG_KEY: &str = "config/config.yaml";
 const AUTH_PREFIX: &str = "auths";
 
 /// Configuration for the object storage-backed token store.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct ObjectStoreConfig {
     pub endpoint: String,
     pub bucket: String,
@@ -41,6 +41,22 @@ pub struct ObjectStoreConfig {
     pub local_root: String,
     pub use_ssl: bool,
     pub path_style: bool,
+}
+
+impl std::fmt::Debug for ObjectStoreConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectStoreConfig")
+            .field("endpoint", &self.endpoint)
+            .field("bucket", &self.bucket)
+            .field("access_key", &self.access_key)
+            .field("secret_key", &"<redacted>")
+            .field("region", &self.region)
+            .field("prefix", &self.prefix)
+            .field("local_root", &self.local_root)
+            .field("use_ssl", &self.use_ssl)
+            .field("path_style", &self.path_style)
+            .finish()
+    }
 }
 
 /// Persists configuration and credentials in an S3-compatible bucket with a local mirror.
