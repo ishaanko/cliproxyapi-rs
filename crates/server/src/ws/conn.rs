@@ -74,6 +74,23 @@ impl Conn {
         }
     }
 
+    /// Queues `msg` without flushing; [`Conn::flush`] puts it on the wire.
+    pub async fn feed(&mut self, msg: Message) -> Result<(), axum::Error> {
+        match &mut self.0 {
+            Kind::Direct(socket) => socket.feed(msg).await,
+            Kind::Duplex { sink, .. } => sink.feed(msg).await,
+            Kind::Closed => Err(axum::Error::new(std::io::Error::other("use of closed network connection"))),
+        }
+    }
+
+    pub async fn flush(&mut self) -> Result<(), axum::Error> {
+        match &mut self.0 {
+            Kind::Direct(socket) => SinkExt::flush(socket.as_mut()).await,
+            Kind::Duplex { sink, .. } => sink.flush().await,
+            Kind::Closed => Ok(()),
+        }
+    }
+
     /// Next client frame; in duplex mode text and binary frames arrive as binary, a reader that
     /// ended (close or error) as `None`.
     pub async fn recv(&mut self) -> Option<Result<Message, axum::Error>> {

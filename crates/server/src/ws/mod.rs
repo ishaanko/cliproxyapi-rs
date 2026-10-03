@@ -517,13 +517,23 @@ struct Writer<'a> {
 
 impl Writer<'_> {
     async fn text(&mut self, payload: &[u8]) -> Result<(), axum::Error> {
+        self.text_deferred(payload).await?;
+        self.socket.flush().await
+    }
+
+    /// Queues the frame; the caller flushes (see `forward_turn`).
+    async fn text_deferred(&mut self, payload: &[u8]) -> Result<(), axum::Error> {
         if self.timeline {
             self.api_log.ws_timeline_append("response", payload);
         }
         let text = String::from_utf8_lossy(payload).into_owned();
-        self.socket.send(Message::Text(text.into())).await
+        self.socket.feed(Message::Text(text.into())).await
     }
 }
+
+/// Frames of one turn are flushed to the client at most this often (the first frame after a quiet
+/// period at once), so a dense burst of events costs one socket write per interval, not per event.
+const WS_FLUSH_GAP: Duration = Duration::from_millis(1);
 
 /// How a turn ended.
 enum TurnEnd {
@@ -543,8 +553,29 @@ struct ForwardOptions<'a> {
     duplex_stream: &'a (dyn Fn() -> bool + Sync),
 }
 
+/// Forwards one turn's events (see [`forward_turn_inner`]) and flushes what is still queued on
+/// every way out.
 #[allow(clippy::too_many_arguments)]
 async fn forward_turn(
+    socket: &mut Conn,
+    disconnects: &mut Disconnects,
+    info: &ReqInfo,
+    keepalive: Duration,
+    timeline: bool,
+    rx: &mut crate::exec::ExecRx,
+    tool_turn: &mut Option<ToolCacheTurn>,
+    session_key: &str,
+    session_id: &str,
+    suppress: &(dyn Fn(&ErrorMessage) -> bool + Sync),
+    options: ForwardOptions<'_>,
+) -> TurnEnd {
+    let end = forward_turn_inner(socket, disconnects, info, keepalive, timeline, rx, tool_turn, session_key, session_id, suppress, options).await;
+    let _ = socket.flush().await;
+    end
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn forward_turn_inner(
     socket: &mut Conn,
     disconnects: &mut Disconnects,
     info: &ReqInfo,
@@ -582,7 +613,25 @@ async fn forward_turn(
         };
     }
 
+    // Frames fed but not yet flushed, when the last flush happened, and the wait for the gap.
+    let mut dirty = false;
+    let mut last_flush: Option<Instant> = None;
+    let hold = tokio::time::sleep(WS_FLUSH_GAP);
+    tokio::pin!(hold);
     loop {
+        if dirty {
+            match last_flush {
+                Some(t) if t.elapsed() < WS_FLUSH_GAP => hold.as_mut().reset(t + WS_FLUSH_GAP),
+                _ => {
+                    if let Err(e) = socket.flush().await {
+                        note(&e.to_string());
+                        return TurnEnd::Terminate(e.to_string());
+                    }
+                    dirty = false;
+                    last_flush = Some(Instant::now());
+                }
+            }
+        }
         tokio::select! {
             biased;
             item = rx.recv() => {
@@ -621,13 +670,14 @@ async fn forward_turn(
                     if let Some(name) = plain_forward_event(&payload_bytes) {
                         api_log.mark_response_timestamp();
                         let mut writer = Writer { socket, api_log: &api_log, timeline };
-                        if let Err(e) = writer.text(&payload_bytes).await {
+                        if let Err(e) = writer.text_deferred(&payload_bytes).await {
                             tracing::warn!(
                                 "responses websocket: downstream_out write failed id={session_id} event={name} error={e}"
                             );
                             note(&e.to_string());
                             return TurnEnd::Terminate(e.to_string());
                         }
+                        dirty = true;
                         continue;
                     }
                     let mut payload = cpa_json::parse(&payload_bytes);
@@ -678,15 +728,18 @@ async fn forward_turn(
                         return end_with_error(socket, &api_log, timeline, &err, Some(&bytes)).await;
                     }
                     let mut writer = Writer { socket, api_log: &api_log, timeline };
-                    if let Err(e) = writer.text(&bytes).await {
+                    if let Err(e) = writer.text_deferred(&bytes).await {
                         tracing::warn!(
                             "responses websocket: downstream_out write failed id={session_id} event={event_type} error={e}"
                         );
                         note(&e.to_string());
                         return TurnEnd::Terminate(e.to_string());
                     }
+                    dirty = true;
                 }
             }
+            // The flush gap of a dense burst ended; the loop head flushes.
+            () = &mut hold, if dirty => {}
             _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
                 if let Err(e) = socket.send(Message::Ping(Bytes::new())).await {
                     note(&e.to_string());
