@@ -13,16 +13,23 @@ name = "cpa_server"
 name = "cliproxy"
 path = "src/main.rs"
 
+[features]
+# TLS fingerprints for api.anthropic.com, chatgpt.com and the Claude OAuth plane (BoringSSL; needs
+# cmake, a C++ compiler and libclang). Disable with `--no-default-features` for plain rustls.
+default = ["tls-fingerprint"]
+tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
+
 [dependencies]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }
-cpa-executors = { path = "../executors" }
+cpa-executors = { path = "../executors", default-features = false }
 cpa-plugin = { path = "../plugin" }
 cpa-pluginapi = { path = "../pluginapi" }
 cpa-live = { path = "../live" }
@@ -59,6 +66,9 @@ url = "2"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls-pemfile = "2"
 async-trait = "0.1"
+multer = "3"
+reqwest = { version = "0.12", default-features = false, features = ["stream"] }
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio"] }

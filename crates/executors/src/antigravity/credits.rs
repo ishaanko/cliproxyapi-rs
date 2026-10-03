@@ -2,19 +2,27 @@
 //! antigravity_executor_credits.go).
 //!
 //! State is process-wide like Go's package-level `sync.Map`s: it is keyed by credential id and
-//! shared by every executor instance. Home KV mode (shared state in a Home server) is not
-//! supported; the in-memory paths below are the non-Home behavior.
+//! shared by every executor instance. In Home mode (a Home client is installed) the credits
+//! balance, short cooldowns and the refresh lock live in Home KV instead of the in-memory maps,
+//! under the `cpa:antigravity:*` keys; KV failures on request paths surface as
+//! `503 home kv store unavailable`.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use cpa_auth::Auth;
 use cpa_config::Config;
+use cpa_home::HomeError;
+use cpa_home::kv::{self, hash_key_part};
 use cpa_json::J;
-use cpa_runtime::conductor::{AntigravityCreditsHint, set_antigravity_credits_hint};
+use cpa_runtime::conductor::{
+    AntigravityCreditsHint, get_antigravity_credits_hint_required, has_known_antigravity_credits_hint_async,
+    set_antigravity_credits_hint_async,
+};
 use cpa_runtime::executor::ExecError;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::request::{load_code_assist_base_url, resolve_user_agent};
@@ -129,8 +137,7 @@ pub(crate) fn new_status_err(status: u16, body: &[u8]) -> ExecError {
 }
 
 /// Go: `homeKVUnavailableStatusErr`.
-#[allow(dead_code)]
-pub(crate) fn home_kv_unavailable_status_err(cause: Option<&str>) -> ExecError {
+pub(crate) fn home_kv_unavailable_status_err(cause: Option<&HomeError>) -> ExecError {
     match cause {
         None => ExecError::new(503, "home kv store unavailable"),
         Some(c) => ExecError::new(503, format!("home kv store unavailable: {c}")),
@@ -162,13 +169,24 @@ struct FailureState {
     explicit_balance_exhausted: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+/// Last probed AI-credits balance. Serialized with Go's field names (it is stored in Home KV).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub(crate) struct CreditsBalance {
+    #[serde(rename = "CreditAmount")]
     pub credit_amount: f64,
+    #[serde(rename = "MinCreditAmount")]
     pub min_credit_amount: f64,
+    #[serde(rename = "PaidTierID")]
     pub paid_tier_id: String,
+    #[serde(rename = "Known")]
     pub known: bool,
 }
+
+/// Home KV lifetime of a stored credits balance.
+const HOME_BALANCE_TTL: Duration = Duration::from_secs(30 * 60);
+/// Extra Home KV lifetime of a short cooldown beyond its own duration.
+const HOME_COOLDOWN_GRACE: Duration = Duration::from_secs(5);
 
 static FAILURE_BY_AUTH: LazyLock<Mutex<HashMap<String, FailureState>>> = LazyLock::new(Default::default);
 static SHORT_COOLDOWN_BY_AUTH: LazyLock<Mutex<HashMap<String, Instant>>> = LazyLock::new(Default::default);
@@ -186,7 +204,7 @@ pub(crate) fn clear_credits_failure_state(auth: &Auth) {
     }
 }
 
-pub(crate) fn mark_credits_permanently_disabled(auth: &Auth) {
+pub(crate) async fn mark_credits_permanently_disabled(auth: &Auth) {
     let Some(id) = trimmed_id(auth) else { return };
     if cooling_disabled(auth, None) {
         return;
@@ -194,11 +212,9 @@ pub(crate) fn mark_credits_permanently_disabled(auth: &Auth) {
     FAILURE_BY_AUTH
         .lock()
         .insert(id.clone(), FailureState { permanently_disabled: true, explicit_balance_exhausted: true });
-    BALANCE_BY_AUTH.lock().insert(
-        id.clone(),
-        CreditsBalance { credit_amount: 0.0, min_credit_amount: 1.0, paid_tier_id: String::new(), known: true },
-    );
-    set_antigravity_credits_hint(
+    let balance = CreditsBalance { credit_amount: 0.0, min_credit_amount: 1.0, paid_tier_id: String::new(), known: true };
+    store_credits_balance_best_effort(&id, balance).await;
+    set_antigravity_credits_hint_async(
         &id,
         AntigravityCreditsHint {
             known: true,
@@ -208,36 +224,93 @@ pub(crate) fn mark_credits_permanently_disabled(auth: &Auth) {
             paid_tier_id: String::new(),
             updated_at: None,
         },
-    );
+    )
+    .await;
 }
 
 fn clear_credits_permanently_disabled(auth: &Auth) {
     clear_credits_failure_state(auth);
 }
 
-/// Whether the credential has AI credits: the conductor hint when known, else the stored
-/// balance, else optimistic `true` (Go: antigravityAuthHasCredits).
-#[allow(dead_code)]
-pub(crate) fn auth_has_credits(auth: &Auth) -> bool {
-    let Some(id) = trimmed_id(auth) else { return false };
-    if let Some(hint) = cpa_runtime::conductor::antigravity_credits_hint(&id)
-        && hint.known
-    {
-        return hint.available;
+fn balance_key(auth_id: &str) -> String {
+    format!("cpa:antigravity:credits-balance:{}", auth_id.trim())
+}
+
+fn refresh_lock_key(auth_id: &str) -> String {
+    format!("cpa:antigravity:credits-refresh-lock:{}", auth_id.trim())
+}
+
+/// Stores the probed balance: Home KV for 30 minutes in Home mode (failures are logged), else the
+/// in-memory map (Go: storeAntigravityCreditsBalanceBestEffort).
+async fn store_credits_balance_best_effort(auth_id: &str, bal: CreditsBalance) {
+    let auth_id = auth_id.trim();
+    if auth_id.is_empty() {
+        return;
     }
-    let balance = BALANCE_BY_AUTH.lock().get(&id).cloned();
-    match balance {
-        None => true,
-        Some(b) => credits_balance_available(&id, &b),
+    let client = match kv::current_kv() {
+        Ok(None) => {
+            BALANCE_BY_AUTH.lock().insert(auth_id.to_string(), bal);
+            return;
+        }
+        Ok(Some(client)) => client,
+        Err(e) => {
+            tracing::error!("antigravity executor: home kv best-effort credits balance set failed prefix=cpa:antigravity:*: {e}");
+            return;
+        }
+    };
+    let raw = match serde_json::to_vec(&bal) {
+        Ok(raw) => raw,
+        Err(e) => {
+            tracing::error!("antigravity executor: home kv best-effort credits balance set failed prefix=cpa:antigravity:*: {e}");
+            return;
+        }
+    };
+    let opts = cpa_home::KvSetOptions { ex: HOME_BALANCE_TTL, ..Default::default() };
+    if let Err(e) = client.kv_set(&balance_key(auth_id), &raw, opts).await {
+        tracing::error!("antigravity executor: home kv best-effort credits balance set failed prefix=cpa:antigravity:*: {e}");
     }
 }
 
-fn credits_balance_available(auth_id: &str, bal: &CreditsBalance) -> bool {
+/// Whether the credential has AI credits; a Home KV failure reads as "no" and is logged (Go:
+/// antigravityAuthHasCredits).
+#[allow(dead_code)]
+pub(crate) async fn auth_has_credits(auth: &Auth) -> bool {
+    match auth_has_credits_required(auth).await {
+        Ok(ok) => ok,
+        Err(e) => {
+            tracing::error!("antigravity executor: home kv credits check error: {e}");
+            false
+        }
+    }
+}
+
+/// The conductor hint when known, else the stored balance (Home KV in Home mode), else
+/// optimistic `true` (Go: antigravityAuthHasCreditsRequired).
+pub(crate) async fn auth_has_credits_required(auth: &Auth) -> Result<bool, HomeError> {
+    let Some(id) = trimmed_id(auth) else { return Ok(false) };
+    if let Some(hint) = get_antigravity_credits_hint_required(&id).await?
+        && hint.known
+    {
+        return Ok(hint.available);
+    }
+    if let Some(client) = kv::current_kv()? {
+        let Some(raw) = client.kv_get(&balance_key(&id)).await? else { return Ok(true) };
+        let balance: CreditsBalance = serde_json::from_slice(&raw).map_err(HomeError::other)?;
+        return Ok(credits_balance_available(&id, &balance).await);
+    }
+    let balance = BALANCE_BY_AUTH.lock().get(&id).cloned();
+    match balance {
+        None => Ok(true),
+        Some(b) => Ok(credits_balance_available(&id, &b).await),
+    }
+}
+
+async fn credits_balance_available(auth_id: &str, bal: &CreditsBalance) -> bool {
     if !bal.known {
         return false;
     }
     let available = bal.credit_amount >= bal.min_credit_amount;
-    set_antigravity_credits_hint(
+    set_antigravity_credits_hint_async(
         auth_id.trim(),
         AntigravityCreditsHint {
             known: true,
@@ -247,7 +320,8 @@ fn credits_balance_available(auth_id: &str, bal: &CreditsBalance) -> bool {
             paid_tier_id: bal.paid_tier_id.clone(),
             updated_at: None,
         },
-    );
+    )
+    .await;
     available
 }
 
@@ -259,30 +333,66 @@ fn short_cooldown_key(auth: &Auth, model: &str) -> Option<String> {
     (!model.is_empty()).then(|| format!("{id}|{model}|sc"))
 }
 
-/// Remaining short cooldown for `(auth, model)`, if any; expired entries are dropped.
-pub(crate) fn is_in_short_cooldown(auth: &Auth, model: &str, now: Instant) -> Option<Duration> {
+fn short_cooldown_kv_key(auth: &Auth, model: &str) -> Option<String> {
+    let id = trimmed_id(auth)?;
+    let model = model.trim();
+    (!model.is_empty()).then(|| format!("cpa:antigravity:short-cooldown:{id}:{}", hash_key_part(model)))
+}
+
+/// Remaining short cooldown for `(auth, model)`, if any. In Home mode the deadline (unix nanos)
+/// is read from Home KV and an expired one is deleted; a KV failure is an error (Go:
+/// antigravityIsInShortCooldownRequired). Local entries that expired are dropped.
+pub(crate) async fn is_in_short_cooldown_required(auth: &Auth, model: &str) -> Result<Option<Duration>, HomeError> {
     if cooling_disabled(auth, None) {
-        return None;
+        return Ok(None);
     }
-    let key = short_cooldown_key(auth, model)?;
+    if let Some(client) = kv::current_kv()? {
+        let Some(key) = short_cooldown_kv_key(auth, model) else { return Ok(None) };
+        let Some(raw) = client.kv_get(&key).await? else { return Ok(None) };
+        let until_nanos: i128 = String::from_utf8_lossy(&raw).trim().parse::<i64>().map_err(HomeError::other)?.into();
+        let now_nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as i128);
+        let remaining = until_nanos - now_nanos;
+        if remaining <= 0 {
+            client.kv_del(&[key]).await?;
+            return Ok(None);
+        }
+        return Ok(Some(Duration::from_nanos(remaining.min(u64::MAX as i128) as u64)));
+    }
+    let Some(key) = short_cooldown_key(auth, model) else { return Ok(None) };
     let mut map = SHORT_COOLDOWN_BY_AUTH.lock();
-    let until = *map.get(&key)?;
-    match until.checked_duration_since(now) {
-        Some(remaining) if !remaining.is_zero() => Some(remaining),
+    let Some(until) = map.get(&key).copied() else { return Ok(None) };
+    match until.checked_duration_since(Instant::now()) {
+        Some(remaining) if !remaining.is_zero() => Ok(Some(remaining)),
         _ => {
             map.remove(&key);
-            None
+            Ok(None)
         }
     }
 }
 
-pub(crate) fn mark_short_cooldown(auth: &Auth, model: &str, now: Instant, duration: Duration) {
+/// Records a short cooldown: in Home mode the deadline goes to Home KV with the duration plus 5s
+/// as expiry and any failure is an error (Go: markAntigravityShortCooldownRequired).
+pub(crate) async fn mark_short_cooldown_required(auth: &Auth, model: &str, duration: Duration) -> Result<(), HomeError> {
     if cooling_disabled(auth, None) {
-        return;
+        return Ok(());
+    }
+    if let Some(client) = kv::current_kv()? {
+        let Some(key) = short_cooldown_kv_key(auth, model) else { return Ok(()) };
+        if duration.is_zero() {
+            return Ok(());
+        }
+        let until = SystemTime::now() + duration;
+        let nanos = until.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+        let opts = cpa_home::KvSetOptions { ex: duration + HOME_COOLDOWN_GRACE, ..Default::default() };
+        if !client.kv_set(&key, nanos.to_string().as_bytes(), opts).await? {
+            return Err(HomeError::other("home kv store unavailable"));
+        }
+        return Ok(());
     }
     if let Some(key) = short_cooldown_key(auth, model) {
-        SHORT_COOLDOWN_BY_AUTH.lock().insert(key, now + duration);
+        SHORT_COOLDOWN_BY_AUTH.lock().insert(key, Instant::now() + duration);
     }
+    Ok(())
 }
 
 /// The credits fallback ignores short cooldowns (Go: antigravityShouldBypassShortCooldown).
@@ -308,19 +418,45 @@ static TASK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::ne
 impl AntigravityExecutor {
     /// Opportunistic hint refresh while a warm token is reused: only when the feature is on, the
     /// hint is still unknown and nothing is in flight (Go: maybeRefreshAntigravityCreditsHint).
-    pub(crate) fn maybe_refresh_credits_hint(&self, cfg: &Config, auth: &Auth, access_token: &str) {
+    /// In Home mode a 10 minute `SET NX` lock in Home KV throttles the probe across nodes instead
+    /// of the local per-credential state.
+    pub(crate) async fn maybe_refresh_credits_hint(&self, cfg: &Config, auth: &Auth, access_token: &str) {
         if !credits_retry_enabled(cfg) || cooling_disabled(auth, Some(cfg)) {
             return;
         }
         let Some(id) = trimmed_id(auth) else { return };
-        if cpa_runtime::conductor::has_known_antigravity_credits_hint(&id) {
+        if has_known_antigravity_credits_hint_async(&id).await {
             return;
         }
         let token = if access_token.trim().is_empty() { auth.meta_str("access_token") } else { access_token.to_string() };
         if token.trim().is_empty() {
             return;
         }
-        self.queue_credits_refresh(auth, &token);
+        match kv::current_kv() {
+            Ok(None) => self.queue_credits_refresh(auth, &token),
+            Err(e) => {
+                tracing::error!("antigravity executor: home kv best-effort refresh lock failed prefix=cpa:antigravity:*: {e}");
+            }
+            Ok(Some(client)) => {
+                match client.kv_set_nx(&refresh_lock_key(&id), b"1", CREDITS_HINT_REFRESH_INTERVAL).await {
+                    Err(e) => {
+                        tracing::error!(
+                            "antigravity executor: home kv best-effort refresh lock failed prefix=cpa:antigravity:*: {e}"
+                        );
+                    }
+                    Ok(false) => {}
+                    Ok(true) => {
+                        let this = self.clone();
+                        let auth = auth.clone();
+                        tokio::spawn(async move {
+                            let cfg = this.cfg();
+                            let probe = this.update_credits_balance(&cfg, &auth, &token, None);
+                            let _ = tokio::time::timeout(CREDITS_HINT_REFRESH_TIMEOUT, probe).await;
+                        });
+                    }
+                }
+            }
+        }
     }
 
     /// Starts one background balance probe per credential: deduplicated while one runs, throttled
@@ -418,7 +554,7 @@ impl AntigravityExecutor {
             return;
         }
 
-        let publish = |balance: Option<CreditsBalance>, hint: AntigravityCreditsHint| {
+        let publish = async |balance: Option<CreditsBalance>, hint: AntigravityCreditsHint| {
             if let Some(task_id) = task {
                 let map = HINT_REFRESH_BY_ID.lock();
                 let current = map.get(&auth_id).is_some_and(|s| {
@@ -430,13 +566,13 @@ impl AntigravityExecutor {
             }
             let available = hint.available;
             if let Some(b) = balance {
-                BALANCE_BY_AUTH.lock().insert(auth_id.clone(), b);
-                set_antigravity_credits_hint(&auth_id, hint);
+                store_credits_balance_best_effort(&auth_id, b).await;
+                set_antigravity_credits_hint_async(&auth_id, hint).await;
                 if available {
                     clear_credits_permanently_disabled(auth);
                 }
             } else {
-                set_antigravity_credits_hint(&auth_id, hint);
+                set_antigravity_credits_hint_async(&auth_id, hint).await;
             }
         };
 
@@ -447,7 +583,8 @@ impl AntigravityExecutor {
             publish(
                 None,
                 AntigravityCreditsHint { known: true, available: false, paid_tier_id, ..Default::default() },
-            );
+            )
+            .await;
             return;
         }
         for credit in credits.array() {
@@ -474,7 +611,8 @@ impl AntigravityExecutor {
                     paid_tier_id: paid_tier_id.clone(),
                     updated_at: None,
                 },
-            );
+            )
+            .await;
             return;
         }
     }

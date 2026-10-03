@@ -94,7 +94,8 @@ fn auth_with(id: &str, base_url: Option<&str>, expires_in_minutes: i64) -> Auth 
         auth.attributes.insert("base_url".into(), url.into());
     }
     auth.metadata.insert("access_token".into(), json!("access-old"));
-    auth.metadata.insert("refresh_token".into(), json!("refresh-old"));
+    // Refreshes are deduplicated per refresh token, so each auth gets its own to keep parallel tests apart.
+    auth.metadata.insert("refresh_token".into(), json!(format!("refresh-old-{id}")));
     auth.metadata.insert("project_id".into(), json!("project-1"));
     let expiry = chrono::Utc::now() + chrono::Duration::minutes(expires_in_minutes);
     auth.metadata.insert("expired".into(), json!(expiry.to_rfc3339()));
@@ -143,7 +144,7 @@ async fn token_inside_five_minute_window_is_refreshed_outside_is_reused() {
     // The refresh request carries the OAuth form and the Go default User-Agent.
     let seen = fake.last("/token").expect("token request");
     let form = String::from_utf8_lossy(&seen.body).into_owned();
-    assert!(form.contains("grant_type=refresh_token") && form.contains("refresh_token=refresh-old"), "{form}");
+    assert!(form.contains("grant_type=refresh_token") && form.contains("refresh_token=refresh-old-"), "{form}");
     assert!(form.contains("client_secret=test-secret"), "{form}");
     assert_eq!(seen.headers.get("user-agent").and_then(|v| v.to_str().ok()), Some("Go-http-client/2.0"));
 }

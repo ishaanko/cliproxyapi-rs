@@ -12,6 +12,8 @@ cargo build --release
 ./target/release/cliproxy --config config.yaml
 ```
 
+Building needs `cmake`, a C++ compiler and libclang: the Claude Code and Chrome TLS fingerprints (`crates/tlsfp`) compile BoringSSL from source. If bindgen cannot find libclang, point `LIBCLANG_PATH` at the directory holding `libclang.so` (for example `uv pip install --target ~/.local/share/libclang libclang`, then `LIBCLANG_PATH=~/.local/share/libclang/clang/native`) and, if it also misses compiler headers, set `BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/<version>/include`. Without them, `cargo build --release -p cpa-server --no-default-features` drops the fingerprints (plain rustls, no BoringSSL).
+
 `config.example.yaml` documents every option; existing CLIProxyAPI configs and auth directories work unchanged. Log in to a provider with `--claude-login`, `--codex-login`, `--antigravity-login` and friends, or from the UI at `http://localhost:8317/management.html`.
 
 ## Compatibility
@@ -19,9 +21,9 @@ cargo build --release
 Verified against the Go implementation:
 
 - **Translators:** 5,684 / 5,684 golden cases, captured from the Go test suite and replayed through the Go code (`cargo run --release -p cpa-conformance`).
-- **End to end:** 669 / 669 HTTP and websocket scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `cargo run --release -p cpa-e2e -- check --server $PWD/target/release/cliproxy`).
+- **End to end:** 899 / 899 HTTP, websocket, realtime and media scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `cargo run --release -p cpa-e2e -- check --server $PWD/target/release/cliproxy`).
 
-Not ported: realtime/WebRTC endpoints, plugins, the Home control plane, the Redis queue, the TUI, and TLS fingerprinting.
+Not ported: realtime/WebRTC endpoints, plugins, the TUI, and TLS fingerprinting.
 
 ## License
 

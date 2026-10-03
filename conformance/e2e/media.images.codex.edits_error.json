@@ -1,0 +1,91 @@
+{
+  "id": "media.images.codex.edits_error",
+  "desc": "edit upstream 500 on every key",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "content_type": "multipart/form-data; boundary=e2eboundary0123456789",
+          "text": "--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\np\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\nPNGDATA-1\r\n--e2eboundary0123456789--\r\n"
+        }
+      },
+      "response": {
+        "status": 500,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-80228c41b545cfb8-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "mock upstream error 500",
+              "type": "server_error",
+              "code": null
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/images/edits",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "images": [
+          {
+            "image_url": "data:image/png;base64,UE5HREFUQS0x"
+          }
+        ],
+        "model": "gpt-image-2",
+        "prompt": "p"
+      }
+    },
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/images/edits",
+      "query": "",
+      "credential": "sk-codex-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "images": [
+          {
+            "image_url": "data:image/png;base64,UE5HREFUQS0x"
+          }
+        ],
+        "model": "gpt-image-2",
+        "prompt": "p"
+      }
+    }
+  ]
+}

@@ -36,6 +36,7 @@ pub mod antigravity;
 pub mod browser;
 pub mod callback_server;
 pub mod claude;
+pub(crate) mod claude_transport;
 pub mod codex;
 pub mod credmeta;
 pub mod devin;

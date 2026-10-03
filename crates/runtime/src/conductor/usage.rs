@@ -69,6 +69,23 @@ fn session_from_metadata(md: &Metadata) -> (String, String) {
     (bound_session_identity(&id), trimmed(meta::PARENT_SESSION_ID))
 }
 
+/// SHA-256 hex of the auth's access token (`access_token` / `accessToken`, or the same inside a
+/// `token` / `Token` object); empty when there is none (Go: `helps.AccessTokenSHA256`).
+fn access_token_sha256(auth: &Auth) -> String {
+    use sha2::{Digest, Sha256};
+    let nonblank = |v: Option<&Value>| v.and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let token = ["access_token", "accessToken"]
+        .iter()
+        .find_map(|k| nonblank(auth.metadata.get(*k)))
+        .or_else(|| {
+            ["token", "Token"].iter().find_map(|k| match auth.metadata.get(*k) {
+                Some(Value::Object(m)) => ["access_token", "accessToken"].iter().find_map(|tk| nonblank(m.get(*tk))),
+                _ => None,
+            })
+        });
+    token.map(|t| hex::encode(Sha256::digest(t.as_bytes()))).unwrap_or_default()
+}
+
 /// Session and request context of a record (Go: `ClientRequestMetadata` plus the reporter's
 /// trace id). The session is the request's canonical session projected to a UUID.
 fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
@@ -84,7 +101,17 @@ fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
     if session.is_empty() || session == parent {
         parent.clear();
     }
+    // Go: syncMetadataSessionToContext only carries these with a canonical session.
+    let has_session = !session_from_metadata(md).0.is_empty();
+    let flag = |key: &str| has_session && md.get(key).and_then(Value::as_bool).unwrap_or(false);
+    let nonblank = |key: &str| Some(meta_str(md, key).trim().to_string()).filter(|s| !s.is_empty());
     UsageExtra {
+        reasoning_effort: nonblank(meta::REASONING_EFFORT),
+        service_tier: nonblank(meta::SERVICE_TIER),
+        generate: md.get(meta::GENERATE).and_then(Value::as_bool),
+        node_kind: if has_session { meta_str(md, "node_kind").trim().to_string() } else { String::new() },
+        is_fork: flag(meta::IS_FORK),
+        is_compaction: flag(meta::IS_COMPACTION),
         client_ip: meta_str(md, meta::CLIENT_IP).trim().to_string(),
         resolved_client_ip: meta_str(md, meta::RESOLVED_CLIENT_IP).trim().to_string(),
         x_forwarded_for: meta_str(md, meta::X_FORWARDED_FOR).trim().to_string(),
@@ -100,9 +127,8 @@ fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
         },
         base_url: auth.map(|a| a.attr("base_url").trim().to_string()).unwrap_or_default(),
         auth_id: auth.map(|a| a.id.clone()).unwrap_or_default(),
-        reasoning_effort: meta_str(md, meta::REASONING_EFFORT).trim().to_string(),
-        service_tier: meta_str(md, meta::SERVICE_TIER).trim().to_string(),
-        generate: md.get(meta::GENERATE).and_then(Value::as_bool),
+        queue_source: String::new(),
+        access_token_sha256: String::new(),
         ..Default::default()
     }
 }
@@ -179,6 +205,7 @@ pub fn build_usage_record(
         }
         None => (String::new(), String::new(), String::new()),
     };
+    let queue_source = auth.map(|a| a.account_info().1).unwrap_or_default();
     let path = meta_str(&result.options.metadata, meta::REQUEST_PATH);
     UsageRecord {
         timestamp: now - chrono::Duration::milliseconds(latency_ms),
@@ -204,7 +231,11 @@ pub fn build_usage_record(
         stream: facts.stream,
         fail: result.error.as_ref().map(failure_of).unwrap_or_default(),
         tokens: facts.tokens.clone(),
-        extra: usage_extra(result, auth),
+        extra: UsageExtra {
+            queue_source,
+            access_token_sha256: auth.map(access_token_sha256).unwrap_or_default(),
+            ..usage_extra(result, auth)
+        },
     }
 }
 

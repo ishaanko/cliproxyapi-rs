@@ -1,0 +1,99 @@
+{
+  "id": "redis.protocol.errors",
+  "desc": "malformed frames answer ERR and close",
+  "steps": [
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Raw(\"*x\\r\\n\")]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": {
+                "raw": "*x\r\n"
+              },
+              "reply": {
+                "error": "ERR protocol error"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Raw(\"+PING\\r\\n\")]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": {
+                "raw": "+PING\r\n"
+              },
+              "reply": {
+                "error": "ERR protocol error"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Raw(\"*1\\r\\n!3\\r\\n\")]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": {
+                "raw": "*1\r\n!3\r\n"
+              },
+              "reply": {
+                "error": "ERR protocol error"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Raw(\"$4\\r\\nPING\\r\\n\")]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": {
+                "raw": "$4\r\nPING\r\n"
+              },
+              "reply": {
+                "error": "ERR protocol error"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

@@ -7,8 +7,11 @@ use std::time::Duration;
 
 use cpa_json::Value;
 use parking_lot::Mutex;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 
 use super::kimi_thinking_replay::{KimiThinkingReplaySnapshot, valid_replay_content};
+use super::kv::{KvBackend, KvError, KvResult, Store, compact_raw_json, read_or_reserve, scoped_kv_key, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started, new_uuid, oldest_keys, scoped_key};
 use crate::util::{GoJsonStyle, go_json_sorted};
 
@@ -211,6 +214,7 @@ impl ClaudeThinkingReplayCache {
             generation: entry.generation.clone(),
             loaded: true,
             found: true,
+            ..Default::default()
         };
         if entry.deleted {
             return (None, snapshot);
@@ -327,22 +331,123 @@ impl ClaudeThinkingReplayCache {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+const KV_PREFIX: &str = "cpa:claude:thinking-replay";
+const LABEL: &str = "Claude thinking replay";
+const MAX_SERIALIZED_BYTES: usize = CLAUDE_THINKING_REPLAY_CACHE_MAX_BYTES_PER_SESSION + 1024;
+
+/// Home value: `{"generation", "deleted"?, "contents"?}`; a tombstone has no contents.
+#[derive(Deserialize)]
+struct HomeValue {
+    #[serde(default)]
+    generation: String,
+    #[serde(default)]
+    deleted: bool,
+    #[serde(default)]
+    contents: Vec<Box<RawValue>>,
+}
+
+fn kv_key(model_family: &str, session_key: &str) -> String {
+    scoped_kv_key(KV_PREFIX, model_family, session_key)
+}
+
+fn marshal_home_value(generation: &str, deleted: bool, contents: &[Vec<u8>]) -> KvResult<Vec<u8>> {
+    let mut out = format!("{{\"generation\":\"{generation}\"");
+    if deleted {
+        out.push_str(",\"deleted\":true");
+    } else if !contents.is_empty() {
+        let parts = contents.iter().map(|c| compact_raw_json(c)).collect::<KvResult<Vec<_>>>()?;
+        out.push_str(",\"contents\":[");
+        out.push_str(&parts.join(","));
+        out.push(']');
+    }
+    out.push('}');
+    Ok(out.into_bytes())
+}
+
+/// `(contents, generation, deleted)` of a stored value.
+fn decode_home_value(raw: &[u8]) -> Option<(Vec<Vec<u8>>, String, bool)> {
+    if raw.is_empty() || raw.len() > MAX_SERIALIZED_BYTES || !cpa_json::valid(raw) {
+        return None;
+    }
+    let value: HomeValue = serde_json::from_slice(raw).ok()?;
+    if value.generation.trim().is_empty() {
+        return None;
+    }
+    if value.deleted {
+        return Some((Vec::new(), value.generation, true));
+    }
+    let contents: Vec<Vec<u8>> = value.contents.iter().map(|c| c.get().as_bytes().to_vec()).collect();
+    if contents.is_empty() || !contents.iter().all(|c| content_is_valid(c)) {
+        return None;
+    }
+    Some((contents, value.generation, false))
+}
+
+fn home_get(
+    backend: &dyn KvBackend,
+    model_family: &str,
+    session_key: &str,
+) -> KvResult<(Option<Vec<Vec<u8>>>, ClaudeThinkingReplaySnapshot)> {
+    let key = kv_key(model_family, session_key);
+    let raw = read_or_reserve(backend, &key, CLAUDE_THINKING_REPLAY_CACHE_TTL, MAX_SERIALIZED_BYTES, LABEL, || {
+        marshal_home_value(&new_uuid(), true, &[])
+    })?;
+    let mut snapshot = ClaudeThinkingReplaySnapshot { raw: raw.clone(), loaded: true, found: true, ..Default::default() };
+    let Some((contents, generation, deleted)) = decode_home_value(&raw) else {
+        return Err(KvError::new("invalid Claude thinking replay content"));
+    };
+    snapshot.generation = generation;
+    if let Err(e) = backend.expire(&key, CLAUDE_THINKING_REPLAY_CACHE_TTL) {
+        tracing::warn!("home kv Claude thinking replay expire failed: {e}");
+    }
+    let found = !deleted && !contents.is_empty();
+    Ok((found.then_some(contents), snapshot))
+}
+
 /// Go: CacheClaudeThinkingReplayBestEffort.
 pub fn cache_claude_thinking_replay_best_effort(model_family: &str, session_key: &str, content: &[u8]) -> bool {
-    ClaudeThinkingReplayCache::global().cache_best_effort(model_family, session_key, content)
+    if cache_key(model_family, session_key).is_none() || !content_is_valid(content) {
+        return false;
+    }
+    let result = store().and_then(|store| match store {
+        Store::Local => Ok(None),
+        Store::Home(backend) => {
+            let raw = marshal_home_value(&new_uuid(), false, &[content.to_vec()])?;
+            backend
+                .set(&kv_key(model_family, session_key), &raw, CLAUDE_THINKING_REPLAY_CACHE_TTL)
+                .map(Some)
+        }
+    });
+    match result {
+        Ok(Some(written)) => written,
+        Ok(None) => ClaudeThinkingReplayCache::global().cache_best_effort(model_family, session_key, content),
+        Err(e) => {
+            tracing::error!("home kv best-effort Claude thinking replay set failed: {e}");
+            false
+        }
+    }
 }
 
 /// Go: GetClaudeThinkingReplayRequired.
-pub fn get_claude_thinking_replay_required(model_family: &str, session_key: &str) -> Option<Vec<Vec<u8>>> {
-    ClaudeThinkingReplayCache::global().get_required(model_family, session_key)
+pub fn get_claude_thinking_replay_required(model_family: &str, session_key: &str) -> KvResult<Option<Vec<Vec<u8>>>> {
+    get_claude_thinking_replay_with_snapshot_required(model_family, session_key).map(|(contents, _)| contents)
 }
 
-/// Go: GetClaudeThinkingReplayWithSnapshotRequired.
+/// Go: GetClaudeThinkingReplayWithSnapshotRequired. In Home mode a miss reserves a tombstone,
+/// and the snapshot carries the stored value as the compare-and-swap guard.
 pub fn get_claude_thinking_replay_with_snapshot_required(
     model_family: &str,
     session_key: &str,
-) -> (Option<Vec<Vec<u8>>>, ClaudeThinkingReplaySnapshot) {
-    ClaudeThinkingReplayCache::global().get_with_snapshot_required(model_family, session_key)
+) -> KvResult<(Option<Vec<Vec<u8>>>, ClaudeThinkingReplaySnapshot)> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok((None, ClaudeThinkingReplaySnapshot::default()));
+    }
+    match store()? {
+        Store::Home(backend) => home_get(backend, model_family, session_key),
+        Store::Local => Ok(ClaudeThinkingReplayCache::global().get_with_snapshot_required(model_family, session_key)),
+    }
 }
 
 /// Go: ReplaceClaudeThinkingReplayIfUnchanged.
@@ -351,8 +456,34 @@ pub fn replace_claude_thinking_replay_if_unchanged(
     session_key: &str,
     snapshot: &ClaudeThinkingReplaySnapshot,
     content: &[u8],
-) -> bool {
-    ClaudeThinkingReplayCache::global().replace_if_unchanged(model_family, session_key, snapshot, content)
+) -> KvResult<bool> {
+    if cache_key(model_family, session_key).is_none() || !content_is_valid(content) {
+        return Ok(false);
+    }
+    if !snapshot.loaded {
+        return Ok(cache_claude_thinking_replay_best_effort(model_family, session_key, content));
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let Some((mut contents, _, deleted)) = decode_home_value(&snapshot.raw) else {
+                return Err(KvError::new("invalid Claude thinking replay snapshot"));
+            };
+            if deleted {
+                contents.clear();
+            }
+            let contents = append_content(&contents, content);
+            let raw = marshal_home_value(&new_uuid(), false, &contents)?;
+            backend.compare_and_swap(
+                &kv_key(model_family, session_key),
+                snapshot.found.then_some(snapshot.raw.as_slice()),
+                &raw,
+                CLAUDE_THINKING_REPLAY_CACHE_TTL,
+            )
+        }
+        Store::Local => {
+            Ok(ClaudeThinkingReplayCache::global().replace_if_unchanged(model_family, session_key, snapshot, content))
+        }
+    }
 }
 
 /// Go: DeleteClaudeThinkingReplayIfUnchanged.
@@ -360,13 +491,42 @@ pub fn delete_claude_thinking_replay_if_unchanged(
     model_family: &str,
     session_key: &str,
     snapshot: &ClaudeThinkingReplaySnapshot,
-) -> bool {
-    ClaudeThinkingReplayCache::global().delete_if_unchanged(model_family, session_key, snapshot)
+) -> KvResult<bool> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok(false);
+    }
+    if !snapshot.loaded {
+        delete_claude_thinking_replay_required(model_family, session_key)?;
+        return Ok(true);
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let tombstone = marshal_home_value(&new_uuid(), true, &[])?;
+            backend.compare_and_swap(
+                &kv_key(model_family, session_key),
+                snapshot.found.then_some(snapshot.raw.as_slice()),
+                &tombstone,
+                CLAUDE_THINKING_REPLAY_CACHE_TTL,
+            )
+        }
+        Store::Local => {
+            Ok(ClaudeThinkingReplayCache::global().delete_if_unchanged(model_family, session_key, snapshot))
+        }
+    }
 }
 
 /// Go: DeleteClaudeThinkingReplayRequired.
-pub fn delete_claude_thinking_replay_required(model_family: &str, session_key: &str) {
-    ClaudeThinkingReplayCache::global().delete_required(model_family, session_key);
+pub fn delete_claude_thinking_replay_required(model_family: &str, session_key: &str) -> KvResult<()> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend.del(&kv_key(model_family, session_key)),
+        Store::Local => {
+            ClaudeThinkingReplayCache::global().delete_required(model_family, session_key);
+            Ok(())
+        }
+    }
 }
 
 /// Go: ClearClaudeThinkingReplayCache.

@@ -7,13 +7,21 @@ license.workspace = true
 # Provider executors (Go internal/runtime/executor): one module per provider plus `helps`,
 # the provider-independent helpers (payload rules, proxy-aware clients, usage extraction,
 # SSE line reader, upstream status errors) that every executor builds on.
+[features]
+# Impersonated TLS ClientHellos (Claude Code for api.anthropic.com, Chrome for chatgpt.com) on
+# BoringSSL; needs cmake, a C++ compiler and libclang to build (see crates/tlsfp).
+default = ["tls-fingerprint"]
+tls-fingerprint = ["dep:cpa-tlsfp", "cpa-auth/tls-fingerprint"]
+
 [dependencies]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
+cpa-tlsfp = { path = "../tlsfp", optional = true }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 async-trait = "0.1"
 serde.workspace = true
 serde_json.workspace = true

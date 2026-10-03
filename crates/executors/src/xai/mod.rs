@@ -24,6 +24,7 @@ use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, 
 use http::{HeaderMap, Method};
 
 use crate::ConfigRx;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::proxy::{effective_proxy_url, new_proxy_aware_http_client};
 use crate::helps::usage::UsageReporter;
@@ -113,6 +114,9 @@ impl Executor for XaiExecutor {
     /// through unchanged.
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
         let cfg = self.config();
+        if let Some(result) = refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
         let refresh_token = auth_metadata_string(auth, "refresh_token");
         if refresh_token.is_empty() {
             return Ok(auth.clone());

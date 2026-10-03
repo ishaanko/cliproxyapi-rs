@@ -95,7 +95,7 @@ pub async fn prepare_request_auth(auth: &Auth, global_proxy: &str) -> Result<Opt
     }
     let (api_key, _) = claude_creds(auth);
     let mut auth = auth.clone();
-    ensure_claude_credential_device_pool_required(&mut auth);
+    ensure_claude_credential_device_pool_required(&mut auth).await?;
     if !claude_credential_account_uuid(&auth).is_empty() {
         return Ok(Some(auth));
     }

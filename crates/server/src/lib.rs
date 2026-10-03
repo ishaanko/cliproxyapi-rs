@@ -6,8 +6,11 @@
 //! usage tracker, optional model catalog) and call [`build_router`] /
 //! [`build_router_with_management`], then [`serve::serve`].
 //!
-//! Not ported: image and video generation (501), `/v1/alpha/search`,
-//! the Redis protocol multiplexer, Home mode, TUI, pprof, plugins, the AI Studio `/v1/ws` relay.
+//! Home mode here covers the heartbeat gate, Home-backed model lists, request-log forwarding and
+//! the application log forwarder ([`home_app_log`]); the service wiring lives with the caller.
+//!
+//! Not ported: image and video generation (501), `/v1/alpha/search`, pprof, plugins, the AI Studio
+//! `/v1/ws` relay.
 
 // `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
 #![allow(clippy::result_large_err)]
@@ -23,6 +26,8 @@ pub mod exec;
 pub mod forward;
 pub mod handlers;
 pub mod headers;
+pub mod home_app_log;
+pub mod home_models;
 pub mod logging;
 pub mod middleware;
 pub mod models;
@@ -30,10 +35,14 @@ mod plugin_exec;
 mod plugin_flow;
 mod plugin_model;
 pub use plugin_model::ServerModelExecutor;
+pub mod multipart;
+pub mod mux;
 pub mod realtime;
+pub mod redis_protocol;
 pub mod reply;
 pub mod req;
 pub mod reqlog;
+pub mod reqlog_home;
 pub mod responses_error;
 pub mod responses_framer;
 pub mod router;

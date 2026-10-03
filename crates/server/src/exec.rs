@@ -2,7 +2,7 @@
 //! handlers_stream): model -> provider routing, execution metadata, non-stream / stream / count
 //! execution through the auth manager, and the stream bootstrap-retry read.
 //!
-//! Plugin interceptors, model routers and plugin executors live in `plugin_exec.rs`; the Home mode of the Go pipeline is not ported.
+//! Plugin interceptors, model routers and plugin executors live in `plugin_exec.rs`; Home mode is handled inside the conductor.
 
 use std::sync::Arc;
 
@@ -82,6 +82,11 @@ pub struct ExecArgs<'a> {
     /// Explicit request headers / query instead of the inbound ones (Go: `modelExecutionHeaders`).
     pub headers: Option<HeaderMap>,
     pub query: Option<Vec<(String, String)>>,
+    /// Handler-level source type the translator `Format` cannot express (`openai-image`,
+    /// `openai-video`); stored as the `handler_type` metadata the executors read.
+    pub handler_type: Option<&'a str>,
+    /// Skip known free-tier credentials (Go: `WithDisallowFreeAuth`).
+    pub disallow_free_auth: bool,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -106,7 +111,17 @@ impl<'a> ExecArgs<'a> {
             internal_source: false,
             headers: None,
             query: None,
+            handler_type: None,
+            disallow_free_auth: false,
         }
+    }
+
+    /// Image / video endpoints: the entry format is only a placeholder, executors dispatch on
+    /// the handler type (Go: `SourceFormat` `openai-image` / `openai-video`).
+    pub fn handler(handler_type: &'a str, model: &'a str, body: Bytes) -> Self {
+        let mut args = ExecArgs::new(Format::OpenAI, model, body, "");
+        args.handler_type = Some(handler_type);
+        args
     }
 }
 
@@ -192,6 +207,12 @@ impl Pipeline {
                 md.insert(meta::CALLER_SCOPE.into(), json!(scope));
             }
         }
+        if let Some(handler_type) = a.handler_type {
+            md.insert(cpa_executors::openai_compat::META_HANDLER_TYPE.into(), json!(handler_type));
+        }
+        if a.disallow_free_auth {
+            md.insert(meta::DISALLOW_FREE_AUTH.into(), json!(true));
+        }
         if a.downstream_websocket {
             md.insert(cpa_executors::codex::META_DOWNSTREAM_WEBSOCKET.into(), json!(true));
         }
@@ -208,7 +229,7 @@ impl Pipeline {
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::AUTH_SELECTION_MODEL.into(), json!(sel));
         }
-        let effort = extract_reasoning_effort(&a.body, a.entry.as_str(), normalized_model);
+        let effort = extract_reasoning_effort(&a.body, a.handler_type.unwrap_or(a.entry.as_str()), normalized_model);
         if !effort.is_empty() {
             md.insert(meta::REASONING_EFFORT.into(), json!(effort));
         }
@@ -258,6 +279,10 @@ impl Pipeline {
 
     pub(crate) fn providers(&self, a: &ExecArgs<'_>) -> Result<(Vec<String>, String), ErrorMessage> {
         let (providers, normalized) = self.providers_for_execution(a.model, a.allow_image_model, a.forced_provider)?;
+        if a.handler_type.is_some() {
+            // Handler-level types never use the native Interactions provider.
+            return Ok((exclude_provider(providers, constant::GEMINI_INTERACTIONS), normalized));
+        }
         Ok((adjust_providers_for_entry(a.entry, providers), normalized))
     }
 
@@ -604,7 +629,7 @@ fn prefer_provider(providers: Vec<String>, preferred: &str) -> Vec<String> {
     out
 }
 
-fn exclude_provider(mut providers: Vec<String>, excluded: &str) -> Vec<String> {
+pub fn exclude_provider(mut providers: Vec<String>, excluded: &str) -> Vec<String> {
     let excluded = norm(excluded);
     if excluded.is_empty() {
         return providers;

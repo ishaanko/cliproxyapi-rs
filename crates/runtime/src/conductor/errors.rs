@@ -237,6 +237,9 @@ pub fn model_cooldown_error(
 /// Headers that are safe to relay for a conductor-generated error (retry/cooldown hints only);
 /// empty for upstream errors (Go: SafeResponseHeaders).
 pub fn safe_response_headers(err: &ExecError) -> HeaderMap {
+    if let Some(headers) = super::home_concurrency::home_safe_response_headers(err) {
+        return headers;
+    }
     if matches!(
         err.auth_code.as_deref(),
         Some(CODE_MODEL_COOLDOWN) | Some(CODE_AUTH_UNAVAILABLE)

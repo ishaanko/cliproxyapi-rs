@@ -6,9 +6,12 @@
 //! the service installs as its `ExecutorFactory`.
 
 mod compat_config;
-mod images;
+pub(crate) mod images;
 pub(crate) mod translate;
 mod stream;
+
+/// Metadata key naming a handler-level source type (`openai-image`, `openai-video`).
+pub use translate::META_HANDLER_TYPE;
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -30,6 +33,7 @@ use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGEN
 use http::{HeaderMap, HeaderValue};
 
 use crate::ConfigRx;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
     APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error,
 };
@@ -540,9 +544,8 @@ fn image_endpoint_path(opts: &Options) -> &'static str {
     let path = payload_request_path(opts);
     if path.ends_with("/images/edits") {
         IMAGES_EDITS_PATH
-    } else if path.ends_with("/images/generations") {
-        IMAGES_GENERATIONS_PATH
     } else {
+        // Anything else (including `/images/generations`) defaults to generations, as in Go.
         IMAGES_GENERATIONS_PATH
     }
 }
@@ -585,6 +588,10 @@ impl Executor for OpenAiCompatExecutor {
 
     /// Credentials are static API keys; OAuth-style refresh tokens cannot be rotated here.
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        let cfg = self.cfg.borrow().clone();
+        if let Some(result) = refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
         if has_refresh_token(auth) {
             let provider = if self.provider.is_empty() { auth.provider.trim() } else { self.provider.as_str() };
             return Err(ExecError::new(

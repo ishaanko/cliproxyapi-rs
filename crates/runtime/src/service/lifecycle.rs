@@ -18,6 +18,10 @@ use parking_lot::Mutex;
 use tokio::sync::{MutexGuard, watch};
 use tokio::task::JoinHandle;
 
+mod home;
+
+pub use home::{HomeHooks, force_home_runtime_config, merge_home_config};
+
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
 use super::models::{
     ModelRegistration, apply_model_prefixes, apply_oauth_model_alias_for_auth, apply_oauth_settings_for_auth, apply_excluded_models,
@@ -125,6 +129,8 @@ pub struct ServiceBuilder {
     dotenv_dir: Option<PathBuf>,
     watch: bool,
     antigravity_probe: bool,
+    initial_config: Option<Config>,
+    home_hooks: Option<Arc<dyn HomeHooks>>,
 }
 
 impl ServiceBuilder {
@@ -143,7 +149,22 @@ impl ServiceBuilder {
             dotenv_dir: std::env::current_dir().ok(),
             watch: true,
             antigravity_probe: true,
+            initial_config: None,
+            home_hooks: None,
         }
+    }
+
+    /// Uses `config` instead of loading the config file (Home mode: the config came from Home).
+    /// File watching is off for such a service when `config.home.enabled`.
+    pub fn initial_config(mut self, config: Config) -> Self {
+        self.initial_config = Some(config);
+        self
+    }
+
+    /// Observer of the Home lifetime (log forwarding).
+    pub fn home_hooks(mut self, hooks: Arc<dyn HomeHooks>) -> Self {
+        self.home_hooks = Some(hooks);
+        self
     }
 
     /// An executor registered with the manager when the service starts.
@@ -222,12 +243,17 @@ impl ServiceBuilder {
             tracing::warn!("failed to load .env file: {err}");
         }
         let config_path = std::path::absolute(&self.config_path).map_err(ServiceError::ConfigPath)?;
-        let mut config = load_config(&config_path)?;
+        let mut config = match self.initial_config {
+            Some(config) => config,
+            None => load_config(&config_path)?,
+        };
         config.validate_credential_weights()?;
         match resolve_auth_dir(&config.auth_dir) {
             Ok(dir) => config.auth_dir = dir.to_string_lossy().into_owned(),
             Err(err) => tracing::error!("failed to resolve auth directory: {err}"),
         }
+        // Home owns the config: nothing to watch.
+        let watch = self.watch && !config.home.enabled;
 
         let store = Arc::new(FileTokenStore::with_dir(&config.auth_dir));
         let manager = self.manager.unwrap_or_default();
@@ -257,9 +283,13 @@ impl ServiceBuilder {
             plugins: self.plugins,
             prober: self.antigravity_probe.then(Prober::default),
             probes: Mutex::new(Vec::new()),
-            watch: self.watch,
+            watch,
             config_watcher: Mutex::new(None),
             task: Mutex::new(None),
+            home_supervisor: Mutex::new(None),
+            home_state: Mutex::new(None),
+            home_hooks: self.home_hooks,
+            home_fatal: tokio::sync::Notify::new(),
         };
         Ok(Service { inner: Arc::new(inner) })
     }
@@ -291,6 +321,12 @@ struct Inner {
     watch: bool,
     config_watcher: Mutex<Option<Arc<ConfigWatcher>>>,
     task: Mutex<Option<JoinHandle<()>>>,
+    home_supervisor: Mutex<Option<home::HomeSupervisor>>,
+    /// The dispatch bundle the active Home lifetime published.
+    home_state: Mutex<Option<Arc<crate::conductor::HomeDispatchBundle>>>,
+    home_hooks: Option<Arc<dyn HomeHooks>>,
+    /// Signalled when Home lifecycle recovery failed in a way that requires restarting the process.
+    home_fatal: tokio::sync::Notify,
 }
 
 /// Result of the most recent config reload.
@@ -378,8 +414,11 @@ impl Service {
     async fn start_inner(&self) -> Result<(), ServiceError> {
         let inner = &self.inner;
         let cfg = self.config();
-        let dir = cfg.auth_dir.clone();
-        blocking(move || ensure_auth_dir(&dir)).await??;
+        let home_mode = cfg.home.enabled;
+        if !home_mode {
+            let dir = cfg.auth_dir.clone();
+            blocking(move || ensure_auth_dir(&dir)).await??;
+        }
         inner.store.set_base_dir(&cfg.auth_dir);
         inner.port.config_changed(&cfg);
         inner.manager.set_store(Some(inner.store.clone()));
@@ -393,6 +432,13 @@ impl Service {
         }
 
         let watchers = if inner.watch { Some(self.open_watchers(&cfg).await?) } else { None };
+
+        if home_mode {
+            // Credentials live at Home: no auth store, auth files, cooldown restore or refresh
+            // loop. Config-synthesized auths arrive with the first config from Home.
+            inner.start_home();
+            return Ok(());
+        }
 
         // Go `Manager.Load`: the store's auths enter the manager first (with file mtimes as
         // `created_at`); synthesized auths then update them.
@@ -494,7 +540,13 @@ impl Service {
             task.abort();
         }
         self.inner.config_watcher.lock().take();
+        self.inner.stop_home();
         self.inner.manager.stop_auto_refresh();
+    }
+
+    /// Resolves when Home lifecycle recovery failed beyond repair (the process should exit).
+    pub async fn home_fatal(&self) {
+        self.inner.home_fatal.notified().await;
     }
 }
 
@@ -688,6 +740,8 @@ impl Inner {
             self.manager.set_cooldown_state_store(cooldown_store_for(&new));
         }
         let mut new_watcher = None;
+        // Home mode keeps no auth directory.
+        let plan = ReloadPlan { auth_dir_changed: plan.auth_dir_changed && !new.home.enabled, ..plan };
         if plan.auth_dir_changed {
             self.store.set_base_dir(&new.auth_dir);
             let dir = new.auth_dir.clone();

@@ -409,6 +409,7 @@ impl Manager {
             let executor = super::executor_locked(&st, &provider);
             (provider, executor)
         };
+        self.home_forget_auth(id);
         self.queue_refresh_unschedule(id);
         // Drop the per-auth refresh lock unless a refresh is holding it. (`persist_locks` stay:
         // their (epoch, generation) high-water mark rejects stale saves from the removed auth.)

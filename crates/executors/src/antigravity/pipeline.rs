@@ -3,7 +3,6 @@
 //! antigravity_executor_stream.go), plus the shared error handling for upstream failures.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use cpa_auth::Auth;
 use cpa_config::Config;
@@ -16,8 +15,8 @@ use serde_json::Value;
 use super::AntigravityExecutor;
 use super::credits::{
     Decision429Kind, cooling_disabled, credits_retry_enabled, decide_429, has_explicit_credits_balance_exhausted_reason,
-    inject_enabled_credit_types, is_in_short_cooldown, mark_credits_permanently_disabled, mark_short_cooldown,
-    new_status_err, should_bypass_short_cooldown,
+    home_kv_unavailable_status_err, inject_enabled_credit_types, is_in_short_cooldown_required,
+    mark_credits_permanently_disabled, mark_short_cooldown_required, new_status_err, should_bypass_short_cooldown,
 };
 use crate::helps::cloak_obfuscate::{SensitiveWordMatcher, obfuscate_sensitive_words_in_system_instruction};
 use super::replay::{
@@ -87,11 +86,21 @@ pub(crate) fn base_model_of(model: &str) -> String {
 impl AntigravityExecutor {
     /// Short-cooldown precheck: an auth that hit a short rate limit answers 429 with the
     /// remaining time so the conductor switches credentials (skipped for the credits fallback).
-    pub(crate) fn check_short_cooldown(&self, cfg: &Config, auth: &Auth, base_model: &str, opts: &Options) -> Result<(), ExecError> {
+    /// A Home KV failure reads as `503 home kv store unavailable`.
+    pub(crate) async fn check_short_cooldown(
+        &self,
+        cfg: &Config,
+        auth: &Auth,
+        base_model: &str,
+        opts: &Options,
+    ) -> Result<(), ExecError> {
         if cooling_disabled(auth, Some(cfg)) {
             return Ok(());
         }
-        if let Some(remaining) = is_in_short_cooldown(auth, base_model, Instant::now())
+        let remaining = is_in_short_cooldown_required(auth, base_model)
+            .await
+            .map_err(|e| pre_send(home_kv_unavailable_status_err(Some(&e))))?;
+        if let Some(remaining) = remaining
             && !should_bypass_short_cooldown(credits_requested(opts), cfg)
         {
             tracing::debug!(
@@ -262,7 +271,7 @@ impl AntigravityExecutor {
 
     /// Non-2xx handling common to every path: 429 cooldown and credits bookkeeping, replay
     /// invalidation on signature errors, then the typed status error.
-    pub(crate) fn handle_upstream_error(&self, p: &Prepared, status: u16, body: &[u8]) -> ExecError {
+    pub(crate) async fn handle_upstream_error(&self, p: &Prepared, status: u16, body: &[u8]) -> ExecError {
         if status == 429 {
             let decision = decide_429(body);
             match decision.kind {
@@ -272,7 +281,9 @@ impl AntigravityExecutor {
                         && !d.is_zero()
                         && !cooling_disabled(&p.auth, Some(&p.cfg))
                     {
-                        mark_short_cooldown(&p.auth, &p.base_model, Instant::now(), d);
+                        if let Err(e) = mark_short_cooldown_required(&p.auth, &p.base_model, d).await {
+                            return home_kv_unavailable_status_err(Some(&e));
+                        }
                         tracing::debug!(
                             "antigravity executor: short quota cooldown ({d:?}) for model {}, recorded cooldown",
                             p.base_model
@@ -285,7 +296,7 @@ impl AntigravityExecutor {
                         && has_explicit_credits_balance_exhausted_reason(body)
                         && !cooling_disabled(&p.auth, Some(&p.cfg))
                     {
-                        mark_credits_permanently_disabled(&p.auth);
+                        mark_credits_permanently_disabled(&p.auth).await;
                     }
                 }
                 _ => {}

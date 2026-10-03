@@ -13,6 +13,8 @@ use http::HeaderMap;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, watch};
 
+use cpa_runtime::executor::ExecutionLifecycle;
+
 use super::conn::{CloseInfo, Read, ReadError, WsConn, spawn_conn};
 use super::transport::{DialFailure, Dialed};
 
@@ -31,6 +33,8 @@ struct ConnSlot {
     proxy_url: String,
     /// Connection whose requests had the multi-agent v2 namespace optimized.
     multi_agent_v2_optimized: Option<u64>,
+    /// Home execution scope the connection is bound to (see `bind_execution_lifecycle`).
+    lifecycle: Option<Arc<dyn ExecutionLifecycle>>,
 }
 
 struct Active {
@@ -45,6 +49,8 @@ pub struct Session {
     /// Serializes requests on the session; held from request start to stream completion.
     pub req_mu: Arc<tokio::sync::Mutex<()>>,
     slot: Mutex<ConnSlot>,
+    /// Serializes lifecycle binds (Go: `lifecycleBindMu`).
+    lifecycle_bind: Mutex<()>,
     active: Mutex<Option<Active>>,
     disconnect_notified: AtomicBool,
     disconnect_tx: watch::Sender<Option<String>>,
@@ -57,6 +63,7 @@ impl Session {
             id: id.to_string(),
             req_mu: Arc::new(tokio::sync::Mutex::new(())),
             slot: Mutex::new(ConnSlot::default()),
+            lifecycle_bind: Mutex::new(()),
             active: Mutex::new(None),
             disconnect_notified: AtomicBool::new(false),
             disconnect_tx,
@@ -248,6 +255,7 @@ impl Session {
             }
             slot.conn = None;
             slot.multi_agent_v2_optimized = None;
+            slot.lifecycle = None;
             (slot.auth_id.clone(), slot.ws_url.clone())
         };
         let last_event = conn.last_event_type();
@@ -270,6 +278,7 @@ impl Session {
             let mut slot = self.slot.lock();
             let conn = slot.conn.take();
             slot.multi_agent_v2_optimized = None;
+            slot.lifecycle = None;
             (conn, slot.auth_id.clone(), slot.ws_url.clone())
         };
         if let Some(conn) = conn {
@@ -283,6 +292,63 @@ impl Session {
         }
     }
 
+    /// Binds `conn` to the request's execution lifecycle (Home dispatch): the connection closes
+    /// when the lifecycle ends, and the lifecycle is retained so the session keeps its
+    /// credential for later requests (Go: `bindExecutionLifecycle`). No-op without a lifecycle.
+    pub fn bind_execution_lifecycle(
+        self: &Arc<Self>,
+        lifecycle: Option<&Arc<dyn ExecutionLifecycle>>,
+        conn: &Arc<WsConn>,
+    ) -> Result<(), String> {
+        let Some(lifecycle) = lifecycle else { return Ok(()) };
+        let _bind = self.lifecycle_bind.lock();
+        {
+            let slot = self.slot.lock();
+            let bound = slot.conn.as_ref().is_some_and(|c| c.id == conn.id)
+                && slot.lifecycle.as_ref().is_some_and(|l| same_lifecycle(l, lifecycle));
+            if bound {
+                return Ok(());
+            }
+        }
+        let (session, bound_conn, bound_lifecycle) = (Arc::clone(self), Arc::clone(conn), Arc::clone(lifecycle));
+        lifecycle.bind(Box::new(move || {
+            session.close_bound_connection(&bound_conn, &bound_lifecycle);
+            Ok(())
+        }))?;
+        lifecycle.retain();
+        let previous = {
+            let mut slot = self.slot.lock();
+            if !slot.conn.as_ref().is_some_and(|c| c.id == conn.id) {
+                return Err("codex websockets executor: websocket connection closed during lifecycle bind".into());
+            }
+            slot.lifecycle.replace(Arc::clone(lifecycle))
+        };
+        if let Some(previous) = previous
+            && !same_lifecycle(&previous, lifecycle)
+        {
+            previous.end("target_replaced");
+        }
+        Ok(())
+    }
+
+    /// The lifecycle's closer: drops the connection from the slot and closes it, then ends the
+    /// lifecycle from another thread (it is running inside the lifecycle's own close).
+    fn close_bound_connection(&self, conn: &Arc<WsConn>, lifecycle: &Arc<dyn ExecutionLifecycle>) {
+        {
+            let mut slot = self.slot.lock();
+            if slot.conn.as_ref().is_some_and(|c| c.id == conn.id) {
+                slot.conn = None;
+                slot.multi_agent_v2_optimized = None;
+            }
+            if slot.lifecycle.as_ref().is_some_and(|l| same_lifecycle(l, lifecycle)) {
+                slot.lifecycle = None;
+            }
+        }
+        conn.close();
+        let lifecycle = Arc::clone(lifecycle);
+        std::thread::spawn(move || lifecycle.end("connection_closed"));
+    }
+
     /// The close frame the upstream sent on `conn`, mapped to a close code for write errors.
     pub fn upstream_close(&self, conn: &WsConn) -> Option<CloseInfo> {
         conn.disconnect_error()
@@ -291,6 +357,10 @@ impl Session {
     fn auth_id(&self) -> String {
         self.slot.lock().auth_id.trim().to_string()
     }
+}
+
+fn same_lifecycle(a: &Arc<dyn ExecutionLifecycle>, b: &Arc<dyn ExecutionLifecycle>) -> bool {
+    std::ptr::addr_eq(Arc::as_ptr(a), Arc::as_ptr(b))
 }
 
 fn target_matches(slot: &ConnSlot, auth_id: &str, ws_url: &str, proxy_url: &str) -> bool {

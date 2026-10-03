@@ -14,6 +14,7 @@ use cpa_core::thinking::parse_suffix;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
 
 use crate::ConfigRx;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::usage::UsageReporter;
 
@@ -100,6 +101,9 @@ impl Executor for ClaudeExecutor {
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
         let cfg = self.config();
+        if let Some(result) = refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
         auth::refresh(auth, &cfg.proxy_url).await
     }
 

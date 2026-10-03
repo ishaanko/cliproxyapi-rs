@@ -123,6 +123,45 @@ fn decode_home_available_models_sorts_and_dedupes() {
     assert!(decode_home_available_models(br#"{"error":{"type":"no_credentials"}}"#).is_empty());
 }
 
+/// The Home models query goes out with the client headers and an empty `client_version`, and the
+/// answer is decoded like Go's codexHomeAvailableModels. Uses a local client, not the global one.
+#[tokio::test]
+async fn home_models_query_sends_headers_and_decodes_the_answer() {
+    use cpa_home::testing::{MockHome, bulk};
+
+    let raw = r#"{"codex":[{"id":"model-b","display_name":"Model B"},{"id":"model-a"}]}"#;
+    let mock = MockHome::start(move |_| bulk(raw)).await;
+    let cfg = cpa_config::HomeConfig {
+        enabled: true,
+        host: "127.0.0.1".into(),
+        port: i64::from(mock.port()),
+        ..Default::default()
+    };
+    let client = cpa_home::Client::new(cfg);
+    client.set_heartbeat_ok_for_tests(true);
+
+    let models = query_home_models(&client, &headers_with_ua("codex_cli_rs/0.144.1"))
+        .await
+        .expect("models");
+    assert_eq!(models.len(), 2);
+    assert_eq!(map_string(&models[0], "id"), "model-a");
+    assert_eq!(map_string(&models[1], "description"), "Model B");
+
+    let commands = mock.commands();
+    let get = commands
+        .iter()
+        .find(|c| c.first().is_some_and(|n| n.eq_ignore_ascii_case("get")))
+        .expect("get command");
+    let request = parsed(get[1].as_bytes());
+    assert_eq!(request.g("type").str(), "models");
+    assert_eq!(
+        request.g("headers.user-agent").str(),
+        "codex_cli_rs/0.144.1"
+    );
+    assert!(request.g("query.client_version").exists());
+    assert_eq!(request.g("query.client_version").str(), "");
+}
+
 #[test]
 fn rewrite_spawn_agent_description_normalizes_model_list() {
     let payload = br#"{
@@ -890,7 +929,7 @@ fn spawn_agent_models_cache_invalidation() {
     let registry = global_registry();
     let (client1, client2) = ("cache-invalidation-client-1", "cache-invalidation-client-2");
     let formatted = || {
-        spawn_agent_models_and_markdown_for_request(&RequestCtx::default(), false)
+        spawn_agent_models_and_markdown_for_request(&HeaderMap::new(), false)
             .markdown
             .clone()
     };

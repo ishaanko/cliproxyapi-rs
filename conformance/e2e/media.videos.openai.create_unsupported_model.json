@@ -1,0 +1,46 @@
+{
+  "id": "media.videos.openai.create_unsupported_model",
+  "desc": "model not supported on the OpenAI route",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "prompt": "p"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "gpt-5.5",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Model gpt-5.5 is not supported on /openai/v1/videos. Use sora-2."
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [],
+  "volatile": [
+    "/steps/0/response/body/value/id"
+  ]
+}

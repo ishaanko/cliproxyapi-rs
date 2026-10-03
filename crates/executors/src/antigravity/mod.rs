@@ -6,9 +6,12 @@
 //! retries and rotation). Streaming and non-stream results are translated back to the client
 //! format; 429s feed short cooldowns and the AI-credits fallback.
 //!
-//! Not ported: Home KV shared state (Home mode), the raw `HttpRequest` passthrough (no trait
-//! hook yet), request-log capture (the executor has no handle to the per-request log) and the
-//! Codex multi-agent-v2 request rewrite (a Codex-client-only option).
+//! Home mode: when a Home client is installed, the credits balance, short cooldowns and the
+//! hint-refresh lock live in Home KV (see `credits`).
+//!
+//! Not ported: the raw `HttpRequest` passthrough (no trait hook yet), request-log capture (the
+//! executor has no handle to the per-request log) and the Codex multi-agent-v2 request rewrite
+//! (a Codex-client-only option).
 
 // ExecError is the runtime contract's error type; its size is not this module's to change.
 #![allow(clippy::result_large_err)]
@@ -68,6 +71,13 @@ impl AntigravityExecutor {
     pub(crate) fn cfg(&self) -> Arc<Config> {
         self.cfg.borrow().clone()
     }
+}
+
+/// Home-mode credits check, exposed for the integration tests that install a process-wide Home
+/// client (Go: antigravityAuthHasCreditsRequired).
+#[doc(hidden)]
+pub async fn auth_has_credits_required(auth: &Auth) -> Result<bool, cpa_home::HomeError> {
+    credits::auth_has_credits_required(auth).await
 }
 
 /// Builds the executor for registration with the conductor.

@@ -69,14 +69,25 @@ pub struct UsageExtra {
     /// Fields only usage plugins read (Go: `usage.Record` beyond the queue record).
     pub base_url: String,
     pub auth_id: String,
-    pub reasoning_effort: String,
-    pub service_tier: String,
     pub response_service_tier: String,
     pub response_model: String,
-    /// `None` means generation is enabled (Go: `GenerateEnabled(nil)`).
-    pub generate: Option<bool>,
     pub cache_read_tokens: i64,
     pub cache_creation_tokens: i64,
+    /// Account the usage queue reports as the record's `source` (API key or e-mail); empty
+    /// falls back to `UsageRecord::source`.
+    pub queue_source: String,
+    /// SHA-256 hex of the access token the attempt used (never the token); empty for API keys.
+    pub access_token_sha256: String,
+    /// Reasoning effort and service tier the request carried (`None` when the request did not set
+    /// them; the queue then reports `""` and `"auto"`).
+    pub reasoning_effort: Option<String>,
+    pub service_tier: Option<String>,
+    /// `false` only when the client explicitly disabled generation.
+    pub generate: Option<bool>,
+    /// Session hierarchy facts (only present with a canonical session).
+    pub node_kind: String,
+    pub is_fork: bool,
+    pub is_compaction: bool,
 }
 
 /// Receives every usage record, whether or not statistics are enabled (Go: a registered
@@ -233,9 +244,13 @@ struct State {
     hourly: BTreeMap<i64, UsageAgg>,
 }
 
+/// Observer of every recorded event (the usage queue).
+pub type UsageSink = std::sync::Arc<dyn Fn(&UsageRecord) + Send + Sync>;
+
 /// Process-wide usage store: counters plus a ring buffer of recent events.
 pub struct UsageTracker {
     enabled: AtomicBool,
+    sink: Mutex<Option<UsageSink>>,
     started_at: DateTime<Utc>,
     state: Mutex<State>,
     listeners: Mutex<Vec<(String, Arc<dyn UsageListener>)>>,
@@ -279,6 +294,7 @@ impl UsageTracker {
     pub fn new() -> Self {
         Self {
             enabled: AtomicBool::new(true),
+            sink: Mutex::new(None),
             started_at: Utc::now(),
             state: Mutex::new(State::default()),
             listeners: Mutex::new(Vec::new()),
@@ -313,6 +329,11 @@ impl UsageTracker {
         self.enabled.store(enabled, Ordering::Relaxed);
     }
 
+    /// Installs (or clears) the sink that sees every recorded event.
+    pub fn set_sink(&self, sink: Option<UsageSink>) {
+        *self.sink.lock() = sink;
+    }
+
     /// Records one usage event: aggregates it and appends it to the ring buffer.
     pub fn record(&self, mut record: UsageRecord) {
         let listeners: Vec<Arc<dyn UsageListener>> = self.listeners.lock().iter().map(|(_, l)| l.clone()).collect();
@@ -321,6 +342,10 @@ impl UsageTracker {
         }
         if !self.enabled.load(Ordering::Relaxed) {
             return;
+        }
+        let sink = self.sink.lock().clone();
+        if let Some(sink) = sink {
+            sink(&record);
         }
         truncate_utf8(&mut record.fail.body, FAIL_BODY_MAX_BYTES);
         let hour = record.timestamp.timestamp().div_euclid(HOUR_SECS) * HOUR_SECS;

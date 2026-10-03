@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::{CLIENT_KEY, MGMT_SECRET};
+use crate::resp::{RespConn, Reply as RespReply};
 
 // ---------------------------------------------------------------- request model
 
@@ -35,6 +36,8 @@ pub enum Body {
     Json(Value),
     /// Sent verbatim with `Content-Type: application/json` (for malformed bodies).
     Text(String),
+    /// Sent verbatim with the given Content-Type (multipart and form bodies).
+    Raw { content_type: String, bytes: Vec<u8> },
     /// Sent verbatim with the given content type (SDP, multipart).
     Typed(&'static str, String),
 }
@@ -76,6 +79,36 @@ impl HttpReq {
 
     pub fn options(path: &str) -> Self {
         Self::new("OPTIONS", path, Body::None)
+    }
+
+    /// `multipart/form-data` body with a fixed boundary; `files` are `(field, filename, content type, bytes)`.
+    pub fn multipart(path: &str, fields: &[(&str, &str)], files: &[(&str, &str, &str, &[u8])]) -> Self {
+        const BOUNDARY: &str = "e2eboundary0123456789";
+        let mut bytes: Vec<u8> = Vec::new();
+        for (name, value) in fields {
+            bytes.extend_from_slice(format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes());
+        }
+        for (name, filename, content_type, data) in files {
+            bytes.extend_from_slice(
+                format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n").as_bytes(),
+            );
+            bytes.extend_from_slice(data);
+            bytes.extend_from_slice(b"\r\n");
+        }
+        bytes.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+        Self::new("POST", path, Body::Raw { content_type: format!("multipart/form-data; boundary={BOUNDARY}"), bytes })
+    }
+
+    /// `application/x-www-form-urlencoded` body.
+    pub fn form(path: &str, pairs: &[(&str, &str)]) -> Self {
+        let text = pairs.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("&");
+        Self::new("POST", path, Body::Raw { content_type: "application/x-www-form-urlencoded".into(), bytes: text.into_bytes() })
+    }
+
+    /// Sends `bytes` with exactly this Content-Type (none when empty).
+    pub fn raw_typed(mut self, content_type: &str, bytes: &[u8]) -> Self {
+        self.body = Body::Raw { content_type: content_type.to_string(), bytes: bytes.to_vec() };
+        self
     }
 
     pub fn raw(mut self, text: &str) -> Self {
@@ -125,10 +158,30 @@ impl WsReq {
     }
 }
 
+/// One action of a Redis-protocol session.
+#[derive(Clone, Debug)]
+pub enum RespAct {
+    /// Sends a command and reads one reply.
+    Cmd(Vec<String>),
+    /// Sends raw bytes and reads one reply.
+    Raw(String),
+    /// Reads one more reply (a pub/sub message) without sending anything.
+    Read,
+    /// Runs an HTTP request against the same server while the connection stays open.
+    Http(HttpReq),
+}
+
+/// A Redis-protocol session against the server port (HTTP and RESP share it).
+#[derive(Clone, Debug)]
+pub struct RespReq {
+    pub acts: Vec<RespAct>,
+}
+
 #[derive(Clone, Debug)]
 pub enum Step {
     Http(HttpReq),
     Ws(WsReq),
+    Resp(RespReq),
     /// Sleep this many ms (lets async config reloads settle); produces no capture.
     Pause(u64),
 }
@@ -136,6 +189,12 @@ pub enum Step {
 impl From<HttpReq> for Step {
     fn from(r: HttpReq) -> Self {
         Step::Http(r)
+    }
+}
+
+impl From<RespReq> for Step {
+    fn from(r: RespReq) -> Self {
+        Step::Resp(r)
     }
 }
 
@@ -214,8 +273,46 @@ impl Client {
         match step {
             Step::Http(r) => self.http_step(r).await,
             Step::Ws(r) => self.ws_step(r).await,
+            Step::Resp(r) => self.resp_step(r).await,
             Step::Pause(_) => unreachable!("pauses are handled by the runner"),
         }
+    }
+
+    /// Runs the session; every act contributes one entry to the captured JSON array. A timeout
+    /// or a closed connection ends the session with a marker entry.
+    async fn resp_step(&self, r: &RespReq) -> Result<Observed> {
+        let mut conn = RespConn::connect(&self.base).await?;
+        let mut entries: Vec<Value> = vec![];
+        for act in &r.acts {
+            let sent = match act {
+                RespAct::Cmd(args) => {
+                    conn.send_command(args).await?;
+                    json!(args)
+                }
+                RespAct::Raw(text) => {
+                    conn.send(text.as_bytes()).await?;
+                    json!({"raw": text})
+                }
+                RespAct::Read => Value::Null,
+                RespAct::Http(req) => {
+                    let o = self.http_step(req).await?;
+                    entries.push(json!({"http": req.path, "status": o.status}));
+                    continue;
+                }
+            };
+            match conn.read().await {
+                RespReply::Value(v) => entries.push(json!({"sent": sent, "reply": v})),
+                RespReply::Closed => {
+                    entries.push(json!({"sent": sent, "closed": true}));
+                    break;
+                }
+                RespReply::Timeout => {
+                    entries.push(json!({"sent": sent, "timeout": true}));
+                    break;
+                }
+            }
+        }
+        Ok(Observed { status: 0, headers: BTreeMap::new(), body: ObsBody::Json { value: Value::Array(entries), lead_newlines: 0 } })
     }
 
     async fn http_step(&self, r: &HttpReq) -> Result<Observed> {
@@ -226,6 +323,8 @@ impl Client {
             Body::None => req,
             Body::Json(v) => req.header("content-type", "application/json").body(v.to_string()),
             Body::Text(t) => req.header("content-type", "application/json").body(t.clone()),
+            Body::Raw { content_type, bytes } if content_type.is_empty() => req.body(bytes.clone()),
+            Body::Raw { content_type, bytes } => req.header("content-type", content_type.as_str()).body(bytes.clone()),
             Body::Typed(content_type, t) => req.header("content-type", *content_type).body(t.clone()),
         };
         let resp = req.send().await.with_context(|| format!("{} {}", r.method, r.path))?;

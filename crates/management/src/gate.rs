@@ -135,6 +135,33 @@ fn provided_key(headers: &HeaderMap) -> Vec<u8> {
     provided.to_vec()
 }
 
+impl ManagementState {
+    /// Management key check for non-HTTP callers (the Redis protocol `AUTH`; Go:
+    /// `AuthenticateManagementKey`). `Ok(())` when allowed, else `(status, message)`. An empty
+    /// `provided` counts as a failed attempt, like Go.
+    pub async fn authenticate_key(
+        &self,
+        client_ip: &str,
+        local_client: bool,
+        provided: &[u8],
+    ) -> Result<(), (u16, String)> {
+        match authenticate_key(self, client_ip, local_client, provided).await {
+            None => Ok(()),
+            Some(denied) => Err(denied),
+        }
+    }
+
+    /// Whether `MANAGEMENT_PASSWORD` is set.
+    pub fn has_env_secret(&self) -> bool {
+        self.env_secret.is_some()
+    }
+
+    /// Whether a local (TUI) password is set.
+    pub fn has_local_password(&self) -> bool {
+        self.local_password.is_some()
+    }
+}
+
 /// Returns `Some((status, message))` when the request is refused.
 async fn authenticate_key(
     st: &ManagementState,
