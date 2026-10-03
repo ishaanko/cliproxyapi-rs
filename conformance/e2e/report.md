@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a5d8cf4a792bfdd25/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `1eaa7b61ff64b91e`
-- scenarios: 753 total, 753 passed, 0 failed
+- goldens digest: `f013e36fd87aaa12`
+- scenarios: 765 total, 765 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -760,3 +760,15 @@
 | `mgmt.oauth_status` | PASS | OAuth session endpoints without a started login |  |
 | `mgmt.plugins` | PASS | plugin endpoints with plugins disabled |  |
 | `mgmt.unknown_route` | PASS | unknown management paths |  |
+| `redis.auth.commands` | PASS | NOAUTH gate, AUTH argument handling and unknown commands |  |
+| `redis.auth.ip_ban` | PASS | five failed attempts ban the client on the Redis path too |  |
+| `redis.auth.noauth_counts_failures` | PASS | unauthenticated commands count as failed attempts |  |
+| `redis.disabled.no_management` | PASS | without a management secret the RESP connection is closed |  |
+| `redis.protocol.errors` | PASS | malformed frames answer ERR and close |  |
+| `redis.pop.usage` | PASS | LPOP/RPOP usage after proxied requests |  |
+| `redis.pop.arguments` | PASS | LPOP/RPOP argument and channel validation |  |
+| `redis.subscribe.usage` | PASS | SUBSCRIBE usage: support refresh, live records, PING, UNSUBSCRIBE |  |
+| `redis.subscribe.arguments` | PASS | SUBSCRIBE validation, channel case, QUIT while subscribed |  |
+| `redis.subscribe.errors` | PASS | SUBSCRIBE errors: upstream failures arrive as error events |  |
+| `redis.mux.http_and_resp` | PASS | HTTP and RESP clients share the port; the queue feeds both consumers |  |
+| `redis.usage_disabled` | PASS | no usage records are queued with usage-statistics-enabled off |  |
