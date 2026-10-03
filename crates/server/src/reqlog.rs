@@ -810,10 +810,10 @@ mod tests {
     }
 
     #[test]
-    fn streaming_layout_has_no_trailing_newline() {
+    fn streaming_layout_ends_with_an_extra_newline_like_go() {
         let ex = exchange("data: x\n\n", 200, true);
         let text = String::from_utf8(render(&ex, &ApiLogData::default(), &ExecView::default(), false, ex.streaming)).unwrap();
-        assert!(text.ends_with("=== RESPONSE ===\nStatus: 200\nContent-Type: application/json\n\ndata: x\n\n"), "{text}");
+        assert!(text.ends_with("=== RESPONSE ===\nStatus: 200\nContent-Type: application/json\n\ndata: x\n\n\n"), "{text}");
     }
 
     #[test]
