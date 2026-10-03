@@ -261,6 +261,7 @@ impl ServiceBuilder {
             watch: self.watch,
             config_watcher: Mutex::new(None),
             task: Mutex::new(None),
+            extras: Default::default(),
         };
         Ok(Service { inner: Arc::new(inner) })
     }
@@ -293,6 +294,8 @@ struct Inner {
     watch: bool,
     config_watcher: Mutex<Option<Arc<ConfigWatcher>>>,
     task: Mutex<Option<JoinHandle<()>>>,
+    /// pprof server and mDNS advertiser, driven by config.
+    extras: super::extras::Extras,
 }
 
 /// Result of the most recent config reload.
@@ -425,6 +428,7 @@ impl Service {
             *inner.task.lock() = Some(task);
             tracing::info!("file watcher started for config and auth directory changes");
         }
+        inner.extras.apply(&cfg).await;
         Ok(())
     }
 
@@ -477,6 +481,12 @@ impl Service {
         for handle in handles {
             let _ = handle.await;
         }
+    }
+
+    /// Stops pprof and the mDNS advertiser (which says goodbye on the LAN), then the watchers.
+    pub async fn shutdown_graceful(&self) {
+        self.inner.extras.shutdown().await;
+        self.shutdown();
     }
 
     /// Stops the watchers. Registered auths and models stay as they are.
@@ -760,6 +770,7 @@ impl Inner {
         self.apply_updates_locked(&guard, updates).await;
         self.restore_cooldowns(&new).await;
         self.persist_config_async();
+        self.extras.apply(&new).await;
         ConfigOutcome { accepted: true, new_watcher }
     }
 

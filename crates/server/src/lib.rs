@@ -18,6 +18,7 @@ pub mod bodytee;
 pub mod cli;
 pub mod clientip;
 pub mod codex_models;
+pub mod discover_cmd;
 pub mod error;
 pub mod exec;
 pub mod forward;

@@ -27,6 +27,13 @@ pub struct Cli {
     pub vertex_import_prefix: String,
     pub password: String,
     pub local_model: bool,
+    /// `-discover` / `-discover-json`: scan the LAN for AI gateways instead of serving.
+    pub discover: bool,
+    pub discover_json: bool,
+    pub discover_timeout: i64,
+    pub discover_service_type: String,
+    pub discover_include: Vec<String>,
+    pub discover_exclude: Vec<String>,
     /// Flags accepted for compatibility but not implemented in this build.
     pub unsupported: Vec<String>,
 }
@@ -80,12 +87,6 @@ const UNSUPPORTED: &[&str] = &[
     "management-base-url",
     "home-jwt",
     "home-disable-cluster-discovery",
-    "discover",
-    "discover-json",
-    "discover-timeout",
-    "discover-service-type",
-    "discover-include",
-    "discover-exclude",
 ];
 
 fn parse_bool(value: &str) -> Option<bool> {
@@ -164,6 +165,15 @@ pub fn parse(args: &[String]) -> ParseOutcome {
             "vertex-import" => cli.vertex_import = value,
             "vertex-import-prefix" => cli.vertex_import_prefix = value,
             "password" => cli.password = value,
+            "discover" => cli.discover = flag_on(),
+            "discover-json" => cli.discover_json = flag_on(),
+            "discover-timeout" => match value.parse::<i64>() {
+                Ok(n) => cli.discover_timeout = n,
+                Err(e) => return ParseOutcome::Error(format!("invalid value {value:?} for flag -{name}: parse error ({e})")),
+            },
+            "discover-service-type" => cli.discover_service_type = value,
+            "discover-include" => cli.discover_include.extend(cpa_discovery::scan::parse_interface_list(&[value])),
+            "discover-exclude" => cli.discover_exclude.extend(cpa_discovery::scan::parse_interface_list(&[value])),
             other if UNSUPPORTED.contains(&other) => {
                 let enabled = !BOOL_FLAGS.contains(&other) || flag_on();
                 if enabled {
@@ -185,6 +195,12 @@ pub fn usage(program: &str) -> String {
         ("codex-login", "", "Login to Codex using OAuth"),
         ("config", "string", "Configure File Path"),
         ("devin-login", "", "Login to Devin using OAuth"),
+        ("discover", "", "Discover local AI gateways and CPA instances on the LAN"),
+        ("discover-exclude", "value", "Comma-separated interface names to skip during LAN discovery"),
+        ("discover-include", "value", "Comma-separated interface names to scan during LAN discovery"),
+        ("discover-json", "", "Output discovered gateways in JSON format"),
+        ("discover-service-type", "string", "DNS-SD service type for LAN discovery (default _ai-gateway._tcp)"),
+        ("discover-timeout", "int", "Timeout in seconds for LAN discovery (default 3s) (default 3)"),
         ("kimi-ai-login", "", "Login to Kimi.ai using OAuth"),
         ("kimi-login", "", "Login to Kimi (.com) using OAuth"),
         ("local-model", "", "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching"),
