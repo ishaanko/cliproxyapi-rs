@@ -211,6 +211,19 @@ pub(crate) async fn apply_request_after_auth_interceptor(
     mut opts: Options,
     requested_model: &str,
 ) -> Result<(Request, Options), ExecError> {
+    if opts.request_after_auth.is_none() {
+        return Ok((req, opts));
+    }
+    Box::pin(intercept_request_after_auth(executor, provider, req, opts, requested_model)).await
+}
+
+async fn intercept_request_after_auth(
+    executor: &DynExecutor,
+    provider: &str,
+    mut req: Request,
+    mut opts: Options,
+    requested_model: &str,
+) -> Result<(Request, Options), ExecError> {
     let Some(interceptor) = opts.request_after_auth.clone() else { return Ok((req, opts)) };
     let to_format = request_to_format(provider, executor, &req, &opts);
     let resp = (interceptor.0)(RequestAfterAuthInterceptRequest {
