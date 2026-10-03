@@ -231,7 +231,10 @@ impl Options {
 
 /// Callback invoked with `(auth_id, auth_index)` when a credential is selected.
 #[derive(Clone)]
-pub struct SelectedAuthCallback(pub Arc<dyn Fn(&str, &str) + Send + Sync>);
+pub struct SelectedAuthCallback(pub Arc<SelectedAuthFn>);
+
+/// `(auth_id, auth_index)` observer of credential picks.
+pub type SelectedAuthFn = dyn Fn(&str, &str) + Send + Sync;
 
 impl std::fmt::Debug for SelectedAuthCallback {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

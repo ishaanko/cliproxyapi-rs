@@ -85,10 +85,10 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
                 *h = "<cooldown>".into();
             }
             normalize_body(&mut n, &mut response.body);
-            if is_model_list(&request) {
-                if let ObsBody::Json { value, .. } = &mut response.body {
-                    sort_model_listing(value);
-                }
+            if is_model_list(&request)
+                && let ObsBody::Json { value, .. } = &mut response.body
+            {
+                sort_model_listing(value);
             }
             StepCapture { request, response }
         })

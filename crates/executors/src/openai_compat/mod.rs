@@ -195,6 +195,7 @@ impl OpenAiCompatExecutor {
     /// Request translation shared by `execute` and `execute_stream` (everything before the
     /// HTTP call): translate, thinking, payload rules, tool-result and max-token
     /// normalization, prompt cache key.
+    #[allow(clippy::too_many_arguments)]
     async fn prepare_chat(
         &self,
         cfg: &Config,

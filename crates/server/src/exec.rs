@@ -49,6 +49,9 @@ pub struct ExecOk {
     pub headers: HeaderMap,
 }
 
+/// Callback receiving the auth id of each credential pick.
+pub type SelectedAuthFn = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// Per-call execution parameters (Go: `modelExecutionOptions` plus the positional arguments).
 #[derive(Clone)]
 pub struct ExecArgs<'a> {
@@ -69,7 +72,7 @@ pub struct ExecArgs<'a> {
     /// websocket (Go: `WithRequiredUpstreamWebsocket`).
     pub required_upstream_websocket: bool,
     /// Called with the auth id of every credential pick (Go: `WithSelectedAuthIDCallback`).
-    pub on_selected_auth: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub on_selected_auth: Option<SelectedAuthFn>,
     /// Plugin whose interceptors and routers are skipped: the caller of a nested host model
     /// execution (Go: `SkipInterceptorPluginID` / `SkipRouterPluginID`).
     pub skip_plugin_id: Option<&'a str>,

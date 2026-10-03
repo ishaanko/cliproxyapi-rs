@@ -42,19 +42,18 @@ pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
         cfg.clone(),
         claude::Embedding { request_log_provider: "kimi", upstream_model: kimi::normalize_kimi_upstream_model },
     );
-    #[allow(unused_mut)]
-    let mut executors: Vec<DynExecutor> = Vec::new();
-    executors.push(claude::new(cfg.clone()));
-    executors.push(codex::new(cfg.clone()));
-    executors.push(gemini::new(cfg.clone()));
-    executors.push(gemini::new_interactions(cfg.clone()));
-    executors.push(gemini::new_vertex(cfg.clone()));
-    executors.push(gemini::new_aistudio(cfg.clone()));
-    executors.push(antigravity::new(cfg.clone()));
-    executors.push(openai_compat::new(cfg.clone()));
-    executors.push(xai::new(cfg.clone()));
-    executors.push(kimi::new_with_claude(cfg.clone(), Some(kimi_claude)));
-    executors.push(devin::new(cfg.clone()));
-    executors.push(meta::new(cfg.clone()));
-    executors
+    vec![
+        claude::new(cfg.clone()),
+        codex::new(cfg.clone()),
+        gemini::new(cfg.clone()),
+        gemini::new_interactions(cfg.clone()),
+        gemini::new_vertex(cfg.clone()),
+        gemini::new_aistudio(cfg.clone()),
+        antigravity::new(cfg.clone()),
+        openai_compat::new(cfg.clone()),
+        xai::new(cfg.clone()),
+        kimi::new_with_claude(cfg.clone(), Some(kimi_claude)),
+        devin::new(cfg.clone()),
+        meta::new(cfg.clone()),
+    ]
 }

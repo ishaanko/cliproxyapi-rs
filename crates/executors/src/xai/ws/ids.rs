@@ -272,7 +272,7 @@ fn rewrite_downstream_ids(
     }
     let mut value = cpa_json::parse(&payload);
     let ids = Ids { upstream_response_id, downstream_response_id, upstream_previous_id, downstream_previous_id };
-    if !rewrite_value(&mut value, &ids, "") {
+    if !rewrite_value(&mut value, &ids) {
         return payload;
     }
     match cpa_core::util::go_json_sorted(&value, cpa_core::util::GoJsonStyle::MARSHAL_USE_NUMBER) {
@@ -288,7 +288,7 @@ struct Ids<'a> {
     downstream_previous_id: &'a str,
 }
 
-fn rewrite_value(value: &mut Value, ids: &Ids<'_>, key: &str) -> bool {
+fn rewrite_value(value: &mut Value, ids: &Ids<'_>) -> bool {
     match value {
         Value::Object(map) => {
             let mut changed = false;
@@ -301,7 +301,7 @@ fn rewrite_value(value: &mut Value, ids: &Ids<'_>, key: &str) -> bool {
                     }
                     continue;
                 }
-                if rewrite_value(child, ids, child_key) {
+                if rewrite_value(child, ids) {
                     changed = true;
                 }
             }
@@ -310,7 +310,7 @@ fn rewrite_value(value: &mut Value, ids: &Ids<'_>, key: &str) -> bool {
         Value::Array(list) => {
             let mut changed = false;
             for child in list.iter_mut() {
-                if rewrite_value(child, ids, key) {
+                if rewrite_value(child, ids) {
                     changed = true;
                 }
             }
