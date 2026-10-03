@@ -613,7 +613,7 @@ impl ThinkingReplayStreamAccumulator {
             Field::Signature => (&mut block.signature, &mut block.signature_initialized, "signature"),
         };
         if !*initialized {
-            let initial = crate::helps::parse_cache::parse(&block.raw).g(path).str();
+            let initial = cpa_json::parse(&block.raw).g(path).str();
             if !reserve(&mut self.bytes_used, &mut self.abandoned, initial.len()) {
                 return;
             }

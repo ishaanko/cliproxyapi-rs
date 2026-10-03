@@ -108,9 +108,10 @@ fn chunk(n: usize) -> usize {
     if n == 0 { 0 } else { ((n + 8 + 15) & !15).max(32) }
 }
 
-/// Estimated heap bytes of a parsed tree: node slots plus string/number text and object entries,
+/// Estimated heap bytes of a parsed tree (also used by callers that keep trees alive and need to
+/// bound them): node slots plus string/number text and object entries,
 /// rounded up to allocator chunks.
-fn tree_cost(v: &Value) -> usize {
+pub fn tree_cost(v: &Value) -> usize {
     const NODE: usize = std::mem::size_of::<Value>();
     // Key, value and the hash/index words an object keeps per entry.
     const ENTRY: usize = std::mem::size_of::<String>() + NODE + 24;

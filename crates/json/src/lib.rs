@@ -26,7 +26,7 @@ mod fast;
 pub mod lazy;
 mod memo;
 
-pub use memo::{scope, scope_sync};
+pub use memo::{scope, scope_sync, tree_cost};
 
 pub use serde_json::{json, Map, Number, Value};
 

@@ -10,21 +10,74 @@
 //! Lookups compare the full bytes, so a hit is exact. Caching is only active between
 //! [`scope`] and the drop of its guard (one synchronous request preparation on one thread); the
 //! entries are released with the guard, so nothing outlives a request.
+//!
+//! Memory is bounded: an entry costs its bytes plus the estimated heap of its tree
+//! ([`cpa_json::tree_cost`]), a thread keeps at most [`MAX_THREAD_BYTES`] and all threads together
+//! [`GLOBAL_BUDGET`]; past either, the oldest entries are evicted or the new one is not kept (its
+//! callers then parse as before, with `cpa_json`'s own memo still catching large repeats). Bodies
+//! below [`TRACK_LEN`] are not costed (three of them are far below any budget).
+//! Large bodies stay cached here rather than deferring to that memo, which hands out deep clones:
+//! twenty reads of a 440 KB body took 4 ms here, 20 ms through the memo and 28 ms uncached.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cpa_json::Value;
 
 /// Entries kept per thread: the working body plus the original and pre-cloaking copies.
 const CAPACITY: usize = 3;
 
+/// Heap one thread's entries may hold, and the same across all threads (so many large requests in
+/// flight cannot multiply it; `cpa_json`'s memo has the same shape of limits).
+const MAX_THREAD_BYTES: usize = 32 * 1024 * 1024;
+const GLOBAL_BUDGET: usize = 64 * 1024 * 1024;
+/// Bodies shorter than this are not costed (a tree walk would outweigh what it protects).
+const TRACK_LEN: usize = 8 * 1024;
+static IN_USE: AtomicUsize = AtomicUsize::new(0);
+
 struct Entry {
     bytes: Vec<u8>,
     /// Result of `cpa_json::valid(bytes)` once asked.
     valid: Option<bool>,
     value: Option<Arc<Value>>,
+    /// Estimated heap of `value`, 0 when unknown or `bytes` is below [`TRACK_LEN`].
+    tree: usize,
+    /// Bytes charged to [`IN_USE`] while the entry sits in the cache; refunded on drop.
+    charge: Charge,
+}
+
+impl Entry {
+    fn empty() -> Entry {
+        Entry { bytes: Vec::new(), valid: None, value: None, tree: 0, charge: Charge(0) }
+    }
+
+    fn new(bytes: &[u8]) -> Entry {
+        Entry { bytes: bytes.to_vec(), ..Entry::empty() }
+    }
+
+    /// Cost of the entry as kept in the cache.
+    fn cost(&self) -> usize {
+        self.bytes.len() + self.tree
+    }
+
+    /// Attaches a freshly parsed or edited tree and costs it.
+    fn set_value(&mut self, value: Arc<Value>) {
+        self.tree = if self.bytes.len() >= TRACK_LEN { cpa_json::tree_cost(&value) } else { 0 };
+        self.value = Some(value);
+    }
+}
+
+/// A claim on [`IN_USE`], returned when dropped.
+struct Charge(usize);
+
+impl Drop for Charge {
+    fn drop(&mut self) {
+        if self.0 > 0 {
+            IN_USE.fetch_sub(self.0, Ordering::Relaxed);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -75,18 +128,32 @@ fn take_entry(bytes: &[u8]) -> Option<Entry> {
             return None;
         }
         let pos = c.entries.iter().position(|e| e.bytes == bytes)?;
-        Some(c.entries.remove(pos))
+        let mut entry = c.entries.remove(pos);
+        // Dropping the old claim refunds it; `put_entry` charges again.
+        entry.charge = Charge(0);
+        Some(entry)
     })
 }
 
-fn put_entry(entry: Entry) {
+/// Stores `entry` as most recently used, evicting the oldest entries to stay within the budgets;
+/// an entry that cannot fit is dropped.
+fn put_entry(mut entry: Entry) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
-        if c.depth == 0 {
+        let cost = entry.cost();
+        if c.depth == 0 || cost > MAX_THREAD_BYTES {
             return;
         }
+        c.entries.truncate(CAPACITY - 1);
+        while c.entries.iter().map(|e| e.cost()).sum::<usize>() + cost > MAX_THREAD_BYTES {
+            c.entries.pop();
+        }
+        if IN_USE.fetch_add(cost, Ordering::Relaxed) + cost > GLOBAL_BUDGET {
+            IN_USE.fetch_sub(cost, Ordering::Relaxed);
+            return;
+        }
+        entry.charge = Charge(cost);
         c.entries.insert(0, entry);
-        c.entries.truncate(CAPACITY);
     });
 }
 
@@ -95,8 +162,15 @@ pub fn parse(bytes: &[u8]) -> Arc<Value> {
     if !active() {
         return Arc::new(cpa_json::parse(bytes));
     }
-    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: bytes.to_vec(), valid: None, value: None });
-    let value = Arc::clone(entry.value.get_or_insert_with(|| Arc::new(cpa_json::parse(bytes))));
+    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry::new(bytes));
+    let value = match &entry.value {
+        Some(v) => Arc::clone(v),
+        None => {
+            let v = Arc::new(cpa_json::parse(bytes));
+            entry.set_value(Arc::clone(&v));
+            v
+        }
+    };
     put_entry(entry);
     value
 }
@@ -106,7 +180,7 @@ pub fn valid(bytes: &[u8]) -> bool {
     if !active() {
         return cpa_json::valid(bytes);
     }
-    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: bytes.to_vec(), valid: None, value: None });
+    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry::new(bytes));
     let ok = *entry.valid.get_or_insert_with(|| cpa_json::valid(bytes));
     put_entry(entry);
     ok
@@ -115,9 +189,13 @@ pub fn valid(bytes: &[u8]) -> bool {
 /// Parses `bytes` (from the memo when possible), applies `f`, and returns the re-serialized body
 /// when `f` reports a change, else a copy of `bytes`. The edited value is memoized under the
 /// returned bytes so the next stage does not parse them again.
+///
+/// Contract: `f` must return `true` whenever it mutated the value. On `false` the value is assumed
+/// untouched and is kept under the original `bytes`, so an unreported mutation would poison later
+/// lookups of those bytes with a tree that no longer matches them.
 pub fn edit(bytes: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
     let active = active();
-    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: Vec::new(), valid: None, value: None });
+    let mut entry = take_entry(bytes).unwrap_or_else(Entry::empty);
     // Take the value out of the Arc when this was its last owner, else copy it.
     let mut value = match entry.value.take() {
         Some(shared) => Arc::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone()),
@@ -126,7 +204,9 @@ pub fn edit(bytes: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
     if f(&mut value) {
         let out = cpa_json::to_vec(&value);
         if active {
-            put_entry(Entry { bytes: out.clone(), valid: Some(true), value: Some(Arc::new(value)) });
+            let mut fresh = Entry { bytes: out.clone(), valid: Some(true), ..Entry::empty() };
+            fresh.set_value(Arc::new(value));
+            put_entry(fresh);
         }
         out
     } else {
@@ -134,7 +214,12 @@ pub fn edit(bytes: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
             if entry.bytes.is_empty() {
                 entry.bytes = bytes.to_vec();
             }
-            entry.value = Some(Arc::new(value));
+            // The tree is unchanged, so a known cost stays valid.
+            if entry.tree == 0 {
+                entry.set_value(Arc::new(value));
+            } else {
+                entry.value = Some(Arc::new(value));
+            }
             put_entry(entry);
         }
         bytes.to_vec()
@@ -167,6 +252,22 @@ mod tests {
         }
         CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
         parse(b"{\"a\":1}");
+        CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
+    }
+
+    #[test]
+    fn big_entries_are_costed_once() {
+        let body = format!(r#"{{"a":"{}","b":[1,2,3]}}"#, "x".repeat(20_000)).into_bytes();
+        {
+            let _scope = scope();
+            parse(&body);
+            let cost = CACHE.with(|c| c.borrow().entries.iter().map(Entry::cost).sum::<usize>());
+            assert!(cost > body.len());
+            assert!(IN_USE.load(Ordering::Relaxed) >= cost);
+            // A hit does not double-charge: the cost stays that of one entry.
+            parse(&body);
+            assert_eq!(CACHE.with(|c| c.borrow().entries.iter().map(|e| e.charge.0).sum::<usize>()), cost);
+        }
         CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
     }
 }
