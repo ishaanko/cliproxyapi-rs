@@ -23,6 +23,7 @@
 use std::borrow::Cow;
 
 mod fast;
+pub mod lazy;
 mod memo;
 
 pub use memo::{scope, scope_sync};

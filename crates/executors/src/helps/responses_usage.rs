@@ -1,7 +1,7 @@
 //! Responses API usage normalization (Go: helps/responses_usage_helpers.go).
 
 use cpa_json::{J, Kind, Value};
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 
 use super::text::trim_space;
 

@@ -12,6 +12,7 @@
 //! entries are released with the guard, so nothing outlives a request.
 
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use cpa_json::Value;
@@ -37,15 +38,16 @@ thread_local! {
     static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
 }
 
-/// Keeps the memo active on this thread until dropped.
+/// Keeps the memo active on this thread until dropped. `!Send`, so holding it across an `.await`
+/// (where the task may resume on another thread) fails to compile.
 #[must_use = "the memo is released when the guard is dropped"]
-pub struct Scope(());
+pub struct Scope(PhantomData<*const ()>);
 
 /// Enables the memo for the current thread (nestable). Call from synchronous request
 /// preparation only: the memo is per thread and must not be held across an `.await`.
 pub fn scope() -> Scope {
     CACHE.with(|c| c.borrow_mut().depth += 1);
-    Scope(())
+    Scope(PhantomData)
 }
 
 impl Drop for Scope {

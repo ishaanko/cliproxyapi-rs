@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use cpa_core::thinking::parse_suffix;
 use cpa_json::{J, Value};
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 use parking_lot::Mutex;
 
 use super::text::json_payload;

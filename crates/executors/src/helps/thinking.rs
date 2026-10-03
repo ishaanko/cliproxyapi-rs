@@ -12,7 +12,7 @@ use cpa_core::thinking::{
     extract_summary_config, extract_translated_summary_config,
 };
 use cpa_runtime::conductor::resolved_model_info;
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 use cpa_runtime::executor::{Options, Request};
 use cpa_translator::Format;
 

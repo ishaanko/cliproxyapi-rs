@@ -35,7 +35,7 @@ use crate::helps::tls_fingerprint::new_utls_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::ttft::observe_responses_token_event_doc;
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 use crate::helps::usage::{parse::parse_codex_usage, parse::parse_openai_usage, reporter::UsageReporter};
 
 /// Message of the 502 recorded when the upstream closes before any payload.

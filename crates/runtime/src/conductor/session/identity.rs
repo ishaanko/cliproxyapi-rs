@@ -16,7 +16,7 @@ use super::info::{
     LCP_AFFINITY_SESSION_ID, Roots, bound_session_identity, extract_session_info,
     normalize_explicit_id,
 };
-use super::lazy::{Doc, MemberKind};
+use cpa_json::lazy::{Doc, MemberKind};
 use crate::executor::{Metadata, Options, Request, meta};
 
 const IDENTITY_VERSION: &str = "cpa-session-root-v1";
@@ -780,19 +780,24 @@ fn hash_root(format: Format, caller_scope: &str, resource: &str, root: &Root) ->
 }
 
 /// Stable identity from leading instructions and the first complete user input (Go: DeriveID).
+///
+/// Go `json.Unmarshal`s the body and returns "" on any error, so the body must be well-formed up
+/// front, before the lazy index (which only scans structure) is trusted. The validator is
+/// `cpa_json::valid`: a mutation differential against serde_json's strict syntax check found no
+/// disagreement (leading zeros, bare words, trailing commas, stray whitespace bytes, bad escapes
+/// all fail). Inside strings it also accepts invalid UTF-8 and lone surrogate escapes, which Go's
+/// decoder reads as U+FFFD but the earlier `serde_json::from_slice::<Value>` rejected.
 pub fn derive_id(format: Format, payload: &[u8], caller_scope: &str) -> String {
-    if payload.is_empty() {
+    if payload.is_empty() || !cpa_json::valid(payload) {
         return String::new();
     }
-    let lazy = Doc::new(payload);
-    // A body the lazy scan could not index must still be a strictly valid JSON object.
-    let doc = if lazy.is_lazy() {
-        lazy
-    } else {
-        match serde_json::from_slice::<Value>(payload) {
-            Ok(v @ Value::Object(_)) => Doc::owned(v),
+    // Bodies the lazy index cannot take (duplicate keys, ...) must still be a JSON object.
+    let doc = match Doc::lazy(payload) {
+        Some(doc) => doc,
+        None => match cpa_json::parse(payload) {
+            v @ Value::Object(_) => Doc::owned(v),
             _ => return String::new(),
-        }
+        },
     };
     derive_id_from(format, &doc, caller_scope)
 }
@@ -1226,6 +1231,24 @@ mod tests {
                 _ => String::new(),
             };
             assert_eq!(lazy, full, "{format:?} {body}");
+        }
+    }
+
+    /// Go `json.Unmarshal` fails on these, so DeriveID yields "" even though the lazy scan could
+    /// index every one of them.
+    #[test]
+    fn malformed_json_derives_nothing() {
+        let ok = br#"{"messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(derive_id(Format::OpenAI, ok, "").starts_with("ctx:v1:"));
+        let bad: &[&[u8]] = &[
+            br#"{"messages":[{"role":"user","content":"hi"}],"temperature":01}"#,
+            br#"{"messages":[{"role":"user","content":"hi"}],"x":tru}"#,
+            br#"{"messages":[{"role":"user","content":"hi"},]}"#,
+            b"{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}\x0c",
+            br#"{"messages":[{"role":"user","content":"h\xi"}]}"#,
+        ];
+        for body in bad {
+            assert_eq!(derive_id(Format::OpenAI, body, ""), "", "{}", String::from_utf8_lossy(body));
         }
     }
 

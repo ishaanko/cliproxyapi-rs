@@ -24,7 +24,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
 use cpa_core::thinking::extract_translated_reasoning_effort;
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 use cpa_runtime::executor::{ExecError, Options, meta};
 use futures_util::{Stream, StreamExt};
 use parking_lot::Mutex;

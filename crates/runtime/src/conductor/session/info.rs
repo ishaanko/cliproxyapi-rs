@@ -9,7 +9,7 @@ use cpa_json::{J, Res, Value};
 use http::HeaderMap;
 use sha2::{Digest, Sha256};
 
-use super::lazy::Doc;
+use cpa_json::lazy::Doc;
 use crate::executor::{Metadata, meta};
 
 /// Request session description used for affinity and upstream reporting.
