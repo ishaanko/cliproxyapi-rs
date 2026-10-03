@@ -1,6 +1,6 @@
 # E2E differential report
 
-- server: `target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a4ea26e497b070e8e/target/release/cliproxy`
 - config layout: `legacy`
 - goldens digest: `2d8ac49173691096`
 - scenarios: 899 total, 899 passed, 0 failed
