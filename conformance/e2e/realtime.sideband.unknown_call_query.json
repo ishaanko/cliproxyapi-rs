@@ -1,0 +1,37 @@
+{
+  "id": "realtime.sideband.unknown_call_query",
+  "desc": "call id in the query",
+  "steps": [
+    {
+      "request": {
+        "method": "WS",
+        "path": "/v1/realtime?call_id=call-123",
+        "auth": "Client",
+        "headers": [],
+        "messages": []
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "code": "realtime_request_failed",
+              "message": "Codex live session not found",
+              "param": null,
+              "type": "invalid_request_error"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

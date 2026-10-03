@@ -56,10 +56,6 @@ impl TextInput {
         self.focused = false;
     }
 
-    pub fn focused(&self) -> bool {
-        self.focused
-    }
-
     /// Inserts typed or pasted text at the cursor, honouring the char limit. Control characters are
     /// dropped and newlines become spaces like `insertRunesFromUserInput`.
     pub fn insert_text(&mut self, text: &str) {
@@ -109,6 +105,11 @@ impl TextInput {
             "alt+d" | "alt+delete" => {
                 let end = self.word_forward_pos();
                 self.value.drain(self.pos..end);
+            }
+            "ctrl+v" => {
+                if let Ok(text) = crate::clipboard::read_text() {
+                    self.insert_text(&text);
+                }
             }
             "ctrl+k" => self.value.truncate(self.pos),
             "ctrl+u" => {

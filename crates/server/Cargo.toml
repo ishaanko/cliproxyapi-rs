@@ -29,6 +29,7 @@ cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }
 cpa-executors = { path = "../executors", default-features = false }
+cpa-live = { path = "../live" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -61,6 +62,9 @@ mime_guess = "2"
 url = "2"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls-pemfile = "2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["stdio"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

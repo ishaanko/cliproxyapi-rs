@@ -49,6 +49,19 @@ async fn gate_rejects_wrong_password_then_connects() {
 }
 
 #[tokio::test]
+async fn gate_accepts_q_and_l_as_password_characters() {
+    let mock = Mock::start().await;
+    let mut h = Harness::client_mode(&mock.url(), "");
+    h.start().await;
+    h.type_text("qL");
+    assert!(!h.quit);
+    assert!(h.screen().contains("Password: **"));
+    assert!(h.screen().contains("Ctrl+C: quit"));
+    h.key("ctrl+c");
+    assert!(h.quit);
+}
+
+#[tokio::test]
 async fn dashboard_snapshot_and_refresh() {
     let mock = Mock::start().await;
     let mut h = standalone(&mock).await;

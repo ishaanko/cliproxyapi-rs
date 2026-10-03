@@ -9,6 +9,7 @@ mod management;
 mod errors;
 mod matrix;
 mod profiles;
+mod realtime;
 mod rich;
 mod routing;
 mod websocket;
@@ -28,6 +29,7 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(interactions::scenarios());
     v.extend(access::scenarios());
     v.extend(websocket::scenarios());
+    v.extend(realtime::scenarios());
     v.extend(management::scenarios(mock_port));
     v
 }
