@@ -210,7 +210,8 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
     req.extensions_mut().insert(api_log);
 
     let scope_id = request_id.clone();
-    let resp = REQUEST_ID.scope(scope_id, next.run(req)).await;
+    // The json memo lets repeated parses of one large request body share work within the request.
+    let resp = REQUEST_ID.scope(scope_id, cpa_json::scope(next.run(req))).await;
 
     let status = resp.status();
     let healthz_ok = path == "/healthz"
