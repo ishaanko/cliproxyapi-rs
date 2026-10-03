@@ -1,0 +1,92 @@
+{
+  "id": "media.images.codex.gen_client_headers",
+  "desc": "client Codex headers reach the upstream, user agent does not",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/generations",
+        "auth": "Client",
+        "headers": [
+          [
+            "User-Agent",
+            "downstream-client/9.9"
+          ],
+          [
+            "Version",
+            "0.135.0"
+          ],
+          [
+            "X-Codex-Turn-Metadata",
+            "{\"turn_id\":\"t1\"}"
+          ],
+          [
+            "X-Client-Request-Id",
+            "client-req-1"
+          ],
+          [
+            "Originator",
+            "Codex Desktop"
+          ]
+        ],
+        "body": {
+          "model": "gpt-image-2",
+          "prompt": "a cute baby sea otter"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "created": 1700000000,
+            "data": [
+              {
+                "b64_json": "AAEC0",
+                "revised_prompt": "mock revised"
+              }
+            ],
+            "usage": {
+              "input_tokens": 5,
+              "output_tokens": 7,
+              "total_tokens": 12
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/images/generations",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)",
+        "version": "0.135.0",
+        "x-client-request-id": "client-req-1",
+        "x-codex-turn-metadata": "{\"turn_id\":\"t1\"}"
+      },
+      "body": {
+        "model": "gpt-image-2",
+        "prompt": "a cute baby sea otter"
+      }
+    }
+  ]
+}

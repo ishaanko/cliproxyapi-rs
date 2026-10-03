@@ -8,7 +8,7 @@ license.workspace = true
 # internal/api/server_management*.go as an axum Router.
 [dependencies]
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
 cpa-core = { path = "../core" }
 axum = { version = "0.8", features = ["multipart"] }

@@ -3,8 +3,14 @@
 //!
 //! Built on webrtc-rs. Differences from the Go/pion stack, all inherent to the library:
 //! UDP sockets are bound explicitly (the port range picks one free port per session for all
-//! interfaces, IPv4 only), the remote IP filter is applied to the SDP candidates before they are
-//! handed to the peer connection, and RTCP of the senders is not drained by the relay.
+//! interfaces, IPv4 only) and the remote IP filter is applied to the SDP candidates before they
+//! are handed to the peer connection.
+//!
+//! Known upstream leak: webrtc 0.21.0 keeps a reference cycle per peer connection
+//! (`PeerConnectionRef.rtp_transceivers` -> `RtpTransceiverImpl` -> `Arc<PeerConnectionRef>`,
+//! peer_connection/mod.rs) that survives `close()`, so a small fixed amount of memory per closed
+//! peer connection is never reclaimed. Everything this module owns (session, forward targets,
+//! close handler, limiter slot) is released on close and does not add to it.
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -43,6 +49,7 @@ const MEDIA_DATA_QUEUE_SIZE: usize = 64;
 const MEDIA_DATA_MESSAGE_MAX_SIZE: usize = 256 << 10;
 const MEDIA_DATA_BUFFERED_MAX_SIZE: usize = 1 << 20;
 const OPUS_PAYLOAD_TYPE: u8 = 111;
+const RTCP_REBIND_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 const MIME_TYPE_OPUS: &str = "audio/opus";
 
 fn opus_codec() -> RTCRtpCodec {
@@ -57,6 +64,8 @@ fn opus_codec() -> RTCRtpCodec {
 
 /// `isPublicRemoteIP`.
 pub fn is_public_remote_ip(ip: &IpAddr) -> bool {
+    // Unwrap IPv4-mapped IPv6 (::ffff:127.0.0.1) so it is judged as the IPv4 address.
+    let ip = &ip.to_canonical();
     if ip.is_unspecified() || ip.is_loopback() || ip.is_multicast() {
         return false;
     }
@@ -95,10 +104,11 @@ enum PeerKind {
     ProxyUpstream,
 }
 
-/// Picks one free UDP port in `[min, max]` (0 when no range is configured).
-fn pick_udp_port(cfg: &CodexLiveMediaRelayConfig) -> u16 {
+/// Picks one free UDP port in `[min, max]` (0 when no range is configured, i.e. any port).
+/// Fails when the whole configured range is in use.
+fn pick_udp_port(cfg: &CodexLiveMediaRelayConfig) -> Result<u16, String> {
     if cfg.udp_port_min == 0 {
-        return 0;
+        return Ok(0);
     }
     let (min, max) = (cfg.udp_port_min as u32, cfg.udp_port_max as u32);
     let span = max - min + 1;
@@ -106,10 +116,10 @@ fn pick_udp_port(cfg: &CodexLiveMediaRelayConfig) -> u16 {
     for i in 0..span {
         let port = (min + (start + i) % span) as u16;
         if std::net::UdpSocket::bind(("0.0.0.0", port)).is_ok() {
-            return port;
+            return Ok(port);
         }
     }
-    0
+    Err(format!("no free UDP port in range {min}-{max}"))
 }
 
 pub struct PionMediaRelay {
@@ -162,7 +172,7 @@ impl PionMediaRelay {
             if !public_ip.is_empty() {
                 settings = settings.with_nat_1to1_ips(vec![public_ip.to_string()], RTCIceCandidateType::Host);
             }
-            let port = pick_udp_port(&self.config);
+            let port = pick_udp_port(&self.config)?;
             builder = builder.with_udp_addrs(vec![format!("0.0.0.0:{port}")]);
         }
         let pc = builder
@@ -278,9 +288,12 @@ async fn relay_rtp(
     let Ok(dest) = destination.wait_for(|d| d.is_some()).await.map(|d| d.clone()) else { return };
     let Some(target) = dest else { return };
     let dest = target.track.clone();
+    let sender = target.sender.clone();
+    // The target holds the other leg's sender; do not keep it alive for the whole relay.
+    drop(target);
     let dest_ssrc = dest.ssrcs().await.first().copied();
     // The payload type the leg negotiated for Opus (the peer's offer may number it differently).
-    let dest_pt = match target.sender.get_parameters().await {
+    let dest_pt = match sender.get_parameters().await {
         Ok(p) => p
             .rtp_parameters
             .codecs
@@ -290,6 +303,7 @@ async fn relay_rtp(
             .unwrap_or(OPUS_PAYLOAD_TYPE),
         Err(_) => OPUS_PAYLOAD_TYPE,
     };
+    drop(sender);
     loop {
         let event = source.poll().await;
         if *done.borrow() {
@@ -315,6 +329,29 @@ async fn relay_rtp(
             }
             Some(TrackRemoteEvent::OnEnded) | None => return,
             Some(_) => {}
+        }
+    }
+}
+
+/// `drainRTCP`: consumes the RTCP feedback delivered for an output track so its event queue never
+/// backs up. `poll` yields `None` until the track is bound by the negotiation (and again once the
+/// peer connection is gone), so it is retried until the session is done.
+async fn drain_rtcp(name: &'static str, track: Arc<TrackLocalStaticRTP>, mut done: watch::Receiver<bool>) {
+    loop {
+        let event = tokio::select! {
+            e = track.poll() => e,
+            _ = done.wait_for(|d| *d) => return,
+        };
+        if event.is_some() {
+            continue;
+        }
+        if *done.borrow() {
+            return;
+        }
+        tracing::trace!("codex live media: {name} RTCP not available yet");
+        tokio::select! {
+            _ = tokio::time::sleep(RTCP_REBIND_INTERVAL) => {}
+            _ = done.wait_for(|d| *d) => return,
         }
     }
 }
@@ -494,6 +531,52 @@ struct SessionState {
     local_offer: String,
 }
 
+/// A slot of the shared media session limiter; released at most once, on close or on drop (so a
+/// `new_session` future cancelled mid-setup does not leak the slot).
+struct SlotPermit {
+    limiter: Arc<MediaLimiter>,
+    held: AtomicBool,
+}
+
+impl SlotPermit {
+    /// Takes a slot, or `None` when the limiter is at capacity.
+    fn acquire(limiter: &Arc<MediaLimiter>) -> Option<SlotPermit> {
+        limiter.acquire().then(|| SlotPermit { limiter: limiter.clone(), held: AtomicBool::new(true) })
+    }
+
+    fn release(&self) {
+        if self.held.swap(false, Ordering::SeqCst) {
+            self.limiter.release();
+        }
+    }
+}
+
+impl Drop for SlotPermit {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Closes a peer connection in the background when dropped, until disarmed (covers a cancelled
+/// `new_session` before the session owns its peer connections).
+struct CloseOnDrop(Option<Arc<dyn PeerConnection>>);
+
+impl CloseOnDrop {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for CloseOnDrop {
+    fn drop(&mut self) {
+        if let (Some(pc), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) {
+            handle.spawn(async move {
+                let _ = pc.close().await;
+            });
+        }
+    }
+}
+
 struct SessionInner {
     id: String,
     downstream: Arc<dyn PeerConnection>,
@@ -507,7 +590,9 @@ struct SessionInner {
     proxy: Option<(Arc<dyn ProxyDialer>, String)>,
     credential: String,
     auth_index: String,
-    limiter: Arc<MediaLimiter>,
+    permit: SlotPermit,
+    /// Senders of the forward targets, cleared on close to break the cross-leg sender cycle.
+    forward_targets: [watch::Sender<Option<ForwardTarget>>; 2],
     downstream_gathered: watch::Receiver<bool>,
     upstream_gathered: watch::Receiver<bool>,
     upstream_state: Mutex<RTCPeerConnectionState>,
@@ -523,7 +608,7 @@ impl SessionInner {
         tracing::info!(media_session_id = %self.id, peer = peer.name(), call_id = %self.call_id(), state, "{message}");
     }
 
-    fn on_state(self: &Arc<Self>, peer: Peer, state: RTCPeerConnectionState) {
+    fn on_state(&self, peer: Peer, state: RTCPeerConnectionState) {
         if peer == Peer::Remote {
             *self.upstream_state.lock() = state;
         }
@@ -572,51 +657,75 @@ impl SessionInner {
     }
 
     /// `CloseWithReason`.
-    fn close(self: &Arc<Self>, reason: &str) {
+    fn close(&self, reason: &str) {
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
         }
+        self.teardown(reason);
+    }
+
+    /// Releases everything the session owns. Runs once (guarded by `closed`), from `close` or `Drop`.
+    /// The limiter slot is released here, synchronously, not after the peer connections finished
+    /// closing.
+    fn teardown(&self, reason: &str) {
         tracing::info!(media_session_id = %self.id, peer = "session", call_id = %self.call_id(), reason, "codex live WebRTC media session closing");
         let _ = self.done.send(true);
         self.bridge.close();
-        let tunnels = std::mem::take(&mut self.state.lock().tunnels);
+        let (tunnels, on_close) = {
+            let mut state = self.state.lock();
+            (std::mem::take(&mut state.tunnels), state.on_close.take())
+        };
         close_candidate_tunnels(&tunnels);
-        let session = self.clone();
-        let reason = reason.to_string();
-        tokio::spawn(async move {
-            for (peer, pc) in [(Peer::Local, session.downstream.clone()), (Peer::Remote, session.upstream.clone())] {
+        // The close handler captures the session store; dropping it ends the store <-> session cycle.
+        drop(on_close);
+        for target in &self.forward_targets {
+            target.send_replace(None);
+        }
+        self.permit.release();
+        let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
+        let (id, call_id, reason) = (self.id.clone(), self.call_id(), reason.to_string());
+        let peers = [(Peer::Local, self.downstream.clone()), (Peer::Remote, self.upstream.clone())];
+        handle.spawn(async move {
+            for (peer, pc) in peers {
                 match pc.close().await {
-                    Ok(()) => session.log_peer(peer, "closed", "codex live WebRTC peer closed"),
-                    Err(e) => tracing::warn!(media_session_id = %session.id, peer = peer.name(), "codex live WebRTC peer close failed: {e}"),
+                    Ok(()) => tracing::info!(media_session_id = %id, peer = peer.name(), %call_id, state = "closed", "codex live WebRTC peer closed"),
+                    Err(e) => tracing::warn!(media_session_id = %id, peer = peer.name(), "codex live WebRTC peer close failed: {e}"),
                 }
             }
-            session.limiter.release();
-            tracing::info!(media_session_id = %session.id, peer = "session", call_id = %session.call_id(), reason = %reason, "codex live WebRTC media session closed");
+            tracing::info!(media_session_id = %id, peer = "session", %call_id, %reason, "codex live WebRTC media session closed");
         });
     }
 
     /// `fail`: closes the session once and reports the reason to the close handler.
-    fn fail(self: &Arc<Self>, reason: &str, error: &str) {
-        let session = self.clone();
-        let (reason, error) = (reason.to_string(), error.to_string());
-        self.failure_once.call_once(move || {
-            tracing::warn!(media_session_id = %session.id, peer = "session", reason = %reason, "codex live WebRTC media session failed: {error}");
-            session.close(&reason);
+    fn fail(&self, reason: &str, error: &str) {
+        self.failure_once.call_once(|| {
+            tracing::warn!(media_session_id = %self.id, peer = "session", reason = %reason, "codex live WebRTC media session failed: {error}");
+            // The handler is taken before closing: closing drops any handler still registered.
             let handler = {
-                let mut state = session.state.lock();
-                state.failure_reason = reason.clone();
-                let handler = state.on_close.clone();
-                if handler.is_some() && !state.handler_called {
-                    state.handler_called = true;
-                    handler
-                } else {
+                let mut state = self.state.lock();
+                state.failure_reason = reason.to_string();
+                if state.handler_called {
                     None
+                } else {
+                    let handler = state.on_close.take();
+                    state.handler_called = handler.is_some();
+                    handler
                 }
             };
+            self.close(reason);
             if let Some(handler) = handler {
-                handler(&reason);
+                handler(reason);
             }
         });
+    }
+}
+
+impl Drop for SessionInner {
+    /// A session dropped without an explicit close (cancelled setup) still releases its resources.
+    fn drop(&mut self) {
+        if !self.closed.swap(true, Ordering::SeqCst) {
+            self.teardown("dropped");
+        }
     }
 }
 
@@ -645,10 +754,11 @@ impl MediaRelayFactory for PionMediaRelay {
             }
             _ => None,
         };
-        if !self.limiter.acquire() {
+        // Held across every await below; moved into the session, or released when a cancelled
+        // or failed setup drops it.
+        let Some(permit) = SlotPermit::acquire(&self.limiter) else {
             return Err(media_err("Codex live media relay capacity exhausted".into()));
-        }
-        let release = |limiter: &Arc<MediaLimiter>| limiter.release();
+        };
 
         let (down_gather_tx, down_gather_rx) = watch::channel(false);
         let (up_gather_tx, up_gather_rx) = watch::channel(false);
@@ -663,20 +773,15 @@ impl MediaRelayFactory for PionMediaRelay {
             .await
         {
             Ok(pc) => pc,
-            Err(e) => {
-                release(&self.limiter);
-                return Err(media_err(format!("create downstream PeerConnection: {e}")));
-            }
+            Err(e) => return Err(media_err(format!("create downstream PeerConnection: {e}"))),
         };
+        let mut downstream_guard = CloseOnDrop(Some(downstream.clone()));
         let (up_kind, up_ice) = if proxy.is_some() { (PeerKind::ProxyUpstream, Vec::new()) } else { (PeerKind::Upstream, self.ice_servers.clone()) };
         let upstream = match self.build_peer(up_kind, up_ice, up_handler.clone()).await {
             Ok(pc) => pc,
-            Err(e) => {
-                release(&self.limiter);
-                let _ = downstream.close().await;
-                return Err(media_err(format!("create upstream PeerConnection: {e}")));
-            }
+            Err(e) => return Err(media_err(format!("create upstream PeerConnection: {e}"))),
         };
+        let mut upstream_guard = CloseOnDrop(Some(upstream.clone()));
 
         let (done_tx, done_rx) = watch::channel(false);
         let inner = Arc::new_cyclic(|weak: &Weak<SessionInner>| {
@@ -699,12 +804,16 @@ impl MediaRelayFactory for PionMediaRelay {
                 proxy,
                 credential: route.credential.trim().to_string(),
                 auth_index: route.auth_index.trim().to_string(),
-                limiter: self.limiter.clone(),
+                permit,
+                forward_targets: [to_downstream_tx.clone(), to_upstream_tx.clone()],
                 downstream_gathered: down_gather_rx,
                 upstream_gathered: up_gather_rx,
                 upstream_state: Mutex::new(RTCPeerConnectionState::New),
             }
         });
+        // From here the session closes the peer connections itself (also when dropped).
+        downstream_guard.disarm();
+        upstream_guard.disarm();
         let _ = down_handler.session.set(Arc::downgrade(&inner));
         let _ = up_handler.session.set(Arc::downgrade(&inner));
         tracing::info!(media_session_id = %inner.id, peer = "session", "codex live WebRTC media session created");
@@ -746,8 +855,11 @@ impl MediaRelayFactory for PionMediaRelay {
             Ok(sender) => sender,
             Err(e) => return Err(fail(&inner, format!("add upstream audio track: {e}"))),
         };
-        let _ = to_downstream_tx.send(Some(ForwardTarget { track: to_desktop, sender: desktop_sender }));
-        let _ = to_upstream_tx.send(Some(ForwardTarget { track: to_openai, sender: openai_sender }));
+        let session_done = inner.done.subscribe();
+        tokio::spawn(drain_rtcp("downstream", to_desktop.clone(), session_done.clone()));
+        tokio::spawn(drain_rtcp("upstream", to_openai.clone(), session_done));
+        to_downstream_tx.send_replace(Some(ForwardTarget { track: to_desktop, sender: desktop_sender }));
+        to_upstream_tx.send_replace(Some(ForwardTarget { track: to_openai, sender: openai_sender }));
 
         match upstream.create_data_channel(REALTIME_DATA_CHANNEL_LABEL, None).await {
             Ok(channel) => inner.bridge.attach_upstream(channel),
@@ -839,7 +951,11 @@ impl MediaRelaySession for PionMediaSession {
         let handler: CloseHandler = Arc::from(handler);
         let pending = {
             let mut state = self.inner.state.lock();
-            state.on_close = Some(handler.clone());
+            // A closed session never calls the handler again, so it is not kept (it would pin the
+            // session store for as long as the session lives).
+            if !self.inner.closed.load(Ordering::SeqCst) {
+                state.on_close = Some(handler.clone());
+            }
             if !state.failure_reason.is_empty() && !state.handler_called {
                 state.handler_called = true;
                 Some(state.failure_reason.clone())

@@ -8,8 +8,8 @@
 //!
 //! Go keeps one `http.Transport` (one connection pool) per proxy URL in a bounded LRU; a reqwest
 //! `Client` owns its pool and clones share it, so [`TransportCache`] caches clients under a key
-//! of proxy setting, timeout and compression mode. No uTLS: TLS fingerprinting is not available
-//! with rustls.
+//! of proxy setting, timeout and compression mode. TLS fingerprints for api.anthropic.com and
+//! chatgpt.com live in `tls_fingerprint`.
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;

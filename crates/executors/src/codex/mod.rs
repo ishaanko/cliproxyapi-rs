@@ -14,6 +14,7 @@ mod count;
 mod creds;
 mod headers;
 mod exec_http;
+mod images;
 mod input_ids;
 mod logging;
 pub(crate) mod multi_agent_v2;
@@ -39,6 +40,7 @@ use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 
+pub use creds::codex_creds;
 pub use quota::parse_codex_quota_event_headers;
 pub use ws::{close_codex_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
@@ -100,6 +102,9 @@ impl Executor for CodexExecutor {
     }
 
     async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
+        if images::is_image_request(&opts) {
+            return self.execute_openai_image(auth, req, opts).await;
+        }
         if metadata_flag(&opts.metadata, META_DOWNSTREAM_WEBSOCKET) && creds::websockets_enabled(auth) {
             return self.execute_ws(auth, req, opts).await;
         }
@@ -110,6 +115,9 @@ impl Executor for CodexExecutor {
     }
 
     async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        if images::is_image_request(&opts) {
+            return self.execute_openai_image_stream(auth, req, opts).await;
+        }
         if metadata_flag(&opts.metadata, META_DOWNSTREAM_WEBSOCKET) && creds::websockets_enabled(auth) {
             return self.execute_stream_ws(auth, req, opts).await;
         }

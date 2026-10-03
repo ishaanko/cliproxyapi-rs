@@ -125,9 +125,9 @@ fn standalone_tui_starts_navigates_and_exits_cleanly() {
     // No password gate; the embedded server answers the dashboard fetches.
     app.wait_for("● Connected");
     assert!(app.in_alternate_screen());
-    let screen = app.screen();
-    assert!(screen.contains("Dashboard") && screen.contains("Auth Files (1 active)"), "{screen}");
-    assert!(screen.contains("Retry Count:"), "{screen}");
+    // The status line can render before the dashboard fetches land, so wait for each section.
+    app.wait_for("Auth Files (1 active)");
+    app.wait_for("Retry Count:");
 
     app.send("\t");
     app.wait_for("Configuration");

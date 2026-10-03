@@ -30,6 +30,7 @@ use super::terminal::{
 };
 use crate::helps::apply_patch::{APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_translation_error};
 use crate::helps::proxy::new_proxy_aware_http_client;
+use crate::helps::tls_fingerprint::new_utls_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::usage::{parse::parse_codex_usage, parse::parse_openai_usage, reporter::UsageReporter};
@@ -105,7 +106,7 @@ impl CodexExecutor {
         (url, headers, body)
     }
 
-    async fn send_http(
+    pub(super) async fn send_http(
         &self,
         cfg: &Config,
         auth: &Auth,
@@ -115,14 +116,15 @@ impl CodexExecutor {
         body: Vec<u8>,
     ) -> Result<reqwest::Response, ExecError> {
         opts.api_log.record_api_request(cfg, upstream_log(auth, url, "POST", &headers, &body));
-        let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
+        let fallback = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
+        let client = new_utls_http_client(&opts.proxy_url, Some(cfg), Some(auth), fallback);
         match client.post(url).headers(headers).body(body).send().await {
             Ok(resp) => {
                 opts.api_log.record_api_response_metadata(cfg, resp.status().as_u16(), resp.headers());
                 Ok(resp)
             }
             Err(e) => {
-                let err = crate::helps::status::transport_error(&e);
+                let err = e.exec_error();
                 opts.api_log.record_api_response_error(cfg, &error_text(&err));
                 Err(err)
             }

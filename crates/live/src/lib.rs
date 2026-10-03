@@ -313,8 +313,7 @@ mod tests {
 
     #[test]
     fn proxy_prefers_the_credential_override() {
-        let mut cfg = Config::default();
-        cfg.proxy_url = "http://global.example:8080".into();
+        let cfg = Config { proxy_url: "http://global.example:8080".into(), ..Default::default() };
         let mut auth = Auth::new("a", "codex");
         assert_eq!(proxy_url_for_auth(&cfg, &auth), "http://global.example:8080");
         auth.proxy_url = "socks5://credential.example:1080".into();

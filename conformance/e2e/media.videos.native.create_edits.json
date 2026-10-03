@@ -1,0 +1,62 @@
+{
+  "id": "media.videos.native.create_edits",
+  "desc": "native video edit",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/videos/edits",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "xai/grok-imagine-video",
+          "prompt": "darker",
+          "video": {
+            "url": "https://v/x.mp4"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e330910b925fcb4-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "request_id": "<request_id>"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "xai",
+      "method": "POST",
+      "path": "/videos/edits",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": {
+        "model": "grok-imagine-video",
+        "prompt": "darker",
+        "video": {
+          "url": "https://v/x.mp4"
+        }
+      }
+    }
+  ]
+}

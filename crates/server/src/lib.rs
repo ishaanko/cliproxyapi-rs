@@ -6,8 +6,7 @@
 //! usage tracker, optional model catalog) and call [`build_router`] /
 //! [`build_router_with_management`], then [`serve::serve`].
 //!
-//! Not ported: image and video generation (501), `/v1/alpha/search`,
-//! the Redis protocol multiplexer, Home mode, TUI, pprof, plugins.
+//! Not ported: the Redis protocol multiplexer, Home mode, TUI, pprof, plugins.
 
 // `ErrorMessage` mirrors Go's `interfaces.ErrorMessage` (status, text, headers); errors are the rare path.
 #![allow(clippy::result_large_err)]
@@ -27,6 +26,7 @@ pub mod headers;
 pub mod logging;
 pub mod middleware;
 pub mod models;
+pub mod multipart;
 pub mod realtime;
 pub mod reply;
 pub mod req;

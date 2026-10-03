@@ -1,0 +1,284 @@
+{
+  "id": "media.videos.openai.create_errors",
+  "desc": "request validation errors become failed video resources",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": " "
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: prompt is required"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "seconds": "abc"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: seconds must be an integer"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "size": "100x100"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: size must be one of 720x1280, 1280x720, 1024x1792, or 1792x1024"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "input_reference": {
+            "file_id": "file_1"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: input_reference.file_id is not supported for xAI video generation; use input_reference.image_url"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "input_reference": {
+            "file_id": "f",
+            "image_url": "u"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: input_reference must provide exactly one of image_url or file_id"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "image": "u",
+          "reference_images": [
+            "a"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: image and reference_images cannot be combined on xAI"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/openai/v1/videos",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "prompt": "p",
+          "reference_images": [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "status": "failed",
+            "progress": 0,
+            "id": "<volatile>",
+            "model": "grok-imagine-video",
+            "error": {
+              "code": "invalid_request_error",
+              "message": "Invalid request: reference_images supports at most 7 images on xAI"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [],
+  "volatile": [
+    "/steps/0/response/body/value/id",
+    "/steps/1/response/body/value/id",
+    "/steps/2/response/body/value/id",
+    "/steps/3/response/body/value/id",
+    "/steps/4/response/body/value/id",
+    "/steps/5/response/body/value/id",
+    "/steps/6/response/body/value/id"
+  ]
+}

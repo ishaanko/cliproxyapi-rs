@@ -60,7 +60,7 @@ pub fn prefix_forced(s: &mut ConfigSpec) {
 /// Claude keys expose one model under an alias instead of the catalog.
 pub fn claude_alias(s: &mut ConfigSpec) {
     for k in &mut s.claude {
-        k.models = vec![ModelCfg { name: "claude-sonnet-4-5-20250929".into(), alias: "sonnet-alias".into() }];
+        k.models = vec![ModelCfg { name: "claude-sonnet-4-5-20250929".into(), alias: "sonnet-alias".into(), ..Default::default() }];
     }
 }
 
