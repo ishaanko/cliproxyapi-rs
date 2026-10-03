@@ -1,8 +1,10 @@
 //! Client API-key authentication (Go: sdk/access + internal/access/config_access).
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use axum::http::HeaderMap;
+use cpa_plugin::CallCtx;
+use cpa_plugin::{AccessAdapter, AccessFailure};
 
 /// Provider id of the inline `api-keys` provider.
 pub const DEFAULT_ACCESS_PROVIDER_NAME: &str = "config-inline";
@@ -10,32 +12,38 @@ pub const DEFAULT_ACCESS_PROVIDER_NAME: &str = "config-inline";
 /// A successfully authenticated caller (`access.Result`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
-    pub provider: &'static str,
-    /// The matching API key.
+    pub provider: String,
+    /// The matching API key (or the principal a plugin provider reported).
     pub principal: String,
-    /// Where the key was found: `authorization`, `x-goog-api-key`, `x-api-key`, `query-key`,
-    /// `query-auth-token`.
-    pub source: &'static str,
+    /// Provider metadata; the inline provider reports where the key was found under `source`:
+    /// `authorization`, `x-goog-api-key`, `x-api-key`, `query-key`, `query-auth-token`.
+    pub metadata: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthFailure {
     /// No credential was presented.
     Missing,
     /// A credential was presented but matched no key.
     Invalid,
+    /// A provider failed with an internal error (status 500).
+    Internal(String),
 }
 
 impl AuthFailure {
-    pub fn message(self) -> &'static str {
+    pub fn message(&self) -> &str {
         match self {
             AuthFailure::Missing => "Missing API key",
             AuthFailure::Invalid => "Invalid API key",
+            AuthFailure::Internal(m) => m,
         }
     }
 
-    pub fn status(self) -> u16 {
-        401
+    pub fn status(&self) -> u16 {
+        match self {
+            AuthFailure::Internal(_) => 500,
+            _ => 401,
+        }
     }
 }
 
@@ -112,13 +120,69 @@ pub fn authenticate(
         }
         if keys.iter().any(|k| k == value) {
             return Ok(Some(Principal {
-                provider: DEFAULT_ACCESS_PROVIDER_NAME,
+                provider: DEFAULT_ACCESS_PROVIDER_NAME.to_string(),
                 principal: value.to_string(),
-                source,
+                metadata: BTreeMap::from([("source".to_string(), source.to_string())]),
             }));
         }
     }
     Err(AuthFailure::Invalid)
+}
+
+/// The request parts a plugin frontend auth provider sees.
+pub struct AccessRequest<'a> {
+    pub method: &'a str,
+    pub path: &'a str,
+    pub headers: &'a HeaderMap,
+    pub query: &'a [(String, String)],
+}
+
+/// Go `Manager.Authenticate` over the registered providers: the inline api-key provider (when
+/// keys exist) followed by plugin frontend providers; an exclusive plugin provider replaces the
+/// whole chain. `body` is only awaited when a plugin provider is consulted. `Ok(None)` means no
+/// provider is registered and every request is allowed.
+pub async fn authenticate_chain<B, F>(
+    req: &AccessRequest<'_>,
+    api_keys: &[String],
+    plugins: &[std::sync::Arc<AccessAdapter>],
+    plugin_exclusive: bool,
+    body: B,
+) -> Result<Option<Principal>, AuthFailure>
+where
+    B: FnOnce() -> F,
+    F: std::future::Future<Output = Result<bytes::Bytes, String>>,
+{
+    let inline = !plugin_exclusive && !normalize_keys(api_keys).is_empty();
+    if !inline && plugins.is_empty() {
+        return Ok(None);
+    }
+    let mut invalid = false;
+    if inline {
+        match authenticate(req.headers, req.query, api_keys) {
+            Ok(Some(p)) => return Ok(Some(p)),
+            Ok(None) => {}
+            Err(AuthFailure::Missing) => {}
+            Err(AuthFailure::Invalid) => invalid = true,
+            Err(e) => return Err(e),
+        }
+    }
+    if !plugins.is_empty() {
+        let Ok(body) = body().await else {
+            return Err(AuthFailure::Internal("failed to read plugin auth request body".into()));
+        };
+        let ctx = CallCtx::background();
+        for provider in plugins {
+            match provider.authenticate(&ctx, req.method, req.path, req.headers, req.query, &body).await {
+                Ok(r) => {
+                    return Ok(Some(Principal { provider: r.provider, principal: r.principal, metadata: r.metadata }));
+                }
+                Err(AccessFailure::NotHandled | AccessFailure::NoCredentials) => {}
+                Err(AccessFailure::InvalidCredential) => invalid = true,
+                Err(AccessFailure::Internal { message }) => return Err(AuthFailure::Internal(message)),
+            }
+        }
+    }
+    Err(if invalid { AuthFailure::Invalid } else { AuthFailure::Missing })
 }
 
 #[cfg(test)]
@@ -160,7 +224,7 @@ mod tests {
     #[test]
     fn lookup_order_and_sources() {
         let p = authenticate(&headers(&[("authorization", "Bearer k1")]), &[], &keys()).unwrap().unwrap();
-        assert_eq!((p.principal.as_str(), p.source), ("k1", "authorization"));
+        assert_eq!((p.principal.as_str(), p.metadata["source"].as_str()), ("k1", "authorization"));
         // raw key without scheme and other schemes use the whole header value
         let p = authenticate(&headers(&[("authorization", "k2")]), &[], &keys()).unwrap().unwrap();
         assert_eq!(p.principal, "k2");
@@ -176,14 +240,14 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!((p.principal.as_str(), p.source), ("k2", "x-goog-api-key"));
+        assert_eq!((p.principal.as_str(), p.metadata["source"].as_str()), ("k2", "x-goog-api-key"));
         // header candidates win over query candidates
         let p = authenticate(&headers(&[("x-api-key", "k1")]), &q(&[("key", "k2")]), &keys()).unwrap().unwrap();
-        assert_eq!((p.principal.as_str(), p.source), ("k1", "x-api-key"));
+        assert_eq!((p.principal.as_str(), p.metadata["source"].as_str()), ("k1", "x-api-key"));
         let p = authenticate(&HeaderMap::new(), &q(&[("key", "bad"), ("auth_token", "k2")]), &keys())
             .unwrap()
             .unwrap();
-        assert_eq!(p.source, "query-auth-token");
+        assert_eq!(p.metadata["source"], "query-auth-token");
     }
 
     #[test]

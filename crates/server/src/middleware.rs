@@ -87,11 +87,46 @@ pub async fn safe_mode(State(st): State<AppState>, req: Request, next: Next) -> 
     .into_response()
 }
 
-/// `AuthMiddleware` for the proxy route groups: API-key check, open when no keys are configured.
+/// `AuthMiddleware` for the proxy route groups: API-key check, open when no provider is
+/// registered; plugin frontend auth providers extend (or, when exclusive, replace) the chain.
 pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Next) -> Response {
     let cfg = st.cfg();
     let query = parse_query(req.uri().query().unwrap_or(""));
-    match access::authenticate(req.headers(), &query, &cfg.api_keys) {
+    let (plugins, exclusive) = match &st.plugins {
+        Some(host) => (host.frontend_auth_providers(), host.exclusive_frontend_auth_provider().is_some()),
+        None => (Vec::new(), false),
+    };
+    if plugins.is_empty() {
+        return match access::authenticate(req.headers(), &query, &cfg.api_keys) {
+            Ok(Some(principal)) => {
+                req.extensions_mut().insert(AuthenticatedKey(principal));
+                next.run(req).await
+            }
+            Ok(None) => next.run(req).await,
+            Err(failure) => auth_failure_reply(failure).into_response(),
+        };
+    }
+    let method = req.method().as_str().to_string();
+    let path = req.uri().path().to_string();
+    let headers = req.headers().clone();
+    // The body is buffered and restored when a plugin provider needs it (Go: `readAndRestoreRequestBody`).
+    let mut buffered: Option<bytes::Bytes> = None;
+    let outcome = {
+        let body_slot = &mut buffered;
+        let req_body = req.body_mut();
+        let access_req = access::AccessRequest { method: &method, path: &path, headers: &headers, query: &query };
+        access::authenticate_chain(&access_req, &cfg.api_keys, &plugins, exclusive, || async move {
+            let taken = std::mem::take(req_body);
+            let bytes = axum::body::to_bytes(taken, usize::MAX).await.map_err(|e| e.to_string())?;
+            *body_slot = Some(bytes.clone());
+            Ok(bytes)
+        })
+        .await
+    };
+    if let Some(bytes) = buffered {
+        *req.body_mut() = axum::body::Body::from(bytes);
+    }
+    match outcome {
         Ok(Some(principal)) => {
             req.extensions_mut().insert(AuthenticatedKey(principal));
             next.run(req).await
@@ -102,7 +137,7 @@ pub async fn api_key_auth(State(st): State<AppState>, mut req: Request, next: Ne
 }
 
 fn auth_failure_reply(failure: AuthFailure) -> Reply {
-    Reply::json(failure.status(), format!(r#"{{"error":"{}"}}"#, failure.message()).into_bytes())
+    Reply::json(failure.status(), format!(r#"{{"error":{}}}"#, cpa_core::util::go_json_string(failure.message())).into_bytes())
 }
 
 /// `CPATraceIDMiddleware`: installs the shared trace state and stamps `X-CPA-TRACE-ID` on the
