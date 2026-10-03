@@ -247,10 +247,10 @@ fn clear_probe_refs(repo: &Repository) -> R<()> {
     Ok(())
 }
 
-/// Fetches the branches of `origin`, into `refs/remotes/origin/*` when `update_tracking`, and
+/// Fetches the branches of `origin`, into `refs/remotes/origin/*` and
 /// returns what the remote advertised (`HEAD` with its symref, then the branches). An empty
 /// remote is an `EMPTY_REMOTE` error (go-git `ErrEmptyRemoteRepository`).
-fn fetch_remote(repo: &Repository, auth: Option<&BasicAuth>, update_tracking: bool) -> R<Fetched> {
+fn fetch_remote(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
     let mut remote = repo.find_remote("origin")?;
     clear_probe_refs(repo)?;
     let updated = Cell::new(false);
@@ -263,8 +263,7 @@ fn fetch_remote(repo: &Repository, auth: Option<&BasicAuth>, update_tracking: bo
     });
     let mut fo = FetchOptions::new();
     fo.remote_callbacks(cbs).download_tags(AutotagOption::None).update_fetchhead(false);
-    let specs: &[&str] = if update_tracking { &[FETCH_SPEC, PROBE_SPEC] } else { &[PROBE_SPEC] };
-    let fetched = remote.fetch(specs, Some(&mut fo), None);
+    let fetched = remote.fetch(&[FETCH_SPEC, PROBE_SPEC], Some(&mut fo), None);
     let head_target = remote.default_branch().ok().and_then(|b| b.as_str().map(str::to_string));
     let advertised = fetched.map_err(GitErr::from).and_then(|()| {
         let mut branches = Vec::new();
@@ -293,12 +292,7 @@ fn fetch_remote(repo: &Repository, auth: Option<&BasicAuth>, update_tracking: bo
 
 /// Fetches all branches of `origin` into `refs/remotes/origin/*`.
 pub(super) fn fetch_origin(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
-    fetch_remote(repo, auth, true)
-}
-
-/// The branches `origin` advertises right now, without touching the tracking refs.
-fn probe_origin(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
-    fetch_remote(repo, auth, false)
+    fetch_remote(repo, auth)
 }
 
 /// go-git `isFastForward`: `new` is `old` or has it as an ancestor.
@@ -480,8 +474,8 @@ pub(super) fn restore_missing_tracked_files(repo: &Repository, repo_dir: &Path) 
 }
 
 /// Pushes the checked-out branch to `origin`. With a stored tracking ref the push is forced but
-/// only if the remote still advertises that exact commit (force-with-lease emulated by an
-/// advertisement check right before the push). Without one (`allow_missing_remote`) the push is a
+/// only if the remote still has that exact commit when the push negotiates (force-with-lease via
+/// libgit2's push negotiation callback). Without one (`allow_missing_remote`) the push is a
 /// plain branch creation that fails if the branch exists. Updates the tracking ref on success.
 pub(super) fn push_branch(
     repo: &Repository,
@@ -506,22 +500,22 @@ pub(super) fn push_branch(
     let push_err = |e: GitErr| e.wrap("git token store: push");
     let mut remote = repo.find_remote("origin").map_err(|e| push_err(e.into()))?;
 
-    if let Some(expected) = lease {
-        let actual = match probe_origin(repo, auth) {
-            Ok(f) => f.refs.iter().find(|r| r.name == head.name).map(|r| r.oid),
-            Err(e) if e.is(EMPTY_REMOTE) => None,
-            Err(e) => return Err(push_err(e)),
-        };
-        if actual != Some(expected) {
-            return Err(GitErr::msg(format!(
-                "git token store: push: force-with-lease: stale info for {} (expected {expected})",
-                head.name
-            )));
-        }
-    }
-
     let rejection: RefCell<Option<String>> = RefCell::new(None);
     let mut cbs = remote_callbacks(auth);
+    // Force-with-lease: the remote's ref as seen during this push's own negotiation must still be
+    // the stored tracking commit, so no other writer can slip in between check and update.
+    let stale: RefCell<bool> = RefCell::new(false);
+    if let Some(expected) = lease {
+        let stale = &stale;
+        cbs.push_negotiation(move |updates| {
+            let current = updates.iter().find(|u| u.dst_refname() == Some(head.name.as_str())).map(|u| u.src());
+            if current != Some(expected) {
+                *stale.borrow_mut() = true;
+                return Err(git2::Error::from_str("force-with-lease: stale info"));
+            }
+            Ok(())
+        });
+    }
     cbs.push_update_reference(|name, status| {
         if let Some(s) = status {
             *rejection.borrow_mut() = Some(format!("{name}: {s}"));
@@ -532,7 +526,16 @@ pub(super) fn push_branch(
     po.remote_callbacks(cbs);
     let force = if lease.is_some() { "+" } else { "" };
     let spec = format!("{force}{0}:{0}", head.name);
-    remote.push(&[spec], Some(&mut po)).map_err(|e| push_err(e.into()))?;
+    if let Err(e) = remote.push(&[spec], Some(&mut po)) {
+        if *stale.borrow() {
+            return Err(GitErr::msg(format!(
+                "git token store: push: force-with-lease: stale info for {} (expected {})",
+                head.name,
+                lease.map(|o| o.to_string()).unwrap_or_default()
+            )));
+        }
+        return Err(push_err(e.into()));
+    }
     if let Some(msg) = rejection.take() {
         return Err(GitErr::msg(format!("git token store: push: {msg}")));
     }
