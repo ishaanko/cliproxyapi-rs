@@ -2,6 +2,16 @@
 
 /// `bytes.TrimSpace`: trims Unicode white space (UTF-8 aware), ASCII-only for invalid UTF-8.
 pub fn trim_space(b: &[u8]) -> &[u8] {
+    // Hot on every stream line: an ASCII non-space first and last byte means nothing to trim
+    // (Unicode spaces start with a non-ASCII byte), so skip the UTF-8 validation.
+    if let (Some(&first), Some(&last)) = (b.first(), b.last())
+        && first > b' '
+        && first < 0x80
+        && last > b' '
+        && last < 0x80
+    {
+        return b;
+    }
     match std::str::from_utf8(b) {
         Ok(s) => s.trim().as_bytes(),
         Err(_) => b.trim_ascii(),
@@ -51,7 +61,7 @@ pub fn iterate_stream_lines(payload: &[u8], mut f: impl FnMut(&[u8])) {
 
 /// `bytes.Contains`.
 pub fn contains(hay: &[u8], needle: &[u8]) -> bool {
-    needle.is_empty() || hay.windows(needle.len()).any(|w| w == needle)
+    needle.is_empty() || memchr::memmem::find(hay, needle).is_some()
 }
 
 #[cfg(test)]

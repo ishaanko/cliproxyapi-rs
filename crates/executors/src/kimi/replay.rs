@@ -572,7 +572,7 @@ pub(super) fn wrap_stream(mut result: StreamResult, scope: ReplayScope) -> Strea
         return result;
     }
     let (tx, rx) = mpsc::channel(8);
-    let mut inner = std::mem::replace(&mut result.chunks, rx);
+    let mut inner = std::mem::replace(&mut result.chunks, rx.into());
     tokio::spawn(async move {
         let mut accumulator = StreamAccumulator::default();
         let mut has_error = false;

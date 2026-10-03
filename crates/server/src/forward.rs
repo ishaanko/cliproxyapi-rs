@@ -1,23 +1,27 @@
 //! Stream forwarding and non-stream keepalive (Go: stream_forwarder.go, handlers.go
 //! `StartNonStreamingKeepAlive`, handlers_errors.go `WriteErrorResponse`).
 
+use std::convert::Infallible;
 use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use bytes::Bytes;
 use tokio::sync::mpsc;
-use tokio::time::{Instant, interval_at};
+use http_body::{Body, Frame};
+use tokio::time::{Instant, Interval, Sleep, interval_at, sleep_until};
 
 use crate::error::{ErrorMessage, claude_error_body, error_body, retry_after_seconds};
-use crate::exec::ExecStream;
+use crate::exec::{ExecRx, ExecStream};
 use crate::headers::{filter_upstream_headers, replace_headers};
 use crate::reply::{JSON, Reply, set_sse_headers, streaming_response};
 
 /// Dialect-specific writers for `ForwardStream` (Go: `StreamForwardOptions`). Every `write_*`
 /// appends to `out`; the forwarder flushes after each step.
-pub trait StreamHooks: Send {
+pub trait StreamHooks: Send + Unpin {
     fn write_chunk(&mut self, out: &mut Vec<u8>, chunk: &[u8]);
 
     /// A terminal failure detected while writing the last chunk (not written again).
@@ -47,95 +51,132 @@ pub trait StreamHooks: Send {
 /// Stop coalescing queued chunks into one write once this many bytes are pending.
 const BATCH_LIMIT: usize = 32 * 1024;
 
-async fn flush(tx: &mpsc::Sender<Bytes>, buf: &mut Vec<u8>) -> bool {
-    if buf.is_empty() {
-        return true;
-    }
-    tx.send(Bytes::from(std::mem::take(buf))).await.is_ok()
+/// Writes to one client are spaced at least this far apart. Go flushes after every chunk, which
+/// costs one socket write per SSE event; on a fast upstream that kernel time was about half of the
+/// proxy's CPU. The first chunk after a quiet period still goes out at once (token streams, where
+/// events are milliseconds apart, see no change); a dense burst is flushed once per gap, so it is
+/// delayed by at most the gap (the tokio timer wheel rounds the wait up to a millisecond tick).
+/// One millisecond is far below what a stream consumer can notice yet already cuts the writes of a
+/// burst by an order of magnitude; a longer gap saves little more and delays more, a shorter one
+/// is below the timer resolution. It is deliberately not configurable.
+const FLUSH_GAP: Duration = Duration::from_millis(1);
+
+/// SSE response body (Go: `ForwardStream`): pulls chunks from the stream when hyper polls the
+/// body, writes them through the dialect hooks and hands over everything that is already queued
+/// as one frame (one socket write; see [`FLUSH_GAP`] for dense bursts). It ends after the stream
+/// ends, errors, or a chunk reports a terminal failure; dropping it (client gone) drops the chunk source, which
+/// releases the upstream. Runs in the connection's own task: no pump task or channel per stream.
+pub struct SseBody<H: StreamHooks> {
+    hooks: H,
+    rx: ExecRx,
+    /// Bytes the handler already wrote before committing the headers; sent first.
+    initial: Vec<u8>,
+    ticker: Option<Interval>,
+    buf: Vec<u8>,
+    finished: bool,
+    /// When the last frame was handed to hyper.
+    last_flush: Option<Instant>,
+    /// Wait for the end of the flush gap while a dense burst accumulates in `buf`.
+    hold: Option<Pin<Box<Sleep>>>,
+    /// The deadline `hold` is set to.
+    hold_deadline: Option<Instant>,
 }
 
-/// `ForwardStream`: pumps chunks to the client until the stream ends, errors, the client goes
-/// away, or a chunk reports a terminal failure. Returns the terminal error, if any.
-pub async fn forward_stream<H: StreamHooks>(
-    hooks: &mut H,
-    mut rx: mpsc::Receiver<Result<Bytes, ErrorMessage>>,
-    tx: mpsc::Sender<Bytes>,
-    keepalive: Duration,
-) -> Option<ErrorMessage> {
-    let mut ticker = (!keepalive.is_zero()).then(|| interval_at(Instant::now() + keepalive, keepalive));
-    let mut buf: Vec<u8> = Vec::new();
-    loop {
-        tokio::select! {
-            _ = tx.closed() => return None,
-            item = rx.recv() => {
-                // Items that are already queued are written into the same flush (no added
-                // latency, fewer wakeups and write syscalls); order and terminal handling are
-                // those of one flush per item.
-                let mut item = item;
-                loop {
-                    match item {
-                        Some(Ok(chunk)) => {
-                            if buf.is_empty() {
-                                // One allocation per flush instead of doubling from zero.
-                                buf.reserve(chunk.len() + 32);
-                            }
-                            hooks.write_chunk(&mut buf, &chunk);
-                            if let Some(err) = hooks.chunk_error() {
-                                if !flush(&tx, &mut buf).await {
-                                    return None;
-                                }
-                                return Some(hooks.normalize_terminal_error(err));
-                            }
-                        }
-                        Some(Err(err)) => {
-                            let err = hooks.normalize_terminal_error(err);
-                            hooks.write_terminal_error(&mut buf, &err);
-                            let _ = flush(&tx, &mut buf).await;
-                            return Some(err);
-                        }
-                        None => {
-                            if let Some(err) = hooks.close_error(&mut buf) {
-                                hooks.write_terminal_error(&mut buf, &err);
-                                let _ = flush(&tx, &mut buf).await;
-                                return Some(err);
-                            }
-                            hooks.write_done(&mut buf);
-                            let _ = flush(&tx, &mut buf).await;
-                            return None;
-                        }
+impl<H: StreamHooks> SseBody<H> {
+    pub fn new(hooks: H, rx: ExecRx, initial: Vec<u8>, keepalive: Duration) -> Self {
+        let ticker = (!keepalive.is_zero()).then(|| interval_at(Instant::now() + keepalive, keepalive));
+        SseBody { hooks, rx, initial, ticker, buf: Vec::new(), finished: false, last_flush: None, hold: None, hold_deadline: None }
+    }
+
+    fn terminal(&mut self, err: &ErrorMessage) {
+        self.finished = true;
+        tracing::debug!(status = err.status_or_500(), "stream terminated with error: {}", err.text);
+    }
+}
+
+impl<H: StreamHooks> Body for SseBody<H> {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+        let this = self.get_mut();
+        if !this.initial.is_empty() {
+            return Poll::Ready(Some(Ok(Frame::data(Bytes::from(std::mem::take(&mut this.initial))))));
+        }
+        if this.finished {
+            return Poll::Ready(None);
+        }
+        // A due keep-alive rides along with whatever is queued (the tick is independent of traffic).
+        if let Some(t) = this.ticker.as_mut()
+            && t.poll_tick(cx).is_ready()
+        {
+            this.hooks.write_keepalive(&mut this.buf);
+        }
+        loop {
+            match this.rx.poll_recv(cx) {
+                Poll::Ready(Some(Ok(chunk))) => {
+                    if this.buf.is_empty() {
+                        // One allocation per flush instead of doubling from zero.
+                        this.buf.reserve(chunk.len() + 32);
                     }
-                    if buf.len() >= BATCH_LIMIT {
+                    this.hooks.write_chunk(&mut this.buf, &chunk);
+                    if let Some(err) = this.hooks.chunk_error() {
+                        let err = this.hooks.normalize_terminal_error(err);
+                        this.terminal(&err);
                         break;
                     }
-                    item = match rx.try_recv() {
-                        Ok(next) => Some(next),
-                        Err(mpsc::error::TryRecvError::Empty) => break,
-                        Err(mpsc::error::TryRecvError::Disconnected) => None,
-                    };
+                    if this.buf.len() >= BATCH_LIMIT {
+                        break;
+                    }
                 }
-                if !flush(&tx, &mut buf).await {
-                    return None;
+                Poll::Ready(Some(Err(err))) => {
+                    let err = this.hooks.normalize_terminal_error(err);
+                    this.hooks.write_terminal_error(&mut this.buf, &err);
+                    this.terminal(&err);
+                    break;
                 }
-            },
-            _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
-                hooks.write_keepalive(&mut buf);
-                if !flush(&tx, &mut buf).await {
-                    return None;
+                Poll::Ready(None) => {
+                    if let Some(err) = this.hooks.close_error(&mut this.buf) {
+                        this.hooks.write_terminal_error(&mut this.buf, &err);
+                        this.terminal(&err);
+                    } else {
+                        this.hooks.write_done(&mut this.buf);
+                        this.finished = true;
+                    }
+                    break;
                 }
+                Poll::Pending => break,
             }
         }
+        if !this.buf.is_empty() {
+            let due = this.finished || this.buf.len() >= BATCH_LIMIT || this.last_flush.is_none_or(|t| t.elapsed() >= FLUSH_GAP);
+            if !due && let Some(last) = this.last_flush {
+                let deadline = last + FLUSH_GAP;
+                // The deadline only moves when a flush happened, so re-arm just then.
+                let hold = this.hold.get_or_insert_with(|| Box::pin(sleep_until(deadline)));
+                if this.hold_deadline != Some(deadline) {
+                    hold.as_mut().reset(deadline);
+                    this.hold_deadline = Some(deadline);
+                }
+                if hold.as_mut().poll(cx).is_pending() {
+                    return Poll::Pending;
+                }
+            }
+            this.last_flush = Some(Instant::now());
+            return Poll::Ready(Some(Ok(Frame::data(Bytes::from(std::mem::take(&mut this.buf))))));
+        }
+        if this.finished { Poll::Ready(None) } else { Poll::Pending }
     }
 }
 
-/// Starts an SSE response: headers (status 200), `initial` bytes first, then the forwarder task
-/// takes over `rx`. `upstream_headers` are added only where the handler set none (Content-Type
-/// wins).
+/// Starts an SSE response: headers (status 200), `initial` bytes first, then the body takes
+/// over `rx`. `upstream_headers` are added only where the handler set none (Content-Type wins).
 pub fn start_sse_stream<H: StreamHooks + 'static>(
     mut headers: HeaderMap,
     upstream_headers: &HeaderMap,
     initial: Vec<u8>,
-    rx: mpsc::Receiver<Result<Bytes, ErrorMessage>>,
-    mut hooks: H,
+    rx: ExecRx,
+    hooks: H,
     keepalive: Duration,
     set_sse: bool,
 ) -> Response {
@@ -144,17 +185,9 @@ pub fn start_sse_stream<H: StreamHooks + 'static>(
     }
     crate::headers::write_upstream_headers(&mut headers, upstream_headers);
     crate::sniff::ensure_content_type(&mut headers, &initial);
-    let (tx, out_rx) = mpsc::channel::<Bytes>(16);
-    tokio::spawn(async move {
-        if !initial.is_empty() && tx.send(Bytes::from(initial)).await.is_err() {
-            return;
-        }
-        let outcome = forward_stream(&mut hooks, rx, tx, keepalive).await;
-        if let Some(err) = outcome {
-            tracing::debug!(status = err.status_or_500(), "stream terminated with error: {}", err.text);
-        }
-    });
-    streaming_response(200, headers, out_rx)
+    let mut resp = Response::new(axum::body::Body::new(SseBody::new(hooks, rx, initial, keepalive)));
+    *resp.headers_mut() = headers;
+    resp
 }
 
 /// Headers + footer for an upstream stream that closed without data (status 200).
@@ -303,20 +336,18 @@ mod tests {
         }
     }
 
+    async fn collect(body: SseBody<Plain>) -> String {
+        let bytes = axum::body::to_bytes(axum::body::Body::new(body), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
     async fn run(items: Vec<Result<Bytes, ErrorMessage>>) -> String {
         let (src_tx, src_rx) = mpsc::channel(8);
         for i in items {
             src_tx.send(i).await.unwrap();
         }
         drop(src_tx);
-        let (tx, mut rx) = mpsc::channel(16);
-        let mut hooks = Plain;
-        forward_stream(&mut hooks, src_rx, tx, Duration::ZERO).await;
-        let mut out = String::new();
-        while let Some(b) = rx.recv().await {
-            out.push_str(std::str::from_utf8(&b).unwrap());
-        }
-        out
+        collect(SseBody::new(Plain, src_rx.into(), Vec::new(), Duration::ZERO)).await
     }
 
     #[tokio::test]
@@ -334,19 +365,34 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn keepalive_comment_is_emitted_while_idle() {
         let (src_tx, src_rx) = mpsc::channel::<Result<Bytes, ErrorMessage>>(1);
-        let (tx, mut rx) = mpsc::channel(16);
-        let handle = tokio::spawn(async move {
-            let mut hooks = Plain;
-            forward_stream(&mut hooks, src_rx, tx, Duration::from_secs(5)).await;
-        });
+        let handle = tokio::spawn(collect(SseBody::new(Plain, src_rx.into(), Vec::new(), Duration::from_secs(5))));
         tokio::time::sleep(Duration::from_secs(11)).await;
         drop(src_tx);
-        handle.await.unwrap();
-        let mut out = String::new();
-        while let Some(b) = rx.recv().await {
-            out.push_str(std::str::from_utf8(&b).unwrap());
+        assert_eq!(handle.await.unwrap(), ": keep-alive\n\n: keep-alive\n\ndata: [DONE]\n\n");
+    }
+
+    // The first chunk after a quiet period goes out at once; chunks that follow within the gap
+    // are written together once it ends.
+    #[tokio::test(start_paused = true)]
+    async fn dense_chunks_share_a_write_per_gap() {
+        use http_body_util::BodyExt;
+        let (tx, rx) = mpsc::channel::<Result<Bytes, ErrorMessage>>(8);
+        let mut body = Box::pin(SseBody::new(Plain, rx.into(), Vec::new(), Duration::ZERO));
+        let next = async |body: &mut Pin<Box<SseBody<Plain>>>| {
+            let frame = body.frame().await.unwrap().unwrap();
+            String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap()
+        };
+        let start = Instant::now();
+        tx.send(Ok(Bytes::from_static(b"a"))).await.unwrap();
+        assert_eq!(next(&mut body).await, "data: a\n\n");
+        assert!(start.elapsed() < FLUSH_GAP);
+        for c in [b"b", b"c"] {
+            tx.send(Ok(Bytes::from_static(c))).await.unwrap();
         }
-        assert_eq!(out, ": keep-alive\n\n: keep-alive\n\ndata: [DONE]\n\n");
+        assert_eq!(next(&mut body).await, "data: b\n\ndata: c\n\n");
+        assert!(start.elapsed() >= FLUSH_GAP);
+        drop(tx);
+        assert_eq!(next(&mut body).await, "data: [DONE]\n\n");
     }
 
     #[tokio::test(start_paused = true)]

@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use super::accounting::{Detail, ensure_token_breakdown_for_provider};
 use super::parse::StreamUsageBuffer;
 use crate::helps::response_model::{
-    MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event, extract_response_model_event_doc,
+    FastModel, MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event, extract_response_model_event_doc,
     is_model_substituted, normalize_model_name,
 };
 
@@ -87,6 +87,8 @@ struct Inner {
     sink: Option<Arc<dyn UsageSink>>,
     /// A terminal event already reported the served model; later frames skip parsing.
     response_model_final: AtomicBool,
+    /// Which no-parse response-model extraction applies to the provider.
+    fast_model: crate::helps::response_model::FastModel,
     published: AtomicBool,
     state: Mutex<State>,
 }
@@ -233,6 +235,7 @@ impl UsageReporter {
             requested_at_utc: Utc::now(),
             sink,
             response_model_final: AtomicBool::new(false),
+            fast_model: crate::helps::response_model::fast_model_kind(provider),
             published: AtomicBool::new(false),
             state: Mutex::new(State {
                 stream: opts.is_some_and(|o| o.stream),
@@ -298,8 +301,33 @@ impl UsageReporter {
         if self.is_response_model_final() {
             return;
         }
+        // Common chat chunk: decided without a parse or an allocation.
+        if self.inner.fast_model != FastModel::No
+            && let Some(data) = crate::helps::text::json_payload(payload)
+        {
+            let fast = match self.inner.fast_model {
+                FastModel::Generic => crate::helps::response_model::generic_model_fast(data),
+                _ => crate::helps::response_model::gemini_model_fast(data),
+            };
+            if let Some((served, terminal)) = fast {
+                self.apply_response_model_ref(served, terminal);
+                return;
+            }
+        }
         let (served, terminal) = extract_response_model_event(payload, &self.inner.provider);
         self.apply_response_model(served, terminal);
+    }
+
+    fn apply_response_model_ref(&self, served: &str, terminal: bool) {
+        if !served.is_empty() {
+            let mut state = self.inner.state.lock();
+            if state.response_model != served {
+                state.response_model = served.to_string();
+            }
+        }
+        if terminal {
+            self.inner.response_model_final.store(true, Ordering::Release);
+        }
     }
 
     /// [`Self::observe_response_model`] for a frame indexed by the caller (`payload` is the raw

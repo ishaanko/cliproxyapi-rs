@@ -28,7 +28,6 @@ use cpa_core::util::{get_provider_name, resolve_auto_model};
 use cpa_json::J;
 use cpa_runtime::conductor::Manager;
 use serde_json::Value;
-use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at};
 
 use crate::error::{ErrorMessage, build_error_response_body_with_error, is_request_fault, status_text};
@@ -62,6 +61,8 @@ pub async fn responses_websocket(
     // A failed handshake would otherwise leave the deferred request log waiting forever.
     let api_log = info.api_log.clone();
     let mut resp = ws
+        // tungstenite's 128 KB default read buffer is allocated per socket up front.
+        .read_buffer_size(16 * 1024)
         .max_message_size(1 << 30)
         .max_frame_size(1 << 30)
         .on_failed_upgrade(move |_| api_log.ws_finished())
@@ -237,6 +238,41 @@ fn json_payloads_from_chunk(chunk: &[u8]) -> Vec<Vec<u8>> {
         payloads.push(trimmed.to_vec());
     }
     payloads
+}
+
+/// The `type` of a frame that needs no bookkeeping beyond being forwarded: a flat object without
+/// `item` or `response` members (the only places the tool-call caches, output collector and
+/// pending-call tracking read) whose plain-string `type` is not one the bookkeeping keys on. `None` for everything
+/// else, which takes the full path. Decided from a top-level scan, no parse.
+fn plain_forward_event(payload: &[u8]) -> Option<&str> {
+    let mut ty: Option<(usize, usize)> = None;
+    let mut bail = false;
+    let complete = cpa_json::lazy::visit_top_level(payload, |key, raw| {
+        match key {
+            "item" | "response" => bail = true,
+            "type" => {
+                if ty.is_some() {
+                    bail = true;
+                } else {
+                    ty = Some((raw.as_ptr() as usize - payload.as_ptr() as usize, raw.len()));
+                }
+            }
+            _ => {}
+        }
+        !bail
+    });
+    if bail || !complete {
+        return None;
+    }
+    let (off, len) = ty?;
+    let inner = payload[off..off + len].strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+    let name = std::str::from_utf8(inner).ok()?;
+    // Types the bookkeeping keys on stay on the full path even if a frame omits `item` / `response`.
+    let tracked = matches!(
+        name,
+        WS_EVENT_TYPE_ERROR | "response.created" | "response.completed" | "response.done" | "response.output_item.added" | "response.output_item.done"
+    );
+    (!name.contains('\\') && !tracked).then_some(name)
 }
 
 fn is_completion_event(event_type: &str) -> bool {
@@ -486,13 +522,23 @@ struct Writer<'a> {
 
 impl Writer<'_> {
     async fn text(&mut self, payload: &[u8]) -> Result<(), axum::Error> {
+        self.text_deferred(payload).await?;
+        self.socket.flush().await
+    }
+
+    /// Queues the frame; `forward_turn` flushes within the gap and its caller flushes on the way out.
+    async fn text_deferred(&mut self, payload: &[u8]) -> Result<(), axum::Error> {
         if self.timeline {
             self.api_log.ws_timeline_append("response", payload);
         }
         let text = String::from_utf8_lossy(payload).into_owned();
-        self.socket.send(Message::Text(text.into())).await
+        self.socket.feed(Message::Text(text.into())).await
     }
 }
+
+/// Frames of one turn are flushed to the client at most this often (the first frame after a quiet
+/// period at once), so a dense burst of events costs one socket write per interval, not per event.
+const WS_FLUSH_GAP: Duration = Duration::from_millis(1);
 
 /// How a turn ended.
 enum TurnEnd {
@@ -519,7 +565,7 @@ async fn forward_turn(
     info: &ReqInfo,
     keepalive: Duration,
     timeline: bool,
-    rx: &mut mpsc::Receiver<Result<Bytes, ErrorMessage>>,
+    rx: &mut crate::exec::ExecRx,
     tool_turn: &mut Option<ToolCacheTurn>,
     session_key: &str,
     session_id: &str,
@@ -551,7 +597,32 @@ async fn forward_turn(
         };
     }
 
+    // Frames fed but not yet flushed, when the last flush happened, and the wait for the gap.
+    let mut dirty = false;
+    let mut last_flush: Option<Instant> = None;
+    let hold = tokio::time::sleep(WS_FLUSH_GAP);
+    tokio::pin!(hold);
+    let mut hold_deadline: Option<Instant> = None;
     loop {
+        if dirty {
+            match last_flush {
+                Some(t) if t.elapsed() < WS_FLUSH_GAP => {
+                    // The deadline only moves when a flush happened, so re-arm just then.
+                    if hold_deadline != Some(t + WS_FLUSH_GAP) {
+                        hold.as_mut().reset(t + WS_FLUSH_GAP);
+                        hold_deadline = Some(t + WS_FLUSH_GAP);
+                    }
+                }
+                _ => {
+                    if let Err(e) = socket.flush().await {
+                        note(&e.to_string());
+                        return TurnEnd::Terminate(e.to_string());
+                    }
+                    dirty = false;
+                    last_flush = Some(Instant::now());
+                }
+            }
+        }
         tokio::select! {
             biased;
             item = rx.recv() => {
@@ -587,6 +658,19 @@ async fn forward_turn(
                     t.reset();
                 }
                 for payload_bytes in json_payloads_from_chunk(&chunk) {
+                    if let Some(name) = plain_forward_event(&payload_bytes) {
+                        api_log.mark_response_timestamp();
+                        let mut writer = Writer { socket, api_log: &api_log, timeline };
+                        if let Err(e) = writer.text_deferred(&payload_bytes).await {
+                            tracing::warn!(
+                                "responses websocket: downstream_out write failed id={session_id} event={name} error={e}"
+                            );
+                            note(&e.to_string());
+                            return TurnEnd::Terminate(e.to_string());
+                        }
+                        dirty = true;
+                        continue;
+                    }
                     let mut payload = cpa_json::parse(&payload_bytes);
                     let mut bytes = payload_bytes;
                     let event_type = payload.g("type").str();
@@ -635,15 +719,18 @@ async fn forward_turn(
                         return end_with_error(socket, &api_log, timeline, &err, Some(&bytes)).await;
                     }
                     let mut writer = Writer { socket, api_log: &api_log, timeline };
-                    if let Err(e) = writer.text(&bytes).await {
+                    if let Err(e) = writer.text_deferred(&bytes).await {
                         tracing::warn!(
                             "responses websocket: downstream_out write failed id={session_id} event={event_type} error={e}"
                         );
                         note(&e.to_string());
                         return TurnEnd::Terminate(e.to_string());
                     }
+                    dirty = true;
                 }
             }
+            // The flush gap of a dense burst ended; the loop head flushes.
+            () = &mut hold, if dirty => {}
             _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
                 if let Err(e) = socket.send(Message::Ping(Bytes::new())).await {
                     note(&e.to_string());
@@ -775,6 +862,8 @@ fn upstream_disconnects(manager: &Manager, session_id: &str) -> Disconnects {
 /// request-shape faults as an error frame, otherwise close silently (the client reconnects, which
 /// implies a full-context resend).
 async fn close_for_upstream_disconnect(socket: &mut Conn, session_id: &str, text: &str) -> String {
+    // Frames queued inside the flush gap must reach the client before the socket goes away.
+    let _ = socket.flush().await;
     let err = disconnect_error(text);
     if let Some(frame) = close_frame_for_upstream_error(&err) {
         let _ = socket.send(Message::Close(Some(frame))).await;
@@ -1121,6 +1210,8 @@ async fn run_session(
             ForwardOptions { preserve_completion_output: &preserve_output, duplex_stream: &is_duplex },
         )
         .await;
+        // Frames still queued inside the flush gap go out on every way out of the turn.
+        let _ = socket.flush().await;
         let (selected_last, selected_mode, selected_seen, pinned_attempted) = match observed_selection.lock() {
             Ok(g) => (g.last_attempted.clone(), g.mode, g.observed, g.pinned_attempted),
             Err(_) => (String::new(), UpstreamMode::Unknown, false, false),
@@ -1178,6 +1269,47 @@ async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A silent close (the upstream error is not exposed to the client) must not drop frames that
+    // were queued but not yet flushed.
+    #[tokio::test]
+    async fn silent_disconnect_close_flushes_queued_frames() {
+        use futures_util::StreamExt;
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(|ws: WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| async move {
+                    let mut conn = Conn::direct(socket);
+                    conn.feed(Message::Text("queued".into())).await.unwrap();
+                    close_for_upstream_disconnect(&mut conn, "test", "upstream went away").await;
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(5), client.next()).await.unwrap();
+        assert_eq!(first.unwrap().unwrap().into_text().unwrap().as_str(), "queued");
+    }
+
+    // Only frames none of the turn bookkeeping looks at skip it.
+    #[test]
+    fn plain_events_are_forwarded_without_bookkeeping() {
+        let name = |s: &str| plain_forward_event(s.as_bytes()).map(str::to_string);
+        assert_eq!(name(r#"{"type":"response.output_text.delta","delta":"x"}"#).as_deref(), Some("response.output_text.delta"));
+        for tracked in [
+            r#"{"type":"response.created","response":{}}"#,
+            r#"{"type":"response.output_item.done","item":{}}"#,
+            r#"{"type":"response.completed"}"#,
+            r#"{"type":"error","error":{}}"#,
+            r#"{"type":"response.output_text.delta","item":{"x":1}}"#,
+            r#"{"delta":"no type"}"#,
+            r#"{"type":"a","type":"b"}"#,
+        ] {
+            assert_eq!(name(tracked), None, "{tracked}");
+        }
+    }
 
     #[test]
     fn json_payloads_are_extracted_from_sse_chunks() {

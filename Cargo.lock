@@ -1086,6 +1086,7 @@ dependencies = [
  "hex",
  "http",
  "httpdate",
+ "memchr",
  "once_cell",
  "parking_lot",
  "rand 0.9.5",
@@ -4507,8 +4508,6 @@ dependencies = [
 [[package]]
 name = "reqwest"
 version = "0.12.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
  "base64 0.22.1",
  "bytes",

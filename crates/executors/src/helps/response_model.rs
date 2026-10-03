@@ -39,6 +39,142 @@ pub fn extract_response_model_event(payload: &[u8], provider: &str) -> (String, 
     extract_response_model_event_doc(&Doc::new(data), provider)
 }
 
+/// Which allocation-free extraction (if any) applies to a provider.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FastModel {
+    Generic,
+    Gemini,
+    /// Codex and Claude read the event type first and are cheap already.
+    No,
+}
+
+pub fn fast_model_kind(provider: &str) -> FastModel {
+    match provider.trim().to_lowercase().as_str() {
+        "codex" | "claude" => FastModel::No,
+        "gemini" | "gemini-interactions" | "vertex" | "aistudio" | "antigravity" => FastModel::Gemini,
+        _ => FastModel::Generic,
+    }
+}
+
+/// Allocation-free answer of the generic extraction for the common chat chunk: a flat object with a
+/// plain string `model` and none of the keys that route to another branch. `data` is the frame's
+/// JSON object ([`json_payload`]). Returns `(served_model, terminal)` borrowed from `data`, or
+/// `None` whenever the full extraction must decide (anything unusual: nested `response` /
+/// `interaction` / `message`, `modelVersion`, duplicate or escaped values, a `finish_reason`
+/// anywhere in `choices`, an oversized or non-string model, malformed JSON).
+pub fn generic_model_fast(data: &[u8]) -> Option<(&str, bool)> {
+    // Spans (offset, len) of the raw values; the visitor cannot hand out borrows.
+    let span = |raw: &[u8]| (raw.as_ptr() as usize - data.as_ptr() as usize, raw.len());
+    let (mut model, mut object, mut status, mut choices) = (None, None, None, None);
+    let mut bail = false;
+    let complete = cpa_json::lazy::visit_top_level(data, |key, raw| {
+        let slot = match key {
+            "model" => &mut model,
+            "object" => &mut object,
+            "status" => &mut status,
+            "choices" => &mut choices,
+            "response" | "interaction" | "modelVersion" | "message" => {
+                bail = true;
+                return false;
+            }
+            _ => return true,
+        };
+        if slot.is_some() {
+            bail = true;
+            return false;
+        }
+        *slot = Some(span(raw));
+        true
+    });
+    if bail || !complete {
+        return None;
+    }
+    let get = |s: Option<(usize, usize)>| s.map(|(o, l)| &data[o..o + l]);
+    // A plain (escape-free) JSON string's content.
+    fn plain(raw: &[u8]) -> Option<&[u8]> {
+        let inner = raw.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+        (!inner.contains(&92u8)).then_some(inner)
+    }
+    let served = std::str::from_utf8(plain(get(model)?)?).ok()?.trim();
+    if served.len() > MAX_RESPONSE_MODEL_LENGTH {
+        return None;
+    }
+    // `choices.0.finish_reason` is empty when every `finish_reason` in sight is the compact
+    // `"finish_reason":null` of a mid-stream chunk (a quote inside a string is escaped, so the
+    // pattern cannot come from text content).
+    if let Some(c) = get(choices) {
+        let any = memchr::memmem::find_iter(c, b"finish_reason").count();
+        if any > 0 && any != memchr::memmem::find_iter(c, b"\"finish_reason\":null").count() {
+            return None;
+        }
+    }
+    let mut terminal = false;
+    if let Some(o) = get(object) {
+        terminal = o == b"\"chat.completion\"";
+        if !terminal && o.starts_with(b"\"") && plain(o).is_none() {
+            return None;
+        }
+    }
+    if let Some(s) = get(status)
+        && s.starts_with(b"\"")
+    {
+        let v = plain(s)?;
+        terminal |= v == b"completed" || v == b"incomplete";
+    }
+    Some((served, terminal))
+}
+
+/// [`generic_model_fast`] for the Gemini family: a flat frame with a plain `modelVersion` (or
+/// `model`) string, no `response` / `interaction` envelope, no `finishReason` anywhere in
+/// `candidates` and no top-level `event_type` / `type`. Anything else answers `None`.
+pub fn gemini_model_fast(data: &[u8]) -> Option<(&str, bool)> {
+    let span = |raw: &[u8]| (raw.as_ptr() as usize - data.as_ptr() as usize, raw.len());
+    let (mut version, mut model, mut candidates) = (None, None, None);
+    let mut bail = false;
+    let complete = cpa_json::lazy::visit_top_level(data, |key, raw| {
+        let slot = match key {
+            "modelVersion" => &mut version,
+            "model" => &mut model,
+            "candidates" => &mut candidates,
+            "response" | "interaction" | "event_type" | "type" => {
+                bail = true;
+                return false;
+            }
+            _ => return true,
+        };
+        if slot.is_some() {
+            bail = true;
+            return false;
+        }
+        *slot = Some(span(raw));
+        true
+    });
+    if bail || !complete {
+        return None;
+    }
+    let get = |s: Option<(usize, usize)>| s.map(|(o, l)| &data[o..o + l]);
+    if let Some(c) = get(candidates)
+        && memchr::memmem::find(c, b"finishReason").is_some()
+    {
+        return None;
+    }
+    let served = match get(version).or(get(model)) {
+        Some(raw) => {
+            let inner = raw.strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+            if inner.contains(&92u8) {
+                return None;
+            }
+            let s = std::str::from_utf8(inner).ok()?.trim();
+            if s.len() > MAX_RESPONSE_MODEL_LENGTH {
+                return None;
+            }
+            s
+        }
+        None => "",
+    };
+    Some((served, false))
+}
+
 fn is_gemini_family(provider: &str) -> bool {
     matches!(provider.trim().to_lowercase().as_str(), "gemini" | "gemini-interactions" | "vertex" | "aistudio" | "antigravity")
 }
@@ -353,6 +489,60 @@ mod tests {
         assert_eq!(extract_response_model_event(chat, "kimi"), ("m1".into(), true));
         let long = format!(r#"{{"model":"{}"}}"#, "x".repeat(200));
         assert_eq!(extract_response_model_event(long.as_bytes(), "kimi").0, "");
+    }
+
+    // The allocation-free fast path may only answer what the full extraction would answer.
+    #[test]
+    fn fast_path_agrees_with_full_extraction() {
+        let long = format!(r#"{{"model":"{}"}}"#, "x".repeat(200));
+        let frames = [
+            r#"{"id":"c1","object":"chat.completion.chunk","model":"m1","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            r#"{"id":"c1","object":"chat.completion.chunk","model":"m1","choices":[{"index":0,"delta":{"content":"hi"}}]}"#,
+            r#"{"object":"chat.completion","model":" m2 ","choices":[]}"#,
+            r#"{"model":"m3","status":"completed"}"#,
+            r#"{"model":"m4","status":"in_progress"}"#,
+            r#"{"model":"m\u0035"}"#,
+            r#"{"model":7}"#,
+            r#"{"model":"a","model":"b"}"#,
+            r#"{"model":"m5","response":{"model":"r"}}"#,
+            r#"{"model":"m6","message":{"model":"mm"}}"#,
+            r#"{"id":"c1"}"#,
+            r#"{"model":""}"#,
+            long.as_str(),
+        ];
+        for f in frames {
+            if let Some((served, terminal)) = generic_model_fast(f.as_bytes()) {
+                assert_eq!(extract_generic_response_model_event(f.as_bytes()), (served.to_string(), terminal), "{f}");
+            }
+        }
+        assert_eq!(generic_model_fast(frames[1].as_bytes()), Some(("m1", false)));
+        assert_eq!(generic_model_fast(frames[2].as_bytes()), Some(("m2", true)));
+        assert_eq!(generic_model_fast(frames[3].as_bytes()), Some(("m3", true)));
+        assert_eq!(generic_model_fast(frames[0].as_bytes()), Some(("m1", false)));
+        let stop = r#"{"model":"m1","choices":[{"delta":{},"finish_reason":"stop"}]}"#;
+        assert_eq!(generic_model_fast(stop.as_bytes()), None);
+    }
+
+    #[test]
+    fn gemini_fast_path_agrees_with_full_extraction() {
+        let frames = [
+            r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]},"index":0}],"modelVersion":"gemini-2.5-flash","responseId":"r"}"#,
+            r#"{"candidates":[{"content":{"parts":[{"text":""}]},"finishReason":"STOP"}],"modelVersion":"gemini-2.5-flash"}"#,
+            r#"{"candidates":[],"model":"m"}"#,
+            r#"{"modelVersion":7,"model":"m"}"#,
+            r#"{"response":{"modelVersion":"v","candidates":[]}}"#,
+            r#"{"modelVersion":"v","type":"interaction.completed"}"#,
+            r#"{"candidates":[]}"#,
+            r#"{"modelVersion":"v\u0031"}"#,
+        ];
+        for f in frames {
+            if let Some((served, terminal)) = gemini_model_fast(f.as_bytes()) {
+                assert_eq!(extract_gemini_response_model_event(f.as_bytes()), (served.to_string(), terminal), "{f}");
+            }
+        }
+        assert_eq!(gemini_model_fast(frames[0].as_bytes()), Some(("gemini-2.5-flash", false)));
+        assert_eq!(gemini_model_fast(frames[1].as_bytes()), None);
+        assert_eq!(gemini_model_fast(frames[6].as_bytes()), Some(("", false)));
     }
 
     #[test]

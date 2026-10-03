@@ -5,13 +5,14 @@
 //! Plugin interceptors, model routers and plugin executors live in `plugin_exec.rs`; Home mode is handled inside the conductor.
 
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use cpa_config::Config;
 use cpa_core::format::{Format, constant};
 use cpa_core::util::{get_provider_name, resolve_auto_model};
-use cpa_runtime::executor::{ExecError, Metadata, Options, Request, SelectedAuthCallback, StreamResult, meta};
+use cpa_runtime::executor::{ChunkRx, ExecError, Metadata, Options, Request, SelectedAuthCallback, StreamResult, meta};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -23,21 +24,109 @@ use crate::sse_validate::SseJsonValidator;
 use crate::state::{AppState, HandlerSettings};
 use crate::thinking::{extract_reasoning_effort, metadata_keys, parse_suffix};
 
-/// Result of a stream execution: filtered upstream headers plus the chunk channel. An `Err`
-/// item is terminal; a closed channel is a clean end.
+/// Result of a stream execution: filtered upstream headers plus the chunk source. An `Err`
+/// item is terminal; an ended source is a clean end.
 pub struct ExecStream {
     pub headers: HeaderMap,
-    pub rx: mpsc::Receiver<Result<Bytes, ErrorMessage>>,
+    pub rx: ExecRx,
 }
 
 impl ExecStream {
     /// A stream that fails before any chunk (the Go "error before data" shape).
     pub fn failed(err: ErrorMessage) -> Self {
-        let (tx, rx) = mpsc::channel(1);
-        let _ = tx.try_send(Err(err));
         ExecStream {
             headers: HeaderMap::new(),
-            rx,
+            rx: ExecRx::once(Err(err)),
+        }
+    }
+}
+
+/// Chunk source of an [`ExecStream`]. Plugin pumps hand over a plain channel; the built-in
+/// pipeline hands over the conductor's channel wrapped in an adapter that converts errors and runs
+/// the Responses SSE validator when polled, so the consumer's own task does that work and no pump
+/// task or extra channel exists per stream.
+pub enum ExecRx {
+    Chan(mpsc::Receiver<Result<Bytes, ErrorMessage>>),
+    Direct(Box<DirectRx>),
+}
+
+/// The conductor's chunk channel plus the post-bootstrap pump logic (Go: forwardStreamChunks).
+pub struct DirectRx {
+    /// `None` once the upstream ended, failed or was never started (dropping it releases it).
+    chunks: Option<ChunkRx>,
+    validator: Option<SseJsonValidator>,
+    /// Bootstrap payload or error that precedes the rest of the stream.
+    first: Option<Result<Bytes, ErrorMessage>>,
+}
+
+impl From<mpsc::Receiver<Result<Bytes, ErrorMessage>>> for ExecRx {
+    fn from(rx: mpsc::Receiver<Result<Bytes, ErrorMessage>>) -> Self {
+        ExecRx::Chan(rx)
+    }
+}
+
+impl ExecRx {
+    /// A source that yields `item` and then ends.
+    pub fn once(item: Result<Bytes, ErrorMessage>) -> Self {
+        ExecRx::Direct(Box::new(DirectRx { chunks: None, validator: None, first: Some(item) }))
+    }
+
+    /// A source that ends at once.
+    pub fn empty() -> Self {
+        ExecRx::Direct(Box::new(DirectRx { chunks: None, validator: None, first: None }))
+    }
+
+    /// Next item; `None` at a clean end.
+    pub async fn recv(&mut self) -> Option<Result<Bytes, ErrorMessage>> {
+        std::future::poll_fn(|cx| self.poll_recv(cx)).await
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, ErrorMessage>>> {
+        match self {
+            ExecRx::Chan(rx) => rx.poll_recv(cx),
+            ExecRx::Direct(d) => d.poll_recv(cx),
+        }
+    }
+}
+
+impl DirectRx {
+    fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Bytes, ErrorMessage>>> {
+        if let Some(item) = self.first.take() {
+            return Poll::Ready(Some(item));
+        }
+        let Some(chunks) = self.chunks.as_mut() else {
+            return Poll::Ready(None);
+        };
+        loop {
+            match chunks.poll_recv(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => {
+                    self.chunks = None;
+                    if let Some(v) = self.validator.as_mut()
+                        && let Err(msg) = v.finish()
+                    {
+                        return Poll::Ready(Some(Err(ErrorMessage::new(502, msg))));
+                    }
+                    return Poll::Ready(None);
+                }
+                Poll::Ready(Some(Err(err))) => {
+                    self.chunks = None;
+                    return Poll::Ready(Some(Err(exec_error_message(&err))));
+                }
+                Poll::Ready(Some(Ok(chunk))) => {
+                    if chunk.is_empty() {
+                        continue;
+                    }
+                    match validate_payload(&mut self.validator, chunk) {
+                        Ok(Some(p)) => return Poll::Ready(Some(Ok(p))),
+                        Ok(None) => {}
+                        Err(e) => {
+                            self.chunks = None;
+                            return Poll::Ready(Some(Err(e)));
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -413,23 +502,15 @@ impl Pipeline {
         } else {
             HeaderMap::new()
         };
-        let (tx, rx) = mpsc::channel(1);
-        tokio::spawn(async move {
-            if let Some(err) = bootstrap_err {
-                let _ = tx.send(Err(err)).await;
-                return;
-            }
-            if let Some(payload) = bootstrap_payload {
-                let sent = tokio::select! {
-                    r = tx.send(Ok(payload)) => r.is_ok(),
-                    () = tx.closed() => false,
-                };
-                if !sent {
-                    return;
-                }
-            }
-            forward_rest(stream, validator, tx).await;
-        });
+        // The consumer polls the conductor's channel directly (see [`ExecRx`]).
+        let rx = match (bootstrap_err, bootstrap_payload) {
+            (Some(err), _) => ExecRx::once(Err(err)),
+            (None, first) => ExecRx::Direct(Box::new(DirectRx {
+                chunks: Some(stream.chunks),
+                validator,
+                first: first.map(Ok),
+            })),
+        };
         ExecStream { headers, rx }
     }
 }
@@ -474,58 +555,16 @@ pub(crate) fn validate_payload(validator: &mut Option<SseJsonValidator>, chunk: 
     let Some(v) = validator else {
         return Ok(Some(chunk));
     };
+    // One complete frame: forwarded as is, without reassembly copies.
+    match v.check_single_frame(&chunk) {
+        Some(Ok(())) => return Ok(Some(chunk)),
+        Some(Err(msg)) => return Err(ErrorMessage::new(502, msg)),
+        None => {}
+    }
     match v.add_chunk(&chunk) {
         Ok(out) if out.is_empty() => Ok(None),
         Ok(out) => Ok(Some(Bytes::from(out))),
         Err(msg) => Err(ErrorMessage::new(502, msg)),
-    }
-}
-
-/// Post-bootstrap pump: forwards every chunk, surfaces terminal errors and the validator's
-/// end-of-stream check, stops when the consumer drops the receiver.
-async fn forward_rest(
-    mut stream: StreamResult,
-    mut validator: Option<SseJsonValidator>,
-    tx: mpsc::Sender<Result<Bytes, ErrorMessage>>,
-) {
-    loop {
-        // A dropped consumer (client disconnect) must release the upstream stream promptly, not
-        // only after the next chunk arrives and fails to send.
-        let next = tokio::select! {
-            item = stream.chunks.recv() => item,
-            () = tx.closed() => return,
-        };
-        let Some(item) = next else {
-            if let Some(v) = validator.as_mut()
-                && let Err(msg) = v.finish()
-            {
-                let _ = tx.send(Err(ErrorMessage::new(502, msg))).await;
-            }
-            return;
-        };
-        match item {
-            Err(err) => {
-                let _ = tx.send(Err(exec_error_message(&err))).await;
-                return;
-            }
-            Ok(chunk) => {
-                if chunk.is_empty() {
-                    continue;
-                }
-                match validate_payload(&mut validator, chunk) {
-                    Ok(Some(p)) => {
-                        if tx.send(Ok(p)).await.is_err() {
-                            return;
-                        }
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        let _ = tx.send(Err(e)).await;
-                        return;
-                    }
-                }
-            }
-        }
     }
 }
 

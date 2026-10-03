@@ -1,0 +1,44 @@
+diff -ruN a/src/async_impl/client.rs b/src/async_impl/client.rs
+--- a/src/async_impl/client.rs
++++ b/src/async_impl/client.rs
+@@ -210,6 +210,7 @@
+     http1_allow_obsolete_multiline_headers_in_responses: bool,
+     http1_ignore_invalid_headers_in_responses: bool,
+     http1_allow_spaces_after_header_name_in_responses: bool,
++    http1_max_buf_size: Option<usize>,
+     #[cfg(feature = "http2")]
+     http2_initial_stream_window_size: Option<u32>,
+     #[cfg(feature = "http2")]
+@@ -339,6 +340,7 @@
+                 http1_allow_obsolete_multiline_headers_in_responses: false,
+                 http1_ignore_invalid_headers_in_responses: false,
+                 http1_allow_spaces_after_header_name_in_responses: false,
++                http1_max_buf_size: None,
+                 #[cfg(feature = "http2")]
+                 http2_initial_stream_window_size: None,
+                 #[cfg(feature = "http2")]
+@@ -995,6 +997,10 @@
+             builder.http1_allow_spaces_after_header_name_in_responses(true);
+         }
+ 
++        if let Some(max) = config.http1_max_buf_size {
++            builder.http1_max_buf_size(max);
++        }
++
+         let proxies_maybe_http_auth = proxies.iter().any(|p| p.maybe_has_http_auth());
+         let proxies_maybe_http_custom_headers =
+             proxies.iter().any(|p| p.maybe_has_http_custom_headers());
+@@ -1502,6 +1508,13 @@
+         self
+     }
+ 
++    /// Caps the HTTP/1 read buffer per connection (hyper's default grows to ~400 KB on a busy
++    /// stream). Also bounds the size of a response head. Vendored addition for CLIProxyAPI.
++    pub fn http1_max_buf_size(mut self, max: usize) -> ClientBuilder {
++        self.config.http1_max_buf_size = Some(max);
++        self
++    }
++
+     /// Send headers as title case instead of lowercase.
+     pub fn http1_title_case_headers(mut self) -> ClientBuilder {
+         self.config.http1_title_case_headers = true;

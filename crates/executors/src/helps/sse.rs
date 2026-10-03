@@ -156,14 +156,41 @@ impl LineReader {
     /// [`Self::next_line`], but a closed client channel ends the wait at once with a
     /// `context canceled` read error instead of lingering until the next upstream frame. Go's
     /// request context cancels the body read the same way.
+    ///
+    /// Lines that are already buffered are returned without building the `closed()` wait (this
+    /// runs once per upstream line); the channel state is still checked first, so a closed
+    /// client wins over a buffered line exactly like a biased `select!`.
     pub async fn next_line_or_closed<T>(&mut self, client: &tokio::sync::mpsc::Sender<T>) -> Option<Result<Bytes, ScanError>> {
-        tokio::select! {
-            biased;
-            _ = client.closed() => {
+        if self.failed && !client.is_closed() {
+            return None;
+        }
+        loop {
+            if client.is_closed() {
                 self.failed = true;
-                Some(Err(ScanError::Read("context canceled".to_string())))
+                return Some(Err(ScanError::Read("context canceled".to_string())));
             }
-            line = self.next_line() => line,
+            match self.splitter.step(self.eof) {
+                Ok(Step::Line(line)) => return Some(Ok(line)),
+                Ok(Step::Done) => return None,
+                Ok(Step::NeedMore) => {
+                    tokio::select! {
+                        biased;
+                        _ = client.closed() => {}
+                        chunk = self.body.next() => match chunk {
+                            Some(Ok(chunk)) => self.splitter.push(&chunk),
+                            Some(Err(err)) => {
+                                self.failed = true;
+                                return Some(Err(ScanError::Read(err)));
+                            }
+                            None => self.eof = true,
+                        },
+                    }
+                }
+                Err(err) => {
+                    self.failed = true;
+                    return Some(Err(err));
+                }
+            }
         }
     }
 }

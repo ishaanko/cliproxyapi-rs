@@ -237,7 +237,7 @@ pub fn wrap_claude_thinking_replay_stream(result: StreamResult, scope: ClaudeThi
             clear_claude_thinking_replay_content(&scope);
         }
     });
-    StreamResult { headers, chunks: rx, usage }
+    StreamResult { headers, chunks: rx.into(), usage }
 }
 
 // ---------------------------------------------------------------------------------------------

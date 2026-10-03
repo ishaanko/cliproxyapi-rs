@@ -38,7 +38,7 @@ use super::pick::pinned_auth_id;
 use super::rules;
 use super::usage::{UsageFacts, tokens_from_response};
 use crate::usage_report::UsageCollector;
-use crate::executor::{DynExecutor, ExecError, HomeErrKind, Metadata, Options, Request, Response, StreamResult, meta};
+use crate::executor::{ChunkRx, DynExecutor, ExecError, HomeErrKind, Metadata, Options, Request, Response, StreamResult, meta};
 
 fn canceled_error() -> ExecError {
     let mut e = ExecError::new(0, "context canceled");
@@ -844,7 +844,7 @@ fn wrap_home_stream(
 ) -> StreamResult {
     let (tx, rx) = mpsc::channel(1);
     let headers = result.headers.clone();
-    let mut upstream = std::mem::replace(&mut result.chunks, mpsc::channel(1).1);
+    let mut upstream = std::mem::replace(&mut result.chunks, ChunkRx::closed());
     let usage = result.usage.take();
     let cancel = guard.cancel();
     let has_selection = selection.is_some();
