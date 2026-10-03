@@ -11,7 +11,7 @@
 //!   and resident), which keeps the footprint near the *global* peak instead of the sum of
 //!   per-thread peaks;
 //! - a background sweeper returns the pages of slots that stayed free for [`AGE_TICKS`] sweeps
-//!   (~100 ms) to the OS
+//!   (50-100 ms) to the OS
 //!   (`MADV_DONTNEED`; the address range stays reserved), so an idle process drops back.
 //!
 //! No `mmap`/`munmap` happens after startup, so no process-wide VM write lock is taken on the
@@ -33,7 +33,7 @@ const MIN_SIZE: usize = 8 * 1024;
 const MAX_SIZE: usize = 1 << 31;
 /// Free slots that sat unused for this many sweeps have their pages returned to the OS. A tick
 /// counter instead of a clock: stamping a slot on every free must stay cheap.
-const AGE_TICKS: u32 = 3;
+const AGE_TICKS: u32 = 2;
 /// Sweeper period while slots are waiting to age out, and while everything is clean.
 const SWEEP_BUSY: Duration = Duration::from_millis(50);
 const SWEEP_IDLE: Duration = Duration::from_millis(500);
