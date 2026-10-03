@@ -92,20 +92,20 @@ impl XaiExecutor {
 }
 
 /// One upstream data payload moving through the normalization steps.
-enum Event {
+pub(super) enum Event {
     Json(Value),
     Raw(Vec<u8>),
 }
 
 impl Event {
-    fn bytes(&self) -> Vec<u8> {
+    pub(super) fn bytes(&self) -> Vec<u8> {
         match self {
             Event::Json(v) => cpa_json::to_vec(v),
             Event::Raw(b) => b.clone(),
         }
     }
 
-    fn event_type(&self) -> String {
+    pub(super) fn event_type(&self) -> String {
         match self {
             Event::Json(v) => s(v, "type"),
             Event::Raw(_) => String::new(),

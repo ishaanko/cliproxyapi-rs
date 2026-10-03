@@ -14,6 +14,9 @@ mod stream;
 mod tokens;
 mod tools;
 mod util;
+mod ws;
+
+pub use ws::{close_xai_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
 use std::sync::Arc;
 
@@ -136,7 +139,15 @@ impl Executor for XaiExecutor {
         self.execute_chat(auth, &req, &opts).await
     }
 
+    /// Go: XAIAutoExecutor.ExecuteStream. The upstream websocket serves a request only when the
+    /// client is on a Responses websocket and the credential enables `websockets`.
     async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        if ws::is_downstream_websocket(&opts) && ws::websockets_enabled(auth) {
+            return self.execute_stream_ws(auth, &req, &opts).await;
+        }
+        if ws::requires_upstream_websocket(&opts) {
+            return Err(crate::codex::upstream_websocket_replay_required());
+        }
         self.execute_stream_chat(auth, &req, &opts).await
     }
 
@@ -162,6 +173,10 @@ impl Executor for XaiExecutor {
 
     async fn count_tokens(&self, _auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
         self.count_tokens_local(&req, &opts).await
+    }
+
+    async fn close_execution_session(&self, session_id: &str) {
+        ws::close_execution_session(session_id);
     }
 
     fn for_api_key(&self) -> Option<DynExecutor> {

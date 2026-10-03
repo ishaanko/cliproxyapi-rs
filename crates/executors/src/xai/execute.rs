@@ -346,7 +346,7 @@ pub(super) fn input_has_item_type(body: &[u8], item_type: &str) -> bool {
 }
 
 /// Go: xaiRemoveInputItemsByType.
-fn remove_input_items_by_type(body: &mut Value, item_type: &str) {
+pub(super) fn remove_input_items_by_type(body: &mut Value, item_type: &str) {
     let Some(input) = at(body, "input").and_then(Value::as_array) else { return };
     let kept: Vec<Value> = input.iter().filter(|i| s(i, "type") != item_type).cloned().collect();
     cpa_json::set(body, "input", Value::Array(kept));
@@ -367,7 +367,7 @@ fn now_unix() -> i64 {
 }
 
 /// Go: xaiCompactionResponseID.
-fn compaction_response_id(compact: &Value) -> String {
+pub(super) fn compaction_response_id(compact: &Value) -> String {
     let response_id = ts(compact, "id");
     if !response_id.is_empty() {
         if response_id.starts_with("resp_") {
@@ -391,7 +391,7 @@ fn compaction_item_id(response_id: &str) -> String {
 }
 
 /// Go: xaiCompactionOutputItem.
-fn compaction_output_item(compact: &Value, response_id: &str) -> Value {
+pub(super) fn compaction_output_item(compact: &Value, response_id: &str) -> Value {
     let mut item = match at(compact, "output.0") {
         Some(v) if v.is_object() || v.is_array() => v.clone(),
         _ => json!({"type": "compaction"}),
@@ -458,7 +458,7 @@ fn compaction_base_response(
 }
 
 /// Go: xaiBuildCompactionTriggerStreamChunks.
-fn build_compaction_trigger_stream_chunks(prepared: &PreparedRequest, compact_data: &[u8]) -> Vec<Vec<u8>> {
+pub(super) fn build_compaction_trigger_stream_chunks(prepared: &PreparedRequest, compact_data: &[u8]) -> Vec<Vec<u8>> {
     let compact = cpa_json::parse(compact_data);
     let response_id = compaction_response_id(&compact);
     let now = now_unix();
