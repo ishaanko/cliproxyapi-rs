@@ -1,6 +1,8 @@
 //! Vertex AI Gemini executor (Go: gemini_vertex_executor.go): service-account credentials
 //! (project and location in the URL, bearer token) or API keys (`x-goog-api-key`, no project).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use cpa_auth::Auth;
@@ -24,6 +26,7 @@ use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
 use super::vertex_token;
 use crate::ConfigRx;
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
@@ -387,14 +390,20 @@ impl Executor for GeminiVertexExecutor {
 
         let url = endpoint(&creds, &base_model, "countTokens");
         let headers = request_headers(&cfg, auth, &opts, &creds, session_id.as_deref()).await?;
+        let log = UpstreamLog::new(&opts, &cfg);
+        log.request(auth, "vertex", &url, &headers, &translated);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(&cfg), Some(auth), None);
-        let resp = post_json(&client, &url, headers, translated).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, translated).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = read_body(resp).await?;
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &data));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
+        let data = log.tap_err(read_body(resp).await)?;
+        log.chunk(&data);
         let count = cpa_json::parse(&data).g("totalTokens").int();
         let payload = cpa_translator::translate_token_count(&Ctx::default(), to, response_format, count, &data);
         Ok(Response { payload: Bytes::from(payload), headers: resp_headers, ..Default::default() })
@@ -409,7 +418,7 @@ impl GeminiVertexExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn execute_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: &Request,
         opts: &Options,
@@ -438,15 +447,21 @@ impl GeminiVertexExecutor {
         reporter.set_translated_reasoning_effort(&body, Format::Gemini.as_str());
 
         let headers = request_headers(cfg, auth, opts, creds, session_id).await?;
+        let log = UpstreamLog::new(opts, cfg);
+        log.request(auth, "vertex", &url, &headers, &body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &url, headers, body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &error_body(resp).await));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
-        let data = read_body(resp).await?;
+        let data = log.tap_err(read_body(resp).await)?;
+        log.chunk(&data);
         reporter.mark_first_response_byte();
         reporter.observe_response_model(&data);
         let data = if imagen_sa { convert_imagen_to_gemini_response(&data, base_model) } else { data.to_vec() };
@@ -476,7 +491,7 @@ impl GeminiVertexExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn stream_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: Request,
         opts: Options,
@@ -501,13 +516,18 @@ impl GeminiVertexExecutor {
         reporter.set_translated_reasoning_effort(&body, Format::Gemini.as_str());
 
         let headers = request_headers(cfg, auth, &opts, creds, session_id).await?;
+        let log = UpstreamLog::new(&opts, cfg);
+        log.request(auth, "vertex", &url, &headers, &body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &url, headers, body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &error_body(resp).await));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
 
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {
@@ -537,6 +557,7 @@ impl GeminiVertexExecutor {
                         break;
                     }
                 };
+                log.chunk(&line);
                 reporter.observe_response_model(&line);
                 if let Some(detail) = parse_gemini_stream_usage(&line) {
                     pump.usage.observe(detail, true);
@@ -552,6 +573,7 @@ impl GeminiVertexExecutor {
                 return;
             }
             if let Some(err) = scan_err {
+                log.error(&err.to_string());
                 pump.fail(err.into()).await;
             }
             pump.finish();

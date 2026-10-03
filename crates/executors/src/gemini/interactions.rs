@@ -2,6 +2,8 @@
 //! the interactions helpers of gemini_executor.go). Used when a `gemini-interactions` credential
 //! serves an Interactions-capable client protocol.
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use cpa_auth::Auth;
 use cpa_config::Config;
@@ -17,6 +19,7 @@ use super::common::{
 };
 use super::executor::{GeminiExecutor, request_headers, resolve_base_url};
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::payload::{
     PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model, set_bool_if_different,
 };
@@ -148,7 +151,7 @@ fn prepare(
 
 pub(super) async fn execute(
     exec: &GeminiExecutor,
-    cfg: &Config,
+    cfg: &Arc<Config>,
     auth: &Auth,
     req: Request,
     opts: Options,
@@ -158,12 +161,16 @@ pub(super) async fn execute(
     let reporter = exec.reporter(&target_name, auth, &opts);
     let result = async {
         let prepared = prepare(cfg, auth, &req, &opts, session_id.as_deref(), &target_name, false)?;
+        let log = UpstreamLog::new(&opts, cfg);
+        log.request(auth, exec.identifier, &prepared.url, &prepared.headers, &prepared.body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &prepared.url, prepared.headers, prepared.body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &prepared.url, prepared.headers, prepared.body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = read_body(resp).await?;
+        log.metadata(status, &resp_headers);
+        let data = log.tap_err(read_body(resp).await)?;
+        log.chunk(&data);
         reporter.mark_first_response_byte();
         if !(200..300).contains(&status) {
             return Err(upstream_error(status, &data));
@@ -198,7 +205,7 @@ pub(super) async fn execute(
 
 pub(super) async fn execute_stream(
     exec: &GeminiExecutor,
-    cfg: &Config,
+    cfg: &Arc<Config>,
     auth: &Auth,
     req: Request,
     opts: Options,
@@ -208,13 +215,18 @@ pub(super) async fn execute_stream(
     let reporter = exec.reporter(&target_name, auth, &opts);
     let result = async {
         let prepared = prepare(cfg, auth, &req, &opts, session_id.as_deref(), &target_name, true)?;
+        let log = UpstreamLog::new(&opts, cfg);
+        log.request(auth, exec.identifier, &prepared.url, &prepared.headers, &prepared.body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &prepared.url, prepared.headers, prepared.body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &prepared.url, prepared.headers, prepared.body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &error_body(resp).await));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
         let response_format = opts.response_format_or_source();
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {
@@ -245,6 +257,7 @@ pub(super) async fn execute_stream(
                         break;
                     }
                 };
+                log.chunk(&line);
                 if trim_space(&line).is_empty() {
                     if !emit_frame(&mut pump, &reporter, &mut frame, response_format).await {
                         return;
@@ -263,6 +276,7 @@ pub(super) async fn execute_stream(
                 return;
             }
             if let Some(err) = scan_err {
+                log.error(&err.to_string());
                 pump.fail(err.into()).await;
             }
             pump.finish();
