@@ -5,4 +5,5 @@
 
 pub mod abi;
 pub mod api;
+pub mod host_api;
 pub mod wire;

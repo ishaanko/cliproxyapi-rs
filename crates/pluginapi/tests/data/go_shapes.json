@@ -1,0 +1,2197 @@
+{
+ "AuthData/full": {
+  "Provider": "s-Provider",
+  "ID": "s-ID",
+  "FileName": "s-FileName",
+  "Label": "s-Label",
+  "Prefix": "s-Prefix",
+  "ProxyURL": "s-ProxyURL",
+  "Disabled": true,
+  "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "Attributes": {
+   "k-Attributes": "s-Attributes"
+  },
+  "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+ },
+ "AuthData/zero": {
+  "Provider": "",
+  "ID": "",
+  "FileName": "",
+  "Label": "",
+  "Prefix": "",
+  "ProxyURL": "",
+  "Disabled": false,
+  "StorageJSON": null,
+  "Metadata": null,
+  "Attributes": null,
+  "NextRefreshAfter": "0001-01-01T00:00:00Z"
+ },
+ "AuthLoginPollRequest/full": {
+  "Provider": "s-Provider",
+  "State": "s-State",
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  },
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "AuthLoginPollRequest/zero": {
+  "Provider": "",
+  "State": "",
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  },
+  "Metadata": null
+ },
+ "AuthLoginPollResponse/full": {
+  "Status": "s-Status",
+  "Message": "s-Message",
+  "Auth": {
+   "Provider": "s-Provider",
+   "ID": "s-ID",
+   "FileName": "s-FileName",
+   "Label": "s-Label",
+   "Prefix": "s-Prefix",
+   "ProxyURL": "s-ProxyURL",
+   "Disabled": true,
+   "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+   "Metadata": {
+    "k-Metadata": "v-Metadata"
+   },
+   "Attributes": {
+    "k-Attributes": "s-Attributes"
+   },
+   "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+  },
+  "Auths": [
+   {
+    "Provider": "s-Provider",
+    "ID": "s-ID",
+    "FileName": "s-FileName",
+    "Label": "s-Label",
+    "Prefix": "s-Prefix",
+    "ProxyURL": "s-ProxyURL",
+    "Disabled": true,
+    "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+    "Metadata": {
+     "k-Metadata": "v-Metadata"
+    },
+    "Attributes": {
+     "k-Attributes": "s-Attributes"
+    },
+    "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+   }
+  ]
+ },
+ "AuthLoginPollResponse/zero": {
+  "Status": "",
+  "Message": "",
+  "Auth": {
+   "Provider": "",
+   "ID": "",
+   "FileName": "",
+   "Label": "",
+   "Prefix": "",
+   "ProxyURL": "",
+   "Disabled": false,
+   "StorageJSON": null,
+   "Metadata": null,
+   "Attributes": null,
+   "NextRefreshAfter": "0001-01-01T00:00:00Z"
+  },
+  "Auths": null
+ },
+ "AuthLoginStartRequest/full": {
+  "Provider": "s-Provider",
+  "BaseURL": "s-BaseURL",
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  },
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "AuthLoginStartRequest/zero": {
+  "Provider": "",
+  "BaseURL": "",
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  },
+  "Metadata": null
+ },
+ "AuthLoginStartResponse/full": {
+  "Provider": "s-Provider",
+  "URL": "s-URL",
+  "State": "s-State",
+  "ExpiresAt": "2026-03-04T05:06:07.123456789Z",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "AuthLoginStartResponse/zero": {
+  "Provider": "",
+  "URL": "",
+  "State": "",
+  "ExpiresAt": "0001-01-01T00:00:00Z",
+  "Metadata": null
+ },
+ "AuthModelRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "AuthID": "s-AuthID",
+  "AuthProvider": "s-AuthProvider",
+  "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "Attributes": {
+   "k-Attributes": "s-Attributes"
+  },
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "AuthModelRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "AuthID": "",
+  "AuthProvider": "",
+  "StorageJSON": null,
+  "Metadata": null,
+  "Attributes": null,
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "AuthParseRequest/full": {
+  "Provider": "s-Provider",
+  "Path": "s-Path",
+  "FileName": "s-FileName",
+  "RawJSON": "Ynl0ZXMtUmF3SlNPTg==",
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "AuthParseRequest/zero": {
+  "Provider": "",
+  "Path": "",
+  "FileName": "",
+  "RawJSON": null,
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "AuthParseResponse/full": {
+  "Handled": true,
+  "Auth": {
+   "Provider": "s-Provider",
+   "ID": "s-ID",
+   "FileName": "s-FileName",
+   "Label": "s-Label",
+   "Prefix": "s-Prefix",
+   "ProxyURL": "s-ProxyURL",
+   "Disabled": true,
+   "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+   "Metadata": {
+    "k-Metadata": "v-Metadata"
+   },
+   "Attributes": {
+    "k-Attributes": "s-Attributes"
+   },
+   "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+  },
+  "Auths": [
+   {
+    "Provider": "s-Provider",
+    "ID": "s-ID",
+    "FileName": "s-FileName",
+    "Label": "s-Label",
+    "Prefix": "s-Prefix",
+    "ProxyURL": "s-ProxyURL",
+    "Disabled": true,
+    "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+    "Metadata": {
+     "k-Metadata": "v-Metadata"
+    },
+    "Attributes": {
+     "k-Attributes": "s-Attributes"
+    },
+    "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+   }
+  ]
+ },
+ "AuthParseResponse/zero": {
+  "Handled": false,
+  "Auth": {
+   "Provider": "",
+   "ID": "",
+   "FileName": "",
+   "Label": "",
+   "Prefix": "",
+   "ProxyURL": "",
+   "Disabled": false,
+   "StorageJSON": null,
+   "Metadata": null,
+   "Attributes": null,
+   "NextRefreshAfter": "0001-01-01T00:00:00Z"
+  },
+  "Auths": null
+ },
+ "AuthRefreshRequest/full": {
+  "AuthID": "s-AuthID",
+  "AuthProvider": "s-AuthProvider",
+  "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "Attributes": {
+   "k-Attributes": "s-Attributes"
+  },
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "AuthRefreshRequest/zero": {
+  "AuthID": "",
+  "AuthProvider": "",
+  "StorageJSON": null,
+  "Metadata": null,
+  "Attributes": null,
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "AuthRefreshResponse/full": {
+  "Auth": {
+   "Provider": "s-Provider",
+   "ID": "s-ID",
+   "FileName": "s-FileName",
+   "Label": "s-Label",
+   "Prefix": "s-Prefix",
+   "ProxyURL": "s-ProxyURL",
+   "Disabled": true,
+   "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+   "Metadata": {
+    "k-Metadata": "v-Metadata"
+   },
+   "Attributes": {
+    "k-Attributes": "s-Attributes"
+   },
+   "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+  },
+  "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+ },
+ "AuthRefreshResponse/zero": {
+  "Auth": {
+   "Provider": "",
+   "ID": "",
+   "FileName": "",
+   "Label": "",
+   "Prefix": "",
+   "ProxyURL": "",
+   "Disabled": false,
+   "StorageJSON": null,
+   "Metadata": null,
+   "Attributes": null,
+   "NextRefreshAfter": "0001-01-01T00:00:00Z"
+  },
+  "NextRefreshAfter": "0001-01-01T00:00:00Z"
+ },
+ "CommandLineExecutionRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "Program": "s-Program",
+  "Args": [
+   "s-Args"
+  ],
+  "ConfigPath": "s-ConfigPath",
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  },
+  "Flags": {
+   "k-Flags": {
+    "Name": "s-Name",
+    "Type": "s-Type",
+    "Value": "s-Value",
+    "Set": true
+   }
+  },
+  "TriggeredFlags": {
+   "k-TriggeredFlags": {
+    "Name": "s-Name",
+    "Type": "s-Type",
+    "Value": "s-Value",
+    "Set": true
+   }
+  }
+ },
+ "CommandLineExecutionRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "Program": "",
+  "Args": null,
+  "ConfigPath": "",
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  },
+  "Flags": null,
+  "TriggeredFlags": null
+ },
+ "CommandLineExecutionResponse/full": {
+  "Stdout": "Ynl0ZXMtU3Rkb3V0",
+  "Stderr": "Ynl0ZXMtU3RkZXJy",
+  "Auths": [
+   {
+    "Provider": "s-Provider",
+    "ID": "s-ID",
+    "FileName": "s-FileName",
+    "Label": "s-Label",
+    "Prefix": "s-Prefix",
+    "ProxyURL": "s-ProxyURL",
+    "Disabled": true,
+    "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+    "Metadata": {
+     "k-Metadata": "v-Metadata"
+    },
+    "Attributes": {
+     "k-Attributes": "s-Attributes"
+    },
+    "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+   }
+  ],
+  "ExitCode": 7
+ },
+ "CommandLineExecutionResponse/zero": {
+  "Stdout": null,
+  "Stderr": null,
+  "Auths": null,
+  "ExitCode": 0
+ },
+ "CommandLineRegistrationRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  }
+ },
+ "CommandLineRegistrationRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  }
+ },
+ "CommandLineRegistrationResponse/full": {
+  "Flags": [
+   {
+    "Name": "s-Name",
+    "Usage": "s-Usage",
+    "Type": "s-Type",
+    "DefaultValue": "s-DefaultValue"
+   }
+  ]
+ },
+ "CommandLineRegistrationResponse/zero": {
+  "Flags": null
+ },
+ "ConfigField/full": {
+  "Name": "s-Name",
+  "Type": "s-Type",
+  "EnumValues": [
+   "s-EnumValues"
+  ],
+  "Description": "s-Description"
+ },
+ "ConfigField/zero": {
+  "Name": "",
+  "Type": "",
+  "EnumValues": null,
+  "Description": ""
+ },
+ "ExecutorHTTPRequest/full": {
+  "AuthID": "s-AuthID",
+  "AuthProvider": "s-AuthProvider",
+  "Method": "s-Method",
+  "URL": "s-URL",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "Attributes": {
+   "k-Attributes": "s-Attributes"
+  }
+ },
+ "ExecutorHTTPRequest/zero": {
+  "AuthID": "",
+  "AuthProvider": "",
+  "Method": "",
+  "URL": "",
+  "Headers": null,
+  "Body": null,
+  "StorageJSON": null,
+  "Metadata": null,
+  "Attributes": null
+ },
+ "ExecutorHTTPResponse/full": {
+  "StatusCode": 7,
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "ExecutorHTTPResponse/zero": {
+  "StatusCode": 0,
+  "Headers": null,
+  "Body": null
+ },
+ "ExecutorRequest/full": {
+  "AuthID": "s-AuthID",
+  "AuthProvider": "s-AuthProvider",
+  "Model": "s-Model",
+  "Format": "s-Format",
+  "Stream": true,
+  "Alt": "s-Alt",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Query": {
+   "k-Query": [
+    "s-Query"
+   ]
+  },
+  "OriginalRequest": "Ynl0ZXMtT3JpZ2luYWxSZXF1ZXN0",
+  "SourceFormat": "s-SourceFormat",
+  "Payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "AuthMetadata": {
+   "k-AuthMetadata": "v-AuthMetadata"
+  },
+  "AuthAttributes": {
+   "k-AuthAttributes": "s-AuthAttributes"
+  }
+ },
+ "ExecutorRequest/zero": {
+  "AuthID": "",
+  "AuthProvider": "",
+  "Model": "",
+  "Format": "",
+  "Stream": false,
+  "Alt": "",
+  "Headers": null,
+  "Query": null,
+  "OriginalRequest": null,
+  "SourceFormat": "",
+  "Payload": null,
+  "Metadata": null,
+  "StorageJSON": null,
+  "AuthMetadata": null,
+  "AuthAttributes": null
+ },
+ "ExecutorResponse/full": {
+  "Payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "ExecutorResponse/zero": {
+  "Payload": null,
+  "Headers": null,
+  "Metadata": null
+ },
+ "ExecutorStreamChunk/full": {
+  "Payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "Err": null
+ },
+ "ExecutorStreamChunk/zero": {
+  "Payload": null,
+  "Err": null
+ },
+ "FrontendAuthRequest/full": {
+  "Method": "s-Method",
+  "Path": "s-Path",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Query": {
+   "k-Query": [
+    "s-Query"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "FrontendAuthRequest/zero": {
+  "Method": "",
+  "Path": "",
+  "Headers": null,
+  "Query": null,
+  "Body": null
+ },
+ "FrontendAuthResponse/full": {
+  "Authenticated": true,
+  "Principal": "s-Principal",
+  "Metadata": {
+   "k-Metadata": "s-Metadata"
+  }
+ },
+ "FrontendAuthResponse/zero": {
+  "Authenticated": false,
+  "Principal": "",
+  "Metadata": null
+ },
+ "HTTPRequest/full": {
+  "Method": "s-Method",
+  "URL": "s-URL",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "wire_profile": {
+   "http1_only": true,
+   "disable_auto_compression": true,
+   "header_profile": [
+    "s-HeaderProfile"
+   ]
+  }
+ },
+ "HTTPRequest/zero": {
+  "Method": "",
+  "URL": "",
+  "Headers": null,
+  "Body": null
+ },
+ "HTTPResponse/full": {
+  "StatusCode": 7,
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "HTTPResponse/zero": {
+  "StatusCode": 0,
+  "Headers": null,
+  "Body": null
+ },
+ "HTTPStreamChunk/full": {
+  "Payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "Err": null
+ },
+ "HTTPStreamChunk/zero": {
+  "Payload": null,
+  "Err": null
+ },
+ "HTTPWireProfile/full": {
+  "http1_only": true,
+  "disable_auto_compression": true,
+  "header_profile": [
+   "s-HeaderProfile"
+  ]
+ },
+ "HTTPWireProfile/zero": {},
+ "HostAffinityLookupRequest/full": {
+  "provider": "s-Provider",
+  "model": "s-Model",
+  "session_id": "s-SessionID"
+ },
+ "HostAffinityLookupRequest/zero": {
+  "provider": "",
+  "model": "",
+  "session_id": ""
+ },
+ "HostAffinityLookupResponse/full": {
+  "status": "s-Status",
+  "auth_index": "s-AuthIndex",
+  "observed_at": "2026-03-04T05:06:07.123456789Z",
+  "disabled": true,
+  "unavailable": true
+ },
+ "HostAffinityLookupResponse/zero": {
+  "status": "",
+  "observed_at": "0001-01-01T00:00:00Z"
+ },
+ "HostAuthFileEntry/full": {
+  "id": "s-ID",
+  "auth_index": "s-AuthIndex",
+  "name": "s-Name",
+  "type": "s-Type",
+  "provider": "s-Provider",
+  "label": "s-Label",
+  "status": "s-Status",
+  "status_message": "s-StatusMessage",
+  "disabled": true,
+  "unavailable": true,
+  "runtime_only": true,
+  "source": "s-Source",
+  "path": "s-Path",
+  "size": 7,
+  "modtime": "2026-03-04T05:06:07.123456789Z",
+  "updated_at": "2026-03-04T05:06:07.123456789Z",
+  "created_at": "2026-03-04T05:06:07.123456789Z",
+  "last_refresh": "2026-03-04T05:06:07.123456789Z",
+  "next_retry_after": "2026-03-04T05:06:07.123456789Z",
+  "email": "s-Email",
+  "project_id": "s-ProjectID",
+  "account_type": "s-AccountType",
+  "account": "s-Account",
+  "priority": 7,
+  "note": "s-Note",
+  "base_url": "s-BaseURL",
+  "websockets": true,
+  "success": 7,
+  "failed": 7,
+  "recent_requests": [
+   {
+    "time": "s-Time",
+    "success": 7,
+    "failed": 7
+   }
+  ]
+ },
+ "HostAuthFileEntry/zero": {
+  "name": "",
+  "modtime": "0001-01-01T00:00:00Z",
+  "updated_at": "0001-01-01T00:00:00Z",
+  "created_at": "0001-01-01T00:00:00Z",
+  "last_refresh": "0001-01-01T00:00:00Z",
+  "next_retry_after": "0001-01-01T00:00:00Z"
+ },
+ "HostAuthGetRequest/full": {
+  "auth_index": "s-AuthIndex"
+ },
+ "HostAuthGetRequest/zero": {
+  "auth_index": ""
+ },
+ "HostAuthGetResponse/full": {
+  "auth_index": "s-AuthIndex",
+  "name": "s-Name",
+  "path": "s-Path",
+  "json": {
+   "raw": "\u003cx\u003e\u0026"
+  }
+ },
+ "HostAuthGetResponse/zero": {
+  "auth_index": "",
+  "json": null
+ },
+ "HostAuthGetRuntimeResponse/full": {
+  "auth": {
+   "id": "s-ID",
+   "auth_index": "s-AuthIndex",
+   "name": "s-Name",
+   "type": "s-Type",
+   "provider": "s-Provider",
+   "label": "s-Label",
+   "status": "s-Status",
+   "status_message": "s-StatusMessage",
+   "disabled": true,
+   "unavailable": true,
+   "runtime_only": true,
+   "source": "s-Source",
+   "path": "s-Path",
+   "size": 7,
+   "modtime": "2026-03-04T05:06:07.123456789Z",
+   "updated_at": "2026-03-04T05:06:07.123456789Z",
+   "created_at": "2026-03-04T05:06:07.123456789Z",
+   "last_refresh": "2026-03-04T05:06:07.123456789Z",
+   "next_retry_after": "2026-03-04T05:06:07.123456789Z",
+   "email": "s-Email",
+   "project_id": "s-ProjectID",
+   "account_type": "s-AccountType",
+   "account": "s-Account",
+   "priority": 7,
+   "note": "s-Note",
+   "base_url": "s-BaseURL",
+   "websockets": true,
+   "success": 7,
+   "failed": 7,
+   "recent_requests": [
+    {
+     "time": "s-Time",
+     "success": 7,
+     "failed": 7
+    }
+   ]
+  }
+ },
+ "HostAuthGetRuntimeResponse/zero": {
+  "auth": {
+   "name": "",
+   "modtime": "0001-01-01T00:00:00Z",
+   "updated_at": "0001-01-01T00:00:00Z",
+   "created_at": "0001-01-01T00:00:00Z",
+   "last_refresh": "0001-01-01T00:00:00Z",
+   "next_retry_after": "0001-01-01T00:00:00Z"
+  }
+ },
+ "HostAuthSaveRequest/full": {
+  "name": "s-Name",
+  "json": {
+   "raw": "\u003cx\u003e\u0026"
+  }
+ },
+ "HostAuthSaveRequest/zero": {
+  "name": "",
+  "json": null
+ },
+ "HostAuthSaveResponse/full": {
+  "name": "s-Name",
+  "path": "s-Path"
+ },
+ "HostAuthSaveResponse/zero": {
+  "name": "",
+  "path": ""
+ },
+ "HostConfigSummary/full": {
+  "AuthDir": "s-AuthDir",
+  "ProxyURL": "s-ProxyURL",
+  "ForceModelPrefix": true,
+  "OAuthModelAlias": {
+   "k-OAuthModelAlias": [
+    {
+     "Name": "s-Name",
+     "Alias": "s-Alias"
+    }
+   ]
+  },
+  "ExcludedModels": {
+   "k-ExcludedModels": [
+    "s-ExcludedModels"
+   ]
+  }
+ },
+ "HostConfigSummary/zero": {
+  "AuthDir": "",
+  "ProxyURL": "",
+  "ForceModelPrefix": false,
+  "OAuthModelAlias": null,
+  "ExcludedModels": null
+ },
+ "HostModelExecutionRequest/full": {
+  "entry_protocol": "s-EntryProtocol",
+  "exit_protocol": "s-ExitProtocol",
+  "model": "s-Model",
+  "stream": true,
+  "body": "Ynl0ZXMtQm9keQ==",
+  "headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "query": {
+   "k-Query": [
+    "s-Query"
+   ]
+  },
+  "alt": "s-Alt",
+  "forced_provider": "s-ForcedProvider",
+  "auth_id": "s-AuthID",
+  "proxy_url": "s-ProxyURL",
+  "path": "s-Path"
+ },
+ "HostModelExecutionRequest/zero": {
+  "entry_protocol": "",
+  "exit_protocol": "",
+  "model": "",
+  "stream": false,
+  "body": null,
+  "headers": null,
+  "query": null,
+  "alt": ""
+ },
+ "HostModelExecutionResponse/full": {
+  "status_code": 7,
+  "headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "body": "Ynl0ZXMtQm9keQ=="
+ },
+ "HostModelExecutionResponse/zero": {
+  "status_code": 0,
+  "headers": null,
+  "body": null
+ },
+ "HostModelStreamCloseRequest/full": {
+  "stream_id": "s-StreamID"
+ },
+ "HostModelStreamCloseRequest/zero": {
+  "stream_id": ""
+ },
+ "HostModelStreamReadRequest/full": {
+  "stream_id": "s-StreamID"
+ },
+ "HostModelStreamReadRequest/zero": {
+  "stream_id": ""
+ },
+ "HostModelStreamReadResponse/full": {
+  "payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "error": "s-Error",
+  "done": true
+ },
+ "HostModelStreamReadResponse/zero": {
+  "payload": null,
+  "error": "",
+  "done": false
+ },
+ "HostModelStreamResponse/full": {
+  "status_code": 7,
+  "headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "stream_id": "s-StreamID"
+ },
+ "HostModelStreamResponse/zero": {
+  "status_code": 0,
+  "headers": null,
+  "stream_id": ""
+ },
+ "ManagementRegistrationRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "BasePath": "s-BasePath",
+  "ResourceBasePath": "s-ResourceBasePath"
+ },
+ "ManagementRegistrationRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "BasePath": "",
+  "ResourceBasePath": ""
+ },
+ "ManagementRegistrationResponse/full": {
+  "Routes": [
+   {
+    "Method": "s-Method",
+    "Path": "s-Path",
+    "Menu": "s-Menu",
+    "Description": "s-Description",
+    "Handler": null
+   }
+  ],
+  "Resources": [
+   {
+    "Path": "s-Path",
+    "Menu": "s-Menu",
+    "Description": "s-Description",
+    "Handler": null
+   }
+  ]
+ },
+ "ManagementRegistrationResponse/zero": {
+  "Routes": null,
+  "Resources": null
+ },
+ "ManagementRequest/full": {
+  "Method": "s-Method",
+  "Path": "s-Path",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Query": {
+   "k-Query": [
+    "s-Query"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "ManagementRequest/zero": {
+  "Method": "",
+  "Path": "",
+  "Headers": null,
+  "Query": null,
+  "Body": null
+ },
+ "ManagementResponse/full": {
+  "StatusCode": 7,
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "ManagementResponse/zero": {
+  "StatusCode": 0,
+  "Headers": null,
+  "Body": null
+ },
+ "ManagementRoute/full": {
+  "Method": "s-Method",
+  "Path": "s-Path",
+  "Menu": "s-Menu",
+  "Description": "s-Description",
+  "Handler": null
+ },
+ "ManagementRoute/zero": {
+  "Method": "",
+  "Path": "",
+  "Menu": "",
+  "Description": "",
+  "Handler": null
+ },
+ "Metadata/full": {
+  "Name": "s-Name",
+  "Version": "s-Version",
+  "Author": "s-Author",
+  "GitHubRepository": "s-GitHubRepository",
+  "Logo": "s-Logo",
+  "ConfigFields": [
+   {
+    "Name": "s-Name",
+    "Type": "s-Type",
+    "EnumValues": [
+     "s-EnumValues"
+    ],
+    "Description": "s-Description"
+   }
+  ]
+ },
+ "Metadata/zero": {
+  "Name": "",
+  "Version": "",
+  "Author": "",
+  "GitHubRepository": "",
+  "Logo": "",
+  "ConfigFields": null
+ },
+ "ModelInfo/full": {
+  "ID": "s-ID",
+  "Object": "s-Object",
+  "Created": 7,
+  "OwnedBy": "s-OwnedBy",
+  "Type": "s-Type",
+  "DisplayName": "s-DisplayName",
+  "Name": "s-Name",
+  "Version": "s-Version",
+  "Description": "s-Description",
+  "InputTokenLimit": 7,
+  "OutputTokenLimit": 7,
+  "SupportedGenerationMethods": [
+   "s-SupportedGenerationMethods"
+  ],
+  "ContextLength": 7,
+  "MaxCompletionTokens": 7,
+  "SupportedParameters": [
+   "s-SupportedParameters"
+  ],
+  "SupportedInputModalities": [
+   "s-SupportedInputModalities"
+  ],
+  "SupportedOutputModalities": [
+   "s-SupportedOutputModalities"
+  ],
+  "Thinking": {
+   "Min": 7,
+   "Max": 7,
+   "ZeroAllowed": true,
+   "DynamicAllowed": true,
+   "Levels": [
+    "s-Levels"
+   ]
+  },
+  "UserDefined": true
+ },
+ "ModelInfo/zero": {
+  "ID": "",
+  "Object": "",
+  "Created": 0,
+  "OwnedBy": "",
+  "Type": "",
+  "DisplayName": "",
+  "Name": "",
+  "Version": "",
+  "Description": "",
+  "InputTokenLimit": 0,
+  "OutputTokenLimit": 0,
+  "SupportedGenerationMethods": null,
+  "ContextLength": 0,
+  "MaxCompletionTokens": 0,
+  "SupportedParameters": null,
+  "SupportedInputModalities": null,
+  "SupportedOutputModalities": null,
+  "Thinking": null,
+  "UserDefined": false
+ },
+ "ModelRegistrationRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  }
+ },
+ "ModelRegistrationRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  }
+ },
+ "ModelRegistrationResponse/full": {
+  "Provider": "s-Provider",
+  "Models": [
+   {
+    "ID": "s-ID",
+    "Object": "s-Object",
+    "Created": 7,
+    "OwnedBy": "s-OwnedBy",
+    "Type": "s-Type",
+    "DisplayName": "s-DisplayName",
+    "Name": "s-Name",
+    "Version": "s-Version",
+    "Description": "s-Description",
+    "InputTokenLimit": 7,
+    "OutputTokenLimit": 7,
+    "SupportedGenerationMethods": [
+     "s-SupportedGenerationMethods"
+    ],
+    "ContextLength": 7,
+    "MaxCompletionTokens": 7,
+    "SupportedParameters": [
+     "s-SupportedParameters"
+    ],
+    "SupportedInputModalities": [
+     "s-SupportedInputModalities"
+    ],
+    "SupportedOutputModalities": [
+     "s-SupportedOutputModalities"
+    ],
+    "Thinking": {
+     "Min": 7,
+     "Max": 7,
+     "ZeroAllowed": true,
+     "DynamicAllowed": true,
+     "Levels": null
+    },
+    "UserDefined": true
+   }
+  ]
+ },
+ "ModelRegistrationResponse/zero": {
+  "Provider": "",
+  "Models": null
+ },
+ "ModelResponse/full": {
+  "Provider": "s-Provider",
+  "Models": [
+   {
+    "ID": "s-ID",
+    "Object": "s-Object",
+    "Created": 7,
+    "OwnedBy": "s-OwnedBy",
+    "Type": "s-Type",
+    "DisplayName": "s-DisplayName",
+    "Name": "s-Name",
+    "Version": "s-Version",
+    "Description": "s-Description",
+    "InputTokenLimit": 7,
+    "OutputTokenLimit": 7,
+    "SupportedGenerationMethods": [
+     "s-SupportedGenerationMethods"
+    ],
+    "ContextLength": 7,
+    "MaxCompletionTokens": 7,
+    "SupportedParameters": [
+     "s-SupportedParameters"
+    ],
+    "SupportedInputModalities": [
+     "s-SupportedInputModalities"
+    ],
+    "SupportedOutputModalities": [
+     "s-SupportedOutputModalities"
+    ],
+    "Thinking": {
+     "Min": 7,
+     "Max": 7,
+     "ZeroAllowed": true,
+     "DynamicAllowed": true,
+     "Levels": null
+    },
+    "UserDefined": true
+   }
+  ],
+  "AuthUpdate": {
+   "Provider": "s-Provider",
+   "ID": "s-ID",
+   "FileName": "s-FileName",
+   "Label": "s-Label",
+   "Prefix": "s-Prefix",
+   "ProxyURL": "s-ProxyURL",
+   "Disabled": true,
+   "StorageJSON": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+   "Metadata": {
+    "k-Metadata": "v-Metadata"
+   },
+   "Attributes": {
+    "k-Attributes": "s-Attributes"
+   },
+   "NextRefreshAfter": "2026-03-04T05:06:07.123456789Z"
+  }
+ },
+ "ModelResponse/zero": {
+  "Provider": "",
+  "Models": null,
+  "AuthUpdate": {
+   "Provider": "",
+   "ID": "",
+   "FileName": "",
+   "Label": "",
+   "Prefix": "",
+   "ProxyURL": "",
+   "Disabled": false,
+   "StorageJSON": null,
+   "Metadata": null,
+   "Attributes": null,
+   "NextRefreshAfter": "0001-01-01T00:00:00Z"
+  }
+ },
+ "ModelRouteRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "PluginID": "s-PluginID",
+  "SourceFormat": "s-SourceFormat",
+  "RequestedModel": "s-RequestedModel",
+  "Stream": true,
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Query": {
+   "k-Query": [
+    "s-Query"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "AvailableProviders": [
+   "s-AvailableProviders"
+  ]
+ },
+ "ModelRouteRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "PluginID": "",
+  "SourceFormat": "",
+  "RequestedModel": "",
+  "Stream": false,
+  "Headers": null,
+  "Query": null,
+  "Body": null,
+  "Metadata": null,
+  "AvailableProviders": null
+ },
+ "ModelRouteResponse/full": {
+  "Handled": true,
+  "TargetKind": "s-TargetKind",
+  "Target": "s-Target",
+  "TargetModel": "s-TargetModel",
+  "Reason": "s-Reason"
+ },
+ "ModelRouteResponse/zero": {
+  "Handled": false,
+  "TargetKind": "",
+  "Target": "",
+  "TargetModel": "",
+  "Reason": ""
+ },
+ "PayloadResponse/full": {
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "PayloadResponse/zero": {
+  "Body": null
+ },
+ "QuotaDescribeRequest/full": {
+  "plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  }
+ },
+ "QuotaDescribeRequest/zero": {
+  "plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  }
+ },
+ "QuotaDescribeResponse/full": {
+  "supported_providers": [
+   "s-SupportedProviders"
+  ],
+  "display_name": "s-DisplayName",
+  "supports_reset": true
+ },
+ "QuotaDescribeResponse/zero": {},
+ "QuotaFetchRequest/full": {
+  "auth_index": "s-AuthIndex",
+  "auth_id": "s-AuthID",
+  "provider": "s-Provider",
+  "storage_json": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "attributes": {
+   "k-Attributes": "s-Attributes"
+  },
+  "host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "QuotaFetchRequest/zero": {
+  "auth_index": "",
+  "auth_id": "",
+  "provider": "",
+  "host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "QuotaFetchResponse/full": {
+  "subscription": {
+   "plan": "s-Plan",
+   "tierName": "s-TierName",
+   "tierId": "s-TierID"
+  },
+  "summary": [
+   {
+    "key": "s-Key",
+    "label": "s-Label",
+    "value": 0.25,
+    "unit": "s-Unit",
+    "format": "s-Format",
+    "currency": "s-Currency"
+   }
+  ],
+  "serverTimeOffsetMs": 7,
+  "groups": [
+   {
+    "displayName": "s-DisplayName",
+    "buckets": [
+     {
+      "window": "s-Window",
+      "remainingFraction": 0.25,
+      "resetTime": "s-ResetTime",
+      "description": "s-Description"
+     }
+    ]
+   }
+  ]
+ },
+ "QuotaFetchResponse/zero": {},
+ "QuotaResetRequest/full": {
+  "auth_index": "s-AuthIndex",
+  "auth_id": "s-AuthID",
+  "provider": "s-Provider",
+  "storage_json": "Ynl0ZXMtU3RvcmFnZUpTT04=",
+  "metadata": {
+   "k-Metadata": "v-Metadata"
+  },
+  "attributes": {
+   "k-Attributes": "s-Attributes"
+  },
+  "host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "QuotaResetRequest/zero": {
+  "auth_index": "",
+  "auth_id": "",
+  "provider": "",
+  "host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "QuotaResetResponse/full": {
+  "success": true,
+  "message": "s-Message"
+ },
+ "QuotaResetResponse/zero": {
+  "success": false
+ },
+ "RequestCompletion/full": {
+  "RequestID": "s-RequestID",
+  "TraceID": "s-TraceID",
+  "SourceFormat": "s-SourceFormat",
+  "Model": "s-Model",
+  "RequestedModel": "s-RequestedModel",
+  "Stream": true,
+  "Outcome": "s-Outcome",
+  "StatusCode": 7,
+  "Error": "s-Error",
+  "StartedAt": "2026-03-04T05:06:07.123456789Z",
+  "CompletedAt": "2026-03-04T05:06:07.123456789Z",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "RequestCompletion/zero": {
+  "RequestID": "",
+  "TraceID": "",
+  "SourceFormat": "",
+  "Model": "",
+  "RequestedModel": "",
+  "Stream": false,
+  "Outcome": "",
+  "StatusCode": 0,
+  "Error": "",
+  "StartedAt": "0001-01-01T00:00:00Z",
+  "CompletedAt": "0001-01-01T00:00:00Z",
+  "Metadata": null
+ },
+ "RequestInterceptRequest/full": {
+  "RequestID": "s-RequestID",
+  "TraceID": "s-TraceID",
+  "SourceFormat": "s-SourceFormat",
+  "ToFormat": "s-ToFormat",
+  "Model": "s-Model",
+  "RequestedModel": "s-RequestedModel",
+  "Stream": true,
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "RequestInterceptRequest/zero": {
+  "RequestID": "",
+  "TraceID": "",
+  "SourceFormat": "",
+  "ToFormat": "",
+  "Model": "",
+  "RequestedModel": "",
+  "Stream": false,
+  "Headers": null,
+  "Body": null,
+  "Metadata": null
+ },
+ "RequestInterceptResponse/full": {
+  "path": "s-Path",
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "ClearHeaders": [
+   "s-ClearHeaders"
+  ],
+  "Terminate": true,
+  "StatusCode": 7,
+  "ResponseHeaders": {
+   "k-ResponseHeaders": [
+    "s-ResponseHeaders"
+   ]
+  },
+  "ResponseBody": "Ynl0ZXMtUmVzcG9uc2VCb2R5"
+ },
+ "RequestInterceptResponse/zero": {
+  "Headers": null,
+  "Body": null,
+  "ClearHeaders": null,
+  "Terminate": false,
+  "StatusCode": 0,
+  "ResponseHeaders": null,
+  "ResponseBody": null
+ },
+ "RequestTransformRequest/full": {
+  "FromFormat": "s-FromFormat",
+  "ToFormat": "s-ToFormat",
+  "Model": "s-Model",
+  "Stream": true,
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "RequestTransformRequest/zero": {
+  "FromFormat": "",
+  "ToFormat": "",
+  "Model": "",
+  "Stream": false,
+  "Body": null
+ },
+ "ResourceRoute/full": {
+  "Path": "s-Path",
+  "Menu": "s-Menu",
+  "Description": "s-Description",
+  "Handler": null
+ },
+ "ResourceRoute/zero": {
+  "Path": "",
+  "Menu": "",
+  "Description": "",
+  "Handler": null
+ },
+ "ResponseInterceptRequest/full": {
+  "RequestID": "s-RequestID",
+  "SourceFormat": "s-SourceFormat",
+  "Model": "s-Model",
+  "RequestedModel": "s-RequestedModel",
+  "Stream": true,
+  "RequestHeaders": {
+   "k-RequestHeaders": [
+    "s-RequestHeaders"
+   ]
+  },
+  "ResponseHeaders": {
+   "k-ResponseHeaders": [
+    "s-ResponseHeaders"
+   ]
+  },
+  "OriginalRequest": "Ynl0ZXMtT3JpZ2luYWxSZXF1ZXN0",
+  "RequestBody": "Ynl0ZXMtUmVxdWVzdEJvZHk=",
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "StatusCode": 7,
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "ResponseInterceptRequest/zero": {
+  "RequestID": "",
+  "SourceFormat": "",
+  "Model": "",
+  "RequestedModel": "",
+  "Stream": false,
+  "RequestHeaders": null,
+  "ResponseHeaders": null,
+  "OriginalRequest": null,
+  "RequestBody": null,
+  "Body": null,
+  "StatusCode": 0,
+  "Metadata": null
+ },
+ "ResponseInterceptResponse/full": {
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "ClearHeaders": [
+   "s-ClearHeaders"
+  ]
+ },
+ "ResponseInterceptResponse/zero": {
+  "Headers": null,
+  "Body": null,
+  "ClearHeaders": null
+ },
+ "ResponseTransformRequest/full": {
+  "FromFormat": "s-FromFormat",
+  "ToFormat": "s-ToFormat",
+  "Model": "s-Model",
+  "Stream": true,
+  "OriginalRequest": "Ynl0ZXMtT3JpZ2luYWxSZXF1ZXN0",
+  "TranslatedRequest": "Ynl0ZXMtVHJhbnNsYXRlZFJlcXVlc3Q=",
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "ResponseTransformRequest/zero": {
+  "FromFormat": "",
+  "ToFormat": "",
+  "Model": "",
+  "Stream": false,
+  "OriginalRequest": null,
+  "TranslatedRequest": null,
+  "Body": null
+ },
+ "SchedulerPickRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "Provider": "s-Provider",
+  "Providers": [
+   "s-Providers"
+  ],
+  "Model": "s-Model",
+  "Stream": true,
+  "Options": {
+   "Headers": {
+    "k-Headers": [
+     "s-Headers"
+    ]
+   },
+   "Metadata": {
+    "k-Metadata": "v-Metadata"
+   }
+  },
+  "Candidates": [
+   {
+    "ID": "s-ID",
+    "Provider": "s-Provider",
+    "Priority": 7,
+    "Status": "s-Status",
+    "Attributes": {
+     "k-Attributes": "s-Attributes"
+    },
+    "Metadata": {
+     "k-Metadata": "v-Metadata"
+    }
+   }
+  ]
+ },
+ "SchedulerPickRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "Provider": "",
+  "Providers": null,
+  "Model": "",
+  "Stream": false,
+  "Options": {
+   "Headers": null,
+   "Metadata": null
+  },
+  "Candidates": null
+ },
+ "SchedulerPickResponse/full": {
+  "AuthID": "s-AuthID",
+  "DelegateBuiltin": "s-DelegateBuiltin",
+  "Handled": true,
+  "Reject": true,
+  "RejectReason": "s-RejectReason",
+  "RejectCode": "s-RejectCode"
+ },
+ "SchedulerPickResponse/zero": {
+  "AuthID": "",
+  "DelegateBuiltin": "",
+  "Handled": false,
+  "Reject": false,
+  "RejectReason": "",
+  "RejectCode": ""
+ },
+ "StaticModelRequest/full": {
+  "Plugin": {
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Author": "s-Author",
+   "GitHubRepository": "s-GitHubRepository",
+   "Logo": "s-Logo",
+   "ConfigFields": [
+    {
+     "Name": "s-Name",
+     "Type": "s-Type",
+     "EnumValues": [
+      "s-EnumValues"
+     ],
+     "Description": "s-Description"
+    }
+   ]
+  },
+  "Host": {
+   "AuthDir": "s-AuthDir",
+   "ProxyURL": "s-ProxyURL",
+   "ForceModelPrefix": true,
+   "OAuthModelAlias": {
+    "k-OAuthModelAlias": [
+     {
+      "Name": "s-Name",
+      "Alias": "s-Alias"
+     }
+    ]
+   },
+   "ExcludedModels": {
+    "k-ExcludedModels": [
+     "s-ExcludedModels"
+    ]
+   }
+  }
+ },
+ "StaticModelRequest/zero": {
+  "Plugin": {
+   "Name": "",
+   "Version": "",
+   "Author": "",
+   "GitHubRepository": "",
+   "Logo": "",
+   "ConfigFields": null
+  },
+  "Host": {
+   "AuthDir": "",
+   "ProxyURL": "",
+   "ForceModelPrefix": false,
+   "OAuthModelAlias": null,
+   "ExcludedModels": null
+  }
+ },
+ "StreamChunkInterceptRequest/full": {
+  "RequestID": "s-RequestID",
+  "SourceFormat": "s-SourceFormat",
+  "Model": "s-Model",
+  "RequestedModel": "s-RequestedModel",
+  "RequestHeaders": {
+   "k-RequestHeaders": [
+    "s-RequestHeaders"
+   ]
+  },
+  "ResponseHeaders": {
+   "k-ResponseHeaders": [
+    "s-ResponseHeaders"
+   ]
+  },
+  "OriginalRequest": "Ynl0ZXMtT3JpZ2luYWxSZXF1ZXN0",
+  "RequestBody": "Ynl0ZXMtUmVxdWVzdEJvZHk=",
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "HistoryChunks": [
+   "Ynl0ZXMtSGlzdG9yeUNodW5rcw=="
+  ],
+  "ChunkIndex": 7,
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "StreamChunkInterceptRequest/zero": {
+  "RequestID": "",
+  "SourceFormat": "",
+  "Model": "",
+  "RequestedModel": "",
+  "RequestHeaders": null,
+  "ResponseHeaders": null,
+  "OriginalRequest": null,
+  "RequestBody": null,
+  "Body": null,
+  "HistoryChunks": null,
+  "ChunkIndex": 0,
+  "Metadata": null
+ },
+ "StreamChunkInterceptResponse/full": {
+  "Headers": {
+   "k-Headers": [
+    "s-Headers"
+   ]
+  },
+  "Body": "Ynl0ZXMtQm9keQ==",
+  "ClearHeaders": [
+   "s-ClearHeaders"
+  ],
+  "DropChunk": true
+ },
+ "StreamChunkInterceptResponse/zero": {
+  "Headers": null,
+  "Body": null,
+  "ClearHeaders": null,
+  "DropChunk": false
+ },
+ "ThinkingApplyRequest/full": {
+  "Provider": "s-Provider",
+  "Model": {
+   "ID": "s-ID",
+   "Object": "s-Object",
+   "Created": 7,
+   "OwnedBy": "s-OwnedBy",
+   "Type": "s-Type",
+   "DisplayName": "s-DisplayName",
+   "Name": "s-Name",
+   "Version": "s-Version",
+   "Description": "s-Description",
+   "InputTokenLimit": 7,
+   "OutputTokenLimit": 7,
+   "SupportedGenerationMethods": [
+    "s-SupportedGenerationMethods"
+   ],
+   "ContextLength": 7,
+   "MaxCompletionTokens": 7,
+   "SupportedParameters": [
+    "s-SupportedParameters"
+   ],
+   "SupportedInputModalities": [
+    "s-SupportedInputModalities"
+   ],
+   "SupportedOutputModalities": [
+    "s-SupportedOutputModalities"
+   ],
+   "Thinking": {
+    "Min": 7,
+    "Max": 7,
+    "ZeroAllowed": true,
+    "DynamicAllowed": true,
+    "Levels": [
+     "s-Levels"
+    ]
+   },
+   "UserDefined": true
+  },
+  "Config": {
+   "Mode": "s-Mode",
+   "Budget": 7,
+   "Level": "s-Level"
+  },
+  "Body": "Ynl0ZXMtQm9keQ=="
+ },
+ "ThinkingApplyRequest/zero": {
+  "Provider": "",
+  "Model": {
+   "ID": "",
+   "Object": "",
+   "Created": 0,
+   "OwnedBy": "",
+   "Type": "",
+   "DisplayName": "",
+   "Name": "",
+   "Version": "",
+   "Description": "",
+   "InputTokenLimit": 0,
+   "OutputTokenLimit": 0,
+   "SupportedGenerationMethods": null,
+   "ContextLength": 0,
+   "MaxCompletionTokens": 0,
+   "SupportedParameters": null,
+   "SupportedInputModalities": null,
+   "SupportedOutputModalities": null,
+   "Thinking": null,
+   "UserDefined": false
+  },
+  "Config": {
+   "Mode": "",
+   "Budget": 0,
+   "Level": ""
+  },
+  "Body": null
+ },
+ "UsageRecord/full": {
+  "RequestID": "s-RequestID",
+  "TraceID": "s-TraceID",
+  "Provider": "s-Provider",
+  "BaseURL": "s-BaseURL",
+  "ExecutorType": "s-ExecutorType",
+  "Model": "s-Model",
+  "Alias": "s-Alias",
+  "APIKey": "s-APIKey",
+  "SessionID": "s-SessionID",
+  "ParentSessionID": "s-ParentSessionID",
+  "AuthID": "s-AuthID",
+  "AuthIndex": "s-AuthIndex",
+  "AuthType": "s-AuthType",
+  "Source": "s-Source",
+  "ReasoningEffort": "s-ReasoningEffort",
+  "ServiceTier": "s-ServiceTier",
+  "ResponseServiceTier": "s-ResponseServiceTier",
+  "ResponseModel": "s-ResponseModel",
+  "Generate": true,
+  "Stream": true,
+  "RequestedAt": "2026-03-04T05:06:07.123456789Z",
+  "Latency": 1500000000,
+  "TTFT": 1500000000,
+  "Failed": true,
+  "Failure": {
+   "StatusCode": 7,
+   "Body": "s-Body"
+  },
+  "Detail": {
+   "InputTokens": 7,
+   "OutputTokens": 7,
+   "ReasoningTokens": 7,
+   "CachedTokens": 7,
+   "CacheReadTokens": 7,
+   "CacheCreationTokens": 7,
+   "TotalTokens": 7
+  },
+  "ResponseHeaders": {
+   "k-ResponseHeaders": [
+    "s-ResponseHeaders"
+   ]
+  }
+ },
+ "UsageRecord/zero": {
+  "RequestID": "",
+  "TraceID": "",
+  "Provider": "",
+  "BaseURL": "",
+  "ExecutorType": "",
+  "Model": "",
+  "Alias": "",
+  "APIKey": "",
+  "SessionID": "",
+  "ParentSessionID": "",
+  "AuthID": "",
+  "AuthIndex": "",
+  "AuthType": "",
+  "Source": "",
+  "ReasoningEffort": "",
+  "ServiceTier": "",
+  "ResponseServiceTier": "",
+  "ResponseModel": "",
+  "Generate": false,
+  "Stream": false,
+  "RequestedAt": "0001-01-01T00:00:00Z",
+  "Latency": 0,
+  "TTFT": 0,
+  "Failed": false,
+  "Failure": {
+   "StatusCode": 0,
+   "Body": ""
+  },
+  "Detail": {
+   "InputTokens": 0,
+   "OutputTokens": 0,
+   "ReasoningTokens": 0,
+   "CachedTokens": 0,
+   "CacheReadTokens": 0,
+   "CacheCreationTokens": 0,
+   "TotalTokens": 0
+  },
+  "ResponseHeaders": null
+ },
+ "WebSocketResponseEvent/full": {
+  "RequestID": "s-RequestID",
+  "TraceID": "s-TraceID",
+  "SourceFormat": "s-SourceFormat",
+  "Model": "s-Model",
+  "RequestedModel": "s-RequestedModel",
+  "Provider": "s-Provider",
+  "AuthID": "s-AuthID",
+  "AuthLabel": "s-AuthLabel",
+  "AuthType": "s-AuthType",
+  "EventType": "s-EventType",
+  "Payload": "Ynl0ZXMtUGF5bG9hZA==",
+  "Metadata": {
+   "k-Metadata": "v-Metadata"
+  }
+ },
+ "WebSocketResponseEvent/zero": {
+  "RequestID": "",
+  "TraceID": "",
+  "SourceFormat": "",
+  "Model": "",
+  "RequestedModel": "",
+  "Provider": "",
+  "AuthID": "",
+  "AuthLabel": "",
+  "AuthType": "",
+  "EventType": "",
+  "Payload": null,
+  "Metadata": null
+ }
+}

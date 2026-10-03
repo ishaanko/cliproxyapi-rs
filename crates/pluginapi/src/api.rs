@@ -9,6 +9,8 @@ use serde_json::{Map, Value};
 
 use crate::wire::{self, b64, b64_list, gotime, nul};
 
+pub use crate::host_api::*;
+
 pub type Header = BTreeMap<String, Vec<String>>;
 pub type AnyMap = Map<String, Value>;
 
