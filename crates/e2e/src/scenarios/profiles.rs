@@ -168,6 +168,12 @@ pub fn request_log(s: &mut ConfigSpec) {
     s.request_log = true;
 }
 
+/// `request-log: true` together with `commercial-mode: true` (Go writes no regular request logs).
+pub fn request_log_commercial(s: &mut ConfigSpec) {
+    request_log(s);
+    s.commercial_mode = true;
+}
+
 /// Request log on plus Codex duplex steering.
 pub fn request_log_codex_steering(s: &mut ConfigSpec) {
     request_log(s);

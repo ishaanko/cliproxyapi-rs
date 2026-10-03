@@ -47,6 +47,15 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 
+# Iteration profile (`cargo build --profile release-fast`, `CPA_PROFILE=release-fast tools/e2e.sh`):
+# the release code generation settings minus fat LTO and the single codegen unit, so a rebuild
+# after touching one crate takes a fraction of the time. Benchmarks, tools/pgo.sh and the final
+# E2E gate use plain release.
+[profile.release-fast]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 # serde_json with a flat insertion-ordered map instead of IndexMap (see crates/json/vendor/serde_json/src/flatmap.rs)
 [patch.crates-io]
 serde_json = { path = "crates/json/vendor/serde_json" }

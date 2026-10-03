@@ -16,6 +16,15 @@ pub enum Want {
     Exists,
     /// An object member of which only the listed members are kept (`null` for other types).
     Sub(&'static [(&'static str, Want)]),
+    /// An array whose elements are reduced like [`Want::Sub`] (`null` for non-object elements and
+    /// for a value that is not an array); for large arrays such as Responses `input`.
+    Items(&'static [(&'static str, Want)]),
+}
+
+/// [`mini_root`] for callers that must also handle bodies that are not valid JSON: those fall back
+/// to the lenient full parse, like the handlers do for malformed requests.
+pub fn fields_or_parse(body: &[u8], keys: &[(&'static str, Want)]) -> Value {
+    mini_root(body, keys).unwrap_or_else(|| cpa_json::parse(body))
 }
 
 /// An object holding only the requested top-level members of `body`, in body order (a repeated
@@ -113,6 +122,7 @@ fn scan(b: &[u8], keys: &[(&'static str, Want)]) -> Option<Value> {
                 Want::Value => cpa_json::parse(&b[i..end]),
                 Want::Exists => Value::Null,
                 Want::Sub(sub) => scan(&b[i..end], sub)?,
+                Want::Items(sub) => scan_items(&b[i..end], sub)?,
             };
             out.insert(key.to_string(), value);
         }
@@ -126,6 +136,27 @@ fn scan(b: &[u8], keys: &[(&'static str, Want)]) -> Option<Value> {
     Some(Value::Object(out))
 }
 
+/// The array `b` with every element reduced to the `keys` members (see [`Want::Items`]).
+fn scan_items(b: &[u8], keys: &[(&'static str, Want)]) -> Option<Value> {
+    let mut i = skip_ws(b, 0);
+    if b.get(i) != Some(&b'[') {
+        return Some(Value::Null);
+    }
+    i = skip_ws(b, i + 1);
+    let mut out = Vec::new();
+    while *b.get(i)? != b']' {
+        let end = value_end(b, i)?;
+        out.push(scan(&b[i..end], keys)?);
+        i = skip_ws(b, end);
+        match *b.get(i)? {
+            b',' => i = skip_ws(b, i + 1),
+            b']' => break,
+            _ => return None,
+        }
+    }
+    Some(Value::Array(out))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +168,7 @@ mod tests {
         ("messages", Want::Exists),
         ("thinking", Want::Value),
         ("response", Want::Sub(&[("error", Want::Value)])),
+        ("input", Want::Items(&[("type", Want::Value), ("reasoning", Want::Sub(&[("effort", Want::Value)]))])),
     ];
 
     #[test]
@@ -148,13 +180,15 @@ mod tests {
             br#"{"n":12.50,"model":"m","big":123456789012345678901234567890}"#,
             br#"{"response":{"id":"x","error":{"message":"boom"},"output":[1,2]},"model":"m"}"#,
             br#"{"response":5,"model":"m"}"#,
+            br#"{"input":[{"type":"message","content":[1,{"type":"x"}]},{"type":"configuration_update","reasoning":{"effort":"high","summary":"s"}},"text",7,{"reasoning":"flat"}],"model":"m"}"#,
+            br#"{"input":"plain","model":"m"}"#,
             b"[1,2,3]",
             b"{}",
         ];
         for body in bodies {
             let mini = mini_root(body, KEYS).expect("valid");
             let full = cpa_json::parse(body);
-            for path in ["model", "stream", "thinking.type", "thinking.budget_tokens", "response.error", "response.error.message"] {
+            for path in ["model", "stream", "thinking.type", "thinking.budget_tokens", "response.error", "response.error.message", "input.0.type", "input.1.type", "input.1.reasoning.effort", "input.4.reasoning.effort"] {
                 assert_eq!(mini.g(path).v(), full.g(path).v(), "{path} in {}", String::from_utf8_lossy(body));
             }
             assert_eq!(mini.g("messages").exists(), full.g("messages").exists());

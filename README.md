@@ -16,12 +16,14 @@ Building needs `cmake`, a C++ compiler and libclang: the Claude Code and Chrome 
 
 `config.example.yaml` documents every option; existing CLIProxyAPI configs and auth directories work unchanged. Log in to a provider with `--claude-login`, `--codex-login`, `--antigravity-login` and friends, or from the UI at `http://localhost:8317/management.html`.
 
+Development builds: the release profile is fat LTO with one codegen unit (slow to link, fastest binary). `cargo build --profile release-fast` (thin LTO, 16 codegen units) rebuilds much faster and is what `CPA_PROFILE=release-fast tools/e2e.sh` uses while iterating; run the final E2E gate, benchmarks and `tools/pgo.sh` on the plain release profile. `.cargo/config.toml` sets `CFLAGS_<target>` for the mimalloc build (lazy arena commit, see `crates/server/src/main.rs`); an exported `CFLAGS_<target>` of your own takes precedence over it.
+
 ## Compatibility
 
 Verified against the Go implementation:
 
 - **Translators:** 5,684 / 5,684 golden cases, captured from the Go test suite and replayed through the Go code (`cargo run --release -p cpa-conformance`).
-- **End to end:** 1,002 / 1,002 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
+- **End to end:** 1,003 / 1,003 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
 
 ## Performance
 

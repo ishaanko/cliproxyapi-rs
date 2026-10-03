@@ -5,6 +5,9 @@
 #
 #   tools/pgo.sh                 # about 30 minutes; takes the machine locks itself
 #
+# Do NOT wrap it in tools/shared.sh or tools/exclusive.sh: it takes shared.sh for the builds and
+# exclusive.sh for the training run itself, and a wrapper's lock would deadlock against them.
+#
 # Needs `rustup component add llvm-tools-preview`. Run it on a quiet machine: the training step
 # takes tools/exclusive.sh. The profile is only valid for the commit it was recorded on; functions
 # changed since are simply compiled without profile data.

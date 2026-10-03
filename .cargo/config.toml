@@ -1,0 +1,12 @@
+# Merges with the user-level ~/.cargo/config.toml (LIBCLANG_PATH etc.); only unset variables are set.
+[env]
+# mimalloc (libmimalloc-sys, built by the cc crate) reserves its first arena fully committed on
+# Linux, which keeps ~17 MB more resident at idle. Defaulting the option to lazy commit at compile
+# time replaces a runtime re-exec with MIMALLOC_ARENA_EAGER_COMMIT=0; the env var at runtime still
+# overrides it. The cc crate reads CFLAGS_<target> for C code built for that target (it applies to
+# every C dependency, where the define is inert), and an exported CFLAGS_<target> takes precedence
+# over these values. macOS and Windows keep mimalloc's default (decommit-on-overcommit-only).
+CFLAGS_x86_64_unknown_linux_gnu = "-DMI_DEFAULT_ARENA_EAGER_COMMIT=0"
+CFLAGS_aarch64_unknown_linux_gnu = "-DMI_DEFAULT_ARENA_EAGER_COMMIT=0"
+CFLAGS_x86_64_unknown_linux_musl = "-DMI_DEFAULT_ARENA_EAGER_COMMIT=0"
+CFLAGS_aarch64_unknown_linux_musl = "-DMI_DEFAULT_ARENA_EAGER_COMMIT=0"

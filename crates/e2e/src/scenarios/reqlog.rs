@@ -85,6 +85,16 @@ pub fn scenarios() -> Vec<Scenario> {
         .profile(profiles::request_log)
         .with_logs(),
     );
+    out.push(
+        Scenario::new(
+            "reqlog.commercial.mid_error",
+            "commercial mode with request-log on: a 200 stream failing after some output writes no log file (as Go)",
+            Script::steps(vec![Step::always(Reply::StreamError { content: Content::Text, after: 3 })]),
+            vec![chat(Family::Compat, true)],
+        )
+        .profile(profiles::request_log_commercial)
+        .with_logs(),
+    );
     // Request log off: only failing requests produce `error-*.log`, carrying the deferred API REQUEST.
     for f in [Family::Claude, Family::Codex] {
         out.push(
