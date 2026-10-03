@@ -33,6 +33,7 @@ use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGEN
 use http::{HeaderMap, HeaderValue};
 
 use crate::ConfigRx;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
     APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error,
 };
@@ -587,6 +588,10 @@ impl Executor for OpenAiCompatExecutor {
 
     /// Credentials are static API keys; OAuth-style refresh tokens cannot be rotated here.
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        let cfg = self.cfg.borrow().clone();
+        if let Some(result) = refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
         if has_refresh_token(auth) {
             let provider = if self.provider.is_empty() { auth.provider.trim() } else { self.provider.as_str() };
             return Err(ExecError::new(

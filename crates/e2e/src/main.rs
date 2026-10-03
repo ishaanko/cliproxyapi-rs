@@ -9,6 +9,7 @@ mod config;
 mod golden;
 mod mock;
 mod normalize;
+mod resp;
 mod runner;
 mod scenario;
 mod scenarios;

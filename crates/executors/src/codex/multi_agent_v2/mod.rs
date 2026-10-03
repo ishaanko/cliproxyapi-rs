@@ -56,10 +56,6 @@ pub struct RequestCtx {
     /// this request, so the optimizer only strips `message.encrypted` instead of refreshing
     /// `spawn_agent` descriptions.
     pub tools_prepared: bool,
-    /// Models the CLIProxyAPIHome control plane reports as available (decode its raw response with
-    /// [`decode_home_available_models`]). Only consulted when `home.enabled`; `None` is Go's "no
-    /// home client" and yields no model list.
-    pub home_models: Option<Vec<Map<String, Value>>>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -140,7 +136,7 @@ pub fn rewrite_input(
 /// namespace. The bool is Go's `prepared` flag: true when the client is an enabled Codex client.
 #[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn prepare_tools(
-    ctx: &RequestCtx,
+    _ctx: &RequestCtx,
     headers: &HeaderMap,
     payload: &[u8],
     enabled: bool,
@@ -150,7 +146,7 @@ pub fn prepare_tools(
         return (payload.to_vec(), false);
     }
     let mut root = cpa_json::parse(payload);
-    let changed = prepare_tools_value(&mut root, ctx, home_enabled);
+    let changed = prepare_tools_value(&mut root, headers, home_enabled);
     (finish(&root, changed, payload), true)
 }
 
@@ -167,7 +163,7 @@ pub fn optimize_request(
         return (payload.to_vec(), false);
     }
     let mut root = cpa_json::parse(payload);
-    let (changed, optimized) = optimize_value(&mut root, ctx, cfg);
+    let (changed, optimized) = optimize_value(&mut root, ctx, headers, cfg);
     (finish(&root, changed, payload), optimized)
 }
 
@@ -221,7 +217,7 @@ pub fn optimize_request_for_auth_with(
     }
     let mut optimized = false;
     if optimize {
-        let (c, o) = optimize_value(&mut root, ctx, cfg);
+        let (c, o) = optimize_value(&mut root, ctx, headers, cfg);
         changed |= c;
         optimized = o;
     }
@@ -245,14 +241,19 @@ fn finish(root: &Value, changed: bool, payload: &[u8]) -> Vec<u8> {
 }
 
 /// Body of [`optimize_request`] on a parsed request; returns (changed, namespace optimized).
-fn optimize_value(root: &mut Value, ctx: &RequestCtx, cfg: Option<&Config>) -> (bool, bool) {
+fn optimize_value(
+    root: &mut Value,
+    ctx: &RequestCtx,
+    headers: &HeaderMap,
+    cfg: Option<&Config>,
+) -> (bool, bool) {
     let home_enabled = cfg.is_some_and(|c| c.home.enabled);
     let mut changed = rewrite_agent_message_content(root);
     if ctx.tools_prepared {
         let paths = collaboration_message_tool_paths(root);
         changed |= remove_collaboration_message_encryption(root, &paths);
     } else {
-        changed |= prepare_tools_value(root, ctx, home_enabled);
+        changed |= prepare_tools_value(root, headers, home_enabled);
     }
     let tool_paths = spawn_agent_tool_paths(root);
     if tool_paths.is_empty() || has_optimized_collaboration_conflict(root) {
@@ -263,7 +264,7 @@ fn optimize_value(root: &mut Value, ctx: &RequestCtx, cfg: Option<&Config>) -> (
 }
 
 /// Body of [`prepare_tools`] after the client check; returns whether `root` changed.
-fn prepare_tools_value(root: &mut Value, ctx: &RequestCtx, home_enabled: bool) -> bool {
+fn prepare_tools_value(root: &mut Value, headers: &HeaderMap, home_enabled: bool) -> bool {
     let tool_paths = spawn_agent_tool_paths(root);
     let message_tool_paths = collaboration_message_tool_paths(root);
     if tool_paths.is_empty() && message_tool_paths.is_empty() {
@@ -274,7 +275,7 @@ fn prepare_tools_value(root: &mut Value, ctx: &RequestCtx, home_enabled: bool) -
     }
 
     let spawn_models = (!tool_paths.is_empty())
-        .then(|| spawn_agent_models_and_markdown_for_request(ctx, home_enabled));
+        .then(|| spawn_agent_models_and_markdown_for_request(headers, home_enabled));
     let (models, markdown) = match &spawn_models {
         Some(m) => (m.models.as_slice(), m.markdown.as_str()),
         None => (&[][..], ""),
@@ -361,7 +362,7 @@ fn registry_lookup(model_id: &str) -> Option<ModelInfo> {
 /// Models offered for spawn_agent overrides and their markdown. Without home, the result is
 /// cached per (catalog revision, registry generation).
 fn spawn_agent_models_and_markdown_for_request(
-    ctx: &RequestCtx,
+    headers: &HeaderMap,
     home_enabled: bool,
 ) -> Arc<SpawnModels> {
     let empty = || {
@@ -375,9 +376,9 @@ fn spawn_agent_models_and_markdown_for_request(
         let Some(default) = &templates.default else {
             return empty();
         };
-        let available = ctx.home_models.as_deref().unwrap_or(&[]);
+        let available = home_available_models(headers);
         let models = spawn_agent_models_from_templates(
-            available,
+            &available,
             &templates.by_id,
             default,
             &registry_lookup,
@@ -415,10 +416,29 @@ fn spawn_agent_models_and_markdown_for_request(
     result
 }
 
+/// Models the Home control plane reports as available to this client (Go: codexHomeAvailableModels).
+/// Without a Home client, or when the query fails, there are none. The query runs through the
+/// blocking Home bridge, so outside a multi-thread runtime it also yields none.
+fn home_available_models(headers: &HeaderMap) -> Vec<Map<String, Value>> {
+    let Some(client) = cpa_home::kv::current() else {
+        return Vec::new();
+    };
+    crate::helps::home_kv::call(query_home_models(&client, headers)).unwrap_or_default()
+}
+
+/// One models query against Home: `client_version` is sent empty like Go.
+async fn query_home_models(
+    client: &cpa_home::Client,
+    headers: &HeaderMap,
+) -> Result<Vec<Map<String, Value>>, cpa_home::HomeError> {
+    let query = [("client_version".to_string(), String::new())];
+    let raw = client.get_models(headers, &query).await?;
+    Ok(decode_home_available_models(&raw))
+}
+
 /// Decodes the home control plane's models response (`{section: [{id|name, display_name}]}`)
 /// into id-sorted, de-duplicated entries. Anything else (for example an error envelope) yields
 /// an empty list. Sections are visited in key order so de-duplication is deterministic.
-#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn decode_home_available_models(raw: &[u8]) -> Vec<Map<String, Value>> {
     let Value::Object(sections) = cpa_json::parse(raw) else {
         return Vec::new();

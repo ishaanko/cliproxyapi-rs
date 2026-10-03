@@ -2,7 +2,7 @@
 //! handlers_stream): model -> provider routing, execution metadata, non-stream / stream / count
 //! execution through the auth manager, and the stream bootstrap-retry read.
 //!
-//! Plugin interceptors, model routers and the Home mode of the Go pipeline are not ported.
+//! Plugin interceptors and model routers of the Go pipeline are not ported; Home mode is handled inside the conductor.
 
 use std::sync::Arc;
 

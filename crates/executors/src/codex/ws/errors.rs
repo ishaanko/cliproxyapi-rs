@@ -47,13 +47,13 @@ pub fn parse_error_frame(frame: &Value, model_level_cooling: bool) -> Option<Exe
 }
 
 /// Drops the reasoning replay state when the frame reports an invalid thinking signature.
-pub fn clear_replay_on_error_frame(scope: &ReplayScope, frame: &Value) {
+pub fn clear_replay_on_error_frame(scope: &ReplayScope, frame: &Value) -> Result<(), ExecError> {
     let status = frame_status(frame);
     if status <= 0 {
-        return;
+        return Ok(());
     }
     let payload = cpa_json::to_vec(&build_error_payload(frame, status));
-    clear_replay_on_invalid_signature(scope, u16::try_from(status).unwrap_or(u16::MAX), &payload);
+    clear_replay_on_invalid_signature(scope, u16::try_from(status).unwrap_or(u16::MAX), &payload)
 }
 
 fn build_error_payload(frame: &Value, status: i64) -> Value {

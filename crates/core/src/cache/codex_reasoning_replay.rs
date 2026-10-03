@@ -9,6 +9,7 @@ use std::time::Duration;
 use cpa_json::{J, Res, Value};
 use parking_lot::Mutex;
 
+use super::kv::{KvBackend, KvResult, Store, decode_items, encode_items, scoped_kv_key, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started, oldest_keys, scoped_key};
 use crate::signature::inspect_gpt_reasoning_signature;
 
@@ -313,34 +314,141 @@ fn evict_oldest(entries: &mut HashMap<String, Entry>, count: usize) {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+const KV_PREFIX: &str = "cpa:codex:reasoning-replay";
+
+/// Attempts of the Home append loop before giving up on contention.
+const MAX_CAS_ATTEMPTS: usize = 32;
+
+fn kv_key(model_name: &str, session_key: &str) -> String {
+    scoped_kv_key(KV_PREFIX, model_name, session_key)
+}
+
 /// Go: CacheCodexReasoningReplayItem.
 pub fn cache_codex_reasoning_replay_item(model_name: &str, session_key: &str, item: &[u8]) -> bool {
-    CodexReasoningReplayCache::global().cache_items(model_name, session_key, &[item.to_vec()])
+    cache_codex_reasoning_replay_items(model_name, session_key, &[item.to_vec()])
 }
 
 /// Go: CacheCodexReasoningReplayItems / CacheCodexReasoningReplayItemsBestEffort.
 pub fn cache_codex_reasoning_replay_items(model_name: &str, session_key: &str, items: &[Vec<u8>]) -> bool {
-    CodexReasoningReplayCache::global().cache_items(model_name, session_key, items)
+    if cache_key(model_name, session_key).is_none() {
+        return false;
+    }
+    let Some(normalized) = normalize_items(items) else {
+        return false;
+    };
+    let result = store().and_then(|store| match store {
+        Store::Local => Ok(None),
+        Store::Home(backend) => {
+            let raw = encode_items(&normalized)?;
+            backend
+                .set(&kv_key(model_name, session_key), &raw, CODEX_REASONING_REPLAY_CACHE_TTL)
+                .map(Some)
+        }
+    });
+    match result {
+        Ok(Some(written)) => written,
+        Ok(None) => CodexReasoningReplayCache::global().cache_items(model_name, session_key, items),
+        Err(e) => {
+            tracing::error!("home kv best-effort codex reasoning replay set failed prefix=cpa:codex:*: {e}");
+            false
+        }
+    }
+}
+
+/// Appends one completed turn through compare-and-swap on the stored value.
+fn home_append(backend: &dyn KvBackend, key: &str, normalized: &[Vec<u8>]) -> KvResult<bool> {
+    for _ in 0..MAX_CAS_ATTEMPTS {
+        let existing_raw = backend.get(key)?;
+        let existing = match &existing_raw {
+            Some(raw) => decode_items(raw)?,
+            None => Vec::new(),
+        };
+        let raw = encode_items(&append_turn(existing, normalized))?;
+        if backend.compare_and_swap(key, existing_raw.as_deref(), &raw, CODEX_REASONING_REPLAY_CACHE_TTL)? {
+            return Ok(true);
+        }
+    }
+    tracing::warn!("home kv best-effort codex reasoning replay append exhausted compare-and-swap attempts");
+    Ok(false)
 }
 
 /// Go: AppendCodexReasoningReplayItemsBestEffort.
 pub fn append_codex_reasoning_replay_items_best_effort(model_name: &str, session_key: &str, items: &[Vec<u8>]) -> bool {
-    CodexReasoningReplayCache::global().append_items_best_effort(model_name, session_key, items)
+    if cache_key(model_name, session_key).is_none() {
+        return false;
+    }
+    let Some(normalized) = normalize_items(items) else {
+        return false;
+    };
+    match store() {
+        Ok(Store::Local) => {
+            CodexReasoningReplayCache::global().append_items_best_effort(model_name, session_key, items)
+        }
+        Ok(Store::Home(backend)) => home_append(backend, &kv_key(model_name, session_key), &normalized)
+            .unwrap_or_else(|e| {
+                tracing::error!("home kv best-effort codex reasoning replay append failed prefix=cpa:codex:*: {e}");
+                false
+            }),
+        Err(e) => {
+            tracing::error!("home kv best-effort codex reasoning replay append failed prefix=cpa:codex:*: {e}");
+            false
+        }
+    }
 }
 
-/// Go: GetCodexReasoningReplayItem.
+/// Go: GetCodexReasoningReplayItem (failures read as a miss).
 pub fn get_codex_reasoning_replay_item(model_name: &str, session_key: &str) -> Option<Vec<u8>> {
-    CodexReasoningReplayCache::global().get_item(model_name, session_key)
+    get_codex_reasoning_replay_items(model_name, session_key)?
+        .into_iter()
+        .find(|item| !is_turn_item(item))
 }
 
-/// Go: GetCodexReasoningReplayItems / GetCodexReasoningReplayItemsRequired.
+/// Go: GetCodexReasoningReplayItems (failures read as a miss).
 pub fn get_codex_reasoning_replay_items(model_name: &str, session_key: &str) -> Option<Vec<Vec<u8>>> {
-    CodexReasoningReplayCache::global().get_items(model_name, session_key)
+    get_codex_reasoning_replay_items_required(model_name, session_key).ok().flatten()
 }
 
-/// Go: DeleteCodexReasoningReplayItem / DeleteCodexReasoningReplayItemRequired.
+/// Go: GetCodexReasoningReplayItemsRequired.
+pub fn get_codex_reasoning_replay_items_required(
+    model_name: &str,
+    session_key: &str,
+) -> KvResult<Option<Vec<Vec<u8>>>> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(None);
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let key = kv_key(model_name, session_key);
+            let Some(raw) = backend.get(&key)? else {
+                return Ok(None);
+            };
+            let items = decode_items(&raw)?;
+            backend.expire(&key, CODEX_REASONING_REPLAY_CACHE_TTL)?;
+            Ok(Some(items))
+        }
+        Store::Local => Ok(CodexReasoningReplayCache::global().get_items(model_name, session_key)),
+    }
+}
+
+/// Go: DeleteCodexReasoningReplayItem (failures ignored).
 pub fn delete_codex_reasoning_replay_item(model_name: &str, session_key: &str) {
-    CodexReasoningReplayCache::global().delete_item(model_name, session_key);
+    let _ = delete_codex_reasoning_replay_item_required(model_name, session_key);
+}
+
+/// Go: DeleteCodexReasoningReplayItemRequired.
+pub fn delete_codex_reasoning_replay_item_required(model_name: &str, session_key: &str) -> KvResult<()> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend.del(&kv_key(model_name, session_key)),
+        Store::Local => {
+            CodexReasoningReplayCache::global().delete_item(model_name, session_key);
+            Ok(())
+        }
+    }
 }
 
 /// Go: ClearCodexReasoningReplayCache.

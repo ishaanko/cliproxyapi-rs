@@ -143,7 +143,9 @@ impl AuthSync {
         if rescan_auth {
             self.rescan_files();
         }
-        self.refresh_auth_state(force)
+        let updates = self.refresh_auth_state(force);
+        cpa_home::queue::notify_usage_refresh();
+        updates
     }
 
     /// Rebuilds `file_hashes` and `file_auths_by_path` from the auth dir.
@@ -265,7 +267,9 @@ impl AuthSync {
         } else {
             self.file_auths_by_path.insert(key, new_by_id.keys().cloned().collect());
         }
-        self.per_path_updates(&old_ids, new_by_id)
+        let updates = self.per_path_updates(&old_ids, new_by_id);
+        cpa_home::queue::notify_usage_refresh();
+        updates
     }
 
     /// Go `removeClient`: a known file was deleted.
@@ -273,7 +277,9 @@ impl AuthSync {
         let key = normalize_path(&path.to_string_lossy());
         let old_ids = self.file_auths_by_path.remove(&key).unwrap_or_default();
         self.file_hashes.remove(&key);
-        self.per_path_updates(&old_ids, BTreeMap::new())
+        let updates = self.per_path_updates(&old_ids, BTreeMap::new());
+        cpa_home::queue::notify_usage_refresh();
+        updates
     }
 
     /// Go `computePerPathUpdatesLocked`.

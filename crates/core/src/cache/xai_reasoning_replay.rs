@@ -11,6 +11,7 @@ use cpa_json::{J, Value};
 use parking_lot::Mutex;
 
 use super::codex_reasoning_replay::{normalize_custom_tool_call_item, normalize_function_call_item};
+use super::kv::{KvResult, Store, decode_items, encode_items, scoped_kv_key, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started, oldest_keys, scoped_key};
 use crate::signature::inspect_grok_encrypted_content;
 
@@ -31,8 +32,8 @@ pub enum XaiReasoningReplayStoreStatus {
     Stored,
     /// The completed output had no cacheable reasoning batch (for example reasoning disabled).
     NoReplayableState,
-    /// Normalization succeeded but the storage backend failed. Only the home KV backend can
-    /// produce this (not ported), so the in-memory cache never returns it.
+    /// Normalization succeeded but the storage backend failed. Only Home KV mode can
+    /// produce this; the in-memory cache never returns it.
     BackendError,
 }
 
@@ -219,38 +220,104 @@ impl XaiReasoningReplayCache {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+fn kv_key(model_name: &str, session_key: &str) -> String {
+    scoped_kv_key("cpa:xai:reasoning-replay", model_name, session_key)
+}
+
 /// Go: CacheXAIReasoningReplayItem.
 pub fn cache_xai_reasoning_replay_item(model_name: &str, session_key: &str, item: &[u8]) -> bool {
-    XaiReasoningReplayCache::global().cache_items(model_name, session_key, &[item.to_vec()])
+    cache_xai_reasoning_replay_items(model_name, session_key, &[item.to_vec()])
 }
 
 /// Go: CacheXAIReasoningReplayItems / CacheXAIReasoningReplayItemsBestEffort.
 pub fn cache_xai_reasoning_replay_items(model_name: &str, session_key: &str, items: &[Vec<u8>]) -> bool {
-    XaiReasoningReplayCache::global().cache_items(model_name, session_key, items)
+    store_xai_reasoning_replay_items(model_name, session_key, items) == XaiReasoningReplayStoreStatus::Stored
 }
 
-/// Go: StoreXAIReasoningReplayItems.
+/// Go: StoreXAIReasoningReplayItems. A Home failure reports `BackendError` so callers keep the
+/// previous entry.
 pub fn store_xai_reasoning_replay_items(
     model_name: &str,
     session_key: &str,
     items: &[Vec<u8>],
 ) -> XaiReasoningReplayStoreStatus {
-    XaiReasoningReplayCache::global().store_items(model_name, session_key, items)
+    use XaiReasoningReplayStoreStatus as Status;
+    if cache_key(model_name, session_key).is_none() {
+        return Status::InvalidArgs;
+    }
+    let Some(normalized) = normalize_items(items) else {
+        return Status::NoReplayableState;
+    };
+    let written = store().and_then(|store| match store {
+        Store::Local => Ok(None),
+        Store::Home(backend) => {
+            let raw = encode_items(&normalized)?;
+            backend
+                .set(&kv_key(model_name, session_key), &raw, XAI_REASONING_REPLAY_CACHE_TTL)
+                .map(Some)
+        }
+    });
+    match written {
+        Ok(None) => XaiReasoningReplayCache::global().store_items(model_name, session_key, items),
+        Ok(Some(true)) => Status::Stored,
+        Ok(Some(false)) => Status::BackendError,
+        Err(e) => {
+            tracing::error!("home kv best-effort xai reasoning replay set failed prefix=cpa:xai:*: {e}");
+            Status::BackendError
+        }
+    }
 }
 
-/// Go: GetXAIReasoningReplayItem.
+/// Go: GetXAIReasoningReplayItem (failures read as a miss).
 pub fn get_xai_reasoning_replay_item(model_name: &str, session_key: &str) -> Option<Vec<u8>> {
-    XaiReasoningReplayCache::global().get_item(model_name, session_key)
+    get_xai_reasoning_replay_items(model_name, session_key)?.into_iter().next()
 }
 
-/// Go: GetXAIReasoningReplayItems / GetXAIReasoningReplayItemsRequired.
+/// Go: GetXAIReasoningReplayItems (failures read as a miss).
 pub fn get_xai_reasoning_replay_items(model_name: &str, session_key: &str) -> Option<Vec<Vec<u8>>> {
-    XaiReasoningReplayCache::global().get_items(model_name, session_key)
+    get_xai_reasoning_replay_items_required(model_name, session_key).ok().flatten()
 }
 
-/// Go: DeleteXAIReasoningReplayItem / DeleteXAIReasoningReplayItemRequired.
+/// Go: GetXAIReasoningReplayItemsRequired.
+pub fn get_xai_reasoning_replay_items_required(model_name: &str, session_key: &str) -> KvResult<Option<Vec<Vec<u8>>>> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(None);
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let key = kv_key(model_name, session_key);
+            let Some(raw) = backend.get(&key)? else {
+                return Ok(None);
+            };
+            let items = decode_items(&raw)?;
+            if let Err(e) = backend.expire(&key, XAI_REASONING_REPLAY_CACHE_TTL) {
+                tracing::warn!("home kv xai reasoning replay expire failed prefix=cpa:xai:*: {e}");
+            }
+            Ok(Some(items))
+        }
+        Store::Local => Ok(XaiReasoningReplayCache::global().get_items(model_name, session_key)),
+    }
+}
+
+/// Go: DeleteXAIReasoningReplayItem (failures ignored).
 pub fn delete_xai_reasoning_replay_item(model_name: &str, session_key: &str) {
-    XaiReasoningReplayCache::global().delete_item(model_name, session_key);
+    let _ = delete_xai_reasoning_replay_item_required(model_name, session_key);
+}
+
+/// Go: DeleteXAIReasoningReplayItemRequired.
+pub fn delete_xai_reasoning_replay_item_required(model_name: &str, session_key: &str) -> KvResult<()> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend.del(&kv_key(model_name, session_key)),
+        Store::Local => {
+            XaiReasoningReplayCache::global().delete_item(model_name, session_key);
+            Ok(())
+        }
+    }
 }
 
 /// Go: ClearXAIReasoningReplayCache.

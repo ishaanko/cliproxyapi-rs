@@ -21,8 +21,10 @@
 //! - [`listing`]: `/v1/models` and `/v1beta/models` payloads over the registry.
 //! - [`antigravity`]: web-search capability probe for Antigravity auths.
 //!
-//! Not ported: Home mode, the plugin host, pprof and mDNS discovery, the aistudio websocket
-//! gateway and runtime-only auths, the usage queue.
+//! Home mode (`lifecycle/home.rs`): the config arrives over the Home subscription.
+//!
+//! Not ported: the plugin host, pprof and mDNS discovery, the aistudio websocket
+//! gateway and runtime-only auths.
 
 pub mod antigravity;
 pub mod listing;
@@ -38,6 +40,9 @@ pub use listing::{
     is_anthropic_models_request, openai_models_response, resolve_claude_model_id_prefix, route_models_request,
 };
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
-pub use lifecycle::{ExecutorFactory, ManagerPort, Service, ServiceBuilder, ServiceError};
+pub use lifecycle::{
+    ExecutorFactory, HomeHooks, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,
+    merge_home_config,
+};
 pub use sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 pub use synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_dir, synthesize_auth_file, synthesize_config_auths};

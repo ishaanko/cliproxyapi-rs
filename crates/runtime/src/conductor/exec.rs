@@ -111,7 +111,7 @@ pub(crate) fn auth_selection_model(opts: &Options, fallback: &str) -> String {
 
 /// `(model, true)` when the executor must be called with the original model although routing used
 /// a different selection model.
-fn execution_model_for_auth_selection(opts: &Options, model: &str) -> (String, bool) {
+pub(crate) fn execution_model_for_auth_selection(opts: &Options, model: &str) -> (String, bool) {
     let model = model.trim();
     if model.is_empty() {
         return (String::new(), false);
@@ -238,6 +238,9 @@ impl Manager {
         if normalized.is_empty() {
             return Err(provider_not_found("no provider supplied"));
         }
+        if self.home_enabled() {
+            return self.execute_home(kind, req, opts).await;
+        }
         let rs = self.retry_settings();
         let retry_model = auth_selection_model(&opts, &req.model);
         let mut preferred_upstream: Option<Fail> = None;
@@ -305,6 +308,9 @@ impl Manager {
         let normalized = normalize_providers(providers);
         if normalized.is_empty() {
             return Err(provider_not_found("no provider supplied"));
+        }
+        if self.home_enabled() {
+            return self.execute_home_stream(req, opts).await;
         }
         let rs = self.retry_settings();
         let retry_model = auth_selection_model(&opts, &req.model);
@@ -689,7 +695,7 @@ impl Manager {
     }
 }
 
-async fn call_unary(
+pub(crate) async fn call_unary(
     kind: Kind,
     executor: &DynExecutor,
     auth: &Auth,

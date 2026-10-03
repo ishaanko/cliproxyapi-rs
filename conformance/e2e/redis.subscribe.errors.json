@@ -1,0 +1,151 @@
+{
+  "id": "redis.subscribe.errors",
+  "desc": "SUBSCRIBE errors: upstream failures arrive as error events",
+  "steps": [
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"SUBSCRIBE\", \"errors\"]), Http(HttpReq { method: \"POST\", path: \"/v1/chat/completions\", auth: Client, headers: [], body: Json(Object {\"model\": String(\"claude-sonnet-4-5-20250929\"), \"messages\": Array [Object {\"role\": String(\"user\"), \"content\": String(\"What is the weather in Paris?\")}], \"stream\": Bool(false)}) }), Read]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE",
+                "errors"
+              ],
+              "reply": [
+                "subscribe",
+                "errors",
+                {
+                  "int": 1
+                }
+              ]
+            },
+            {
+              "http": "/v1/chat/completions",
+              "status": 401
+            },
+            {
+              "sent": null,
+              "reply": [
+                "message",
+                "errors",
+                {
+                  "timestamp": "<now>",
+                  "provider": "claude",
+                  "model": "claude-sonnet-4-5-20250929",
+                  "auth_id": "claude:apikey:2244b81cd9bd",
+                  "auth_index": "f46ece6b8824823d",
+                  "status_code": 401,
+                  "body": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"mock upstream error 401\"}}",
+                  "auth_status": {
+                    "status": "error",
+                    "status_message": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"mock upstream error 401\"}}",
+                    "disabled": false,
+                    "unavailable": true,
+                    "next_retry_after": "<now>",
+                    "model": {
+                      "name": "claude-sonnet-4-5-20250929",
+                      "status": "error",
+                      "status_message": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"mock upstream error 401\"}}",
+                      "unavailable": true,
+                      "next_retry_after": "<now>"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-2",
+      "headers": {
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-2",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    }
+  ]
+}

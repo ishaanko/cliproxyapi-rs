@@ -1,0 +1,166 @@
+{
+  "id": "redis.subscribe.arguments",
+  "desc": "SUBSCRIBE validation, channel case, QUIT while subscribed",
+  "steps": [
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"SUBSCRIBE\"]), Cmd([\"SUBSCRIBE\", \"a\", \"b\"]), Cmd([\"SUBSCRIBE\", \"nope\"])]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE"
+              ],
+              "reply": {
+                "error": "ERR wrong number of arguments for 'subscribe' command"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE",
+                "a",
+                "b"
+              ],
+              "reply": {
+                "error": "ERR wrong number of arguments for 'subscribe' command"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE",
+                "nope"
+              ],
+              "reply": {
+                "error": "ERR unsupported channel 'nope'"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"SUBSCRIBE\", \" Usage \"]), Read, Cmd([\"QUIT\"])]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE",
+                " Usage "
+              ],
+              "reply": [
+                "subscribe",
+                "Usage",
+                {
+                  "int": 1
+                }
+              ]
+            },
+            {
+              "sent": null,
+              "reply": [
+                "message",
+                "Usage",
+                {
+                  "support_refresh": true
+                }
+              ]
+            },
+            {
+              "sent": [
+                "QUIT"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"SUBSCRIBE\", \"errors\"]), Raw(\"*0\\r\\n\"), Raw(\"garbage\\r\\n\")]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            },
+            {
+              "sent": [
+                "SUBSCRIBE",
+                "errors"
+              ],
+              "reply": [
+                "subscribe",
+                "errors",
+                {
+                  "int": 1
+                }
+              ]
+            },
+            {
+              "sent": {
+                "raw": "*0\r\n"
+              },
+              "reply": {
+                "error": "ERR empty command"
+              }
+            },
+            {
+              "sent": {
+                "raw": "garbage\r\n"
+              },
+              "reply": {
+                "error": "ERR protocol error"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

@@ -6,6 +6,7 @@
 //! with whatever the process-wide registry and `Manager` contain.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cpa_auth::OAuthSessions;
@@ -14,6 +15,7 @@ use cpa_runtime::service::ServiceBuilder;
 use cpa_runtime::usage::UsageTracker;
 use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
+use cpa_server::redis_protocol::RedisProtocol;
 use cpa_server::reqlog::RequestLogger;
 use cpa_management::ManagementState;
 use cpa_server::{AppState, BuildInfo, KeepAlive, build_router_with_management, safemode, serve};
@@ -65,6 +67,16 @@ async fn run() -> i32 {
         eprintln!("flag -{flag} is not supported by this build");
         return 2;
     }
+    let mut cli = cli;
+    // Go: `lookupEnv("HOME_JWT", "home_jwt")` when the flag is empty.
+    if cli.home_jwt.trim().is_empty() {
+        cli.home_jwt = ["HOME_JWT", "home_jwt"]
+            .iter()
+            .filter_map(|k| std::env::var(k).ok())
+            .map(|v| v.trim().to_string())
+            .find(|v| !v.is_empty())
+            .unwrap_or_default();
+    }
 
     let wd = match std::env::current_dir() {
         Ok(d) => d,
@@ -83,15 +95,23 @@ async fn run() -> i32 {
     } else {
         std::path::PathBuf::from(&cli.config)
     };
-    let mut cfg = match cpa_config::load_config_optional(&config_path, cloud_deploy) {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("failed to load config: {e}");
-            return 0;
+    let home_mode = !cli.home_jwt.trim().is_empty();
+    let mut cfg = if home_mode {
+        match boot_home(&cli).await {
+            Ok(c) => c,
+            Err(()) => return 0,
+        }
+    } else {
+        match cpa_config::load_config_optional(&config_path, cloud_deploy) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("failed to load config: {e}");
+                return 0;
+            }
         }
     };
 
-    if cloud_deploy {
+    if cloud_deploy && !home_mode {
         let usable = match std::fs::metadata(&config_path) {
             Err(_) => {
                 tracing::info!("Cloud deploy mode: No configuration file detected; standing by for configuration");
@@ -302,6 +322,77 @@ impl StdioRedirect {
     fn restore(self) {}
 }
 
+/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, report the
+/// (empty) plugin status and hand the parsed config to the service. `Err` means the process
+/// should exit after the error was logged.
+async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
+    let timeout = Duration::from_secs(30);
+    let mut home_cfg = match tokio::time::timeout(timeout, cpa_home::certificate::config_from_jwt(&cli.home_jwt)).await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            tracing::error!("invalid -home-jwt: {e}");
+            return Err(());
+        }
+        Err(_) => {
+            tracing::error!("invalid -home-jwt: context deadline exceeded");
+            return Err(());
+        }
+    };
+    if cli.home_disable_cluster_discovery {
+        home_cfg.disable_cluster_discovery = true;
+    }
+    let client = cpa_home::Client::new(home_cfg.clone());
+    let raw = match tokio::time::timeout(timeout, client.get_config()).await {
+        Ok(Ok(raw)) => raw,
+        Ok(Err(e)) => {
+            tracing::error!("failed to fetch config from home: {e}");
+            client.close();
+            return Err(());
+        }
+        Err(_) => {
+            tracing::error!("failed to fetch config from home: context deadline exceeded");
+            client.close();
+            return Err(());
+        }
+    };
+    let mut parsed = match cpa_config::parse_config_bytes(&raw) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("failed to parse config payload from home: {e}");
+            client.close();
+            return Err(());
+        }
+    };
+    parsed.home = home_cfg.clone();
+    parsed.port = cpa_config::normalize_home_port(parsed.port);
+    parsed.usage_statistics_enabled = true;
+    cpa_runtime::service::force_home_runtime_config(&mut parsed);
+    // No plugin host in this build: report that nothing needed installing, twice like Go (after
+    // the sync and after the load step).
+    for what in ["sync", "load"] {
+        let report = cpa_home::plugin_status::completed_sync_report(cpa_home::plugin_status::Platform::current(), None);
+        if let Err(e) = cpa_home::plugin_status::report_plugin_status(&client, &home_cfg.node_id, report).await {
+            tracing::warn!("failed to report home plugin {what} status: {e}");
+        }
+    }
+    // The bootstrap client is not owned by the service; release its connection.
+    client.close();
+    Ok(parsed)
+}
+
+/// Starts the app-log forwarder with the Home lifetime (Go: `startHomeLogForwarder`).
+struct ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder);
+
+impl cpa_runtime::service::HomeHooks for ServerHomeHooks {
+    fn bind(&self, client: Arc<cpa_home::Client>) {
+        self.0.bind(client);
+    }
+
+    fn deactivate(&self, client: &Arc<cpa_home::Client>) {
+        self.0.deactivate(client);
+    }
+}
+
 /// Local management password, whether the idle-shutdown keep-alive endpoint is enabled, and
 /// whether SIGINT/SIGTERM stop the server.
 struct LocalManagement {
@@ -320,7 +411,7 @@ async fn serve_proxy(
     local: LocalManagement,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> i32 {
-    let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
+    let safe_mode = !cfg.home.enabled && safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
             api_keys = %safemode::example_api_keys(&cfg.api_keys).join(","),
@@ -331,13 +422,21 @@ async fn serve_proxy(
     // The service owns config reload, the credential manager, the auth store and model
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
+    // Usage records and error events also feed the Redis-protocol output (Go: redisqueue plugin).
+    cpa_runtime::usage_queue::install(&usage);
+    cpa_home::queue::set_usage_statistics_enabled(cfg.usage_statistics_enabled);
+    cpa_home::queue::set_retention_seconds(cfg.redis_usage_queue_retention_seconds);
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
-    let service = match ServiceBuilder::new(&config_path)
+    let mut builder = ServiceBuilder::new(&config_path)
         .dotenv_dir(None)
         .usage(usage.clone())
-        .executor_factory(compat_factory)
-        .build()
-    {
+        .executor_factory(compat_factory);
+    if cfg.home.enabled {
+        builder = builder
+            .initial_config(cfg.clone())
+            .home_hooks(Arc::new(ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder::start(0))));
+    }
+    let service = match builder.build() {
         Ok(s) => Arc::new(s),
         Err(e) => {
             tracing::error!("failed to build proxy service: {e}");
@@ -355,6 +454,7 @@ async fn serve_proxy(
         service.register_executor(executor);
     }
     let manager = service.manager();
+    manager.set_error_event_sink(Some(Arc::new(|payload: Vec<u8>| cpa_home::queue::enqueue_error(&payload))));
     let store = service.store();
     let sessions = Arc::new(OAuthSessions::default());
 
@@ -398,6 +498,35 @@ async fn serve_proxy(
         management = management.with_local_password(local.password.clone());
     }
 
+    // The usage queue runs while management is available (or Home owns usage) and follows
+    // config reloads like Go's `managementRoutesEnabled` bookkeeping.
+    let has_secret = !cfg.remote_management.secret_key.is_empty() || management.has_env_secret() || management.has_local_password();
+    let routes_enabled = Arc::new(AtomicBool::new(has_secret));
+    cpa_home::queue::set_enabled(has_secret || cfg.home.enabled);
+    {
+        let mut rx = config_rx.clone();
+        let routes_enabled = routes_enabled.clone();
+        let env_secret = management.has_env_secret();
+        let mut last = (cfg.usage_statistics_enabled, cfg.redis_usage_queue_retention_seconds);
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let next = rx.borrow().clone();
+                let key = (next.usage_statistics_enabled, next.redis_usage_queue_retention_seconds);
+                if key.0 != last.0 {
+                    cpa_home::queue::set_usage_statistics_enabled(key.0);
+                }
+                if key.1 != last.1 {
+                    cpa_home::queue::set_retention_seconds(key.1);
+                }
+                last = key;
+                let enabled = env_secret || !next.remote_management.secret_key.is_empty();
+                routes_enabled.store(enabled, Ordering::SeqCst);
+                cpa_home::queue::set_enabled(enabled || next.home.enabled);
+            }
+        });
+    }
+    let redis = Arc::new(RedisProtocol { config: config_rx.clone(), management: management.clone(), routes_enabled });
+
     // Log level / destination follow config reloads.
     {
         let mut rx = config_rx.clone();
@@ -419,7 +548,7 @@ async fn serve_proxy(
 
     // The provider redirect routes (`/anthropic/callback`, ...) live in the proxy router.
     let app = build_router_with_management(state, cpa_management::router(management));
-    let server = serve::serve(&cfg, app);
+    let server = serve::serve_with_redis(&cfg, app, Some(redis));
     let idle = async move {
         match idle_shutdown.as_mut() {
             None => std::future::pending::<()>().await,
@@ -448,6 +577,7 @@ async fn serve_proxy(
             }
         } => {}
         _ = idle => {}
+        _ = service.home_fatal() => {}
         _ = async {
             match stop {
                 Some(rx) => {

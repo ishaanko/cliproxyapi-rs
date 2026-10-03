@@ -36,6 +36,7 @@ pub mod xai;
 /// trivial.
 pub fn all_executors(cfg: ConfigRx) -> Vec<DynExecutor> {
     let _ = &cfg;
+    helps::home_kv::install();
     #[allow(unused_mut)]
     let mut executors: Vec<DynExecutor> = Vec::new();
     executors.push(claude::new(cfg.clone()));

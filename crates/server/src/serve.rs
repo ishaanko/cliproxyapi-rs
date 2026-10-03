@@ -1,20 +1,20 @@
-//! Listener setup: plain TCP or TLS (`tls.enable`, ALPN h2 + http/1.1) and graceful stop
-//! (Go: Server.Start / Stop in internal/api/server.go; the RESP multiplexer is not ported).
+//! Listener setup: plain TCP or TLS (`tls.enable`, ALPN h2 + http/1.1), HTTP and the Redis
+//! protocol multiplexed on one port (see [`crate::mux`]), and graceful stop (Go: Server.Start /
+//! Stop in internal/api/server.go).
 
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::Router;
-use axum::serve::{Listener, ListenerExt};
+use axum::serve::ListenerExt;
 use cpa_config::Config;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
-use tokio_rustls::server::TlsStream;
+
+use crate::mux;
+use crate::redis_protocol::RedisProtocol;
 
 /// `host:port`, defaulting to port 8317 when unset. An empty host binds every interface
 /// (Go's `:port`); `[::]` is dual-stack on Linux. Bare IPv6 hosts are bracketed.
@@ -28,64 +28,6 @@ pub fn listen_addr(cfg: &Config) -> String {
     }
 }
 
-/// TLS listener: a background task accepts TCP connections and runs each handshake in its own
-/// task (bounded by a timeout), so one slow client cannot stall the others. Finished streams
-/// arrive through a channel that `accept` drains.
-struct TlsListener {
-    ready: mpsc::Receiver<(TlsStream<TcpStream>, SocketAddr)>,
-    local_addr: SocketAddr,
-    accept_task: JoinHandle<()>,
-}
-
-impl TlsListener {
-    fn new(inner: TcpListener, acceptor: TlsAcceptor) -> io::Result<Self> {
-        let local_addr = inner.local_addr()?;
-        let (tx, ready) = mpsc::channel(64);
-        let accept_task = tokio::spawn(async move {
-            loop {
-                let (tcp, addr) = match inner.accept().await {
-                    Ok(v) => v,
-                    Err(e) => {
-                        tracing::debug!("accept error: {e}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                        continue;
-                    }
-                };
-                let (acceptor, tx) = (acceptor.clone(), tx.clone());
-                tokio::spawn(async move {
-                    match tokio::time::timeout(Duration::from_secs(10), acceptor.accept(tcp)).await {
-                        Ok(Ok(tls)) => {
-                            let _ = tx.send((tls, addr)).await;
-                        }
-                        Ok(Err(e)) => tracing::debug!("tls handshake with {addr} failed: {e}"),
-                        Err(_) => tracing::debug!("tls handshake with {addr} timed out"),
-                    }
-                });
-            }
-        });
-        Ok(Self { ready, local_addr, accept_task })
-    }
-}
-
-impl Drop for TlsListener {
-    fn drop(&mut self) {
-        self.accept_task.abort();
-    }
-}
-
-impl Listener for TlsListener {
-    type Io = TlsStream<TcpStream>;
-    type Addr = SocketAddr;
-
-    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
-        // The sender lives in the accept task, which only ends when this listener is dropped.
-        self.ready.recv().await.expect("tls accept task ended")
-    }
-
-    fn local_addr(&self) -> io::Result<Self::Addr> {
-        Ok(self.local_addr)
-    }
-}
 
 fn load_tls_config(cert_path: &str, key_path: &str) -> Result<ServerConfig, String> {
     let certs = {
@@ -114,33 +56,39 @@ fn load_tls_config(cert_path: &str, key_path: &str) -> Result<ServerConfig, Stri
     Ok(config)
 }
 
+
 /// Binds and serves `app` until the future is dropped (Go closes the listener and connections
 /// immediately on stop, no drain). Errors are formatted like Go's `failed to start HTTP server`.
 pub async fn serve(cfg: &Config, app: Router) -> Result<(), String> {
+    serve_with_redis(cfg, app, None).await
+}
+
+/// [`serve`] with the Redis-protocol usage output enabled on the same port.
+pub async fn serve_with_redis(cfg: &Config, app: Router, redis: Option<Arc<RedisProtocol>>) -> Result<(), String> {
     let addr = listen_addr(cfg);
     let listener = TcpListener::bind(&addr)
         .await
         .map_err(|e| format!("failed to start HTTP server: {e}"))?;
     println!("API server started successfully on: {}:{}", cfg.host, cfg.port);
     let service = app.into_make_service_with_connect_info::<SocketAddr>();
-    if cfg.tls.enable {
+    let acceptor = if cfg.tls.enable {
         let (cert, key) = (cfg.tls.cert.trim(), cfg.tls.key.trim());
         if cert.is_empty() || key.is_empty() {
             return Err("failed to start HTTPS server: tls.cert or tls.key is empty".into());
         }
         let tls = load_tls_config(cert, key).map_err(|e| format!("failed to start HTTPS server: {e}"))?;
         tracing::debug!("Starting API server on {addr} with TLS");
-        // `tap_io` lets axum derive `ConnectInfo<SocketAddr>` from the wrapped listener's address.
-        let listener = TlsListener::new(listener, TlsAcceptor::from(Arc::new(tls)))
-            .map_err(|e| format!("failed to start HTTPS server: {e}"))?
-            .tap_io(|_| {});
-        axum::serve(listener, service)
-            .await
-            .map_err(|e| format!("failed to start HTTP server: {e}"))
+        Some(TlsAcceptor::from(Arc::new(tls)))
     } else {
         tracing::debug!("Starting API server on {addr}");
-        axum::serve(listener, service)
-            .await
-            .map_err(|e| format!("failed to start HTTP server: {e}"))
-    }
+        None
+    };
+    let tls_enabled = acceptor.is_some();
+    // `tap_io` lets axum derive `ConnectInfo<SocketAddr>` from the wrapped listener's address.
+    let listener = mux::start(listener, acceptor, redis)
+        .map_err(|e| format!("failed to start {} server: {e}", if tls_enabled { "HTTPS" } else { "HTTP" }))?
+        .tap_io(|_| {});
+    axum::serve(listener, service)
+        .await
+        .map_err(|e| format!("failed to start HTTP server: {e}"))
 }
