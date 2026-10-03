@@ -2,8 +2,8 @@
 
 - server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `f3bc77fc3193d5b7`
-- scenarios: 954 total, 954 passed, 0 failed
+- goldens digest: `0379fd7fbc66be77`
+- scenarios: 998 total, 998 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -639,12 +639,56 @@
 | `ws.upstream.cut_abort` | PASS | upstream drops its websocket mid-turn |  |
 | `ws.upstream.close_clean` | PASS | upstream closes its websocket cleanly mid-turn |  |
 | `ws.upstream.non_codex_model_falls_back` | PASS | a Claude model on a websocket-enabled setup still goes over HTTP upstream |  |
+| `ws.xai.text` | PASS | response.create forwarded over the xAI upstream websocket |  |
+| `ws.xai.thinking` | PASS | reasoning events over the xAI websocket |  |
+| `ws.xai.two_turns` | PASS | second turn continues on the same upstream socket |  |
+| `ws.xai.previous_response_id` | PASS | previous_response_id continues on the live upstream socket |  |
+| `ws.xai.error_400` | PASS | upstream error frame |  |
+| `ws.xai.error_401` | PASS | upstream error frame |  |
+| `ws.xai.error_429` | PASS | upstream error frame |  |
+| `ws.xai.error_500` | PASS | upstream error frame |  |
+| `ws.xai.mid_error` | PASS | upstream response.failed after some output |  |
+| `ws.xai.cut_abort` | PASS | upstream drops its websocket mid-turn |  |
+| `ws.steering.text` | PASS | one turn over a duplex stream |  |
+| `ws.steering.thinking` | PASS | reasoning events over a duplex stream |  |
+| `ws.steering.two_turns` | PASS | a second create travels through the duplex writer |  |
+| `ws.steering.steer_frame` | PASS | response.steer reaches the upstream socket untouched |  |
+| `ws.steering.bad_frames` | PASS | invalid frames get local error frames and keep the stream alive |  |
+| `ws.steering.error_400` | PASS | upstream error frame before the first response |  |
+| `ws.steering.error_401` | PASS | upstream error frame before the first response |  |
+| `ws.steering.error_429` | PASS | upstream error frame before the first response |  |
+| `ws.steering.error_500` | PASS | upstream error frame before the first response |  |
+| `ws.steering.mid_error` | PASS | upstream response.failed after some output |  |
+| `ws.steering.cut_abort` | PASS | upstream drops its websocket mid-turn |  |
 | `ws.handshake.missing_key` | PASS | upgrade without credentials |  |
 | `ws.handshake.invalid_key` | PASS | upgrade with a wrong key |  |
 | `ws.handshake.query_key` | PASS | key in the query string |  |
 | `ws.handshake.codex_backend_path` | PASS | /backend-api/codex/responses alias |  |
 | `ws.handshake.turn_state_echo` | PASS | x-codex-turn-state is echoed on the upgrade response |  |
 | `ws.handshake.plain_get` | PASS | GET /v1/responses without an upgrade |  |
+| `reqlog.claude.json` | PASS | request-log file of a successful call |  |
+| `reqlog.claude.stream` | PASS | request-log file of a successful call |  |
+| `reqlog.codex.json` | PASS | request-log file of a successful call |  |
+| `reqlog.codex.stream` | PASS | request-log file of a successful call |  |
+| `reqlog.gemini.json` | PASS | request-log file of a successful call |  |
+| `reqlog.gemini.stream` | PASS | request-log file of a successful call |  |
+| `reqlog.compat.json` | PASS | request-log file of a successful call |  |
+| `reqlog.compat.stream` | PASS | request-log file of a successful call |  |
+| `reqlog.claude.messages` | PASS | request-log file of a Claude-dialect call routed to Claude |  |
+| `reqlog.claude.failover` | PASS | two upstream attempts (500 then success) produce API REQUEST 1/2 and API RESPONSE 1/2 |  |
+| `reqlog.codex.failover_stream` | PASS | stream bootstrap failover logs both attempts |  |
+| `reqlog.gemini.upstream_400` | PASS | upstream client error with request-log on |  |
+| `reqlog.compat.mid_error` | PASS | stream failing after some output |  |
+| `reqlog.forced.claude.upstream_500` | PASS | error-only log of a failing request (deferred API REQUEST) |  |
+| `reqlog.forced.codex.upstream_500` | PASS | error-only log of a failing request (deferred API REQUEST) |  |
+| `reqlog.off.success` | PASS | request-log off and a successful call: no file |  |
+| `reqlog.ws.upstream_text` | PASS | Responses websocket client over a Codex upstream websocket |  |
+| `reqlog.ws.fallback_text` | PASS | Responses websocket client over an HTTP Codex upstream |  |
+| `reqlog.ws.upstream_error` | PASS | an upstream error frame on the Codex websocket |  |
+| `reqlog.ws.upstream_abort` | PASS | the upstream drops its websocket mid-turn |  |
+| `reqlog.ws.steering` | PASS | duplex steering stream on the Codex websocket |  |
+| `reqlog.ws.xai` | PASS | Responses websocket client over an xAI upstream websocket |  |
+| `reqlog.claude.count_tokens` | PASS | Claude count_tokens request-log file |  |
 | `realtime.secrets.create` | PASS | client secret for a realtime session with an explicit lifetime |  |
 | `realtime.secrets.create_empty` | PASS | empty request object gets the default session |  |
 | `realtime.secrets.create_no_body` | PASS | no body at all |  |
