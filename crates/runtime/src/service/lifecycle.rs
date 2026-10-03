@@ -744,8 +744,8 @@ impl Inner {
 
     async fn handle_auth_file_event(&self, event: AuthFileEvent) {
         let guard = self.apply_lock.lock().await;
-        // Replayed or content-identical events produce no updates and are not pushed to the
-        // remote backend (Go skips unchanged content hashes before persisting).
+        // Content-identical events and failed syntheses are not pushed to the remote backend (Go
+        // skips unchanged hashes and errors); removals always are.
         let (updates, persist) = match event {
             AuthFileEvent::Added(auth) | AuthFileEvent::Updated(auth) => {
                 let path = auth.attr(ATTRIBUTE_PATH);
@@ -754,17 +754,22 @@ impl Inner {
                     return;
                 }
                 let persisted = path.clone();
-                let updates = self.with_sync(move |sync| sync.file_changed(Path::new(&path))).await;
-                (updates, ("Sync auth", persisted))
+                let (updates, synced) = self
+                    .with_sync(move |sync| {
+                        let updates = sync.file_changed(Path::new(&path));
+                        (updates, sync.last_synced())
+                    })
+                    .await;
+                (updates, synced.then_some(("Sync auth", persisted)))
             }
             AuthFileEvent::Removed { path, .. } => {
                 let persisted = path.to_string_lossy().into_owned();
                 let updates = self.with_sync(move |sync| sync.file_removed(&path)).await;
-                (updates, ("Remove auth", persisted))
+                (updates, Some(("Remove auth", persisted)))
             }
         };
-        if !updates.is_empty() {
-            self.persist_auth_async(persist.0, &persist.1);
+        if let Some((action, path)) = persist {
+            self.persist_auth_async(action, &path);
         }
         self.apply_updates_locked(&guard, updates).await;
     }
