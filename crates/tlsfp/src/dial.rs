@@ -181,7 +181,7 @@ async fn http_connect(conn: &mut BoxIo, host: &str, port: u16, authorization: Op
     let status_line = text.lines().next().unwrap_or_default();
     let status = status_line.split_whitespace().nth(1).unwrap_or_default();
     if status != "200" {
-        let reason = status_line.splitn(2, ' ').nth(1).unwrap_or(status_line);
+        let reason = status_line.split_once(' ').map_or(status_line, |x| x.1);
         return Err(io::Error::other(format!("proxy CONNECT returned status {reason}")));
     }
     Ok(())

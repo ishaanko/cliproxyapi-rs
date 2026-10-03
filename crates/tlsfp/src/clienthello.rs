@@ -44,8 +44,10 @@ impl<'a> Reader<'a> {
 fn u16_list(data: &[u8], skip: usize) -> Vec<u16> {
     data.get(skip..)
         .unwrap_or_default()
-        .chunks_exact(2)
-        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_be_bytes(*c))
         .collect()
 }
 

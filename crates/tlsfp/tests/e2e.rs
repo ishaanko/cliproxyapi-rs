@@ -304,7 +304,9 @@ async fn chrome_h2_connection_preface_matches_go_http2_transport() {
     let len = (usize::from(raw[24]) << 16) | (usize::from(raw[25]) << 8) | usize::from(raw[26]);
     assert_eq!(raw[27], 4, "SETTINGS frame");
     let settings: Vec<(u16, u32)> = raw[33..33 + len]
-        .chunks_exact(6)
+        .as_chunks::<6>()
+        .0
+        .iter()
         .map(|c| (u16::from_be_bytes([c[0], c[1]]), u32::from_be_bytes([c[2], c[3], c[4], c[5]])))
         .collect();
     // Go: ENABLE_PUSH=0, INITIAL_WINDOW_SIZE=4MiB, MAX_FRAME_SIZE=1MiB, MAX_HEADER_LIST_SIZE=10MiB.

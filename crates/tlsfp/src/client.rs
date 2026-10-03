@@ -278,7 +278,7 @@ impl tower_service::Service<Uri> for Connector {
 type PooledClient = hyper_util::client::legacy::Client<Connector, Full<Bytes>>;
 
 enum Mode {
-    Pooled(PooledClient),
+    Pooled(Box<PooledClient>),
     Dedicated(Connector),
 }
 
@@ -340,7 +340,7 @@ impl FingerprintClient {
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(None)
             .build(connector);
-        Ok(Self { mode: Arc::new(Mode::Pooled(client)), timeout: cfg.timeout })
+        Ok(Self { mode: Arc::new(Mode::Pooled(Box::new(client))), timeout: cfg.timeout })
     }
 
     /// Sends `req` and returns the response once its headers arrive. The body streams and is
