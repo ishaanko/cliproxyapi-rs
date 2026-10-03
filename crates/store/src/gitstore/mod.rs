@@ -343,17 +343,18 @@ impl GitTokenStore {
             }
         }
 
-        if !recovered && let Some(r) = repo.as_ref() {
-            if let Err(verify) = verify_repository_head(r) {
-                let prefix = "git token store: verify repository after pull";
-                if !verify.is_corruption() {
-                    return Err(verify.wrap(prefix));
-                }
-                if let Err(rec) = recover(&mut repo) {
-                    return Err(failed_with_recovery(prefix, &verify, &rec));
-                }
-                recovered = true;
+        if !recovered
+            && let Some(r) = repo.as_ref()
+            && let Err(verify) = verify_repository_head(r)
+        {
+            let prefix = "git token store: verify repository after pull";
+            if !verify.is_corruption() {
+                return Err(verify.wrap(prefix));
             }
+            if let Err(rec) = recover(&mut repo) {
+                return Err(failed_with_recovery(prefix, &verify, &rec));
+            }
+            recovered = true;
         }
         if !recovered && let Some(r) = repo.as_ref() {
             restore_missing_tracked_files(r, repo_dir)

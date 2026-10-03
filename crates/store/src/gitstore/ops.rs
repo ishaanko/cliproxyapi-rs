@@ -10,7 +10,7 @@ use std::path::Path;
 
 use git2::build::CheckoutBuilder;
 use git2::{
-    AutotagOption, Cred, CredentialType, Direction, ErrorClass, ErrorCode, FetchOptions, ObjectType,
+    AutotagOption, Cred, CredentialType, ErrorClass, ErrorCode, FetchOptions, ObjectType,
     Oid, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions, ResetType, Status,
     StatusOptions, TreeWalkMode, TreeWalkResult,
 };
@@ -230,32 +230,75 @@ pub(super) struct Fetched {
     pub(super) refs: Vec<RemoteRef>,
 }
 
-/// Fetches all branches of `origin` into `refs/remotes/origin/*`. An empty remote is an
-/// `EMPTY_REMOTE` error (go-git `ErrEmptyRemoteRepository`).
-pub(super) fn fetch_origin(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
+/// Scratch namespace the fetch mirrors the advertised branches into. `git2::Remote::list` is
+/// unsound on an empty remote (null slice), so the advertisement is read back from these refs.
+const PROBE_PREFIX: &str = "refs/gitstore/probe/";
+const PROBE_SPEC: &str = "+refs/heads/*:refs/gitstore/probe/*";
+
+fn clear_probe_refs(repo: &Repository) -> R<()> {
+    let names: Vec<String> = repo
+        .references_glob(&format!("{PROBE_PREFIX}*"))?
+        .names()
+        .filter_map(|n| n.ok().map(str::to_string))
+        .collect();
+    for name in names {
+        repo.find_reference(&name)?.delete()?;
+    }
+    Ok(())
+}
+
+/// Fetches the branches of `origin`, into `refs/remotes/origin/*` when `update_tracking`, and
+/// returns what the remote advertised (`HEAD` with its symref, then the branches). An empty
+/// remote is an `EMPTY_REMOTE` error (go-git `ErrEmptyRemoteRepository`).
+fn fetch_remote(repo: &Repository, auth: Option<&BasicAuth>, update_tracking: bool) -> R<Fetched> {
     let mut remote = repo.find_remote("origin")?;
+    clear_probe_refs(repo)?;
     let updated = Cell::new(false);
     let mut cbs = remote_callbacks(auth);
-    cbs.update_tips(|_, _, _| {
-        updated.set(true);
+    cbs.update_tips(|name, _, _| {
+        if name.starts_with("refs/remotes/origin/") {
+            updated.set(true);
+        }
         true
     });
     let mut fo = FetchOptions::new();
     fo.remote_callbacks(cbs).download_tags(AutotagOption::None).update_fetchhead(false);
-    remote.fetch(&[FETCH_SPEC], Some(&mut fo), None)?;
-    let refs: Vec<RemoteRef> = remote
-        .list()?
-        .iter()
-        .map(|h| RemoteRef {
-            name: h.name().to_string(),
-            oid: h.oid(),
-            symref: h.symref_target().map(str::to_string),
-        })
-        .collect();
+    let specs: &[&str] = if update_tracking { &[FETCH_SPEC, PROBE_SPEC] } else { &[PROBE_SPEC] };
+    let fetched = remote.fetch(specs, Some(&mut fo), None);
+    let head_target = remote.default_branch().ok().and_then(|b| b.as_str().map(str::to_string));
+    let advertised = fetched.map_err(GitErr::from).and_then(|()| {
+        let mut branches = Vec::new();
+        for r in repo.references_glob(&format!("{PROBE_PREFIX}*"))?.flatten() {
+            if let (Some(name), Some(oid)) = (r.name(), r.target()) {
+                let short = name.strip_prefix(PROBE_PREFIX).unwrap_or(name);
+                branches.push(RemoteRef { name: format!("refs/heads/{short}"), oid, symref: None });
+            }
+        }
+        Ok(branches)
+    });
+    clear_probe_refs(repo)?;
+    let branches = advertised?;
+    let mut refs = Vec::with_capacity(branches.len() + 1);
+    if let Some(target) = head_target
+        && let Some(b) = branches.iter().find(|b| b.name == target)
+    {
+        refs.push(RemoteRef { name: "HEAD".into(), oid: b.oid, symref: Some(target) });
+    }
+    refs.extend(branches);
     if refs.is_empty() {
         return Err(GitErr::kind(EMPTY_REMOTE));
     }
     Ok(Fetched { updated: updated.get(), refs })
+}
+
+/// Fetches all branches of `origin` into `refs/remotes/origin/*`.
+pub(super) fn fetch_origin(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
+    fetch_remote(repo, auth, true)
+}
+
+/// The branches `origin` advertises right now, without touching the tracking refs.
+fn probe_origin(repo: &Repository, auth: Option<&BasicAuth>) -> R<Fetched> {
+    fetch_remote(repo, auth, false)
 }
 
 /// go-git `isFastForward`: `new` is `old` or has it as an ancestor.
@@ -464,15 +507,10 @@ pub(super) fn push_branch(
     let mut remote = repo.find_remote("origin").map_err(|e| push_err(e.into()))?;
 
     if let Some(expected) = lease {
-        let actual = {
-            let conn = remote
-                .connect_auth(Direction::Push, Some(remote_callbacks(auth)), None)
-                .map_err(|e| push_err(e.into()))?;
-            conn.list()
-                .map_err(|e| push_err(e.into()))?
-                .iter()
-                .find(|h| h.name() == head.name)
-                .map(|h| h.oid())
+        let actual = match probe_origin(repo, auth) {
+            Ok(f) => f.refs.iter().find(|r| r.name == head.name).map(|r| r.oid),
+            Err(e) if e.is(EMPTY_REMOTE) => None,
+            Err(e) => return Err(push_err(e)),
         };
         if actual != Some(expected) {
             return Err(GitErr::msg(format!(

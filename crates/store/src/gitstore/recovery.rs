@@ -15,7 +15,7 @@ use super::ops::{
 use crate::common::{mkdir_all_private, write_file_private};
 
 /// Directory-entry mover; tests inject failures through it.
-pub(super) type RenameFn = dyn Fn(&Path, &Path) -> io::Result<()>;
+pub(super) type RenameFn<'a> = dyn Fn(&Path, &Path) -> io::Result<()> + 'a;
 
 pub(super) fn os_rename(from: &Path, to: &Path) -> io::Result<()> {
     fs::rename(from, to)
@@ -130,7 +130,7 @@ pub(super) fn recover_repository(
     caller: Option<Repository>,
     baseline: Option<TreeSnap>,
     dirty: Option<DirtySet>,
-    rename: &RenameFn,
+    rename: &RenameFn<'_>,
 ) -> R<()> {
     let parent = repo_dir.parent().unwrap_or(Path::new("."));
     let recovery_root = match make_recovery_dir(parent) {
@@ -157,7 +157,7 @@ fn recover_inner(
     caller: Option<Repository>,
     baseline: Option<TreeSnap>,
     dirty: Option<DirtySet>,
-    rename: &RenameFn,
+    rename: &RenameFn<'_>,
     cleanup: &mut bool,
 ) -> R<()> {
     let (baseline_repo, baseline, dirty) = match baseline {
@@ -325,7 +325,7 @@ fn symlink(_link: &Path, _target: &Path) -> io::Result<()> {
 
 /// `moveWorktreeEntries`: moves every entry except `.git`, undoing the moves on failure. The
 /// error carries whether the target still holds entries that could not be moved back.
-fn move_worktree_entries(source: &Path, target: &Path, rename: &RenameFn) -> Result<(), (bool, GitErr)> {
+fn move_worktree_entries(source: &Path, target: &Path, rename: &RenameFn<'_>) -> Result<(), (bool, GitErr)> {
     mkdir_all_private(target).map_err(|e| (false, GitErr::from(e)))?;
     let mut names: Vec<String> = fs::read_dir(source)
         .and_then(|rd| rd.map(|e| e.map(|e| e.file_name().to_string_lossy().into_owned())).collect())
@@ -368,7 +368,7 @@ fn rollback_recovered_repository(
     git_dir: &Path,
     backup_git_dir: &Path,
     backup_worktree: &Path,
-    rename: &RenameFn,
+    rename: &RenameFn<'_>,
 ) -> R<()> {
     remove_worktree_entries(repo_dir).map_err(|e| GitErr::msg(format!("remove recovered worktree: {e}")))?;
     rollback_recovered_git_directory(git_dir, backup_git_dir)?;
@@ -381,7 +381,7 @@ pub(super) fn install_recovered_git_directory(
     git_dir: &Path,
     cloned_git_dir: &Path,
     backup_git_dir: &Path,
-    rename: &RenameFn,
+    rename: &RenameFn<'_>,
 ) -> Result<(), (bool, GitErr)> {
     if let Err(e) = rename(git_dir, backup_git_dir) {
         return Err((false, GitErr::msg(format!("backup corrupt git directory: {e}"))));
