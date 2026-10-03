@@ -12,7 +12,7 @@ use bytes::Bytes;
 use cpa_config::Config;
 use cpa_core::format::{Format, constant};
 use cpa_core::util::{get_provider_name, resolve_auto_model};
-use cpa_runtime::executor::{ExecError, Metadata, Options, Request, SelectedAuthCallback, StreamResult, meta};
+use cpa_runtime::executor::{ChunkRx, ExecError, Metadata, Options, Request, SelectedAuthCallback, StreamResult, meta};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
@@ -53,7 +53,7 @@ pub enum ExecRx {
 /// The conductor's chunk channel plus the post-bootstrap pump logic (Go: forwardStreamChunks).
 pub struct DirectRx {
     /// `None` once the upstream ended, failed or was never started (dropping it releases it).
-    chunks: Option<mpsc::Receiver<Result<Bytes, ExecError>>>,
+    chunks: Option<ChunkRx>,
     validator: Option<SseJsonValidator>,
     /// Bootstrap payload or error that precedes the rest of the stream.
     first: Option<Result<Bytes, ErrorMessage>>,

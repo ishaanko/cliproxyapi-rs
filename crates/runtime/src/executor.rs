@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -284,19 +285,60 @@ pub struct Response {
     pub headers: HeaderMap,
 }
 
-/// Streaming response: upstream headers plus a channel of translated chunks. A chunk with
-/// `Err` is terminal.
+/// One item of a stream: a payload chunk, or the terminal failure.
+pub type Chunk = Result<Bytes, ExecError>;
+
+/// A pull-based chunk producer layered over another stream (the conductor's result wrapper), so
+/// no task or channel sits between the executor and the consumer.
+pub trait ChunkSource: Send {
+    /// Like `mpsc::Receiver::poll_recv`: `Ready(None)` is a clean end.
+    fn poll_chunk(&mut self, cx: &mut Context<'_>) -> Poll<Option<Chunk>>;
+}
+
+/// Receiving side of a stream: an executor's channel, or a [`ChunkSource`] wrapped around one.
+pub enum ChunkRx {
+    Chan(mpsc::Receiver<Chunk>),
+    Source(Box<dyn ChunkSource>),
+}
+
+impl From<mpsc::Receiver<Chunk>> for ChunkRx {
+    fn from(rx: mpsc::Receiver<Chunk>) -> Self {
+        ChunkRx::Chan(rx)
+    }
+}
+
+impl ChunkRx {
+    /// Next item; `None` at a clean end. Cancel-safe.
+    pub async fn recv(&mut self) -> Option<Chunk> {
+        std::future::poll_fn(|cx| self.poll_recv(cx)).await
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut Context<'_>) -> Poll<Option<Chunk>> {
+        match self {
+            ChunkRx::Chan(rx) => rx.poll_recv(cx),
+            ChunkRx::Source(s) => s.poll_chunk(cx),
+        }
+    }
+
+    /// An empty, already ended stream.
+    pub fn closed() -> Self {
+        ChunkRx::Chan(mpsc::channel(1).1)
+    }
+}
+
+/// Streaming response: upstream headers plus the translated chunks. A chunk with `Err` is
+/// terminal.
 pub struct StreamResult {
     pub headers: HeaderMap,
-    pub chunks: mpsc::Receiver<Result<Bytes, ExecError>>,
+    pub chunks: ChunkRx,
     /// Executor-measured usage, sent before `chunks` closes. Same object shape as a
     /// non-stream `Response.metadata["usage"]`; the conductor prefers it over parsing chunks.
     pub usage: Option<tokio::sync::oneshot::Receiver<Value>>,
 }
 
 impl StreamResult {
-    pub fn new(headers: HeaderMap, chunks: mpsc::Receiver<Result<Bytes, ExecError>>) -> Self {
-        StreamResult { headers, chunks, usage: None }
+    pub fn new(headers: HeaderMap, chunks: impl Into<ChunkRx>) -> Self {
+        StreamResult { headers, chunks: chunks.into(), usage: None }
     }
 }
 
