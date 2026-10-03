@@ -3,10 +3,12 @@
 //! spool directory, so the watcher and file-based flows run unchanged on the spool.
 
 mod common;
+pub mod gitstore;
 mod pgconn;
 pub mod postgres;
 mod postgres_cooldown;
 mod rt;
 
 pub use common::copy_config_template;
+pub use gitstore::GitTokenStore;
 pub use postgres::{PostgresStore, PostgresStoreConfig};
