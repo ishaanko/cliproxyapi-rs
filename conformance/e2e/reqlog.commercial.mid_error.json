@@ -1,6 +1,6 @@
 {
   "id": "reqlog.commercial.mid_error",
-  "desc": "commercial mode with request-log on: a 200 stream failing after some output still writes the forced error log",
+  "desc": "commercial mode with request-log on: a 200 stream failing after some output writes no log file (as Go)",
   "steps": [
     {
       "request": {

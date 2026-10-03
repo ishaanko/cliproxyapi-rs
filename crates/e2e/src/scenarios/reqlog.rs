@@ -88,7 +88,7 @@ pub fn scenarios() -> Vec<Scenario> {
     out.push(
         Scenario::new(
             "reqlog.commercial.mid_error",
-            "commercial mode with request-log on: a 200 stream failing after some output still writes the forced error log",
+            "commercial mode with request-log on: a 200 stream failing after some output writes no log file (as Go)",
             Script::steps(vec![Step::always(Reply::StreamError { content: Content::Text, after: 3 })]),
             vec![chat(Family::Compat, true)],
         )

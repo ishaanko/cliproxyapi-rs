@@ -168,8 +168,7 @@ pub fn request_log(s: &mut ConfigSpec) {
     s.request_log = true;
 }
 
-/// `request-log: true` together with `commercial-mode: true`: no regular log files, only the
-/// forced error logs.
+/// `request-log: true` together with `commercial-mode: true` (Go writes no regular request logs).
 pub fn request_log_commercial(s: &mut ConfigSpec) {
     request_log(s);
     s.commercial_mode = true;
