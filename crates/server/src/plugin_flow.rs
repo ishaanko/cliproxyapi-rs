@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use cpa_core::format::Format;
-use cpa_executors::helps::usage::{StreamUsageBuffer, UsageReporter};
+use cpa_executors::helps::usage::StreamUsageBuffer;
 use cpa_plugin::usage_helpers::observe_plugin_executor_stream_usage;
 use cpa_runtime::executor::StreamResult;
 use tokio::sync::mpsc;
@@ -156,7 +156,7 @@ impl Pipeline {
             }
         };
         let reporter = (!a.internal_source).then(|| {
-            let r = UsageReporter::new(executor_plugin_id, "", a.model, None, Some(&opts));
+            let r = self.route_usage_reporter(executor_plugin_id, a, &opts);
             r.set_translated_reasoning_effort(&req.payload, a.entry.as_str());
             r
         });

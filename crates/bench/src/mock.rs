@@ -3,8 +3,8 @@
 //!
 //! Routes mirror what the servers call with `base-url = http://mock/<family>`:
 //! `/anthropic/v1/messages`, `/compat/chat/completions`, `/codex/responses` (always SSE) and
-//! `/gemini/v1beta/models/<m>:generateContent`. Streaming is chosen by a `"stream":true` scan of
-//! the request body. `/__ctl?first_ms=&gap_us=&chunks=` retunes the stream shape at runtime.
+//! `/gemini/v1beta/models/<m>:generateContent` (`:streamGenerateContent` is always SSE). Streaming is chosen by a `"stream":true` scan of
+//! the request body. `/__ctl?first_ms=&first_max_ms=&gap_us=&chunks=` retunes the stream shape at runtime.
 //!
 //! Every text delta carries `@@<unix micros>` so a client can compute per-chunk latency.
 
@@ -32,6 +32,9 @@ type Body = BoxBody<Bytes, Infallible>;
 pub struct Shape {
     /// Delay before the response starts (upstream think time).
     first_ms: AtomicU64,
+    /// Upper bound of the think time: each request waits a uniform `first_ms..=first_max_ms`
+    /// (ignored when not above `first_ms`).
+    first_max_ms: AtomicU64,
     /// Pause between SSE events.
     gap_us: AtomicU64,
     /// Number of text deltas per stream.
@@ -41,7 +44,7 @@ pub struct Shape {
 pub async fn serve(port: u16) -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = TcpListener::bind(addr).await.with_context(|| format!("bind mock on {addr}"))?;
-    let shape = Arc::new(Shape { first_ms: AtomicU64::new(0), gap_us: AtomicU64::new(0), chunks: AtomicUsize::new(20) });
+    let shape = Arc::new(Shape { first_ms: AtomicU64::new(0), first_max_ms: AtomicU64::new(0), gap_us: AtomicU64::new(0), chunks: AtomicUsize::new(20) });
     loop {
         let (sock, _) = listener.accept().await?;
         let _ = sock.set_nodelay(true);
@@ -55,6 +58,15 @@ pub async fn serve(port: u16) -> Result<()> {
 
 fn now_us() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_micros() as u64).unwrap_or(0)
+}
+
+/// Cheap thread-safe pseudo-random number (splitmix64 over a shared counter).
+fn rand_u64() -> u64 {
+    static CTR: AtomicU64 = AtomicU64::new(0x9E37_79B9_7F4A_7C15);
+    let mut z = CTR.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// Reads the request body to the end and reports whether it contains `"stream":true`.
@@ -91,6 +103,7 @@ enum Dialect {
     Anthropic,
     Compat,
     Codex,
+    Gemini,
 }
 
 async fn handle(shape: Arc<Shape>, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
@@ -101,6 +114,7 @@ async fn handle(shape: Arc<Shape>, req: Request<Incoming>) -> Result<Response<Bo
             let Ok(v) = v.parse::<u64>() else { continue };
             match k {
                 "first_ms" => shape.first_ms.store(v, Ordering::Relaxed),
+                "first_max_ms" => shape.first_max_ms.store(v, Ordering::Relaxed),
                 "gap_us" => shape.gap_us.store(v, Ordering::Relaxed),
                 "chunks" => shape.chunks.store(v as usize, Ordering::Relaxed),
                 _ => {}
@@ -109,7 +123,8 @@ async fn handle(shape: Arc<Shape>, req: Request<Incoming>) -> Result<Response<Bo
         return Ok(full(StatusCode::OK, "text/plain", "ok"));
     }
     let wants_stream = drain(req.into_body()).await;
-    let first_ms = shape.first_ms.load(Ordering::Relaxed);
+    let (lo, hi) = (shape.first_ms.load(Ordering::Relaxed), shape.first_max_ms.load(Ordering::Relaxed));
+    let first_ms = if hi > lo { lo + rand_u64() % (hi - lo + 1) } else { lo };
     if first_ms > 0 {
         tokio::time::sleep(Duration::from_millis(first_ms)).await;
     }
@@ -120,6 +135,7 @@ async fn handle(shape: Arc<Shape>, req: Request<Incoming>) -> Result<Response<Bo
         "/compat/chat/completions" if wants_stream => sse(Dialect::Compat, n, gap),
         "/compat/chat/completions" => full(StatusCode::OK, "application/json", COMPAT_JSON),
         "/codex/responses" => sse(Dialect::Codex, n, gap),
+        p if p.starts_with("/gemini/v1beta/models/") && p.ends_with(":streamGenerateContent") => sse(Dialect::Gemini, n, gap),
         p if p.starts_with("/gemini/v1beta/models/") && p.ends_with(":generateContent") => {
             full(StatusCode::OK, "application/json", GEMINI_JSON)
         }
@@ -132,6 +148,7 @@ fn sse(dialect: Dialect, n: usize, gap: Duration) -> Response<Body> {
         Dialect::Anthropic => n + 5,
         Dialect::Compat => n + 4,
         Dialect::Codex => n + 8,
+        Dialect::Gemini => n + 1,
     };
     // Events are rendered on demand so each delta carries the time it was sent.
     let events = stream::unfold(0usize, move |i| async move {
@@ -181,6 +198,23 @@ data: {"type":"message_start","message":{"id":"msg_bench","type":"message","role
                 k if k == n + 1 => chunk("{}", "\"stop\""),
                 k if k == n + 2 => "data: {\"id\":\"chatcmpl-bench\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"mock-gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}\n\n".to_string(),
                 _ => "data: [DONE]\n\n".to_string(),
+            }
+        }
+        Dialect::Gemini => {
+            let chunk = |text: &str, tail: &str| {
+                format!(
+                    "data: {{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"text\":\"{text}\"}}]}}{tail},\"index\":0}}],\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"benchresp01\"}}\n\n"
+                )
+            };
+            if i < n {
+                chunk(&format!("@@{ts:016} token "), "")
+            } else {
+                // Final chunk: finish reason plus usage.
+                chunk("", ",\"finishReason\":\"STOP\"").replacen(
+                    "}],\"modelVersion\"",
+                    "}],\"usageMetadata\":{\"promptTokenCount\":11,\"candidatesTokenCount\":7,\"totalTokenCount\":18},\"modelVersion\"",
+                    1,
+                )
             }
         }
         Dialect::Codex => {

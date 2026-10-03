@@ -104,20 +104,9 @@ impl ClaudeExecutor {
         if opts.api_log.get().is_none() {
             return;
         }
-        let (auth_type, auth_value) = auth.account_info();
         opts.api_log.record_api_request(
             cfg,
-            UpstreamRequestLog {
-                url: url.to_string(),
-                method: "POST".to_string(),
-                headers: headers.clone(),
-                body: body.to_vec(),
-                provider: self.upstream_request_log_provider().to_string(),
-                auth_id: auth.id.clone(),
-                auth_label: auth.label.clone(),
-                auth_type: auth_type.to_string(),
-                auth_value,
-            },
+            UpstreamRequestLog::from_auth(self.upstream_request_log_provider(), Some(auth), "POST", url, headers, body),
         );
     }
 

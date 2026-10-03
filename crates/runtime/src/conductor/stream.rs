@@ -30,6 +30,7 @@ use super::models::{
 use super::rewriter::StreamRewriter;
 use super::rules;
 use super::usage::{StreamUsage, UsageFacts};
+use crate::usage_report::UsageCollector;
 use crate::executor::{DynExecutor, ExecError, Options, Request, StreamResult};
 
 type Chunk = Result<Bytes, ExecError>;
@@ -213,6 +214,8 @@ impl Manager {
                 Err(e) => return Err(Fail::stop(e)),
             }
 
+            let usage = UsageCollector::new();
+            exec_opts.usage_collector = Some(usage.clone());
             let started = Instant::now();
             let make_result = |auth: &Auth,
                                error: &ExecError,
@@ -236,6 +239,7 @@ impl Manager {
                 upstream_model: exec_model.clone(),
                 requested_model: requested_model_alias(opts, route_model),
                 tokens,
+                reports: usage.take(),
                 ..Default::default()
             };
 
@@ -487,6 +491,7 @@ fn wrap_stream(
         let mut rewriter = (alias.force_mapping && !alias.original_alias.trim().is_empty())
             .then(|| StreamRewriter::new(alias.original_alias.trim()));
         let mut usage = StreamUsage::new(options.response_format_or_source());
+        let reports = options.usage_collector.clone().unwrap_or_default();
         let mut ttft: Option<Duration> = None;
         let mut failed = false;
         let mut client_gone = false;
@@ -524,6 +529,7 @@ fn wrap_stream(
                     tokens: usage.tokens.clone(),
                     upstream_model: upstream_model.clone(),
                     requested_model: requested_model.clone(),
+                    reports: reports.take(),
                 };
                 match &home_auth {
                     Some(a) => manager.report_home_result(result, Some(a), Some(facts)),
@@ -622,6 +628,7 @@ fn wrap_stream(
                 tokens: usage.tokens.clone(),
                 upstream_model,
                 requested_model,
+                reports: reports.take(),
             };
             match &home_auth {
                 Some(a) => manager.report_home_result(result, Some(a), Some(facts)),

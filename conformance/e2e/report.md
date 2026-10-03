@@ -2,8 +2,8 @@
 
 - server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `0379fd7fbc66be77`
-- scenarios: 998 total, 998 passed, 0 failed
+- goldens digest: `d91ec15e9dbcda26`
+- scenarios: 1002 total, 1002 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -858,6 +858,10 @@
 | `redis.subscribe.arguments` | PASS | SUBSCRIBE validation, channel case, QUIT while subscribed |  |
 | `redis.subscribe.errors` | PASS | SUBSCRIBE errors: upstream failures arrive as error events |  |
 | `redis.mux.http_and_resp` | PASS | HTTP and RESP clients share the port; the queue feeds both consumers |  |
+| `redis.usage.cached.claude` | PASS | queued usage of cached-token responses, claude upstream, json and stream |  |
+| `redis.usage.cached.codex` | PASS | queued usage of cached-token responses, codex upstream, json and stream |  |
+| `redis.usage.cached.gemini` | PASS | queued usage of cached-token responses, gemini upstream, json and stream |  |
+| `redis.usage.cached.compat` | PASS | queued usage of cached-token responses, compat upstream, json and stream |  |
 | `redis.usage_disabled` | PASS | no usage records are queued with usage-statistics-enabled off |  |
 | `media.images.codex.gen_json` | PASS | codex image generation, options pass through |  |
 | `media.images.codex.gen_default_model` | PASS | no model defaults to gpt-image-2 |  |

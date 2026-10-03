@@ -37,6 +37,7 @@ use super::models::{
 use super::pick::pinned_auth_id;
 use super::rules;
 use super::usage::{UsageFacts, tokens_from_response};
+use crate::usage_report::UsageCollector;
 use crate::executor::{DynExecutor, ExecError, HomeErrKind, Metadata, Options, Request, Response, StreamResult, meta};
 
 fn canceled_error() -> ExecError {
@@ -366,6 +367,8 @@ impl Manager {
                     );
                 }
                 let executor_for_call = executor_for_auth(executor.clone(), &prepared);
+                let usage = UsageCollector::new();
+                exec_opts.usage_collector = Some(usage.clone());
                 let started = Instant::now();
                 let res =
                     call_unary_cancellable(kind, &executor_for_call, &prepared, exec_req.clone(), exec_opts.clone(), &guard.cancel())
@@ -403,6 +406,7 @@ impl Manager {
                     stream: false,
                     upstream_model: upstream_model.clone(),
                     requested_model: requested_model_alias(&exec_opts, &route_model),
+                    reports: usage.take(),
                     ..Default::default()
                 };
                 match res {

@@ -288,7 +288,9 @@ fn resources(out: &mut String, r: &Results, d: &Data) {
         let rss = |x: &Cell| x.rss_kb.map(|v| v as f64);
         let peak = |x: &Cell| x.peak_kb.map(|v| v as f64);
         let cpu = |x: &Cell| x.cpu_ms_per_1k;
+        let instr = |x: &Cell| x.instr_per_req;
         let (gc, rc) = (g("go", cpu), g("rust", cpu));
+        let (gi, ri) = (g("go", instr), g("rust", instr));
         rows.push(vec![
             format!("`{sc}`"),
             c.to_string(),
@@ -299,11 +301,73 @@ fn resources(out: &mut String, r: &Results, d: &Data) {
             plain(gc, |v| format!("{v:.0}")),
             plain(rc, |v| format!("{v:.0}")),
             ratio(rc, gc),
+            plain(gi, kilo),
+            plain(ri, kilo),
+            ratio(ri, gi),
         ]);
     }
     table(
         out,
-        &["Scenario", "Conc", "Steady RSS Go (MB)", "Rust", "Peak RSS Go (MB)", "Rust", "CPU ms/1k req Go", "Rust", "Rust/Go"],
+        &["Scenario", "Conc", "Steady RSS Go (MB)", "Rust", "Peak RSS Go (MB)", "Rust", "CPU ms/1k req Go", "Rust", "Rust/Go", "Instr/req Go (k)", "Rust", "Rust/Go"],
+        rows,
+    );
+}
+
+/// Thousands of instructions.
+fn kilo(v: f64) -> String {
+    format!("{:.0}", v / 1e3)
+}
+
+/// The additional scenarios: long/native/Gemini SSE, websocket, agent-sized requests and slow
+/// upstreams, with the deterministic per-request metrics and memory per in-flight request.
+fn extras(out: &mut String, d: &Data) {
+    let keys = d.keys("extra");
+    if keys.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "## Additional scenarios\n");
+    let _ = writeln!(
+        out,
+        "SSE streams of 100 to 2000 events, native Claude and Gemini passthrough, the Responses websocket, 250 KB tool-heavy agent requests, and slow upstreams (200 ms to 2 s think time). CPU is user+system microseconds per request, instructions are user-space thousands per request (perf_event_open). KB/in-flight is (peak RSS during the window minus idle RSS) divided by concurrency.\n"
+    );
+    let mut rows = vec![];
+    for (sc, c) in keys {
+        let g = |s: &str, f: fn(&Cell) -> Option<f64>| d.agg(s, "extra", &sc, c, f);
+        let rps = |x: &Cell| Some(x.rps);
+        let p50 = |x: &Cell| Some(x.lat.p50 as f64);
+        let p99 = |x: &Cell| Some(x.lat.p99 as f64);
+        let cpu = |x: &Cell| x.cpu_ms_per_1k;
+        let instr = |x: &Cell| x.instr_per_req;
+        let peak = |x: &Cell| x.peak_kb.map(|v| v as f64);
+        // Only meaningful with enough requests in flight to dominate the baseline.
+        let per_flight = |x: &Cell| {
+            if x.conc < 256 {
+                return None;
+            }
+            Some(x.peak_kb?.saturating_sub(x.idle_kb?) as f64 / x.conc as f64)
+        };
+        rows.push(vec![
+            format!("`{sc}`"),
+            c.to_string(),
+            plain(g("go", rps), thousands),
+            plain(g("rust", rps), thousands),
+            ratio(g("rust", rps), g("go", rps)),
+            format!("{} / {}", plain(g("go", p50), ms), plain(g("rust", p50), ms)),
+            format!("{} / {}", plain(g("go", p99), ms), plain(g("rust", p99), ms)),
+            ratio(g("rust", cpu), g("go", cpu)),
+            plain(g("go", cpu), |v| format!("{v:.0}")),
+            plain(g("rust", cpu), |v| format!("{v:.0}")),
+            ratio(g("rust", instr), g("go", instr)),
+            format!("{} / {}", plain(g("go", peak), mb), plain(g("rust", peak), mb)),
+            format!("{} / {}", plain(g("go", per_flight), |v| format!("{v:.0}")), plain(g("rust", per_flight), |v| format!("{v:.0}"))),
+        ]);
+    }
+    table(
+        out,
+        &[
+            "Scenario", "Conc", "req/s Go", "req/s Rust", "Rust/Go", "p50 ms Go / Rust", "p99 ms Go / Rust", "CPU Rust/Go", "CPU us/req Go", "Rust",
+            "Instr Rust/Go", "Peak RSS MB Go / Rust", "KB/in-flight Go / Rust",
+        ],
         rows,
     );
 }
@@ -401,6 +465,7 @@ pub fn report(input: &Path, out_path: &Path) -> Result<()> {
     streaming(&mut out, &d);
     resources(&mut out, &r, &d);
     large(&mut out, &d);
+    extras(&mut out, &d);
     std::fs::write(out_path, out)?;
     eprintln!("wrote {}", out_path.display());
     Ok(())
