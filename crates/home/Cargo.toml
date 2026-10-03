@@ -20,6 +20,7 @@ hex.workspace = true
 base64.workspace = true
 chrono.workspace = true
 http = "1"
+tokio-util = "0.7"
 url = "2"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls-pemfile = "2"
