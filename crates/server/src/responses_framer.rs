@@ -6,11 +6,13 @@
 //! `response.output_item.done` items, rewrites error payloads into the dialect's error events and
 //! remembers the terminal event.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use cpa_json::J;
 use serde_json::Value;
 
+use crate::bodyview::{Want, mini_root};
 use crate::error::ErrorMessage;
 use crate::responses_error::{
     build_error_chunk, build_failed_chunk, sanitize_error_message, sanitize_event_name, stream_error_text,
@@ -67,6 +69,12 @@ impl ResponsesSseFramer {
     /// `WriteChunk`: feeds one upstream chunk, appending finished frames to `out`.
     pub fn write_chunk(&mut self, out: &mut Vec<u8>, chunk: &[u8]) {
         if chunk.is_empty() || !self.terminal_event.is_empty() {
+            return;
+        }
+        // Common case: the chunk is exactly one complete frame. Same result as buffering it and
+        // splitting it again, without the copies.
+        if self.pending.is_empty() && frame_len(chunk) == chunk.len() {
+            self.write_frame(out, chunk);
             return;
         }
         if starts_new_data_frame(&self.pending, chunk) {
@@ -144,26 +152,35 @@ impl ResponsesSseFramer {
         check(stream_event) || check(payload_type)
     }
 
-    fn repair_frame(&mut self, frame: &[u8]) -> Vec<u8> {
+    /// The frame to write: borrowed as is unless it was dropped (empty) or rewritten.
+    fn repair_frame<'f>(&mut self, frame: &'f [u8]) -> Cow<'f, [u8]> {
         let (payload, ok) = data_payload(frame);
         let stream_event = event_name(frame);
         if !stream_event.is_empty() && self.should_filter_private_event(&stream_event, "") {
-            return Vec::new();
+            return Cow::Borrowed(&[]);
         }
         if !ok || payload.is_empty() {
-            return frame.to_vec();
+            return Cow::Borrowed(frame);
         }
-        if payload == b"[DONE]" {
+        if &*payload == b"[DONE]" {
             self.data_frames += 1;
-            return frame.to_vec();
+            return Cow::Borrowed(frame);
         }
-        if !cpa_json::valid(&payload) {
-            return frame.to_vec();
-        }
-        let root = cpa_json::parse(&payload);
+        // Only the fields every frame needs are read; the whole payload is parsed for the few
+        // event kinds that use more.
+        const FIELDS: &[(&str, Want)] = &[
+            ("type", Want::Value),
+            ("error", Want::Value),
+            ("code", Want::Exists),
+            ("message", Want::Exists),
+            ("response", Want::Sub(&[("error", Want::Value)])),
+        ];
+        let Some(root) = mini_root(&payload, FIELDS) else {
+            return Cow::Borrowed(frame);
+        };
         let payload_type = root.g("type").str();
         if self.should_filter_private_event(&stream_event, &payload_type) {
-            return Vec::new();
+            return Cow::Borrowed(&[]);
         }
         self.data_frames += 1;
 
@@ -171,31 +188,33 @@ impl ResponsesSseFramer {
             if !payload_type.is_empty() {
                 self.last_event = sanitize_event_name(&payload_type);
             }
-            return self.repair_error_payload(&root, &payload);
+            let root = cpa_json::parse(&payload);
+            return Cow::Owned(self.repair_error_payload(&root, &payload));
         }
         let mut event_type = payload_type;
         if is_terminal_event(&stream_event) || event_type.is_empty() {
-            event_type = stream_event.clone();
+            event_type = stream_event.to_string();
         }
         if !event_type.is_empty() {
             self.last_event = sanitize_event_name(&event_type);
         }
         if is_error_event(&event_type) {
-            return self.repair_error_payload(&root, &payload);
+            let root = cpa_json::parse(&payload);
+            return Cow::Owned(self.repair_error_payload(&root, &payload));
         }
         if is_terminal_event(&event_type) {
             self.terminal_event = event_type.clone();
         }
         match event_type.as_str() {
-            "response.output_item.done" => self.record_output_item(&root),
+            "response.output_item.done" => self.record_output_item(&cpa_json::parse(&payload)),
             "response.completed" => {
-                if let Some(repaired) = self.repair_completed_payload(root) {
-                    return frame_with_data(frame, &repaired);
+                if let Some(repaired) = self.repair_completed_payload(&payload) {
+                    return Cow::Owned(frame_with_data(frame, &repaired));
                 }
             }
             _ => {}
         }
-        frame.to_vec()
+        Cow::Borrowed(frame)
     }
 
     fn repair_error_payload(&mut self, root: &Value, payload: &[u8]) -> Vec<u8> {
@@ -247,10 +266,11 @@ impl ResponsesSseFramer {
     }
 
     /// Rebuilds `response.output` from the recorded items when the upstream sent none.
-    fn repair_completed_payload(&self, mut root: Value) -> Option<Vec<u8>> {
+    fn repair_completed_payload(&self, payload: &[u8]) -> Option<Vec<u8>> {
         if self.output_order.is_empty() && self.unindexed_output_items.is_empty() {
             return None;
         }
+        let mut root = cpa_json::parse(payload);
         let output = root.g("response.output");
         if output.exists() && (!output.is_array() || !output.array().is_empty()) {
             return None;
@@ -324,9 +344,9 @@ fn payload_error_message(root: &Value, payload: &[u8]) -> ErrorMessage {
     sanitize_error_message(&ErrorMessage::new(status, String::from_utf8_lossy(payload).into_owned()))
 }
 
-/// Joined `data:` lines of a frame (CR stripped).
-fn data_payload(frame: &[u8]) -> (Vec<u8>, bool) {
-    let mut payload = Vec::new();
+/// Joined `data:` lines of a frame (CR stripped); borrowed when there is a single data line.
+fn data_payload(frame: &[u8]) -> (Cow<'_, [u8]>, bool) {
+    let mut payload: Cow<'_, [u8]> = Cow::Borrowed(&[]);
     let mut found = false;
     for line in frame.split(|b| *b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line);
@@ -334,10 +354,14 @@ fn data_payload(frame: &[u8]) -> (Vec<u8>, bool) {
         let Some(rest) = trimmed.strip_prefix(b"data:") else {
             continue;
         };
+        let rest = rest.trim_ascii();
         if found {
-            payload.push(b'\n');
+            let joined = payload.to_mut();
+            joined.push(b'\n');
+            joined.extend_from_slice(rest);
+        } else {
+            payload = Cow::Borrowed(rest);
         }
-        payload.extend_from_slice(rest.trim_ascii());
         found = true;
     }
     (payload, found)
@@ -365,7 +389,7 @@ fn frame_with_data(frame: &[u8], payload: &[u8]) -> Vec<u8> {
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+    memchr::memmem::find(haystack, needle)
 }
 
 /// `responsesSSEFrameLen`: length of the first frame (through its blank line), 0 if incomplete.
@@ -431,14 +455,17 @@ fn starts_new_data_frame(pending: &[u8], chunk: &[u8]) -> bool {
     chunk[start..].starts_with(b"data:")
 }
 
-fn event_name(frame: &[u8]) -> String {
+fn event_name(frame: &[u8]) -> Cow<'_, str> {
     for line in frame.split(|b| *b == b'\n') {
         let line = line.strip_suffix(b"\r").unwrap_or(line).trim_ascii();
         if let Some(rest) = line.strip_prefix(b"event:") {
-            return String::from_utf8_lossy(rest).trim().to_string();
+            return match String::from_utf8_lossy(rest) {
+                Cow::Borrowed(text) => Cow::Borrowed(text.trim()),
+                Cow::Owned(text) => Cow::Owned(text.trim().to_string()),
+            };
         }
     }
-    String::new()
+    Cow::Borrowed("")
 }
 
 fn needs_line_break(pending: &[u8], chunk: &[u8]) -> bool {

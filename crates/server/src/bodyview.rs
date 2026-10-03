@@ -14,12 +14,14 @@ pub enum Want {
     Value,
     /// Only that the key exists (stored as JSON `null`); for large members.
     Exists,
+    /// An object member of which only the listed members are kept (`null` for other types).
+    Sub(&'static [(&'static str, Want)]),
 }
 
 /// An object holding only the requested top-level members of `body`, in body order (a repeated
 /// key keeps the last value, like a full parse). `None` when `body` is not valid JSON. A valid
 /// body that is not an object yields `Value::Null`, on which every lookup misses.
-pub fn mini_root(body: &[u8], keys: &[(&str, Want)]) -> Option<Value> {
+pub fn mini_root(body: &[u8], keys: &[(&'static str, Want)]) -> Option<Value> {
     if body.is_empty() || !cpa_json::valid(body) {
         return None;
     }
@@ -83,7 +85,7 @@ fn value_end(b: &[u8], start: usize) -> Option<usize> {
     }
 }
 
-fn scan(b: &[u8], keys: &[(&str, Want)]) -> Option<Value> {
+fn scan(b: &[u8], keys: &[(&'static str, Want)]) -> Option<Value> {
     let mut i = skip_ws(b, 0);
     if b.get(i) != Some(&b'{') {
         return Some(Value::Null);
@@ -110,6 +112,7 @@ fn scan(b: &[u8], keys: &[(&str, Want)]) -> Option<Value> {
             let value = match want {
                 Want::Value => cpa_json::parse(&b[i..end]),
                 Want::Exists => Value::Null,
+                Want::Sub(sub) => scan(&b[i..end], sub)?,
             };
             out.insert(key.to_string(), value);
         }
@@ -128,7 +131,13 @@ mod tests {
     use super::*;
     use cpa_json::J;
 
-    const KEYS: &[(&str, Want)] = &[("model", Want::Value), ("stream", Want::Value), ("messages", Want::Exists), ("thinking", Want::Value)];
+    const KEYS: &[(&str, Want)] = &[
+        ("model", Want::Value),
+        ("stream", Want::Value),
+        ("messages", Want::Exists),
+        ("thinking", Want::Value),
+        ("response", Want::Sub(&[("error", Want::Value)])),
+    ];
 
     #[test]
     fn matches_a_full_parse_for_the_wanted_keys() {
@@ -137,13 +146,15 @@ mod tests {
             br#" { "stream" : false , "model" : "a\"b" , "thinking":{"type":"enabled","budget_tokens":5} } "#,
             br#"{"model":"esc","model":"dup"}"#,
             br#"{"n":12.50,"model":"m","big":123456789012345678901234567890}"#,
+            br#"{"response":{"id":"x","error":{"message":"boom"},"output":[1,2]},"model":"m"}"#,
+            br#"{"response":5,"model":"m"}"#,
             b"[1,2,3]",
             b"{}",
         ];
         for body in bodies {
             let mini = mini_root(body, KEYS).expect("valid");
             let full = cpa_json::parse(body);
-            for path in ["model", "stream", "thinking.type", "thinking.budget_tokens"] {
+            for path in ["model", "stream", "thinking.type", "thinking.budget_tokens", "response.error", "response.error.message"] {
                 assert_eq!(mini.g(path).v(), full.g(path).v(), "{path} in {}", String::from_utf8_lossy(body));
             }
             assert_eq!(mini.g("messages").exists(), full.g("messages").exists());

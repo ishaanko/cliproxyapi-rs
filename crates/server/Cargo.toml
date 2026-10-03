@@ -87,6 +87,7 @@ async-trait = "0.1"
 multer = "3"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 base64 = "0.22"
+memchr = "2"
 
 mimalloc = { version = "0.1", optional = true }
 pprof = { version = "0.15", optional = true, default-features = false }
