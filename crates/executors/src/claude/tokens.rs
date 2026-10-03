@@ -234,18 +234,39 @@ impl ClaudeExecutor {
             },
         )?;
 
+        self.record_upstream_request(cfg, auth, &opts, &url, &headers, &body);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
-        let resp = super::http::send_messages(&client, &url, &headers, &body).await?;
+        let resp = match super::http::send_messages(&client, &url, &headers, &body).await {
+            Ok(r) => r,
+            Err(err) => {
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                return Err(err);
+            }
+        };
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        opts.api_log.record_api_response_metadata(cfg, status, &resp_headers);
         if !(200..300).contains(&status) {
             let data = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
+                Err(e) => {
+                    let msg = crate::helps::status::transport_message(&e);
+                    opts.api_log.record_api_response_error(cfg, &msg);
+                    Bytes::from(format!("failed to read error response body: {msg}"))
+                }
             };
+            opts.api_log.append_api_response_chunk(cfg, &data);
             return Err(classify_claude_upstream_error_with_cooling(status, &resp_headers, &data, cfg.claude.model_level_cooling));
         }
-        let data = resp.bytes().await.map_err(|e| ExecError::new(0, crate::helps::status::transport_message(&e)))?;
+        let data = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                let msg = crate::helps::status::transport_message(&e);
+                opts.api_log.record_api_response_error(cfg, &msg);
+                return Err(ExecError::new(0, msg));
+            }
+        };
+        opts.api_log.append_api_response_chunk(cfg, &data);
         let count = cpa_json::parse(&data).g("input_tokens").int();
         let out = cpa_translator::translate_token_count(&Ctx::default(), to, response_format, count, &data);
         Ok(Response { payload: Bytes::from(out), headers: resp_headers, ..Default::default() })

@@ -1,5 +1,7 @@
 //! Streaming Messages call (Go: ExecuteStream in claude_executor_stream.go).
 
+use std::sync::Arc;
+
 use bytes::Bytes;
 use futures_util::TryStreamExt;
 use cpa_auth::Auth;
@@ -19,6 +21,7 @@ use crate::helps::apply_patch::{
     apply_patch_original_request, apply_patch_translation_error, end_apply_patch_stream, gateway_error,
     initialize_apply_patch_stream, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
+use crate::helps::logging::ApiLogHandle;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
@@ -30,7 +33,7 @@ impl ClaudeExecutor {
     /// stream translator.
     pub(super) async fn execute_stream_impl(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: Request,
         opts: Options,
@@ -57,11 +60,26 @@ impl ClaudeExecutor {
         let (usage_tx, usage_rx) = oneshot::channel();
         let original_request = apply_patch_original_request(&prepared.req, &opts);
         let task_headers = resp_headers.clone();
+        let task_cfg = Arc::clone(cfg);
+        let api_log = opts.api_log.clone();
         tokio::spawn(async move {
             let mut usage = StreamUsageBuffer::default();
-            let outcome = run_stream(resp, status, &task_headers, &prepared, &original_request, response_format, &reporter, &mut usage, &tx).await;
+            let outcome = run_stream(
+                resp,
+                status,
+                &task_headers,
+                &prepared,
+                &original_request,
+                response_format,
+                &reporter,
+                &mut usage,
+                &tx,
+                (&task_cfg, &api_log),
+            )
+            .await;
             if let Err(err) = outcome {
                 let err = wrap_claude_fast_request_error(prepared.fast_request, status, err);
+                api_log.record_api_response_error(&task_cfg, &err.message);
                 reporter.publish_buffer_failure(&usage, &err);
                 if prepared.replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(Some(&err)) {
                     clear_claude_thinking_replay_content(&prepared.replay_scope);
@@ -97,6 +115,7 @@ async fn run_stream(
     reporter: &UsageReporter,
     usage: &mut StreamUsageBuffer,
     tx: &mpsc::Sender<Result<Bytes, ExecError>>,
+    (cfg, api_log): (&Config, &ApiLogHandle),
 ) -> Result<(), ExecError> {
     let to = Format::Claude;
     let mut lines = LineReader::from_stream(
@@ -124,6 +143,7 @@ async fn run_stream(
                 }
             };
             observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+            api_log.append_api_response_chunk(cfg, &line);
             reporter.observe_response_model(&line);
             usage.observe_claude_stream(&line);
             let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;
@@ -164,6 +184,7 @@ async fn run_stream(
             }
         };
         observe_claude_stream_line(&line, &mut upstream_message_id, &mut upstream_completed);
+        api_log.append_api_response_chunk(cfg, &line);
         reporter.observe_response_model(&line);
         usage.observe_claude_stream(&line);
         let restored = restore_claude_oauth_tool_names_from_stream_line(&line, &p.tool_reverse_map).map_err(restore_error)?;

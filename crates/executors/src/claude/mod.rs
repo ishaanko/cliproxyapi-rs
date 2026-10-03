@@ -14,6 +14,7 @@ use cpa_core::thinking::parse_suffix;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
 
 use crate::ConfigRx;
+use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::usage::UsageReporter;
 
@@ -62,6 +63,35 @@ impl ClaudeExecutor {
     fn config(&self) -> Arc<Config> {
         let cfg = self.cfg.borrow().clone();
         if self.api_key_scope { config_for_api_key(&cfg) } else { cfg }
+    }
+
+    /// Provider label of the upstream request log (Go: upstreamRequestLogProvider).
+    fn upstream_request_log_provider(&self) -> &str {
+        "claude"
+    }
+
+    /// Records the outbound request on the inbound request's api log (Go:
+    /// helps.RecordAPIRequest with claudeAuthLogIdentity). Skips the body copy when the call is
+    /// not part of a logged request.
+    fn record_upstream_request(&self, cfg: &Config, auth: &Auth, opts: &Options, url: &str, headers: &::http::HeaderMap, body: &[u8]) {
+        if opts.api_log.get().is_none() {
+            return;
+        }
+        let (auth_type, auth_value) = auth.account_info();
+        opts.api_log.record_api_request(
+            cfg,
+            UpstreamRequestLog {
+                url: url.to_string(),
+                method: "POST".to_string(),
+                headers: headers.clone(),
+                body: body.to_vec(),
+                provider: self.upstream_request_log_provider().to_string(),
+                auth_id: auth.id.clone(),
+                auth_label: auth.label.clone(),
+                auth_type: auth_type.to_string(),
+                auth_value,
+            },
+        );
     }
 
     fn reporter(&self, auth: &Auth, req: &Request, opts: &Options) -> UsageReporter {

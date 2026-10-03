@@ -487,24 +487,32 @@ impl ClaudeExecutor {
         opts: &Options,
         p: &Prepared,
     ) -> Result<reqwest::Response, ExecError> {
+        self.record_upstream_request(cfg, auth, opts, &p.url, &p.headers, &p.body_for_upstream);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
         let model_level_cooling = cfg.claude.model_level_cooling;
         let resp = match super::http::send_messages(&client, &p.url, &p.headers, &p.body_for_upstream).await {
             Ok(r) => r,
             Err(err) => {
                 tracing::debug!("claude upstream request failed: {}", err.message);
+                opts.api_log.record_api_response_error(cfg, &err.message);
                 return Err(wrap_claude_fast_request_error(p.fast_request, 0, err));
             }
         };
         let status = resp.status().as_u16();
+        opts.api_log.record_api_response_metadata(cfg, status, resp.headers());
         if (200..300).contains(&status) {
             return Ok(resp);
         }
         let resp_headers = resp.headers().clone();
         let body = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
+            Err(e) => {
+                let msg = crate::helps::status::transport_message(&e);
+                opts.api_log.record_api_response_error(cfg, &msg);
+                Bytes::from(format!("failed to read error response body: {msg}"))
+            }
         };
+        opts.api_log.append_api_response_chunk(cfg, &body);
         tracing::debug!(
             "request error, error status: {status}, error message: {}",
             crate::helps::logging::summarize_error_body(
@@ -534,17 +542,17 @@ impl ClaudeExecutor {
         let data = match resp.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                return Err(wrap_claude_fast_request_error(
-                    p.fast_request,
-                    status,
-                    ExecError::new(0, crate::helps::status::transport_message(&e)),
-                ));
+                let msg = crate::helps::status::transport_message(&e);
+                opts.api_log.record_api_response_error(cfg, &msg);
+                return Err(wrap_claude_fast_request_error(p.fast_request, status, ExecError::new(0, msg)));
             }
         };
+        opts.api_log.append_api_response_chunk(cfg, &data);
         let mut data = data.to_vec();
         let mut stream_usage = StreamUsageBuffer::default();
         if p.upstream_stream {
             if let Err(err) = validate_claude_streaming_response(&data) {
+                opts.api_log.record_api_response_error(cfg, &err.message);
                 return Err(wrap_claude_fast_request_error(p.fast_request, status, err));
             }
             let msg_id = claude_message_id_from_sse(&data);
@@ -560,6 +568,7 @@ impl ClaudeExecutor {
                     Err(err) => {
                         let mut err = err.into_exec_error();
                         err.message = format!("restore Claude OAuth tool name from streaming response: {}", err.message);
+                        opts.api_log.record_api_response_error(cfg, &err.message);
                         reporter.publish_buffer_failure(&stream_usage, &err);
                         return Err(wrap_claude_fast_request_error(p.fast_request, status, err));
                     }
@@ -576,6 +585,7 @@ impl ClaudeExecutor {
             data = restore_claude_oauth_tool_names_from_response(&data, &p.tool_reverse_map).map_err(|err| {
                 let mut err = err.into_exec_error();
                 err.message = format!("restore Claude OAuth tool name from response: {}", err.message);
+                opts.api_log.record_api_response_error(cfg, &err.message);
                 wrap_claude_fast_request_error(p.fast_request, status, err)
             })?;
         }
