@@ -10,6 +10,10 @@ use crate::registry::{Ctx, Param};
 
 const DATA_TAG: &[u8] = b"data:";
 
+mod fast;
+#[cfg(test)]
+mod fast_tests;
+
 /// Streaming conversion state, kept across the lines of one response.
 #[derive(Default)]
 struct StreamState {
@@ -21,6 +25,11 @@ struct StreamState {
     /// Tool calls being accumulated, keyed by Claude content block index.
     tool_calls: BTreeMap<i64, ToolCallAccumulator>,
     next_tool_call_index: i64,
+    /// Fast path: serialized chunk prefix up to `"delta":`, valid while `head_model` matches the
+    /// model and `head_valid` is set (cleared whenever the id or created time changes).
+    head: Vec<u8>,
+    head_model: String,
+    head_valid: bool,
 }
 
 #[derive(Default)]
@@ -100,6 +109,12 @@ pub fn convert_claude_response_to_openai(
     }
     let raw = raw[DATA_TAG.len()..].trim_ascii();
 
+    fast::convert(state, model_name, raw).unwrap_or_else(|| convert_general(state, model_name, raw))
+}
+
+/// The general conversion of one event payload through `Value`s; the reference for every shape
+/// the fast path declines.
+fn convert_general(state: &mut StreamState, model_name: &str, raw: &[u8]) -> Vec<Vec<u8>> {
     let root = cpa_json::parse(raw);
     let event_type = root.g("type").str();
 
@@ -123,6 +138,7 @@ pub fn convert_claude_response_to_openai(
             if message.exists() {
                 state.response_id = message.g("id").str();
                 state.created_at = unix_now();
+                state.head_valid = false;
 
                 cpa_json::set(&mut template, "id", state.response_id.as_str());
                 cpa_json::set(&mut template, "model", model_name);

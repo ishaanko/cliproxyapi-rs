@@ -16,7 +16,24 @@ hex.workspace = true
 rand.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+itoa = "1"
+memchr = "2"
+
+[features]
+# In-process SIGPROF sampling for the perf example (`--features prof`, PROF=1).
+prof = ["dep:pprof", "dep:perf-event2"]
+
+[dependencies.pprof]
+version = "0.15"
+optional = true
+
+[dependencies.perf-event2]
+version = "0.7"
+optional = true
 
 [dev-dependencies]
 base64.workspace = true
 flate2 = "1"
+# The perf example reuses the bench crate's scenario generators.
+bytes.workspace = true
+hyper = { version = "1", default-features = false }
