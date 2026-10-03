@@ -6,7 +6,7 @@
 //! interfaces), the remote IP filter is applied to the SDP candidates before they are handed to
 //! the peer connection, and RTCP of the senders is not drained by the relay.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, Weak};
 
@@ -839,5 +839,6 @@ impl PionMediaSession {
     }
 }
 
-#[allow(dead_code)]
-fn _unused(_: SocketAddr) {}
+#[cfg(test)]
+#[path = "relay_tests.rs"]
+mod tests;
