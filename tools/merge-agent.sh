@@ -15,8 +15,8 @@ fi
 git checkout --theirs Cargo.lock 2>/dev/null || true
 python3 tools/dedupe-toml.py
 git add -A
-cargo build -q --workspace
-if ! cargo test -q --workspace --all-targets >/tmp/merge-agent-test.log 2>&1; then
+tools/shared.sh cargo build -q --workspace
+if ! tools/shared.sh cargo test -q --workspace --all-targets >/tmp/merge-agent-test.log 2>&1; then
   grep -E '^error|FAILED|panicked' /tmp/merge-agent-test.log | head -20; echo "tests failed"; exit 1
 fi
 git commit -qm "$msg"
