@@ -245,7 +245,7 @@ impl Pipeline {
                 }
             }
         });
-        ExecStream { headers, rx }
+        ExecStream { headers, rx: rx.into() }
     }
 
     /// Streaming execution with plugins.
@@ -353,7 +353,7 @@ impl Pipeline {
             }
             forward_rest_t(stream, validator, transform, tx, lifecycle).await;
         });
-        ExecStream { headers, rx }
+        ExecStream { headers, rx: rx.into() }
     }
 }
 

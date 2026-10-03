@@ -28,7 +28,6 @@ use cpa_core::util::{get_provider_name, resolve_auto_model};
 use cpa_json::J;
 use cpa_runtime::conductor::Manager;
 use serde_json::Value;
-use tokio::sync::mpsc;
 use tokio::time::{Instant, interval_at};
 
 use crate::error::{ErrorMessage, build_error_response_body_with_error, is_request_fault, status_text};
@@ -519,7 +518,7 @@ async fn forward_turn(
     info: &ReqInfo,
     keepalive: Duration,
     timeline: bool,
-    rx: &mut mpsc::Receiver<Result<Bytes, ErrorMessage>>,
+    rx: &mut crate::exec::ExecRx,
     tool_turn: &mut Option<ToolCacheTurn>,
     session_key: &str,
     session_id: &str,

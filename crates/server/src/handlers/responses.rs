@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use super::{ok_reply, read_request_body};
 use crate::bodyview::Want;
 use crate::error::{ErrorMessage, error_response_json};
-use crate::exec::{ExecArgs, Pipeline};
+use crate::exec::{ExecArgs, ExecRx, Pipeline};
 use crate::forward::{StreamHooks, openai_error_reply, start_sse_stream, with_nonstream_keepalive};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
@@ -170,15 +170,12 @@ impl StreamHooks for ResponsesHooks {
 }
 
 /// A one-item error stream (the Go "pending error" channel handed to `forwardResponsesStream`).
-fn error_only_stream(err: ErrorMessage) -> mpsc::Receiver<Result<Bytes, ErrorMessage>> {
-    let (tx, rx) = mpsc::channel(1);
-    let _ = tx.try_send(Err(err));
-    rx
+fn error_only_stream(err: ErrorMessage) -> ExecRx {
+    ExecRx::once(Err(err))
 }
 
-fn empty_stream() -> mpsc::Receiver<Result<Bytes, ErrorMessage>> {
-    let (_tx, rx) = mpsc::channel(1);
-    rx
+fn empty_stream() -> ExecRx {
+    ExecRx::empty()
 }
 
 async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes) -> Response {
@@ -244,7 +241,7 @@ async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes
     }
 }
 
-type Rx = mpsc::Receiver<Result<Bytes, ErrorMessage>>;
+type Rx = ExecRx;
 
 /// The buffered output already ends the stream (terminal error or terminal event): send it and
 /// finish without a trailing marker.
