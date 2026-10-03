@@ -8,6 +8,7 @@ The host is shared and has only about 4000 ephemeral ports (`ip_local_port_range
 
 - Anything that generates load (`run.sh`, `quick.sh`, any `cpa-bench` subcommand except `report`) goes through `tools/exclusive.sh`, which also holds the lock until TIME-WAIT drains. Builds and tests go through `tools/shared.sh`.
 - The load generator is port-frugal: one keep-alive connection per concurrent worker, never one per request, and the connections are pooled per destination and reused across warmup, windows, cells and scenarios (`load.rs`, `Pool`). A run opens about `max concurrency` client connections per server plus the server's own upstream connections (about 2 x 1024 with the default 1024 ceiling). The only per-use connections are websocket scenarios (about 100 per server run). The pool is cleared when a server stops. Measured TIME-WAIT left behind (host baseline subtracted): `quick.sh --all` (18 scenarios, both servers, 14 minutes) about 3100 at the end, a two-server `run` subset reaching concurrency 1024 about 2100, one slow-upstream `quick` at 1024 with the alloc pass about 3000.
+- Measure on the plain `release` profile (fat LTO, one codegen unit) only. The `release-fast` profile (thin LTO, 16 codegen units; `CPA_PROFILE=release-fast tools/e2e.sh`) exists for quick functional iteration and its CPU and RSS numbers are not comparable.
 - Both `run` and `quick` pick free ports at startup, so they never collide with other processes.
 
 ## Reproduce
