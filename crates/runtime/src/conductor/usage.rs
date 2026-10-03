@@ -71,7 +71,7 @@ fn session_from_metadata(md: &Metadata) -> (String, String) {
 
 /// Session and request context of a record (Go: `ClientRequestMetadata` plus the reporter's
 /// trace id). The session is the request's canonical session projected to a UUID.
-fn usage_extra(result: &ExecResult) -> UsageExtra {
+fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
     let md = &result.options.metadata;
     let request_id = meta_str(md, META_REQUEST_ID);
     let trace_id = {
@@ -98,6 +98,12 @@ fn usage_extra(result: &ExecResult) -> UsageExtra {
             h.remove(http::header::TRANSFER_ENCODING);
             h
         },
+        base_url: auth.map(|a| a.attr("base_url").trim().to_string()).unwrap_or_default(),
+        auth_id: auth.map(|a| a.id.clone()).unwrap_or_default(),
+        reasoning_effort: meta_str(md, meta::REASONING_EFFORT).trim().to_string(),
+        service_tier: meta_str(md, meta::SERVICE_TIER).trim().to_string(),
+        generate: md.get(meta::GENERATE).and_then(Value::as_bool),
+        ..Default::default()
     }
 }
 /// `Response.metadata` key under which an executor may report exact token counts.
@@ -198,7 +204,7 @@ pub fn build_usage_record(
         stream: facts.stream,
         fail: result.error.as_ref().map(failure_of).unwrap_or_default(),
         tokens: facts.tokens.clone(),
-        extra: usage_extra(result),
+        extra: usage_extra(result, auth),
     }
 }
 

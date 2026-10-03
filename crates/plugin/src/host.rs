@@ -134,6 +134,7 @@ pub(crate) struct State {
     pub provider_models: HashMap<String, Vec<cpa_core::registry::ModelInfo>>,
     pub executor_providers: HashSet<String>,
     pub access_provider_keys: HashSet<String>,
+    pub usage_listener_keys: HashSet<String>,
     pub executor_adapters: HashMap<String, Arc<crate::adapters::executors::ExecutorAdapter>>,
     pub command_line_flags: HashMap<String, crate::cli::FlagRecord>,
     pub command_line_hits: HashSet<String>,
