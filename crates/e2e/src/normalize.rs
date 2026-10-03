@@ -55,12 +55,23 @@ pub struct Normalizer {
     now: i64,
     seen: HashMap<String, usize>,
     counters: HashMap<String, usize>,
+    /// `(auth index, placeholder)` of credential files, whose index hashes the absolute path.
+    auth_indexes: Vec<(String, String)>,
 }
 
 impl Normalizer {
     pub fn new(mock_port: u16, server_port: u16, work_dir: &str) -> Self {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        Normalizer { mock_port, server_port, work_dir: work_dir.to_string(), now, seen: HashMap::new(), counters: HashMap::new() }
+        Normalizer { mock_port, server_port, work_dir: work_dir.to_string(), now, seen: HashMap::new(), counters: HashMap::new(), auth_indexes: vec![] }
+    }
+
+    /// Registers a credential file (`<type>:<absolute path>` is the auth index seed) so its index,
+    /// which depends on where the work dir lives, is masked as `<auth-index:name>`.
+    pub fn mask_auth_file(&mut self, auth_type: &str, path: &str, name: &str) {
+        use sha2::{Digest, Sha256};
+        let sum = Sha256::digest(format!("{}:{path}", auth_type.trim().to_lowercase()).as_bytes());
+        let index: String = sum[..8].iter().map(|b| format!("{b:02x}")).collect();
+        self.auth_indexes.push((index, format!("<auth-index:{name}>")));
     }
 
     /// Stable index for `original` within `kind`: the same value always gets the same number.
@@ -79,7 +90,11 @@ impl Normalizer {
     }
 
     pub fn string(&mut self, s: &str) -> String {
-        let mut out = s
+        let mut out = s.to_string();
+        for (index, placeholder) in &self.auth_indexes {
+            out = out.replace(index.as_str(), placeholder);
+        }
+        let mut out = out
             .replace(&format!("127.0.0.1:{}", self.mock_port), "<mock>")
             .replace(&format!("127.0.0.1:{}", self.server_port), "<server>")
             .replace(&format!("localhost:{}", self.server_port), "<server>")

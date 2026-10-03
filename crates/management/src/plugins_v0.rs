@@ -209,7 +209,7 @@ pub(crate) async fn patch_config(
         keys.sort();
         for k in keys {
             if obj[k].is_null() {
-                m.remove(k.as_str());
+                m.shift_remove(k.as_str());
             } else {
                 m.insert(k.as_str().into(), json_to_yaml(&obj[k]));
             }

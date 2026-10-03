@@ -30,9 +30,19 @@ impl<'de> IntoDeserializer<'de, serde_json::Error> for Fold {
 }
 
 /// Renames the keys of `map` that match one of `fields` ignoring case; later duplicates win.
+/// Null members are dropped so the field keeps its zero value like Go's `null` handling
+/// (`#[serde(default)]` supplies it); only struct objects go through here, never maps.
 fn fold_keys(map: Map<String, Value>, fields: &[&str]) -> Map<String, Value> {
     let mut out = Map::new();
     for (key, value) in map {
+        if value.is_null() {
+            // A null duplicate still overrides an earlier value in Go, so clear it.
+            let lower = key.to_lowercase();
+            if let Some(f) = fields.iter().find(|f| **f == key || f.to_lowercase() == lower) {
+                out.shift_remove(*f);
+            }
+            continue;
+        }
         let target = if fields.contains(&key.as_str()) {
             key
         } else {
@@ -171,6 +181,14 @@ mod tests {
         assert_eq!(h.json.unwrap().get(), r#"{"a":[1,2]}"#);
         let h: Holder = from_slice(br#"{"json":null}"#).unwrap();
         assert!(h.json.is_none());
+    }
+
+    #[test]
+    fn null_keeps_zero_value_for_scalars_and_structs() {
+        let v: Outer = from_slice(br#"{"Count":null,"Resources":null,"Repo":null}"#).unwrap();
+        assert_eq!(v, Outer::default());
+        let v: Outer = from_slice(br#"{"Resources":[{"FileName":null,"URL":"u"}]}"#).unwrap();
+        assert_eq!(v.resources, vec![Inner { file_name: String::new(), url: "u".into() }]);
     }
 
     #[test]

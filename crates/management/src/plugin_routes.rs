@@ -16,9 +16,10 @@ use crate::state::ManagementState;
 fn write_plugin_response(resp: PluginHttpResponse) -> Response {
     let (status, headers, body) = resp.into_parts();
     let mut out = Response::new(Body::from(body));
-    *out.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+    // net/http panics on an out-of-range status; gin's recovery turns that into a 500.
+    *out.status_mut() = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     for (name, value) in headers {
-        if let (Ok(n), Ok(v)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(&value)) {
+        if let (Ok(n), Ok(v)) = (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_bytes(value.as_bytes())) {
             out.headers_mut().append(n, v);
         }
     }
@@ -56,6 +57,10 @@ fn plugin_http_error(message: &str, status: u16) -> PluginHttpResponse {
 
 /// `GET /v0/resource/plugins/...`: unauthenticated plugin resources.
 pub(crate) async fn resource_fallback(State(st): State<ManagementState>, req: Request) -> Response {
+    // Go `pluginResourceNoRoute`: hidden when Home mode is enabled.
+    if st.cfg().home.enabled {
+        return empty(404);
+    }
     let Some(host) = st.plugins.clone() else { return empty(404) };
     let (parts, _) = req.into_parts();
     let path = parts.extensions.get::<OriginalUri>().map(|u| u.0.path().to_string()).unwrap_or_else(|| parts.uri.path().to_string());
