@@ -1,8 +1,8 @@
 # E2E differential report
 
-- server: `target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-aa6df2d9dcacd6d49/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `d91ec15e9dbcda26`
+- goldens digest: `4cd5d0c49223dcaf`
 - scenarios: 1002 total, 1002 passed, 0 failed
 
 | scenario | result | what | first difference |
