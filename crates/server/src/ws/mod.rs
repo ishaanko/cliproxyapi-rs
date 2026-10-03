@@ -1084,9 +1084,14 @@ async fn run_session(
         args.on_selected_auth = Some(on_selected);
         if let Some(input) = steering_input {
             let manager = st.manager.clone();
+            let check_session = session_id.to_string();
             args.ws_input = Some(input);
+            // Go `sessionAuthByID`: the manager's view first, then the execution session's Home auth.
             args.ws_auth_check = Some(cpa_runtime::executor::WebsocketAuthCheck(std::sync::Arc::new(move |auth_id: &str| {
-                manager.get(auth_id).is_some_and(|a| !a.disabled && a.status != cpa_auth::Status::Disabled)
+                manager
+                    .get(auth_id)
+                    .or_else(|| manager.get_execution_session_auth_by_id(&check_session, auth_id))
+                    .is_some_and(|a| !a.disabled && a.status != cpa_auth::Status::Disabled)
             })));
         }
         if !execution_auth_id.is_empty() {

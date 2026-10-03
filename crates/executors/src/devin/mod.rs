@@ -430,9 +430,11 @@ impl DevinExecutor {
 /// `devinAuthLogFields`: the request log's auth type and masked session token.
 fn auth_log_fields(auth: &Auth) -> (String, String) {
     let api_key = credentials(Some(auth)).api_key;
-    let value = match api_key.len() {
+    // Byte-wise like Go's slicing, which may cut inside a multi-byte character.
+    let bytes = api_key.as_bytes();
+    let value = match bytes.len() {
         0 => String::new(),
-        n if n > 8 => format!("{}...{}", &api_key[..4], &api_key[n - 4..]),
+        n if n > 8 => format!("{}...{}", String::from_utf8_lossy(&bytes[..4]), String::from_utf8_lossy(&bytes[n - 4..])),
         _ => "***".to_string(),
     };
     ("devin".to_string(), value)
