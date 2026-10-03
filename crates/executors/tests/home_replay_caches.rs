@@ -155,7 +155,7 @@ fn decode_stored(raw: &[u8]) -> Vec<Vec<u8>> {
 async fn codex_home_stores_base64_json_and_slides_ttl() {
     let h = home().await;
     let item = codex_item(3);
-    assert!(cache_codex_reasoning_replay_items("gpt-5.4", "session-home", &[item.clone()]));
+    assert!(cache_codex_reasoning_replay_items("gpt-5.4", "session-home", std::slice::from_ref(&item)));
     let key = format!("cpa:codex:reasoning-replay:{}:{}", sha("gpt-5.4"), sha("session-home"));
     assert_eq!(h.kv.ttl(&key), Some(Duration::from_secs(3600)));
     assert_eq!(decode_stored(&h.kv.get(&key).unwrap()), vec![item.clone()]);
@@ -213,7 +213,7 @@ async fn xai_home_store_reports_backend_errors_and_keeps_previous_entry() {
     let h = home().await;
     // A plain function_call is a replay anchor (reasoning would need Grok-shaped encrypted content).
     let call = br#"{"type":"function_call","call_id":"c1","name":"run","arguments":"{}"}"#.to_vec();
-    assert_eq!(store_xai_reasoning_replay_items("grok-4", "s", &[call.clone()]), XaiReasoningReplayStoreStatus::Stored);
+    assert_eq!(store_xai_reasoning_replay_items("grok-4", "s", std::slice::from_ref(&call)), XaiReasoningReplayStoreStatus::Stored);
     let key = format!("cpa:xai:reasoning-replay:{}:{}", sha("grok-4"), sha("s"));
     assert_eq!(decode_stored(&h.kv.get(&key).unwrap()), vec![call.clone()]);
     assert_eq!(
@@ -271,7 +271,7 @@ async fn antigravity_home_descendant_chain_is_accepted_and_non_prefix_rotates_th
         ag_item("home-descendant-middle-123456"),
         ag_item("home-descendant-latest-123456"),
     );
-    assert!(cache_antigravity_reasoning_replay_items(AG_MODEL, "descendant", &[prefix.clone()]));
+    assert!(cache_antigravity_reasoning_replay_items(AG_MODEL, "descendant", std::slice::from_ref(&prefix)));
     let (_, stale) = get_antigravity_reasoning_replay_items_with_snapshot_required(AG_MODEL, "descendant");
     let (_, first) = get_antigravity_reasoning_replay_items_with_snapshot_required(AG_MODEL, "descendant");
     assert!(replace_antigravity_reasoning_replay_items_if_unchanged(AG_MODEL, "descendant", &first, &[prefix.clone(), middle.clone()]).unwrap());
@@ -283,7 +283,7 @@ async fn antigravity_home_descendant_chain_is_accepted_and_non_prefix_rotates_th
     assert!(cache_antigravity_reasoning_replay_items(AG_MODEL, "rotate", &[old]));
     let (_, a) = get_antigravity_reasoning_replay_items_with_snapshot_required(AG_MODEL, "rotate");
     let (_, b) = get_antigravity_reasoning_replay_items_with_snapshot_required(AG_MODEL, "rotate");
-    assert!(replace_antigravity_reasoning_replay_items_if_unchanged(AG_MODEL, "rotate", &a, &[new.clone()]).unwrap());
+    assert!(replace_antigravity_reasoning_replay_items_if_unchanged(AG_MODEL, "rotate", &a, std::slice::from_ref(&new)).unwrap());
     assert!(
         !replace_antigravity_reasoning_replay_items_if_unchanged(AG_MODEL, "rotate", &b, &[new, newest]).unwrap(),
         "a descendant of the replaced chain must not cross the non-prefix reset"

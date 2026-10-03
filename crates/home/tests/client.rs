@@ -145,7 +145,7 @@ async fn get_config_stops_after_cluster_transport_failure_and_disabled_discovery
     let mut disabled = cfg("127.0.0.1", 1);
     disabled.disable_cluster_discovery = true;
     let c = Client::new(disabled);
-    assert_eq!(c.refresh_cluster_nodes().await.unwrap(), false);
+    assert!(!c.refresh_cluster_nodes().await.unwrap());
 }
 
 #[tokio::test]

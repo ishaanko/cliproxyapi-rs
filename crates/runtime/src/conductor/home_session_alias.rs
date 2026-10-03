@@ -77,7 +77,7 @@ impl AliasCache {
         }
         let ttl = if ttl.is_zero() { DEFAULT_ALIAS_TTL } else { ttl };
         self.ops += 1;
-        if self.ops % CLEANUP_OPS == 0 {
+        if self.ops.is_multiple_of(CLEANUP_OPS) {
             self.cleanup(now);
         }
 

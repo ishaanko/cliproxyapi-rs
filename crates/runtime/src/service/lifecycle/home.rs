@@ -263,11 +263,9 @@ async fn run_supervisor(inner: Weak<Inner>, cancel: Arc<Kill>, home_cfg: HomeCon
                     service.home_fatal.notify_one();
                 }
             }
-            (_, Err(e)) => {
-                if !cancel.is_dead() {
-                    tracing::error!("failed to flush Home concurrency releases: {e}");
-                    service.home_fatal.notify_one();
-                }
+            (_, Err(e)) if !cancel.is_dead() => {
+                tracing::error!("failed to flush Home concurrency releases: {e}");
+                service.home_fatal.notify_one();
             }
             _ => {}
         }

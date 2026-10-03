@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(canonical_concurrency_model_key("(high)"), "(high)");
         assert!(!recognized_concurrency_suffix("99999999999"));
         assert!(!recognized_concurrency_suffix(""));
-        assert!(valid_canonical_concurrency_model_key("").1 == false);
+        assert!(!valid_canonical_concurrency_model_key("").1);
     }
 
     #[test]

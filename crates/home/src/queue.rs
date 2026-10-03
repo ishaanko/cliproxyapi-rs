@@ -213,6 +213,7 @@ pub(crate) fn test_lock() -> parking_lot::MutexGuard<'static, ()> {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)] // test_lock serializes tests over the global queue
 mod tests {
     use super::*;
 
