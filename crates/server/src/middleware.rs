@@ -49,6 +49,28 @@ pub async fn cors(req: Request, next: Next) -> Response {
     resp
 }
 
+/// Paths the Home heartbeat gate lets through: management, plugin resources and the panel page.
+fn is_home_gate_exempt(path: &str) -> bool {
+    path == "/v0/management"
+        || path.starts_with("/v0/management/")
+        || path == "/v8/management"
+        || path.starts_with("/v8/management/")
+        || path.starts_with("/v0/resource/plugins/")
+        || path == "/management.html"
+}
+
+/// `homeHeartbeatMiddleware`: while Home mode is on, every endpoint answers a bare 503 until the
+/// Home control connection reports a healthy heartbeat.
+pub async fn home_heartbeat(State(st): State<AppState>, req: Request, next: Next) -> Response {
+    if !st.cfg().home.enabled || is_home_gate_exempt(req.uri().path()) {
+        return next.run(req).await;
+    }
+    match cpa_home::kv::current() {
+        Some(client) if client.heartbeat_ok() => next.run(req).await,
+        _ => Reply::new(503).into_response(),
+    }
+}
+
 /// `exampleAPIKeySafeModeMiddleware`.
 pub async fn safe_mode(State(st): State<AppState>, req: Request, next: Next) -> Response {
     if !st.example_api_key_safe_mode {

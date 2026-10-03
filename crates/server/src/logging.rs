@@ -40,6 +40,19 @@ pub fn short_request_id(request_id: &str) -> String {
     }
 }
 
+/// Applies Go `json.Marshal`'s default HTML escaping to compact JSON text: `<`, `>`, `&` and
+/// U+2028/9 can only occur inside strings, so a plain replace is safe.
+pub(crate) fn go_json_html_escape(json: String) -> String {
+    if !json.contains(['<', '>', '&', '\u{2028}', '\u{2029}']) {
+        return json;
+    }
+    json.replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 /// `GenerateRequestID`: UUIDv7.
 pub fn generate_request_id() -> String {
     uuid::Uuid::now_v7().to_string()
@@ -116,6 +129,62 @@ impl Visit for FieldCollector {
     }
 }
 
+/// One formatted application log line plus the facts the Home forwarder needs.
+pub(crate) struct LogLine {
+    /// The Go `LogFormatter` line, newline terminated.
+    pub text: String,
+    /// logrus level name (`warning`, not `warn`).
+    pub level: &'static str,
+    pub time: chrono::DateTime<chrono::Local>,
+    /// Full (unshortened) request id from the event field or the task-local, if any.
+    pub request_id: Option<String>,
+}
+
+/// The Go `LogFormatter.Format` for one tracing event.
+pub(crate) fn render_line(event: &Event<'_>) -> LogLine {
+    let mut fields = FieldCollector::default();
+    event.record(&mut fields);
+
+    let request_id = fields
+        .request_id
+        .filter(|id| !id.is_empty())
+        .or_else(|| REQUEST_ID.try_with(|id| id.clone()).ok().filter(|id| !id.is_empty()));
+    let req = request_id.as_deref().map(short_request_id).unwrap_or_else(|| "--------".into());
+
+    let meta = event.metadata();
+    let (level, level_name) = match *meta.level() {
+        Level::ERROR => ("error", "error"),
+        Level::WARN => ("warn", "warning"),
+        Level::INFO => ("info", "info"),
+        Level::DEBUG => ("debug", "debug"),
+        Level::TRACE => ("trace", "trace"),
+    };
+    let message = fields.message.trim_end_matches(['\r', '\n']);
+
+    let mut extra = String::new();
+    for key in FIELD_ORDER {
+        if let Some((_, value, is_str)) = fields.fields.iter().find(|(k, _, _)| k == key) {
+            let rendered = if *is_str && QUOTED_FIELDS.contains(key) {
+                go_quote(value.as_bytes())
+            } else {
+                value.clone()
+            };
+            let _ = write!(extra, " {key}={rendered}");
+        }
+    }
+
+    let time = chrono::Local::now();
+    let ts = time.format("%Y-%m-%d %H:%M:%S");
+    let text = match (meta.file(), meta.line()) {
+        (Some(file), Some(line)) => {
+            let base = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or(file);
+            format!("[{ts}] [{req}] [{level:<5}] [{base}:{line}] {message}{extra}\n")
+        }
+        _ => format!("[{ts}] [{req}] [{level:<5}] {message}{extra}\n"),
+    };
+    LogLine { text, level: level_name, time, request_id }
+}
+
 /// The Go `LogFormatter`.
 pub struct GoLogFormat;
 
@@ -125,45 +194,7 @@ where
     N: for<'a> FormatFields<'a> + 'static,
 {
     fn format_event(&self, _ctx: &FmtContext<'_, S, N>, mut writer: Writer<'_>, event: &Event<'_>) -> fmt::Result {
-        let mut fields = FieldCollector::default();
-        event.record(&mut fields);
-
-        let request_id = fields
-            .request_id
-            .filter(|id| !id.is_empty())
-            .or_else(|| REQUEST_ID.try_with(|id| id.clone()).ok().filter(|id| !id.is_empty()));
-        let req = request_id.map(|id| short_request_id(&id)).unwrap_or_else(|| "--------".into());
-
-        let meta = event.metadata();
-        let level = match *meta.level() {
-            Level::ERROR => "error",
-            Level::WARN => "warn",
-            Level::INFO => "info",
-            Level::DEBUG => "debug",
-            Level::TRACE => "trace",
-        };
-        let message = fields.message.trim_end_matches(['\r', '\n']);
-
-        let mut extra = String::new();
-        for key in FIELD_ORDER {
-            if let Some((_, value, is_str)) = fields.fields.iter().find(|(k, _, _)| k == key) {
-                let rendered = if *is_str && QUOTED_FIELDS.contains(key) {
-                    go_quote(value.as_bytes())
-                } else {
-                    value.clone()
-                };
-                let _ = write!(extra, " {key}={rendered}");
-            }
-        }
-
-        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-        match (meta.file(), meta.line()) {
-            (Some(file), Some(line)) => {
-                let base = Path::new(file).file_name().and_then(|n| n.to_str()).unwrap_or(file);
-                writeln!(writer, "[{ts}] [{req}] [{level:<5}] [{base}:{line}] {message}{extra}")
-            }
-            _ => writeln!(writer, "[{ts}] [{req}] [{level:<5}] {message}{extra}"),
-        }
+        writer.write_str(&render_line(event).text)
     }
 }
 
@@ -290,7 +321,12 @@ pub fn init() -> Arc<LogControl> {
     let fmt_layer = tracing_subscriber::fmt::layer()
         .event_format(GoLogFormat)
         .with_writer(writer.clone());
-    let _ = tracing_subscriber::registry().with(filter).with(fmt_layer).try_init();
+    // The Home forwarder layer follows the level filter, like the logrus hook follows the level.
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(crate::home_app_log::HomeAppLogLayer::global())
+        .with(fmt_layer)
+        .try_init();
     Arc::new(LogControl {
         writer,
         level,
