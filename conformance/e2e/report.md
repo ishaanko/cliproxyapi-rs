@@ -2,7 +2,7 @@
 
 - server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `27f58474009e07bf`
+- goldens digest: `b5e44b319ad7f6c6`
 - scenarios: 1003 total, 1003 passed, 0 failed
 
 | scenario | result | what | first difference |
@@ -679,7 +679,7 @@
 | `reqlog.codex.failover_stream` | PASS | stream bootstrap failover logs both attempts |  |
 | `reqlog.gemini.upstream_400` | PASS | upstream client error with request-log on |  |
 | `reqlog.compat.mid_error` | PASS | stream failing after some output |  |
-| `reqlog.commercial.mid_error` | PASS | commercial mode with request-log on: a 200 stream failing after some output still writes the forced error log |  |
+| `reqlog.commercial.mid_error` | PASS | commercial mode with request-log on: a 200 stream failing after some output writes no log file (as Go) |  |
 | `reqlog.forced.claude.upstream_500` | PASS | error-only log of a failing request (deferred API REQUEST) |  |
 | `reqlog.forced.codex.upstream_500` | PASS | error-only log of a failing request (deferred API REQUEST) |  |
 | `reqlog.off.success` | PASS | request-log off and a successful call: no file |  |
