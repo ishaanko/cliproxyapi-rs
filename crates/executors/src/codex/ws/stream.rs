@@ -12,7 +12,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::conn::Read;
 use super::errors::{clear_replay_on_error_frame, encode_as_sse, map_read_error, parse_error_frame};
-use super::{SESSION_READ_CLOSED, WsCall, WsPlan, connect_and_send, is_downstream_websocket, read_error_stage};
+use super::{SESSION_READ_CLOSED, WS_EXECUTOR_TYPE, WsCall, WsPlan, connect_and_send, is_downstream_websocket, read_error_stage};
 use crate::codex::CodexExecutor;
 use crate::codex::multi_agent_v2::restore_response;
 use crate::codex::reasoning::{cache_replay_from_completed, clear_replay_on_invalid_signature};
@@ -24,6 +24,7 @@ use crate::codex::terminal::{
 };
 use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::responses_usage::ensure_responses_usage_details;
+use crate::helps::ttft::observe_responses_token_event;
 use crate::helps::usage::{accounting::Detail, parse::parse_codex_usage, reporter::UsageReporter};
 
 const STREAM_CHANNEL_CAPACITY: usize = 64;
@@ -48,6 +49,7 @@ struct WsStream {
     saw_output_delta: bool,
     downstream_ws: bool,
     usage: Option<Detail>,
+    reporter: UsageReporter,
 }
 
 fn is_completion_type(event_type: &str) -> bool {
@@ -60,6 +62,7 @@ impl WsStream {
         if payload.is_empty() {
             return Step::Skip;
         }
+        observe_responses_token_event(&self.reporter, &payload);
         self.plan.log_frame(&payload);
         let payload = restore_response(&payload, restore_multi_agent);
         let frame = cpa_json::parse(&payload);
@@ -91,6 +94,10 @@ impl WsStream {
                 cache_replay_from_completed(&self.plan.prepared.replay_scope, &cpa_json::parse(&completed));
             }
             self.usage = parse_codex_usage(&completed);
+            match &self.usage {
+                Some(detail) => self.reporter.publish(detail.clone()),
+                None => self.reporter.ensure_published(),
+            }
         }
         let completion = is_completion_type(&event_type);
         let (chunks, payload) = if self.downstream_ws {
@@ -129,12 +136,28 @@ impl CodexExecutor {
         if opts.alt == "responses/compact" {
             return Err(status_error(400, "streaming not supported for /responses/compact"));
         }
+        let reporter = self.reporter(WS_EXECUTOR_TYPE, auth, &req, &opts);
+        let result = self.execute_stream_ws_reported(cfg, auth, req, opts, reporter.clone()).await;
+        reporter.track_failure(&result);
+        result
+    }
+
+    async fn execute_stream_ws_reported(
+        &self,
+        cfg: std::sync::Arc<cpa_config::Config>,
+        auth: &Auth,
+        req: Request,
+        opts: Options,
+        reporter: UsageReporter,
+    ) -> Result<StreamResult, ExecError> {
         let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsStream)?;
+        reporter.set_translated_reasoning_effort(&plan.body, plan.prepared.to.as_str());
         let mut call = connect_and_send(&opts, &plan, true).await?;
+        reporter.start_response_ttft();
         if let Some(input) = opts.ws_input.clone()
             && (cfg.codex.response_steering || cfg.codex_response_steering)
         {
-            return Ok(self.stream_duplex(cfg, auth, req, opts, input, call, plan));
+            return Ok(self.stream_duplex(cfg, auth, req, opts, input, call, plan, reporter));
         }
         let headers = std::mem::take(&mut call.handshake_headers);
 
@@ -150,6 +173,7 @@ impl CodexExecutor {
             saw_output_delta: false,
             downstream_ws: is_downstream_websocket(&opts),
             usage: None,
+            reporter,
         };
         let (usage_tx, usage_rx) = oneshot::channel::<Value>();
 
@@ -194,6 +218,7 @@ impl CodexExecutor {
                         }
                         stream.plan.log_error("upstream_error", &err.message);
                         if time_reached {
+                            stream.reporter.publish_failure(&err);
                             bootstrap_terminal_err = Some(err);
                             break;
                         }
@@ -215,6 +240,7 @@ impl CodexExecutor {
                             call.set_close_reason("bootstrap_overload");
                             return Err(new_bootstrap_overload_err(&body));
                         }
+                        stream.reporter.publish_failure(&err);
                         bootstrap_terminal_err = Some(err);
                         break;
                     }
@@ -222,6 +248,7 @@ impl CodexExecutor {
                         stream.plan.log_error("upstream_error", &err.message);
                         call.invalidate_with("terminal_empty_incomplete", &err, true);
                         call.unlock();
+                        stream.reporter.publish_failure(&err);
                         bootstrap_terminal_err = Some(err);
                         break;
                     }
@@ -284,13 +311,16 @@ impl WsStream {
                     call.set_close_reason("read_error");
                     let mapped = map_read_error(&err);
                     self.plan.log_error(read_error_stage(&err), &mapped.message);
+                    self.reporter.publish_failure(&mapped);
                     let _ = tx.send(Err(mapped)).await;
                     return;
                 }
                 None => {
                     call.set_close_reason("read_error");
                     self.plan.log_error("read", SESSION_READ_CLOSED);
-                    let _ = tx.send(Err(ExecError::new(0, SESSION_READ_CLOSED))).await;
+                    let closed = ExecError::new(0, SESSION_READ_CLOSED);
+                    self.reporter.publish_failure(&closed);
+                    let _ = tx.send(Err(closed)).await;
                     return;
                 }
             };
@@ -310,6 +340,7 @@ impl WsStream {
                             err
                         }
                     };
+                    self.reporter.publish_failure(&err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
@@ -327,6 +358,7 @@ impl WsStream {
                             err
                         }
                     };
+                    self.reporter.publish_failure(&err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
@@ -335,6 +367,7 @@ impl WsStream {
                     call.invalidate_with("terminal_empty_incomplete", &err, true);
                     call.unlock();
                     call.set_close_reason("terminal_empty_incomplete");
+                    self.reporter.publish_failure(&err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }

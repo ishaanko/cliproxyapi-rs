@@ -22,7 +22,7 @@ use tokio::sync::{Notify, mpsc, oneshot, watch};
 use super::conn::Read;
 use super::errors::{clear_replay_on_error_frame, map_read_error, map_write_error, parse_error_frame};
 use super::session::Session;
-use super::{SESSION_READ_CLOSED, WsCall, WsPlan, build_request_frame};
+use super::{SESSION_READ_CLOSED, WS_EXECUTOR_TYPE, WsCall, WsPlan, build_request_frame};
 use crate::codex::CodexExecutor;
 use crate::codex::multi_agent_v2::restore_response;
 use crate::codex::reasoning::{ReplayScope, cache_replay_from_completed, clear_replay_on_invalid_signature};
@@ -31,6 +31,9 @@ use crate::codex::terminal::{OutputItems, normalize_completion, patch_completed_
 use crate::codex::upstream_websocket_replay_required;
 use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::responses_usage::ensure_responses_usage_details;
+use crate::helps::ttft::observe_responses_token_event;
+use crate::helps::usage::{parse::parse_codex_usage, reporter::UsageReporter};
+use cpa_translator::Format;
 
 /// Outstanding creates and queued creates are capped (Go: 16).
 const MAX_OUTSTANDING: usize = 16;
@@ -132,9 +135,21 @@ struct Shared {
     cancel: watch::Sender<bool>,
     /// The first failure the writer hit, preferred by the reader as the connection error.
     write_error: Mutex<Option<ExecError>>,
+    /// The downstream input ended: the client went away (Go: the request context is done), so
+    /// the stream closes without an error or a failed usage record.
+    client_gone: std::sync::atomic::AtomicBool,
 }
 
 impl Shared {
+    fn client_gone(&self) {
+        self.client_gone.store(true, std::sync::atomic::Ordering::Release);
+        self.cancel.send_replace(true);
+    }
+
+    fn is_client_gone(&self) -> bool {
+        self.client_gone.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn fail(&self, err: ExecError) {
         self.write_error.lock().get_or_insert(err);
         self.cancel.send_replace(true);
@@ -168,6 +183,24 @@ async fn wait_cancelled(rx: &mut watch::Receiver<bool>) {
 /// policy; this wrapper applies only after the stream started.
 fn connection_error(cause: ExecError) -> ExecError {
     cause.with_code(ErrorCode::RequestScoped)
+}
+
+/// Makes the reporter of each response of the socket (Go: `NewExecutorUsageReporter(ctx, e, req.Model, auth)`
+/// per `response.created` after the first).
+struct ReporterFactory {
+    auth: Auth,
+    model: String,
+    opts: Options,
+}
+
+impl ReporterFactory {
+    /// A reporter for a response created with `settings`, its reasoning effort read from the
+    /// translated request body.
+    fn reporter(&self, settings: &Settings, to: Format) -> UsageReporter {
+        let reporter = UsageReporter::new("codex", WS_EXECUTOR_TYPE, &self.model, Some(&self.auth), Some(&self.opts));
+        reporter.set_translated_reasoning_effort(&settings.client_body, to.as_str());
+        reporter
+    }
 }
 
 /// A locally generated rejection frame: `{"error":{"message":..,"type":"invalid_request_error"},"status":400,"type":"error"}`
@@ -395,7 +428,7 @@ impl Writer {
             };
             let payload = match message {
                 None => {
-                    self.shared.fail(ExecError::new(0, "context canceled"));
+                    self.shared.client_gone();
                     return;
                 }
                 Some(Err(err)) => {
@@ -459,6 +492,7 @@ impl CodexExecutor {
         input: WebsocketInput,
         mut call: WsCall,
         plan: WsPlan,
+        reporter: UsageReporter,
     ) -> StreamResult {
         let headers = std::mem::take(&mut call.handshake_headers);
         // This first frame was successfully written before the handoff.
@@ -486,7 +520,9 @@ impl CodexExecutor {
             changed: Notify::new(),
             cancel,
             write_error: Mutex::new(None),
+            client_gone: std::sync::atomic::AtomicBool::new(false),
         });
+        let reporters = ReporterFactory { auth: auth.clone(), model: req.model.clone(), opts: opts.clone() };
         let (out_tx, out_rx) = mpsc::channel::<Result<Bytes, ExecError>>(1);
         let (ready_tx, ready_rx) = oneshot::channel();
         let plan = Arc::new(plan);
@@ -507,7 +543,7 @@ impl CodexExecutor {
         };
         let writer_task = tokio::spawn(writer.run(ready_rx));
         tokio::spawn(async move {
-            read_loop(&mut call, &plan, &shared, &out_tx, ready_tx).await;
+            read_loop(&mut call, &plan, &shared, &out_tx, ready_tx, reporter, &reporters).await;
             // Closing releases a writer blocked in the network; join it before releasing the
             // execution session so no task outlives its socket.
             shared.cancel.send_replace(true);
@@ -566,7 +602,10 @@ async fn read_loop(
     shared: &Shared,
     out: &mpsc::Sender<Result<Bytes, ExecError>>,
     ready: oneshot::Sender<()>,
+    mut reporter: UsageReporter,
+    reporters: &ReporterFactory,
 ) {
+    let to = plan.prepared.to;
     let mut ready = Some(ready);
     let mut cancel = shared.cancel.subscribe();
     let model_level_cooling = plan.model_level_cooling;
@@ -594,8 +633,11 @@ async fn read_loop(
                 if let Some(write_err) = shared.write_error.lock().take() {
                     err = write_err;
                 }
-                if !out.is_closed() {
-                    let _ = send(Err(connection_error(err))).await;
+                // The client going away is not an upstream failure: nothing is published or sent.
+                if !shared.is_client_gone() && !out.is_closed() {
+                    let err = connection_error(err);
+                    reporter.publish_failure(&err);
+                    let _ = send(Err(err)).await;
                 }
                 return;
             }
@@ -608,13 +650,22 @@ async fn read_loop(
         let establishing = first_response && event_type == "response.created";
         if event_type == "response.created" {
             if let Err(err) = on_response_created(shared, &root, first_response) {
-                let _ = send(Err(connection_error(err))).await;
+                let err = connection_error(err);
+                reporter.publish_failure(&err);
+                let _ = send(Err(err)).await;
                 return;
+            }
+            if !first_response {
+                // Every later response of the socket is its own request with its own record.
+                let current = Arc::clone(&shared.state.lock().current);
+                reporter = reporters.reporter(&current, to);
+                reporter.start_response_ttft();
             }
             first_response = false;
             response_active = true;
             items = OutputItems::default();
         }
+        observe_responses_token_event(&reporter, &payload);
         plan.log_frame(&payload);
 
         // Steering acknowledgements, pending notifications and failures are opaque: IDs, input,
@@ -666,6 +717,7 @@ async fn read_loop(
             {
                 // Account health is independent of which queued request failed. The conductor
                 // records the original classification without replaying this started stream.
+                reporter.publish_failure(&err);
                 if send(Ok(Bytes::from(payload))).await {
                     let _ = send(Err(err)).await;
                 }
@@ -674,6 +726,7 @@ async fn read_loop(
         }
 
         let mut event_settings = Arc::clone(&shared.state.lock().current);
+        let mut event_reporter = reporter.clone();
         if !first_response && (event_type == "response.failed" || event_type == "error") {
             let mut failed_id = root.g("response.id").str();
             if failed_id.is_empty() {
@@ -688,6 +741,7 @@ async fn read_loop(
                     && ((!st.pending.is_empty() && response_active) || !st.unacknowledged_steers.is_empty());
                 if !st.pending.is_empty() && !current_failure && !ambiguous {
                     if let Some(next) = st.pending.pop_front() {
+                        event_reporter = reporters.reporter(&next, to);
                         event_settings = next;
                     }
                 } else if !ambiguous {
@@ -701,9 +755,10 @@ async fn read_loop(
                 // Without a response id, assigning this failure could corrupt either request.
                 // Preserve the event and fail the socket without guessing a scope, replaying
                 // input, or cooling the credential.
-                let err = ExecError::new(0, "cannot associate websocket failure with a response or pending create");
+                let err = connection_error(ExecError::new(0, "cannot associate websocket failure with a response or pending create"));
+                reporter.publish_failure(&err);
                 if send(Ok(Bytes::from(payload))).await {
-                    let _ = send(Err(connection_error(err))).await;
+                    let _ = send(Err(err)).await;
                 }
                 return;
             }
@@ -734,14 +789,16 @@ async fn read_loop(
         if let Some(err) = replay_err {
             // A failed replay cleanup replaces the upstream error and ends the stream.
             plan.log_error("replay_clear_error", &err.message);
+            event_reporter.publish_failure(&err);
             let _ = send(Err(err)).await;
             return;
         }
-        if let Some(err) = terminal_err
-            && first_response
-        {
-            let _ = send(Err(err)).await;
-            return;
+        if let Some(err) = terminal_err {
+            event_reporter.publish_failure(&err);
+            if first_response {
+                let _ = send(Err(err)).await;
+                return;
+            }
         }
 
         if event_type == "response.output_item.done" {
@@ -762,6 +819,10 @@ async fn read_loop(
             }
             if event_type != "response.incomplete" {
                 cache_replay_from_completed(&current.replay_scope, &cpa_json::parse(&payload));
+            }
+            match parse_codex_usage(&payload) {
+                Some(detail) => reporter.publish(detail),
+                None => reporter.ensure_published(),
             }
         }
         if !send(Ok(Bytes::from(ensure_responses_usage_details(&payload)))).await {

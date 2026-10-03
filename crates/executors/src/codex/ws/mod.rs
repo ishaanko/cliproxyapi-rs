@@ -43,7 +43,11 @@ use super::{CodexExecutor, META_DOWNSTREAM_WEBSOCKET, META_REQUIRED_UPSTREAM_WEB
 use crate::helps::apply_patch::APPLY_PATCH_UPSTREAM_ERROR_MESSAGE;
 use crate::helps::proxy::effective_proxy_setting;
 use crate::helps::responses_usage::ensure_responses_usage_details;
+use crate::helps::ttft::observe_responses_token_event;
 use crate::helps::usage::{parse::parse_codex_usage, reporter::UsageReporter};
+
+/// Go's executor type name of the websocket executor, as the usage record reports it.
+pub(super) const WS_EXECUTOR_TYPE: &str = "CodexWebsocketsExecutor";
 
 pub use self::session::{close_execution_session, close_sessions_for_auth_id as close_codex_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
@@ -202,8 +206,17 @@ impl CodexExecutor {
         if opts.alt == "responses/compact" {
             return self.execute_http(auth, req, opts).await;
         }
-        let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsExecute)?;
+        let reporter = self.reporter(WS_EXECUTOR_TYPE, auth, &req, &opts);
+        let result = self.execute_ws_reported(&cfg, auth, req, opts, &reporter).await;
+        reporter.track_failure(&result);
+        result
+    }
+
+    async fn execute_ws_reported(&self, cfg: &Arc<Config>, auth: &Auth, req: Request, opts: Options, reporter: &UsageReporter) -> Result<Response, ExecError> {
+        let plan = self.prepare_ws(cfg, auth, &req, &opts, Mode::WsExecute)?;
+        reporter.set_translated_reasoning_effort(&plan.body, plan.prepared.to.as_str());
         let mut call = connect_and_send(&opts, &plan, false).await?;
+        reporter.start_response_ttft();
         let prepared = &plan.prepared;
 
         let mut items = OutputItems::default();
@@ -226,6 +239,7 @@ impl CodexExecutor {
             if payload.is_empty() {
                 continue;
             }
+            observe_responses_token_event(reporter, &payload);
             plan.log_frame(&payload);
             let payload = restore_response(&payload, call.restore_multi_agent);
             let frame = cpa_json::parse(&payload);
@@ -265,6 +279,10 @@ impl CodexExecutor {
                         cache_replay_from_completed(&prepared.replay_scope, &cpa_json::parse(&payload));
                     }
                     let detail = parse_codex_usage(&payload);
+                    match &detail {
+                        Some(detail) => reporter.publish(detail.clone()),
+                        None => reporter.ensure_published(),
+                    }
                     let mut param = Param::default();
                     let out = cpa_translator::translate_non_stream(
                         &Ctx::default(),

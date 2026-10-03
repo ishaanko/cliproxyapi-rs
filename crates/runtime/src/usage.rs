@@ -17,6 +17,8 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use parking_lot::Mutex;
 use serde::{Serialize, Serializer};
 
+use crate::usage_accounting::Detail;
+
 /// Events kept in the request ring buffer.
 pub const REQUEST_RING_CAPACITY: usize = 1000;
 /// Upstream failure bodies are truncated to this many bytes.
@@ -37,6 +39,17 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// The five counters the aggregates and the request feed report, from a full detail.
+    pub fn from_detail(d: &Detail) -> Self {
+        TokenUsage {
+            input_tokens: d.input_tokens,
+            output_tokens: d.output_tokens,
+            reasoning_tokens: d.reasoning_tokens,
+            cached_tokens: d.cached_tokens,
+            total_tokens: d.total_tokens,
+        }
+    }
+
     fn add(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
@@ -69,10 +82,14 @@ pub struct UsageExtra {
     /// Fields only usage plugins read (Go: `usage.Record` beyond the queue record).
     pub base_url: String,
     pub auth_id: String,
+    /// Id of the executor attempt (the reporter's request id); the queue's `execution_id`.
+    pub execution_id: String,
+    /// Tier and model the upstream response reported; empty when unknown.
     pub response_service_tier: String,
     pub response_model: String,
-    pub cache_read_tokens: i64,
-    pub cache_creation_tokens: i64,
+    /// Full token detail the executor reported (cache read/creation, canonical breakdown). Left at
+    /// its default for records built without a reporter; see [`UsageRecord::detail`].
+    pub detail: Detail,
     /// Account the usage queue reports as the record's `source` (API key or e-mail); empty
     /// falls back to `UsageRecord::source`.
     pub queue_source: String,
@@ -124,6 +141,29 @@ pub struct UsageRecord {
     pub tokens: TokenUsage,
     #[serde(skip)]
     pub extra: UsageExtra,
+}
+
+impl UsageRecord {
+    /// The record's token detail: what the executor reported, else one rebuilt from `tokens`
+    /// (records made without a reporter), with the breakdown ensured for the provider.
+    pub fn detail(&self) -> Detail {
+        let d = &self.extra.detail;
+        let detail = if d.has_token_usage() || self.tokens == TokenUsage::default() {
+            d.clone()
+        } else {
+            let t = &self.tokens;
+            Detail {
+                input_tokens: t.input_tokens,
+                output_tokens: t.output_tokens,
+                reasoning_tokens: t.reasoning_tokens,
+                cached_tokens: t.cached_tokens,
+                cache_read_tokens: t.cached_tokens,
+                total_tokens: t.total_tokens,
+                ..Default::default()
+            }
+        };
+        crate::usage_accounting::ensure_token_breakdown_for_provider(detail, &self.provider, &self.executor_type)
+    }
 }
 
 /// A [`UsageRecord`] in the ring buffer: the record plus its sequence number. Serializes to the
