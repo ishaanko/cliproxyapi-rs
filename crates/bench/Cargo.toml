@@ -23,3 +23,5 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 futures-util = "0.3"
 memchr = "2"
+perf-event2 = "0.7"
+tokio-tungstenite = "0.29"
