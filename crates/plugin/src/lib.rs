@@ -24,6 +24,7 @@ pub mod loader;
 pub mod management;
 pub mod platform;
 pub mod rpc;
+pub mod sniff;
 pub mod usage_helpers;
 
 pub use adapters::access::{AccessAdapter, AccessFailure, AccessResult};

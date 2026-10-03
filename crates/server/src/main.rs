@@ -354,6 +354,7 @@ async fn serve_proxy(
     // models register on the first pass (Go: `pluginHost.ApplyConfig` in cmd/server).
     plugin_host.set_auth_manager(Some(service.manager()));
     plugin_host.sync_runtime_config(&service.config(), &service.manager(), &usage).await;
+    refresh_plugin_routes(&plugin_host).await;
     if let Err(e) = service.start().await {
         tracing::error!("failed to build proxy service: {e}");
         return 0;
@@ -400,6 +401,7 @@ async fn serve_proxy(
         commit: build.commit.clone(),
         build_date: build.build_date.clone(),
     })
+    .with_plugin_host(plugin_host.clone())
     .with_reload_hook(Arc::new(move || {
         let service = reload_service.clone();
         Box::pin(async move {
@@ -418,6 +420,7 @@ async fn serve_proxy(
             while rx.changed().await.is_ok() {
                 let next = rx.borrow().clone();
                 host.sync_runtime_config(&next, &service.manager(), &usage).await;
+                refresh_plugin_routes(&host).await;
                 host.sync_model_runtime(&service.manager(), service.registry()).await;
                 service.refresh_model_registrations().await;
             }
@@ -487,6 +490,16 @@ async fn serve_proxy(
     plugin_host.set_model_executor(None);
     plugin_host.shutdown_runtime(&service.manager(), service.registry()).await;
     0
+}
+
+/// Go `RefreshPluginManagementRoutes`: plugin routes may not shadow built-in management routes.
+async fn refresh_plugin_routes(host: &Arc<cpa_plugin::Host>) {
+    let reserved: std::collections::HashSet<String> = cpa_management::GIN_ROUTES
+        .iter()
+        .filter(|(_, path)| path.starts_with("/v0/management/") || *path == "/v0/management")
+        .map(|(method, path)| format!("{} {path}", method.to_uppercase()))
+        .collect();
+    host.register_management_routes(&cpa_plugin::CallCtx::background(), &reserved).await;
 }
 
 async fn shutdown_signal() {

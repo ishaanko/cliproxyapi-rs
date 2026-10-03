@@ -72,7 +72,11 @@ pub(crate) async fn auth_url(State(st): State<ManagementState>, req: Request) ->
         return Err(ApiError::bad_request("provider is required"));
     }
     let Some(provider) = v8_provider(&name) else {
-        return Err(ApiError::new(404, "provider_not_found"));
+        let query = crate::http::query_pairs(uri);
+        return match crate::plugin_routes::serve_plugin_auth_url(&st, "/v8/management/oauth/auth-url", &query).await {
+            Some(resp) => Ok(resp),
+            None => Err(ApiError::new(404, "provider_not_found")),
+        };
     };
     start_login(&st, uri, provider).await
 }

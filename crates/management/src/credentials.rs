@@ -194,6 +194,10 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
     let index_filter = query_trim(req.uri(), "auth_index");
     let observed_at = Utc::now();
     let cooldowns_known = !st.cfg().home.enabled;
+    let quota_supported = match &st.plugins {
+        Some(host) => Some(host.quota_supported_providers_set(&cpa_plugin::CallCtx::background()).await),
+        None => None,
+    };
     let auths = st.registry.list();
     // Building entries stats credential files.
     let body = blocking(move || {
@@ -204,6 +208,7 @@ pub(crate) async fn list(State(st): State<ManagementState>, req: Request) -> Api
             index_filter,
             observed_at,
             cooldowns_known,
+            quota_supported.as_ref(),
         ))
     })
     .await?;
@@ -217,9 +222,10 @@ fn list_blocking(
     index_filter: String,
     observed_at: DateTime<Utc>,
     cooldowns_known: bool,
+    quota_supported: Option<&std::collections::HashSet<String>>,
 ) -> Value {
     let entry = |auth: &mut Auth| -> Option<Value> {
-        let mut entry = build_entry(auth, observed_at)?;
+        let mut entry = build_entry(auth, observed_at, quota_supported)?;
         let cooldowns = if cooldowns_known {
             serde_json::to_value(cooldown_snapshot(auth, observed_at)).unwrap_or(Value::Null)
         } else {
@@ -395,7 +401,11 @@ fn codex_id_token_claims(auth: &Auth) -> Option<Value> {
 }
 
 /// `buildAuthFileEntry` (without `cooldowns`). `None` hides the credential from the list.
-pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<String, Value>> {
+pub(crate) fn build_entry(
+    auth: &mut Auth,
+    now: DateTime<Utc>,
+    quota_supported: Option<&std::collections::HashSet<String>>,
+) -> Option<Map<String, Value>> {
     auth.ensure_index();
     let runtime_only = is_runtime_only(auth);
     if runtime_only && (auth.disabled || auth.status == Status::Disabled) {
@@ -446,6 +456,10 @@ pub(crate) fn build_entry(auth: &mut Auth, now: DateTime<Utc>) -> Option<Map<Str
     ) && !model_quotas.is_empty()
     {
         e.insert("model_quotas".into(), Value::Object(model_quotas));
+    }
+    if quota_supported.is_some_and(|set| set.contains(&provider.to_lowercase())) {
+        e.insert("supports_quota".into(), true.into());
+        e.insert("quota_provider".into(), provider.clone().into());
     }
     if let Some(probe) = auth.metadata.get("quota_probe").filter(|p| !p.is_null()) {
         e.insert("supports_quota".into(), true.into());
@@ -991,7 +1005,7 @@ async fn delete_inner(st: ManagementState, uri: Uri, body: ApiResult<Bytes>) -> 
 }
 
 /// `isPluginVirtualSourceDelete`: non-virtual auths and the source file of a virtual group.
-fn is_plugin_virtual_source_delete(name: &str, auth: &Auth) -> bool {
+pub(crate) fn is_plugin_virtual_source_delete(name: &str, auth: &Auth) -> bool {
     if !auth.is_plugin_virtual() {
         return true;
     }
@@ -1016,7 +1030,7 @@ fn find_auth_for_delete(st: &ManagementState, name: &str) -> Option<Auth> {
         .find(|a| a.file_name.trim() == name || base_name(&attribute(a, ATTRIBUTE_PATH)) == name)
 }
 
-fn same_path(a: &str, b: &str) -> bool {
+pub(crate) fn same_path(a: &str, b: &str) -> bool {
     let (a, b) = (a.trim(), b.trim());
     !a.is_empty() && !b.is_empty() && abs_path(Path::new(a)) == abs_path(Path::new(b))
 }

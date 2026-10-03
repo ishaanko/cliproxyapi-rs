@@ -11,6 +11,10 @@ cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth" }
 cpa-runtime = { path = "../runtime" }
 cpa-core = { path = "../core" }
+cpa-plugin = { path = "../plugin" }
+cpa-pluginapi = { path = "../pluginapi" }
+cpa-pluginstore = { path = "../pluginstore" }
+cpa-json.workspace = true
 axum = { version = "0.8", features = ["multipart"] }
 serde.workspace = true
 serde_json.workspace = true
@@ -28,6 +32,8 @@ async-trait = "0.1"
 bcrypt = "0.17"
 subtle = "2"
 url = "2"
+httpdate = "1"
+futures-util = "0.3"
 tempfile = "3"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "socks", "json"] }
 

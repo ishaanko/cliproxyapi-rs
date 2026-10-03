@@ -46,6 +46,17 @@ pub struct PluginHttpResponse {
 }
 
 impl PluginHttpResponse {
+    /// `(status, headers, body)` as net/http writes them: a `Content-Type` is sniffed from the
+    /// body when the plugin set none.
+    pub fn into_parts(self) -> (u16, Vec<(String, String)>, Vec<u8>) {
+        let mut headers: Vec<(String, String)> =
+            self.headers.iter().flat_map(|(k, vs)| vs.iter().map(move |v| (k.clone(), v.clone()))).collect();
+        if !self.body.is_empty() && !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("content-type")) {
+            headers.push(("Content-Type".into(), crate::sniff::detect_content_type(&self.body).into()));
+        }
+        (self.status, headers, self.body)
+    }
+
     /// `http.Error(w, msg, status)`.
     fn http_error(msg: &str, status: u16) -> Self {
         let mut headers = BTreeMap::new();
