@@ -271,7 +271,15 @@ impl UsageReporter {
 
     /// Records the translated upstream reasoning effort from the final payload.
     pub fn set_translated_reasoning_effort(&self, payload: &[u8], format: &str) {
-        self.inner.state.lock().reasoning = extract_translated_reasoning_effort(payload, format);
+        // Every path `cpa_core::thinking` reads starts at one of these top-level keys; a
+        // well-formed object without them has no effort, so skip its full parse.
+        const EFFORT_ROOTS: [&str; 8] =
+            ["thinking", "output_config", "reasoning_effort", "reasoning", "generationConfig", "generation_config", "request", "input"];
+        let effort = match Doc::lazy(payload) {
+            Some(doc) if !EFFORT_ROOTS.iter().any(|k| doc.has(k)) => String::new(),
+            _ => extract_translated_reasoning_effort(payload, format),
+        };
+        self.inner.state.lock().reasoning = effort;
     }
 
     pub fn request_id(&self) -> &str {
