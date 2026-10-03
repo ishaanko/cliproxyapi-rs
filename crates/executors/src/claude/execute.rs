@@ -8,10 +8,10 @@ use std::sync::Arc;
 use bytes::Bytes;
 use cpa_auth::Auth;
 use cpa_config::Config;
-use cpa_core::thinking::{apply_summary_config_for_model, extract_translated_summary_config, parse_suffix};
+use cpa_core::thinking::parse_suffix;
 use cpa_json::J;
 use cpa_runtime::executor::{ExecError, Options, Request, Response};
-use cpa_translator::{Ctx, Format, Param, RequestEnvelope};
+use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 use parking_lot::Mutex;
 
@@ -36,7 +36,7 @@ use super::diagnostics::{
 use super::fast_error::{
     claude_request_is_fast, new_claude_fast_direct_response_error, wrap_claude_fast_request_error,
 };
-use super::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
+use crate::helps::cloak_obfuscate::{build_sensitive_word_matcher, obfuscate_sensitive_words};
 use super::helps::credential_identity::{apply_claude_credential_metadata, claude_agent_session_uuid_for_request, claude_request_has_execution_metadata};
 use super::helps::diagnostics::{
     claude_subagent_requests_1h, extract_claude_billing_tags, inject_claude_billing_tags, is_claude_probe_or_helper_request,
@@ -65,6 +65,7 @@ use super::{ClaudeExecutor, DEFAULT_BASE_URL};
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE};
 use crate::helps::payload::{PayloadRequest, apply_payload_config_tracked, payload_request_path, payload_requested_model};
 use crate::helps::status::status_err;
+use crate::helps::translate::{RequestTranslation, translate_request_pair};
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 use crate::helps::usage::{Detail, StreamUsageBuffer, UsageReporter, parse_claude_usage};
 
@@ -81,66 +82,6 @@ pub(super) struct Prepared {
     pub fast_request: bool,
     pub replay_scope: ClaudeThinkingReplayScope,
     pub req: Request,
-}
-
-/// Translates one payload to the Claude schema (Go: helps.TranslateRequestWithAPIKeyModelCompatibility,
-/// minus the Codex multi-agent rewrite).
-pub(super) fn translate_request_single(
-    headers: &HeaderMap,
-    from: Format,
-    model: &str,
-    payload: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> Vec<u8> {
-    let payload = crate::helps::codex_tool_integers::normalize_codex_tool_integer_types(payload, Some(headers));
-    let to = Format::Claude;
-    if is_compat {
-        let translated = match from {
-            Format::OpenAI => Some(
-                cpa_translator::claude::openai::chat_completions::convert_openai_request_to_claude_with_compat(
-                    model, &payload, stream,
-                ),
-            ),
-            Format::OpenAIResponse => Some(
-                cpa_translator::claude::openai::responses::convert_openai_responses_request_to_claude_with_compat(
-                    model, &payload, stream,
-                ),
-            ),
-            _ => None,
-        };
-        if let Some(translated) = translated {
-            let summary = extract_translated_summary_config(&payload, from.as_str(), to.as_str());
-            return apply_summary_config_for_model(translated, to.as_str(), model, &summary);
-        }
-    }
-    cpa_translator::translate_request_envelope(
-        &Ctx::default(),
-        from,
-        to,
-        RequestEnvelope { model: model.to_string(), stream, body: payload, ..Default::default() },
-    )
-    .body
-}
-
-/// Translates the pre-translation payload and the working payload (Go:
-/// helps.TranslateRequestPairWithAPIKeyModelCompatibility); identical inputs translate once.
-fn translate_request_pair(
-    headers: &HeaderMap,
-    from: Format,
-    model: &str,
-    original_payload: &[u8],
-    request_payload: &[u8],
-    stream: bool,
-    is_compat: bool,
-) -> (Vec<u8>, Vec<u8>) {
-    let original = translate_request_single(headers, from, model, original_payload, stream, is_compat);
-    if original_payload == request_payload {
-        let working = original.clone();
-        return (original, working);
-    }
-    let working = translate_request_single(headers, from, model, request_payload, stream, is_compat);
-    (original, working)
 }
 
 /// Signature sanitizer for thinking blocks coming from other providers, then the web-search
@@ -257,15 +198,8 @@ impl ClaudeExecutor {
         };
 
         let is_compat = api_key_model_is_compat(&req);
-        let (original_translated, mut body) = translate_request_pair(
-            &opts.headers,
-            from,
-            &base_model,
-            &original_payload,
-            &req.payload,
-            upstream_stream,
-            is_compat,
-        );
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, to, &base_model, upstream_stream).compat(is_compat);
+        let (original_translated, mut body, _) = translate_request_pair(&translation, &original_payload, &req.payload);
         body = set_string_if_different_bytes(&body, "model", &upstream_model);
 
         body = apply_request_thinking(&body, &req, opts, from.as_str(), to.as_str(), "claude", false)
@@ -569,7 +503,7 @@ impl ClaudeExecutor {
         let resp_headers = resp.headers().clone();
         let body = match resp.bytes().await {
             Ok(b) => b,
-            Err(e) => Bytes::from(format!("failed to read error response body: {}", super::http::describe_body_error(&e))),
+            Err(e) => Bytes::from(format!("failed to read error response body: {}", crate::helps::status::transport_message(&e))),
         };
         tracing::debug!(
             "request error, error status: {status}, error message: {}",
@@ -603,7 +537,7 @@ impl ClaudeExecutor {
                 return Err(wrap_claude_fast_request_error(
                     p.fast_request,
                     status,
-                    ExecError::new(0, super::http::describe_body_error(&e)),
+                    ExecError::new(0, crate::helps::status::transport_message(&e)),
                 ));
             }
         };

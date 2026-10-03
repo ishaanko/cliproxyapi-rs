@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 
 use super::util::{at, s, ts};
 use crate::helps::usage::META_CLIENT_API_KEY;
-use crate::openai_compat::translate::{claude_code_execution_scope, uuid_sha1_oid};
+use crate::helps::session::{claude_code_execution_scope, header_value_case_insensitive, uuid_sha1_oid};
 
 /// Metadata flag the client-facing layer sets when the downstream request arrived over a
 /// websocket (Go: `cliproxyexecutor.DownstreamWebsocket(ctx)`).
@@ -42,17 +42,6 @@ impl ReplayScope {
 
 fn metadata_string(metadata: &Metadata, key: &str) -> String {
     metadata.get(key).and_then(Value::as_str).map(|v| v.trim().to_string()).unwrap_or_default()
-}
-
-fn header_value_case_insensitive(headers: &HeaderMap, name: &str) -> String {
-    headers
-        .get_all(name)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .map(str::trim)
-        .find(|v| !v.is_empty())
-        .unwrap_or_default()
-        .to_string()
 }
 
 fn session_key_from_turn_metadata(turn_metadata: &str) -> String {

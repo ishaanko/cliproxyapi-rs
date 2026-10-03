@@ -5,9 +5,7 @@
 //! bare one at startup via [`new`]; per-entry keys are created on demand by [`factory`], which
 //! the service installs as its `ExecutorFactory`.
 
-pub(crate) mod claude_input_tokens;
 mod compat_config;
-pub(crate) mod errors;
 mod images;
 pub(crate) mod translate;
 mod stream;
@@ -49,8 +47,9 @@ use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::{ensure_session_id, provider_session_uuid};
 use crate::helps::status::{openai_compat_status_error, status_err};
-use errors::transport_error;
+use crate::helps::status::transport_error;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
+use crate::helps::translate::{RequestTranslation, translate_request, translate_request_pair};
 use crate::helps::token_count::{build_openai_usage_json, count_openai_chat_tokens, tokenizer_for_model};
 use crate::helps::usage::{UsageReporter, parse_openai_usage};
 
@@ -164,7 +163,7 @@ impl OpenAiCompatExecutor {
             model_name = base_model.to_string();
         }
         if from == Format::Claude
-            && let Some(id) = translate::claude_code_prompt_cache_id(&model_name, &req.payload, &opts.headers)
+            && let Some(id) = crate::helps::session::claude_code_prompt_cache_id(&model_name, &req.payload, &opts.headers)
         {
             return set(&translated, &id);
         }
@@ -184,7 +183,7 @@ impl OpenAiCompatExecutor {
             &session_id,
         ]
         .join("\x00");
-        set(&translated, &translate::uuid_sha1_oid(identity.as_bytes()))
+        set(&translated, &crate::helps::session::uuid_sha1_oid(identity.as_bytes()))
     }
 
     /// Request translation shared by `execute` and `execute_stream` (everything before the
@@ -210,16 +209,8 @@ impl OpenAiCompatExecutor {
         }
         let original_source: &[u8] = if opts.original_request.is_empty() { &req.payload } else { &opts.original_request };
         let is_compat = api_key_model_is_compat(req);
-        let (original_translated, translated, updates_changed) = translate::translate_request_pair(
-            &opts.headers,
-            from,
-            to,
-            base_model,
-            original_source,
-            &req.payload,
-            stream,
-            is_compat,
-        );
+        let translation = RequestTranslation::new(&opts.headers, Some(cfg), from, to, base_model, stream).compat(is_compat);
+        let (original_translated, translated, updates_changed) = translate_request_pair(&translation, original_source, &req.payload);
         let mut translated =
             apply_request_thinking(&translated, req, opts, from.as_str(), to.as_str(), &self.provider, updates_changed)
                 .map_err(thinking_error)?;
@@ -557,7 +548,7 @@ fn image_endpoint_path(opts: &Options) -> &'static str {
 }
 
 fn has_refresh_token(auth: &Auth) -> bool {
-    ["refresh_token", "refreshToken"].iter().any(|k| auth.meta_str(k) != "")
+    ["refresh_token", "refreshToken"].iter().any(|k| !auth.meta_str(k).is_empty())
 }
 
 #[async_trait]
@@ -610,8 +601,9 @@ impl Executor for OpenAiCompatExecutor {
         let from = opts.source_format;
         let response_format = opts.response_format_or_source();
         let to = Format::OpenAI;
-        let (translated, updates_changed) =
-            translate::translate_request(&opts.headers, from, to, &base_model, &req.payload, false, api_key_model_is_compat(&req));
+        let cfg = self.config();
+        let translation = RequestTranslation::new(&opts.headers, Some(&cfg), from, to, &base_model, false).compat(api_key_model_is_compat(&req));
+        let (translated, updates_changed) = translate_request(&translation, &req.payload);
         let translated =
             apply_request_thinking(&translated, &req, &opts, from.as_str(), to.as_str(), &self.provider, updates_changed)
                 .map_err(thinking_error)?;

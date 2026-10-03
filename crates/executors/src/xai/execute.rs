@@ -28,7 +28,7 @@ use crate::helps::session::ensure_session_id;
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
 use crate::helps::usage::{UsageReporter, parse_codex_usage, parse_openai_usage};
-use crate::openai_compat::errors::transport_error;
+use crate::helps::status::transport_error;
 
 const EXECUTOR_TYPE: &str = "XAIExecutor";
 
@@ -315,7 +315,7 @@ pub(super) fn content_type(headers: &HeaderMap) -> String {
 /// Reads a whole upstream body, marking the first byte for TTFT.
 pub(super) async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
     use futures_util::StreamExt;
-    let mut stream = Box::pin(crate::openai_compat::translate::observe_body(reporter.clone(), resp.bytes_stream(), false));
+    let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
     let mut buf = Vec::new();
     while let Some(chunk) = stream.next().await {
         buf.extend_from_slice(&chunk.map_err(|e| transport_error(&e))?);

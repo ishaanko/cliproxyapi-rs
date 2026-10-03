@@ -4,6 +4,10 @@
 //! HTTP clients, usage extraction, the SSE line reader, upstream status errors). Each provider
 //! lives in its own module and implements [`cpa_runtime::executor::Executor`].
 
+// `ExecError` is the conductor's error type (it carries the upstream body and headers for
+// passthrough) and every executor returns it by value, so the size lint would fire everywhere.
+#![allow(clippy::result_large_err)]
+
 use std::sync::Arc;
 
 use cpa_config::Config;

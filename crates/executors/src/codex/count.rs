@@ -11,9 +11,10 @@ use cpa_runtime::executor::{ExecError, Options, Request, Response};
 use cpa_translator::{Ctx, Format};
 
 use super::CodexExecutor;
-use super::request::{is_native_request, thinking_error, translate_for_count};
+use super::request::{is_native_request, thinking_error};
 use super::terminal::status_error;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
+use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::token_count::{Tokenizer, tokenizer_for_model};
 
 impl CodexExecutor {
@@ -25,8 +26,10 @@ impl CodexExecutor {
         let from = opts.source_format;
         let response_format = opts.response_format_or_source();
         let to = Format::Codex;
-        let (body, updates_changed) =
-            translate_for_count(&cfg, &opts.headers, from, to, &base_model, &req.payload, api_key_model_is_compat(&req));
+        let translation = RequestTranslation::new(&opts.headers, Some(&cfg), from, to, &base_model, false)
+            .compat(api_key_model_is_compat(&req))
+            .target_executor("codex");
+        let (body, updates_changed) = translate_request(&translation, &req.payload);
         let body = apply_request_thinking(&body, &req, &opts, from.as_str(), to.as_str(), "codex", updates_changed).map_err(thinking_error)?;
         let mut parsed = cpa_json::parse(&body);
         if parsed.g("model").as_str() != Some(base_model.as_str()) {
