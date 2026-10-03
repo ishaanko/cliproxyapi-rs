@@ -84,13 +84,9 @@ impl<'a> Doc<'a> {
                 if path.is_empty() {
                     return Res::NONE;
                 }
-                let (first, rest) = match path.split_once('.') {
-                    Some((f, r)) => (f, Some(r)),
-                    None => (path, None),
-                };
-                if !is_plain_key(first) {
+                let Some((first, rest)) = split_plain_head(path) else {
                     return l.full().g(path);
-                }
+                };
                 let Some(m) = l.member(first) else {
                     return Res::NONE;
                 };
@@ -228,9 +224,31 @@ impl<'a> Iterator for Elements<'a> {
     }
 }
 
-/// A path head that gjson treats as a literal key: no escapes, wildcards, queries, modifiers.
-fn is_plain_key(s: &str) -> bool {
-    !s.bytes().any(|b| matches!(b, b'\\' | b'*' | b'?' | b'#' | b'@' | b'|' | b'(' | b')' | b'"'))
+/// Bytes that make a path head more than a literal key for gjson: escapes, wildcards, queries,
+/// modifiers, pipes.
+const SPECIAL: [bool; 256] = {
+    let mut t = [false; 256];
+    let specials = *b"\\*?#@|()\"";
+    let mut i = 0;
+    while i < specials.len() {
+        t[specials[i] as usize] = true;
+        i += 1;
+    }
+    t
+};
+
+/// Splits `path` at its first `.`; `None` when the head is not a plain literal key (the caller
+/// then evaluates the path against the whole document).
+fn split_plain_head(path: &str) -> Option<(&str, Option<&str>)> {
+    for (i, &b) in path.as_bytes().iter().enumerate() {
+        if b == b'.' {
+            return Some((&path[..i], Some(&path[i + 1..])));
+        }
+        if SPECIAL[b as usize] {
+            return None;
+        }
+    }
+    Some((path, None))
 }
 
 fn skip_ws(b: &[u8], mut i: usize) -> usize {
