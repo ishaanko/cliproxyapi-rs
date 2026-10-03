@@ -13,7 +13,7 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use chrono::Utc;
 use cpa_core::format::Format;
-use cpa_executors::helps::usage::UsageReporter;
+use cpa_executors::helps::usage::{Record as UsageRecord, UsageReporter, UsageSink};
 use cpa_plugin::convert::{headers_from_go, headers_to_go, plugin_visible_metadata, query_to_go};
 use cpa_plugin::{CallCtx, Host};
 use cpa_pluginapi::api::{
@@ -370,7 +370,7 @@ impl Pipeline {
             }
         };
         let reporter = (!a.internal_source).then(|| {
-            let r = UsageReporter::new(executor_plugin_id, "", a.model, None, Some(&opts));
+            let r = self.route_usage_reporter(executor_plugin_id, a, &opts);
             r.set_translated_reasoning_effort(&req.payload, a.entry.as_str());
             r
         });
@@ -382,7 +382,6 @@ impl Pipeline {
                     && !pcx.ctx.has_nested()
                 {
                     r.publish_failure(&e);
-                    self.publish_route_usage(r, a);
                 }
                 let msg = exec_error_message(&e);
                 lifecycle.complete_error(&msg);
@@ -394,7 +393,6 @@ impl Pipeline {
         {
             r.publish(cpa_plugin::usage_helpers::parse_plugin_executor_response_usage(response_protocol.as_str(), &resp.payload));
             r.ensure_published();
-            self.publish_route_usage(r, a);
         }
         let passthrough = a.internal_source || self.settings.passthrough_headers;
         let (body, headers) = self
@@ -476,43 +474,33 @@ impl Pipeline {
         (req, opts)
     }
 
-    /// Records the usage of a handler-level plugin executor call (Go: the reporter publishing to
-    /// the usage manager).
-    fn publish_route_usage(&self, reporter: &UsageReporter, a: &ExecArgs<'_>) {
-        let Some(rec) = reporter.record() else { return };
+    /// The reporter of a handler-level plugin executor call; its record goes to the usage
+    /// tracker (Go: the reporter publishing to the usage manager).
+    pub(crate) fn route_usage_reporter(&self, executor_plugin_id: &str, a: &ExecArgs<'_>, opts: &Options) -> UsageReporter {
         let path = self.info.route.trim();
         let path = if path.is_empty() { self.info.path.trim() } else { path };
-        let tokens = cpa_runtime::usage::TokenUsage {
-            input_tokens: rec.detail.input_tokens,
-            output_tokens: rec.detail.output_tokens,
-            reasoning_tokens: rec.detail.reasoning_tokens,
-            cached_tokens: rec.detail.cached_tokens,
-            total_tokens: rec.detail.total_tokens,
-        };
-        let model = rec.model.clone();
-        let alias = if !rec.alias.is_empty() && rec.alias != model { rec.alias.clone() } else { String::new() };
-        let record = cpa_runtime::usage::UsageRecord {
-            timestamp: rec.requested_at,
-            latency_ms: i64::try_from(rec.latency.as_millis()).unwrap_or(i64::MAX),
-            ttft_ms: i64::try_from(rec.ttft.as_millis()).unwrap_or(i64::MAX),
-            source: rec.source.clone(),
-            auth_index: rec.auth_index.clone(),
-            auth_type: rec.auth_type.clone(),
-            provider: rec.provider.clone(),
-            executor_type: rec.executor_type.clone(),
-            model,
-            alias,
+        let sink = RouteUsageSink {
+            tracker: self.state.usage.clone(),
             endpoint: if path.is_empty() { String::new() } else { format!("{} {path}", self.info.method) },
-            api_key: rec.api_key.clone(),
             request_id: self.info.request_id.clone(),
-            failed: rec.failed,
-            stream: rec.stream,
-            fail: cpa_runtime::usage::UsageFailure { status_code: rec.fail.status_code, body: rec.fail.body.clone() },
-            tokens,
-            extra: Default::default(),
         };
-        let _ = a;
-        self.state.usage.record(record);
+        UsageReporter::with_sink(executor_plugin_id, "", a.model, None, Some(opts), Some(Arc::new(sink)))
+    }
+}
+
+/// Sends a plugin-route reporter's record to the tracker with the request's endpoint and id.
+struct RouteUsageSink {
+    tracker: Arc<cpa_runtime::usage::UsageTracker>,
+    endpoint: String,
+    request_id: String,
+}
+
+impl UsageSink for RouteUsageSink {
+    fn publish(&self, record: UsageRecord) {
+        let mut rec = record.to_usage_record();
+        rec.endpoint.clone_from(&self.endpoint);
+        rec.request_id.clone_from(&self.request_id);
+        self.tracker.record(rec);
     }
 }
 

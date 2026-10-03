@@ -23,7 +23,7 @@ mod reasoning;
 mod request;
 mod terminal;
 mod tool_schema;
-mod ws;
+pub(crate) mod ws;
 
 #[cfg(test)]
 mod tests;
@@ -37,9 +37,12 @@ use cpa_runtime::executor::{DynExecutor, ErrorCode, ExecError, Executor, Metadat
 use serde_json::Value;
 
 use crate::helps::http_request;
+use crate::helps::usage::UsageReporter;
+use cpa_core::thinking::parse_suffix;
 use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 
+pub(crate) use headers::WireHeaders;
 pub use creds::codex_creds;
 pub use quota::parse_codex_quota_event_headers;
 pub use ws::{close_codex_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
@@ -87,6 +90,12 @@ impl CodexExecutor {
     pub(crate) fn config(&self) -> Arc<Config> {
         let cfg = self.cfg.borrow().clone();
         if self.api_key_scope { config_for_api_key(&cfg) } else { cfg }
+    }
+
+    /// The usage reporter of one upstream attempt (Go: `NewExecutorUsageReporter`).
+    pub(crate) fn reporter(&self, executor_type: &str, auth: &Auth, req: &Request, opts: &Options) -> UsageReporter {
+        let base_model = parse_suffix(&req.model).model_name;
+        UsageReporter::new("codex", executor_type, &base_model, Some(auth), Some(opts))
     }
 
     /// Internal session id behind `$CPA-SESSION-ID` in custom headers.

@@ -3,7 +3,9 @@
 //! An executor creates one reporter per upstream attempt, feeds it TTFT marks, the served model
 //! and token usage, and finally calls [`UsageReporter::publish`], [`publish_failure`] or
 //! [`ensure_published`]; exactly one record is produced per reporter. Where the record goes is
-//! decided by an optional [`UsageSink`]; the finished record is always retrievable with
+//! decided by an optional [`UsageSink`], by default the [`UsageCollector`](cpa_runtime::usage_report::UsageCollector) the conductor attached
+//! to the attempt's [`Options`] (so the conductor builds the usage event from this record); the
+//! finished record is always retrievable with
 //! [`UsageReporter::record`], and [`UsageReporter::usage_metadata`] renders the compact
 //! `Response.metadata["usage"]` object the conductor reads for non-stream responses.
 //!
@@ -35,55 +37,14 @@ use crate::helps::response_model::{
     is_model_substituted, normalize_model_name,
 };
 
+/// Service tier recorded when the request set none (Go: `usage.DefaultServiceTier`).
+pub const DEFAULT_SERVICE_TIER: &str = "default";
 /// Metadata key the client-facing layer may set with the downstream API key.
 pub const META_CLIENT_API_KEY: &str = "client_api_key";
 /// Metadata key carrying the inbound request id.
 pub const META_TRACE_ID: &str = "trace_id";
 
-/// HTTP failure facts of a failed attempt.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Failure {
-    pub status_code: u16,
-    pub body: String,
-}
-
-/// Usage statistics of one upstream attempt (Go: usage.Record).
-#[derive(Debug, Clone)]
-pub struct Record {
-    pub request_id: String,
-    pub trace_id: String,
-    pub provider: String,
-    pub base_url: String,
-    pub executor_type: String,
-    pub model: String,
-    pub alias: String,
-    pub api_key: String,
-    pub session_id: String,
-    pub parent_session_id: String,
-    pub auth_id: String,
-    pub auth_index: String,
-    /// SHA-256 of the access token actually used, never the token.
-    pub access_token_sha256: String,
-    pub auth_type: String,
-    pub source: String,
-    pub reasoning_effort: String,
-    pub service_tier: String,
-    pub response_service_tier: String,
-    pub response_model: String,
-    pub generate: bool,
-    pub stream: bool,
-    pub requested_at: DateTime<Utc>,
-    pub latency: Duration,
-    pub ttft: Duration,
-    pub failed: bool,
-    pub fail: Failure,
-    pub detail: Detail,
-}
-
-/// Receives the finished record of each reporter.
-pub trait UsageSink: Send + Sync {
-    fn publish(&self, record: Record);
-}
+pub use cpa_runtime::usage_report::{Failure, Record, UsageSink};
 
 #[derive(Default)]
 struct State {
@@ -211,7 +172,8 @@ impl UsageReporter {
         Self::with_sink(provider, executor_type, model, auth, opts, None)
     }
 
-    /// [`new`](Self::new) with a sink that receives the finished record.
+    /// [`new`](Self::new) with a sink that receives the finished record. Without one, the
+    /// options' collector (when the conductor attached it) is the sink.
     pub fn with_sink(
         provider: &str,
         executor_type: &str,
@@ -241,6 +203,7 @@ impl UsageReporter {
             auth_index = if auth.index.trim().is_empty() { auth.clone().ensure_index() } else { auth.index.trim().to_string() };
             token_hash = access_token_sha256(auth);
         }
+        let sink = sink.or_else(|| opts.and_then(|o| o.usage_collector.clone()).map(|c| Arc::new(c) as Arc<dyn UsageSink>));
         let generate = !matches!(opts.and_then(|o| o.metadata.get(meta::GENERATE)), Some(Value::Bool(false)));
         let inner = Inner {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -255,7 +218,7 @@ impl UsageReporter {
             auth_type: auth.map(|a| a.auth_kind().to_string()).unwrap_or_default(),
             source: resolve_usage_source(auth, &api_key),
             api_key,
-            service_tier: meta_string(opts, meta::SERVICE_TIER),
+            service_tier: Some(meta_string(opts, meta::SERVICE_TIER)).filter(|t| !t.is_empty()).unwrap_or_else(|| DEFAULT_SERVICE_TIER.to_string()),
             generate,
             requested_at: Instant::now(),
             requested_at_utc: Utc::now(),

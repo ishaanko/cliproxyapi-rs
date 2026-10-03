@@ -18,10 +18,11 @@ use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 use tokio::sync::OwnedMutexGuard;
 
-use super::conn::Read;
 use super::errors::{map_read_error, parse_error_frame};
 use super::ids::RequestIdMapper;
 use super::WsCall;
+use crate::codex::ws::conn::Read;
+use crate::codex::ws::read_error_stage;
 use crate::helps::apply_patch::{
     APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, gateway_error, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
@@ -197,10 +198,10 @@ impl WsStream {
             };
             let payload = match read {
                 Some(Read::Text(payload)) => payload,
-                Some(Read::Err(err)) => return self.handle_read_error(map_read_error(&err)).await,
+                Some(Read::Err(err)) => return self.handle_read_error(read_error_stage(&err), map_read_error(&err)).await,
                 None => {
                     let err = ExecError::new(0, "xai websockets executor: session read channel closed");
-                    return self.handle_read_error(err).await;
+                    return self.handle_read_error("read", err).await;
                 }
             };
             if payload.is_empty() {
@@ -213,7 +214,7 @@ impl WsStream {
     }
 
     /// The upstream ended or failed mid-request.
-    async fn handle_read_error(&mut self, mapped: ExecError) {
+    async fn handle_read_error(&mut self, stage: &'static str, mapped: ExecError) {
         if let Err(err_finish) = self.prepared.apply_patch.finish() {
             let (events, _) = self.prepared.apply_patch.bridge.fail(err_finish);
             self.invalidate_patch_attempt();
@@ -221,8 +222,9 @@ impl WsStream {
             self.send_err(gateway_error()).await;
             return;
         }
-        self.call.set_close_reason("read_error");
-        self.api_log.record_api_websocket_error(&self.cfg, "read", &mapped.message);
+        // The connection reader already invalidated the connection for a binary frame.
+        self.call.set_close_reason(if stage == "read" { "read_error" } else { stage });
+        self.api_log.record_api_websocket_error(&self.cfg, stage, &mapped.message);
         self.reporter.publish_failure(&mapped);
         self.send_err(mapped).await;
     }
@@ -377,9 +379,7 @@ impl WsStream {
             return Flow::Stop;
         }
         if !warmup_completed.is_empty() {
-            if let Flow::Continue = self.deliver_translated(&warmup_completed).await {
-                stop_apply_patch_stream(&self.param, &self.reporter, &self.tx, gateway_error()).await;
-            }
+            self.deliver_translated(&warmup_completed).await;
             return Flow::Stop;
         }
         if matches!(event_type.as_str(), "response.completed" | "response.done") || patch_terminal {

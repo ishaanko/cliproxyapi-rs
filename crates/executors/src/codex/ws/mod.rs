@@ -5,13 +5,13 @@
 //! on the upstream remembering the previous response on the same connection. A request flagged as
 //! requiring the existing upstream socket fails with the replay-required error when there is none.
 
-mod codec;
-mod conn;
+pub(crate) mod codec;
+pub(crate) mod conn;
 mod duplex;
 mod errors;
-mod session;
+pub(crate) mod session;
 mod stream;
-mod transport;
+pub(crate) mod transport;
 
 use std::sync::Arc;
 
@@ -25,9 +25,9 @@ use cpa_translator::{Ctx, Format, Param};
 use http::HeaderMap;
 use tokio::sync::{OwnedMutexGuard, mpsc};
 
-use self::conn::{Read, ReadError, UNEXPECTED_BINARY, WsConn};
+use self::conn::{Read, ReadError, WsConn};
 use self::errors::{clear_replay_on_error_frame, map_read_error, map_write_error, parse_error_frame, should_retry_send};
-use self::session::Session;
+use self::session::{Provider, Session};
 use crate::helps::logging::{ApiLogHandle, UpstreamRequestLog};
 use crate::helps::websocket_observer::WsFrameObserver;
 use self::transport::DialFailure;
@@ -43,7 +43,11 @@ use super::{CodexExecutor, META_DOWNSTREAM_WEBSOCKET, META_REQUIRED_UPSTREAM_WEB
 use crate::helps::apply_patch::APPLY_PATCH_UPSTREAM_ERROR_MESSAGE;
 use crate::helps::proxy::effective_proxy_setting;
 use crate::helps::responses_usage::ensure_responses_usage_details;
+use crate::helps::ttft::observe_responses_token_event;
 use crate::helps::usage::{parse::parse_codex_usage, reporter::UsageReporter};
+
+/// Go's executor type name of the websocket executor, as the usage record reports it.
+pub(super) const WS_EXECUTOR_TYPE: &str = "CodexWebsocketsExecutor";
 
 pub use self::session::{close_execution_session, close_sessions_for_auth_id as close_codex_websocket_sessions_for_auth_id, upstream_disconnect_receiver};
 
@@ -177,7 +181,12 @@ impl CodexExecutor {
             ProxySetting::Inherit
         });
         let frame = build_request_frame(&body);
-        let req_log = super::logging::upstream_log(auth, &ws_url, "WEBSOCKET", &headers, &frame);
+        // Only a logged request needs the handshake details (and the frame copy).
+        let req_log = if opts.api_log.get().is_some() {
+            UpstreamRequestLog::from_auth("codex", Some(auth), "WEBSOCKET", &ws_url, &headers, &frame)
+        } else {
+            UpstreamRequestLog::default()
+        };
         Ok(WsPlan {
             prepared,
             ws_url,
@@ -202,8 +211,17 @@ impl CodexExecutor {
         if opts.alt == "responses/compact" {
             return self.execute_http(auth, req, opts).await;
         }
-        let plan = self.prepare_ws(&cfg, auth, &req, &opts, Mode::WsExecute)?;
+        let reporter = self.reporter(WS_EXECUTOR_TYPE, auth, &req, &opts);
+        let result = self.execute_ws_reported(&cfg, auth, req, opts, &reporter).await;
+        reporter.track_failure(&result);
+        result
+    }
+
+    async fn execute_ws_reported(&self, cfg: &Arc<Config>, auth: &Auth, req: Request, opts: Options, reporter: &UsageReporter) -> Result<Response, ExecError> {
+        let plan = self.prepare_ws(cfg, auth, &req, &opts, Mode::WsExecute)?;
+        reporter.set_translated_reasoning_effort(&plan.body, plan.prepared.to.as_str());
         let mut call = connect_and_send(&opts, &plan, false).await?;
+        reporter.start_response_ttft();
         let prepared = &plan.prepared;
 
         let mut items = OutputItems::default();
@@ -226,6 +244,7 @@ impl CodexExecutor {
             if payload.is_empty() {
                 continue;
             }
+            observe_responses_token_event(reporter, &payload);
             plan.log_frame(&payload);
             let payload = restore_response(&payload, call.restore_multi_agent);
             let frame = cpa_json::parse(&payload);
@@ -265,6 +284,10 @@ impl CodexExecutor {
                         cache_replay_from_completed(&prepared.replay_scope, &cpa_json::parse(&payload));
                     }
                     let detail = parse_codex_usage(&payload);
+                    match &detail {
+                        Some(detail) => reporter.publish(detail.clone()),
+                        None => reporter.ensure_published(),
+                    }
                     let mut param = Param::default();
                     let out = cpa_translator::translate_non_stream(
                         &Ctx::default(),
@@ -354,9 +377,9 @@ pub(super) const SESSION_READ_CLOSED: &str = "codex websockets executor: session
 
 /// Log stage of a failed read: the reader reports an unexpected binary frame as a read error,
 /// Go logs it under its own stage.
-pub(super) fn read_error_stage(err: &ReadError) -> &'static str {
+pub(crate) fn read_error_stage(err: &ReadError) -> &'static str {
     match err {
-        ReadError::Other(text) if text == UNEXPECTED_BINARY => "unexpected_binary",
+        ReadError::UnexpectedBinary(_) => "unexpected_binary",
         _ => "read",
     }
 }
@@ -382,9 +405,9 @@ fn dial_failure_error(plan: &WsPlan, failure: DialFailure) -> ExecError {
 /// first send fails (Go: the connect/send prologue of Execute and ExecuteStream).
 pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool) -> Result<WsCall, ExecError> {
     let session_id = execution_session_id(opts);
-    let (sess, ephemeral) = match Session::get_or_create(&session_id) {
+    let (sess, ephemeral) = match Session::get_or_create(Provider::Codex, &session_id) {
         Some(s) => (s, false),
-        None => (Session::ephemeral(), true),
+        None => (Session::ephemeral(Provider::Codex), true),
     };
     let guard = if ephemeral { None } else { Some(Arc::clone(&sess.req_mu).lock_owned().await) };
     plan.log_request();
@@ -488,7 +511,7 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool
 }
 
 /// Drops a connection whose lifecycle bind failed (Go: `closeWebsocketAfterBindFailure`).
-fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
+pub(crate) fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
     sess.invalidate(conn, "lifecycle_bind_failed", None, false);
 }
 

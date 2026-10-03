@@ -1,5 +1,6 @@
 //! Websocket sessions: the process-wide store keyed by execution session id, one upstream
-//! connection per session, request serialization and invalidation (Go: codex_websockets_session.go).
+//! connection per session, request serialization and invalidation (Go: codex_websockets_session.go,
+//! which the xAI executor shares; each [`Provider`] keeps its own store).
 //!
 //! The pool key is the client-side execution session, not the credential: a session reuses its
 //! connection only while `(auth id, ws url, proxy url)` stay the same.
@@ -21,7 +22,42 @@ use super::transport::{DialFailure, Dialed};
 /// Frames buffered per active request (Go: 4096).
 const READ_BUFFER: usize = 4096;
 
-static GLOBAL_STORE: LazyLock<Mutex<HashMap<String, Arc<Session>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+type Store = LazyLock<Mutex<HashMap<String, Arc<Session>>>>;
+
+static CODEX_STORE: Store = LazyLock::new(|| Mutex::new(HashMap::new()));
+static XAI_STORE: Store = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The executor a session belongs to: selects the store, the log prefix and the binary-frame text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Provider {
+    Codex,
+    Xai,
+}
+
+impl Provider {
+    fn store(self) -> &'static Mutex<HashMap<String, Arc<Session>>> {
+        match self {
+            Provider::Codex => &CODEX_STORE,
+            Provider::Xai => &XAI_STORE,
+        }
+    }
+
+    /// Log prefix (`codex websockets`).
+    fn label(self) -> &'static str {
+        match self {
+            Provider::Codex => "codex websockets",
+            Provider::Xai => "xai websockets",
+        }
+    }
+
+    /// Read error text for a binary frame (Go: the executors reject binary messages).
+    pub fn unexpected_binary(self) -> &'static str {
+        match self {
+            Provider::Codex => "codex websockets executor: unexpected binary message",
+            Provider::Xai => "xai websockets executor: unexpected binary message",
+        }
+    }
+}
 
 static NEXT_ACTIVE_GEN: AtomicU64 = AtomicU64::new(1);
 
@@ -46,6 +82,7 @@ struct Active {
 /// One execution session (or an ephemeral per-request one with an empty id).
 pub struct Session {
     pub id: String,
+    pub provider: Provider,
     /// Serializes requests on the session; held from request start to stream completion.
     pub req_mu: Arc<tokio::sync::Mutex<()>>,
     slot: Mutex<ConnSlot>,
@@ -57,10 +94,11 @@ pub struct Session {
 }
 
 impl Session {
-    fn new(id: &str) -> Arc<Session> {
+    fn new(provider: Provider, id: &str) -> Arc<Session> {
         let (disconnect_tx, _) = watch::channel(None);
         Arc::new(Session {
             id: id.to_string(),
+            provider,
             req_mu: Arc::new(tokio::sync::Mutex::new(())),
             slot: Mutex::new(ConnSlot::default()),
             lifecycle_bind: Mutex::new(()),
@@ -71,18 +109,18 @@ impl Session {
     }
 
     /// A one-request session that is closed when the request ends.
-    pub fn ephemeral() -> Arc<Session> {
-        Session::new("")
+    pub fn ephemeral(provider: Provider) -> Arc<Session> {
+        Session::new(provider, "")
     }
 
     /// The stored session for `id`, created on first use.
-    pub fn get_or_create(id: &str) -> Option<Arc<Session>> {
+    pub fn get_or_create(provider: Provider, id: &str) -> Option<Arc<Session>> {
         let id = id.trim();
         if id.is_empty() {
             return None;
         }
-        let mut store = GLOBAL_STORE.lock();
-        Some(Arc::clone(store.entry(id.to_string()).or_insert_with(|| Session::new(id))))
+        let mut store = provider.store().lock();
+        Some(Arc::clone(store.entry(id.to_string()).or_insert_with(|| Session::new(provider, id))))
     }
 
     pub fn is_ephemeral(&self) -> bool {
@@ -174,6 +212,15 @@ impl Session {
         Some(conn)
     }
 
+    /// Whether the session already dialed a different target (Go: websocketSessionTargetChanged).
+    pub fn target_changed(&self, auth_id: &str, ws_url: &str, proxy_url: &str) -> bool {
+        let slot = self.slot.lock();
+        if slot.auth_id.trim().is_empty() && slot.ws_url.trim().is_empty() {
+            return false;
+        }
+        !target_matches(&slot, auth_id, ws_url, proxy_url)
+    }
+
     pub fn set_multi_agent_v2_optimized(&self, conn: &WsConn, optimized: bool) {
         let mut slot = self.slot.lock();
         if slot.conn.as_ref().is_some_and(|c| c.id == conn.id) {
@@ -202,7 +249,8 @@ impl Session {
         let stale = self.detach_mismatched(auth_id, ws_url, proxy_url);
         if let Some((conn, previous_auth, previous_url)) = stale {
             tracing::info!(
-                "codex websockets: upstream disconnected session={} auth={previous_auth} url={previous_url} session_object={} reason=target_changed last_event={}",
+                "{}: upstream disconnected session={} auth={previous_auth} url={previous_url} session_object={} reason=target_changed last_event={}",
+                self.provider.label(),
                 self.id,
                 self.kind(),
                 conn.last_event_type()
@@ -210,7 +258,12 @@ impl Session {
             conn.close();
         }
         if let Some(conn) = self.slot.lock().conn.clone() {
-            tracing::debug!("codex websockets: upstream connected session={} auth={auth_id} url={ws_url} reused=true", self.id);
+            tracing::info!(
+                "{}: upstream connected session={} auth={auth_id} url={ws_url} session_object={} reused=true",
+                self.provider.label(),
+                self.id,
+                self.kind()
+            );
             return Ok((conn, None));
         }
         let mut dialed = dial().await?;
@@ -229,7 +282,12 @@ impl Session {
             slot.auth_id = auth_id.to_string();
             slot.proxy_url = proxy_url.to_string();
         }
-        tracing::info!("codex websockets: upstream connected session={} auth={auth_id} url={ws_url} session_object={} reused=false", self.id, self.kind());
+        tracing::info!(
+            "{}: upstream connected session={} auth={auth_id} url={ws_url} session_object={} reused=false",
+            self.provider.label(),
+            self.id,
+            self.kind()
+        );
         Ok((conn, Some(response_headers)))
     }
 
@@ -260,7 +318,8 @@ impl Session {
         };
         let last_event = conn.last_event_type();
         tracing::info!(
-            "codex websockets: upstream disconnected session={} auth={auth_id} url={ws_url} session_object={} reason={reason} last_event={last_event} is_terminal={} err={}",
+            "{}: upstream disconnected session={} auth={auth_id} url={ws_url} session_object={} reason={reason} last_event={last_event} is_terminal={} err={}",
+            self.provider.label(),
             self.id,
             self.kind(),
             is_terminal_event(&last_event),
@@ -283,7 +342,8 @@ impl Session {
         };
         if let Some(conn) = conn {
             tracing::info!(
-                "codex websockets: upstream disconnected session={} auth={auth_id} url={ws_url} session_object={} reason={reason} last_event={}",
+                "{}: upstream disconnected session={} auth={auth_id} url={ws_url} session_object={} reason={reason} last_event={}",
+                self.provider.label(),
                 self.id,
                 self.kind(),
                 conn.last_event_type()
@@ -371,46 +431,65 @@ fn is_terminal_event(event_type: &str) -> bool {
     matches!(event_type, "response.completed" | "response.done" | "response.incomplete" | "response.failed" | "error")
 }
 
-/// Releases a stored session and its connection (client session ended). The special id `*`
-/// closes every session (Go: CloseAllExecutionSessionsID).
+/// Releases a stored Codex session and its connection (client session ended). The special id
+/// `*` closes every session (Go: CloseAllExecutionSessionsID).
 pub fn close_execution_session(session_id: &str) {
+    close_execution_session_in(Provider::Codex, session_id);
+}
+
+/// [`close_execution_session`] for any provider's store.
+pub fn close_execution_session_in(provider: Provider, session_id: &str) {
     let session_id = session_id.trim();
     if session_id.is_empty() {
         return;
     }
     if session_id == "*" {
-        let sessions: Vec<Arc<Session>> = GLOBAL_STORE.lock().drain().map(|(_, s)| s).collect();
+        let sessions: Vec<Arc<Session>> = provider.store().lock().drain().map(|(_, s)| s).collect();
         for session in sessions {
             session.close("executor_shutdown");
         }
         return;
     }
-    let session = GLOBAL_STORE.lock().remove(session_id);
+    let session = provider.store().lock().remove(session_id);
     if let Some(session) = session {
         session.close("session_closed");
     }
 }
 
-/// Closes every session whose connection belongs to `auth_id` (credential removed).
+/// Closes every Codex session whose connection belongs to `auth_id` (credential removed).
 pub fn close_sessions_for_auth_id(auth_id: &str, reason: &str) {
+    close_sessions_for_auth_id_in(Provider::Codex, auth_id, reason);
+}
+
+/// [`close_sessions_for_auth_id`] for any provider's store; returns the ids of the closed sessions.
+pub fn close_sessions_for_auth_id_in(provider: Provider, auth_id: &str, reason: &str) -> Vec<String> {
     let auth_id = auth_id.trim();
     if auth_id.is_empty() {
-        return;
+        return Vec::new();
     }
     let reason = if reason.trim().is_empty() { "auth_removed" } else { reason.trim() };
-    let matches: Vec<Arc<Session>> = {
-        let mut store = GLOBAL_STORE.lock();
+    let removed: Vec<(String, Arc<Session>)> = {
+        let mut store = provider.store().lock();
         let ids: Vec<String> = store.iter().filter(|(_, s)| s.auth_id() == auth_id).map(|(id, _)| id.clone()).collect();
-        ids.iter().filter_map(|id| store.remove(id)).collect()
+        ids.into_iter().filter_map(|id| store.remove(&id).map(|s| (id, s))).collect()
     };
-    for session in matches {
-        session.close(reason);
-    }
+    removed
+        .into_iter()
+        .map(|(id, session)| {
+            session.close(reason);
+            id
+        })
+        .collect()
 }
 
 /// Receiver of the disconnect notification of an execution session (created on demand).
+pub fn upstream_disconnect_receiver_in(provider: Provider, session_id: &str) -> Option<watch::Receiver<Option<String>>> {
+    Session::get_or_create(provider, session_id).map(|s| s.disconnect_receiver())
+}
+
+/// Codex form of [`upstream_disconnect_receiver_in`].
 pub fn upstream_disconnect_receiver(session_id: &str) -> Option<watch::Receiver<Option<String>>> {
-    Session::get_or_create(session_id).map(|s| s.disconnect_receiver())
+    upstream_disconnect_receiver_in(Provider::Codex, session_id)
 }
 
 #[cfg(test)]
@@ -421,7 +500,7 @@ mod tests {
     async fn dialed_session() -> (Arc<Session>, Arc<WsConn>, tokio::io::DuplexStream) {
         let (client, server) = tokio::io::duplex(1 << 16);
         let (reader, writer) = split(Box::new(client), &[], Deflate::default());
-        let session = Session::ephemeral();
+        let session = Session::ephemeral(Provider::Codex);
         let dialed = Dialed { reader, writer, response_headers: HeaderMap::new() };
         let (conn, _) = session.ensure_conn("a", "wss://x", "", || async move { Ok(dialed) }).await.unwrap();
         (session, conn, server)
