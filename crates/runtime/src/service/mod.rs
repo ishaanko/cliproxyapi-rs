@@ -21,10 +21,16 @@
 //! - [`listing`]: `/v1/models` and `/v1beta/models` payloads over the registry.
 //! - [`antigravity`]: web-search capability probe for Antigravity auths.
 //!
-//! Not ported: Home mode, the plugin host, pprof and mDNS discovery, the aistudio websocket
-//! gateway and runtime-only auths, the usage queue.
+//! - [`discovery`], [`pprof`], `extras`: the mDNS advertiser and the profiling server, applied on
+//!   start and on every config reload.
+//!
+//! Not ported: Home mode, the plugin host, the aistudio websocket gateway and runtime-only auths,
+//! the usage queue.
 
 pub mod antigravity;
+pub mod discovery;
+mod extras;
+pub mod pprof;
 pub mod listing;
 pub mod models;
 mod lifecycle;

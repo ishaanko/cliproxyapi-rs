@@ -274,7 +274,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         _ = shutdown_signal() => {}
         _ = idle => {}
     }
-    service.shutdown();
+    service.shutdown_graceful().await;
     0
 }
 
