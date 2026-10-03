@@ -8,19 +8,20 @@
 //! thread that purges expired entries every [`CACHE_CLEANUP_INTERVAL`], like Go's cleanup
 //! goroutine.
 //!
-//! Not ported: the `internal/home` KV mode. Go branches to a remote KV client when the home
-//! control plane is active; here only the in-memory path exists, so the Go `context` parameters and
-//! the `error` results that only the KV path can produce are dropped (`*Required` variants return
-//! plain values). The Go signature-cache toggles ([`set_signature_cache_enabled`],
-//! [`set_signature_bypass_strict_mode`]) stay process-wide atomics.
+//! Home KV mode: the global free functions (`cache_*`, `get_*_required`, ...) use the remote
+//! store installed with [`install_kv_backend`] when Home mode is on and the in-process cache
+//! otherwise; the struct methods are always in-process. Go's `*Required` functions return the
+//! store's error, so here they return [`KvResult`]; the Go `context` parameters are dropped. The
+//! signature-cache toggles ([`set_signature_cache_enabled`], [`set_signature_bypass_strict_mode`])
+//! stay process-wide atomics.
 
 mod antigravity_reasoning_replay;
 mod bounded_lru;
 mod claude_thinking_replay;
 mod clock;
 mod codex_reasoning_replay;
-mod kv;
 mod kimi_thinking_replay;
+mod kv;
 mod signature_cache;
 mod xai_reasoning_replay;
 

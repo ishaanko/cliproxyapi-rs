@@ -16,6 +16,7 @@ use std::time::Duration;
 use cpa_json::{J, Res, Value};
 use parking_lot::Mutex;
 
+use super::kv::{KvBackend, KvError, KvResult, Store, decode_items, encode_items, scoped_kv_key, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started, oldest_keys, scoped_key};
 use crate::signature::GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR;
 
@@ -32,17 +33,29 @@ pub const ANTIGRAVITY_REASONING_REPLAY_CACHE_MAX_BYTES_PER_ENTRY: usize = 16 << 
 
 const MIN_ANTIGRAVITY_THOUGHT_SIGNATURE_REPLAY_LEN: usize = 16;
 
-/// Rejection of replay items by [`AntigravityReasoningReplayCache::replace_items_if_unchanged`].
+/// Failure of a conditional replace: the items normalize to nothing, or Home KV failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AntigravityReplayError;
+pub enum AntigravityReplayError {
+    InvalidItems,
+    Kv(KvError),
+}
 
 impl fmt::Display for AntigravityReplayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("invalid antigravity reasoning replay items")
+        match self {
+            Self::InvalidItems => f.write_str("invalid antigravity reasoning replay items"),
+            Self::Kv(e) => e.fmt(f),
+        }
     }
 }
 
 impl std::error::Error for AntigravityReplayError {}
+
+impl From<KvError> for AntigravityReplayError {
+    fn from(e: KvError) -> Self {
+        Self::Kv(e)
+    }
+}
 
 struct Entry {
     items: Vec<Vec<u8>>,
@@ -53,9 +66,11 @@ struct Entry {
 }
 
 /// The exact replay state read for one request. Opaque outside the cache; the default snapshot
-/// (`loaded == false`) makes conditional operations behave as unconditional.
+/// (`loaded == false`) makes conditional operations behave as unconditional. In Home mode `raw`
+/// is the stored value read, the compare-and-swap guard.
 #[derive(Debug, Clone, Default)]
 pub struct AntigravityReasoningReplaySnapshot {
+    raw: Vec<u8>,
     items: Vec<Vec<u8>>,
     loaded: bool,
     found: bool,
@@ -136,6 +151,7 @@ impl State {
         }
         let (revision, branch) = self.put_tombstone(key, now);
         AntigravityReasoningReplaySnapshot {
+            raw: Vec::new(),
             items: Vec::new(),
             loaded: true,
             found: true,
@@ -334,6 +350,7 @@ impl AntigravityReasoningReplayCache {
         };
         entry.timestamp = now;
         let mut snapshot = AntigravityReasoningReplaySnapshot {
+            raw: Vec::new(),
             items: Vec::new(),
             loaded: true,
             found: true,
@@ -360,7 +377,7 @@ impl AntigravityReasoningReplayCache {
         let Some(key) = cache_key(model_name, session_key) else {
             return Ok(false);
         };
-        let normalized = normalize_items(items).ok_or(AntigravityReplayError)?;
+        let normalized = normalize_items(items).ok_or(AntigravityReplayError::InvalidItems)?;
         if !snapshot.loaded {
             return Ok(self.cache_items(model_name, session_key, &normalized));
         }
@@ -485,32 +502,231 @@ impl AntigravityReasoningReplayCache {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+const KV_PREFIX: &str = "cpa:antigravity:reasoning-replay";
+const GENERATION_ITEM_TYPE: &str = "cpa_antigravity_replay_generation";
+/// Attempts to fence an absent key, and to re-validate a lost compare-and-swap.
+const HOME_ATTEMPTS: usize = 4;
+/// JSON encodes each normalized item as base64; leaves room for that expansion while rejecting
+/// oversized Home values before decoding.
+const MAX_SERIALIZED_BYTES: usize = 24 << 20;
+
+fn kv_key(model_name: &str, session_key: &str) -> String {
+    scoped_kv_key(KV_PREFIX, model_name, session_key)
+}
+
+/// The leading marker item of a stored value: `{"type","generation","branch"[,"deleted":true]}`.
+fn marker_item(deleted: bool, branch: &str) -> Vec<u8> {
+    let template = if deleted {
+        r#"{"type":"","generation":"","branch":"","deleted":true}"#
+    } else {
+        r#"{"type":"","generation":"","branch":""}"#
+    };
+    let mut marker = cpa_json::parse_str(template);
+    cpa_json::set(&mut marker, "type", GENERATION_ITEM_TYPE);
+    cpa_json::set(&mut marker, "generation", new_generation());
+    cpa_json::set(&mut marker, "branch", branch);
+    cpa_json::to_vec(&marker)
+}
+
+fn new_tombstone() -> KvResult<Vec<u8>> {
+    encode_items(&[marker_item(true, &new_generation())])
+}
+
+/// Stored value of `items` on `branch` (a fresh branch when empty).
+fn marshal_home_value(items: &[Vec<u8>], branch: &str) -> KvResult<Vec<u8>> {
+    let branch = if branch.is_empty() { new_generation() } else { branch.to_string() };
+    let mut stored = Vec::with_capacity(items.len() + 1);
+    stored.push(marker_item(false, &branch));
+    stored.extend_from_slice(items);
+    encode_items(&stored)
+}
+
+/// A decoded stored value.
+struct HomeValue {
+    items: Vec<Vec<u8>>,
+    deleted: bool,
+    branch: String,
+}
+
+/// Splits the leading marker off a stored value; a value without one decodes as plain items.
+fn decode_home_value(raw: &[u8]) -> Option<HomeValue> {
+    let mut items = decode_items(raw).ok()?;
+    let is_marker = items
+        .first()
+        .is_some_and(|first| trimmed(&cpa_json::parse(first), "type") == GENERATION_ITEM_TYPE);
+    if !is_marker {
+        return Some(HomeValue { items, deleted: false, branch: String::new() });
+    }
+    let marker = cpa_json::parse(&items.remove(0));
+    Some(HomeValue { items, deleted: marker.g("deleted").bool(), branch: trimmed(&marker, "branch") })
+}
+
+/// Reads the stored value of `key`, reserving a tombstone first when absent.
+fn read_or_fence(backend: &dyn KvBackend, key: &str) -> KvResult<Vec<u8>> {
+    for _ in 0..HOME_ATTEMPTS {
+        if let Some(raw) = backend.get(key)? {
+            return Ok(raw);
+        }
+        let reservation = new_tombstone()?;
+        if backend.compare_and_swap(key, None, &reservation, ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL)? {
+            return Ok(reservation);
+        }
+    }
+    Err(KvError::new("could not fence absent antigravity reasoning replay state"))
+}
+
+/// Reads the Home state into `snapshot`, which is already marked loaded so a failed read still
+/// guards later conditional writes (as in Go, where the error comes with a loaded snapshot).
+fn home_get(
+    backend: &dyn KvBackend,
+    model_name: &str,
+    session_key: &str,
+    snapshot: &mut AntigravityReasoningReplaySnapshot,
+) -> KvResult<Option<Vec<Vec<u8>>>> {
+    let key = kv_key(model_name, session_key);
+    let raw = read_or_fence(backend, &key)?;
+    snapshot.found = true;
+    if raw.len() > MAX_SERIALIZED_BYTES {
+        return Ok(None);
+    }
+    snapshot.raw.clone_from(&raw);
+    let Some(value) = decode_home_value(&raw) else {
+        return Ok(None);
+    };
+    snapshot.branch = value.branch;
+    if value.deleted || value.items.is_empty() || value.items.len() > ANTIGRAVITY_REASONING_REPLAY_CACHE_MAX_ITEMS_PER_ENTRY {
+        return Ok(None);
+    }
+    let Some(normalized) = normalize_items(&value.items).filter(|n| n.len() == value.items.len()) else {
+        return Ok(None);
+    };
+    snapshot.items.clone_from(&normalized);
+    backend.expire(&key, ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL)?;
+    Ok(Some(normalized))
+}
+
+/// Publishes `normalized` by compare-and-swap, following a chain of descendants of the snapshot
+/// that only extend what this request read.
+fn home_replace(
+    backend: &dyn KvBackend,
+    key: &str,
+    snapshot: &AntigravityReasoningReplaySnapshot,
+    normalized: &[Vec<u8>],
+) -> KvResult<bool> {
+    let mut expected_raw = snapshot.raw.clone();
+    let mut expected_found = snapshot.found;
+    let branch = if snapshot.branch.is_empty() || !items_prefix(&snapshot.items, normalized) {
+        new_generation()
+    } else {
+        snapshot.branch.clone()
+    };
+    for _ in 0..HOME_ATTEMPTS {
+        let raw = marshal_home_value(normalized, &branch)?;
+        let expected = expected_found.then_some(expected_raw.as_slice());
+        if backend.compare_and_swap(key, expected, &raw, ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL)? {
+            return Ok(true);
+        }
+        let Some(current_raw) = backend.get(key)? else {
+            return Ok(false);
+        };
+        if current_raw.len() > MAX_SERIALIZED_BYTES {
+            return Ok(false);
+        }
+        let Some(current) = decode_home_value(&current_raw) else {
+            return Ok(false);
+        };
+        if current.deleted || snapshot.branch.is_empty() || current.branch != snapshot.branch {
+            return Ok(false);
+        }
+        let descends = normalize_items(&current.items)
+            .is_some_and(|n| n.len() == current.items.len() && items_prefix(&n, normalized));
+        if !descends {
+            return Ok(false);
+        }
+        expected_raw = current_raw;
+        expected_found = true;
+    }
+    Ok(false)
+}
+
 /// Go: CacheAntigravityReasoningReplayItem.
 pub fn cache_antigravity_reasoning_replay_item(model_name: &str, session_key: &str, item: &[u8]) -> bool {
-    AntigravityReasoningReplayCache::global().cache_items(model_name, session_key, &[item.to_vec()])
+    cache_antigravity_reasoning_replay_items(model_name, session_key, &[item.to_vec()])
 }
 
 /// Go: CacheAntigravityReasoningReplayItems / CacheAntigravityReasoningReplayItemsBestEffort.
 pub fn cache_antigravity_reasoning_replay_items(model_name: &str, session_key: &str, items: &[Vec<u8>]) -> bool {
-    AntigravityReasoningReplayCache::global().cache_items(model_name, session_key, items)
+    if cache_key(model_name, session_key).is_none() {
+        return false;
+    }
+    let Some(normalized) = normalize_items(items) else {
+        return false;
+    };
+    let result = store().and_then(|store| match store {
+        Store::Local => Ok(None),
+        Store::Home(backend) => {
+            let raw = marshal_home_value(&normalized, "")?;
+            backend
+                .set(&kv_key(model_name, session_key), &raw, ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL)
+                .map(Some)
+        }
+    });
+    match result {
+        Ok(Some(written)) => written,
+        Ok(None) => AntigravityReasoningReplayCache::global().cache_items(model_name, session_key, items),
+        Err(e) => {
+            tracing::error!("home kv best-effort antigravity reasoning replay set failed prefix=cpa:antigravity:*: {e}");
+            false
+        }
+    }
 }
 
-/// Go: GetAntigravityReasoningReplayItem.
+/// Go: GetAntigravityReasoningReplayItem (failures read as a miss).
 pub fn get_antigravity_reasoning_replay_item(model_name: &str, session_key: &str) -> Option<Vec<u8>> {
-    AntigravityReasoningReplayCache::global().get_item(model_name, session_key)
+    get_antigravity_reasoning_replay_items(model_name, session_key)?.into_iter().next()
 }
 
-/// Go: GetAntigravityReasoningReplayItems / GetAntigravityReasoningReplayItemsRequired.
+/// Go: GetAntigravityReasoningReplayItems (failures read as a miss).
 pub fn get_antigravity_reasoning_replay_items(model_name: &str, session_key: &str) -> Option<Vec<Vec<u8>>> {
-    AntigravityReasoningReplayCache::global().get_items(model_name, session_key)
+    get_antigravity_reasoning_replay_items_with_snapshot_required(model_name, session_key)
+        .0
+        .ok()
+        .flatten()
 }
 
-/// Go: GetAntigravityReasoningReplayItemsWithSnapshotRequired.
+/// Go: GetAntigravityReasoningReplayItemsRequired.
+pub fn get_antigravity_reasoning_replay_items_required(
+    model_name: &str,
+    session_key: &str,
+) -> KvResult<Option<Vec<Vec<u8>>>> {
+    get_antigravity_reasoning_replay_items_with_snapshot_required(model_name, session_key).0
+}
+
+/// Go: GetAntigravityReasoningReplayItemsWithSnapshotRequired. In Home mode a miss reserves a
+/// tombstone, and the snapshot carries the stored value as the compare-and-swap guard. After a
+/// failed Home read the snapshot is still returned (loaded), except when the store is unavailable.
 pub fn get_antigravity_reasoning_replay_items_with_snapshot_required(
     model_name: &str,
     session_key: &str,
-) -> (Option<Vec<Vec<u8>>>, AntigravityReasoningReplaySnapshot) {
-    AntigravityReasoningReplayCache::global().get_items_with_snapshot_required(model_name, session_key)
+) -> (KvResult<Option<Vec<Vec<u8>>>>, AntigravityReasoningReplaySnapshot) {
+    if cache_key(model_name, session_key).is_none() {
+        return (Ok(None), AntigravityReasoningReplaySnapshot::default());
+    }
+    match store() {
+        Err(e) => (Err(e), AntigravityReasoningReplaySnapshot::default()),
+        Ok(Store::Home(backend)) => {
+            let mut snapshot = AntigravityReasoningReplaySnapshot { loaded: true, ..Default::default() };
+            let items = home_get(backend, model_name, session_key, &mut snapshot);
+            (items, snapshot)
+        }
+        Ok(Store::Local) => {
+            let (items, snapshot) =
+                AntigravityReasoningReplayCache::global().get_items_with_snapshot_required(model_name, session_key);
+            (Ok(items), snapshot)
+        }
+    }
 }
 
 /// Go: ReplaceAntigravityReasoningReplayItemsIfUnchanged.
@@ -520,7 +736,21 @@ pub fn replace_antigravity_reasoning_replay_items_if_unchanged(
     snapshot: &AntigravityReasoningReplaySnapshot,
     items: &[Vec<u8>],
 ) -> Result<bool, AntigravityReplayError> {
-    AntigravityReasoningReplayCache::global().replace_items_if_unchanged(model_name, session_key, snapshot, items)
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(false);
+    }
+    let normalized = normalize_items(items).ok_or(AntigravityReplayError::InvalidItems)?;
+    if !snapshot.loaded {
+        return Ok(cache_antigravity_reasoning_replay_items(model_name, session_key, &normalized));
+    }
+    match store()? {
+        Store::Home(backend) => {
+            Ok(home_replace(backend, &kv_key(model_name, session_key), snapshot, &normalized)?)
+        }
+        Store::Local => {
+            AntigravityReasoningReplayCache::global().replace_items_if_unchanged(model_name, session_key, snapshot, items)
+        }
+    }
 }
 
 /// Go: DeleteAntigravityReasoningReplayItemsIfUnchanged.
@@ -528,13 +758,49 @@ pub fn delete_antigravity_reasoning_replay_items_if_unchanged(
     model_name: &str,
     session_key: &str,
     snapshot: &AntigravityReasoningReplaySnapshot,
-) -> bool {
-    AntigravityReasoningReplayCache::global().delete_items_if_unchanged(model_name, session_key, snapshot)
+) -> KvResult<bool> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(false);
+    }
+    if !snapshot.loaded {
+        delete_antigravity_reasoning_replay_item_required(model_name, session_key)?;
+        return Ok(true);
+    }
+    match store()? {
+        Store::Home(backend) => backend.compare_and_swap(
+            &kv_key(model_name, session_key),
+            snapshot.found.then_some(snapshot.raw.as_slice()),
+            &new_tombstone()?,
+            ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL,
+        ),
+        Store::Local => Ok(AntigravityReasoningReplayCache::global().delete_items_if_unchanged(
+            model_name,
+            session_key,
+            snapshot,
+        )),
+    }
 }
 
-/// Go: DeleteAntigravityReasoningReplayItem / DeleteAntigravityReasoningReplayItemRequired.
+/// Go: DeleteAntigravityReasoningReplayItem (failures ignored).
 pub fn delete_antigravity_reasoning_replay_item(model_name: &str, session_key: &str) {
-    AntigravityReasoningReplayCache::global().delete_item(model_name, session_key);
+    let _ = delete_antigravity_reasoning_replay_item_required(model_name, session_key);
+}
+
+/// Go: DeleteAntigravityReasoningReplayItemRequired. Home mode writes a tombstone, which keeps
+/// stale writers fenced.
+pub fn delete_antigravity_reasoning_replay_item_required(model_name: &str, session_key: &str) -> KvResult<()> {
+    if cache_key(model_name, session_key).is_none() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend
+            .set(&kv_key(model_name, session_key), &new_tombstone()?, ANTIGRAVITY_REASONING_REPLAY_CACHE_TTL)
+            .map(|_| ()),
+        Store::Local => {
+            AntigravityReasoningReplayCache::global().delete_item(model_name, session_key);
+            Ok(())
+        }
+    }
 }
 
 /// Go: ClearAntigravityReasoningReplayCache.

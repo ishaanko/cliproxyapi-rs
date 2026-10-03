@@ -161,13 +161,13 @@ impl CodexExecutor {
             let frame = cpa_json::parse(&payload);
             if let Some(ws_err) = parse_error_frame(&frame, plan.model_level_cooling) {
                 call.invalidate("upstream_error", true);
-                clear_replay_on_error_frame(&prepared.replay_scope, &frame);
+                clear_replay_on_error_frame(&prepared.replay_scope, &frame)?;
                 return Err(ws_err);
             }
             if let Some((stream_err, terminal_body)) = terminal_failure_err(&frame, plan.model_level_cooling) {
                 call.unlock();
                 call.invalidate("terminal_failure", true);
-                clear_replay_on_invalid_signature(&prepared.replay_scope, stream_err.status, &terminal_body);
+                clear_replay_on_invalid_signature(&prepared.replay_scope, stream_err.status, &terminal_body)?;
                 return Err(stream_err);
             }
             let payload = normalize_completion(&payload);

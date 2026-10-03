@@ -9,6 +9,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
 
+use super::kv::{KvResult, Store, hash_key_part, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started};
 use crate::signature::GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR;
 
@@ -172,24 +173,67 @@ impl SignatureCache {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+/// Home key of one signature: `cpa:signature:<model group>:<sha256(text)>`.
+fn kv_key(model_name: &str, text: &str) -> String {
+    format!("cpa:signature:{}:{}", get_model_group(model_name), hash_key_part(text))
+}
+
 /// Stores a thinking signature for a model group and text (Go: CacheSignature).
 pub fn cache_signature(model_name: &str, text: &str, signature: &str) {
-    SignatureCache::global().cache_signature_best_effort(model_name, text, signature);
+    cache_signature_best_effort(model_name, text, signature);
 }
 
 /// Go: CacheSignatureBestEffort.
 pub fn cache_signature_best_effort(model_name: &str, text: &str, signature: &str) -> bool {
-    SignatureCache::global().cache_signature_best_effort(model_name, text, signature)
+    if text.is_empty() || signature.is_empty() || signature.len() < MIN_VALID_SIGNATURE_LEN {
+        return false;
+    }
+    match store() {
+        Ok(Store::Local) => SignatureCache::global().cache_signature_best_effort(model_name, text, signature),
+        Ok(Store::Home(backend)) => backend
+            .set(&kv_key(model_name, text), signature.as_bytes(), SIGNATURE_CACHE_TTL)
+            .unwrap_or_else(|e| {
+                tracing::error!("home kv best-effort signature set failed prefix=cpa:signature:*: {e}");
+                false
+            }),
+        Err(e) => {
+            tracing::error!("home kv best-effort signature set failed prefix=cpa:signature:*: {e}");
+            false
+        }
+    }
 }
 
-/// Go: GetCachedSignature.
+/// Go: GetCachedSignature (a Home failure reads as `""`).
 pub fn get_cached_signature(model_name: &str, text: &str) -> String {
-    SignatureCache::global().get_cached_signature_required(model_name, text)
+    get_cached_signature_required(model_name, text).unwrap_or_default()
 }
 
 /// Go: GetCachedSignatureRequired.
-pub fn get_cached_signature_required(model_name: &str, text: &str) -> String {
-    SignatureCache::global().get_cached_signature_required(model_name, text)
+pub fn get_cached_signature_required(model_name: &str, text: &str) -> KvResult<String> {
+    let group = get_model_group(model_name);
+    let miss = || {
+        if group == "gemini" {
+            GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR.to_string()
+        } else {
+            String::new()
+        }
+    };
+    if text.is_empty() {
+        return Ok(miss());
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let key = kv_key(model_name, text);
+            let Some(raw) = backend.get(&key)? else {
+                return Ok(miss());
+            };
+            backend.expire(&key, SIGNATURE_CACHE_TTL)?;
+            Ok(String::from_utf8_lossy(&raw).into_owned())
+        }
+        Store::Local => Ok(SignatureCache::global().get_cached_signature_required(model_name, text)),
+    }
 }
 
 /// Go: ClearSignatureCache.
@@ -198,8 +242,17 @@ pub fn clear_signature_cache(model_name: &str) {
 }
 
 /// Go: DeleteCachedSignatureRequired.
-pub fn delete_cached_signature_required(model_name: &str, text: &str) {
-    SignatureCache::global().delete_cached_signature_required(model_name, text);
+pub fn delete_cached_signature_required(model_name: &str, text: &str) -> KvResult<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend.del(&kv_key(model_name, text)),
+        Store::Local => {
+            SignatureCache::global().delete_cached_signature_required(model_name, text);
+            Ok(())
+        }
+    }
 }
 
 static SIGNATURE_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);

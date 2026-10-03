@@ -14,6 +14,7 @@ use std::time::Duration;
 use cpa_core::cache::{KvBackend, KvError, KvResult, install_kv_backend};
 use cpa_home::KvSetOptions;
 use cpa_home::{Client, HomeError};
+use cpa_runtime::executor::ExecError;
 use tokio::runtime::{Handle, RuntimeFlavor};
 
 /// Drives `fut` to completion on the calling thread.
@@ -36,8 +37,26 @@ pub fn client() -> Result<Option<Arc<Client>>, HomeError> {
     cpa_home::kv::current_kv()
 }
 
+/// Executor error for a Home KV failure while preparing a request (Go returns the plain error
+/// before any upstream attempt).
+pub fn exec_error(err: &HomeError) -> ExecError {
+    let mut e = ExecError::new(0, err.to_string());
+    e.upstream_attempted = false;
+    e
+}
+
+/// [`exec_error`] for a failure reported by the `cpa_core` caches.
+pub fn kv_exec_error(err: &KvError) -> ExecError {
+    let mut e = ExecError::new(0, err.to_string());
+    e.upstream_attempted = false;
+    e
+}
+
 fn kv_error(err: HomeError) -> KvError {
-    KvError::new(err)
+    match err {
+        HomeError::CompareAndSwapUnsupported => KvError::compare_and_swap_unsupported(err),
+        err => KvError::new(err),
+    }
 }
 
 /// `cpa_core` cache backend over the process-wide Home client.
