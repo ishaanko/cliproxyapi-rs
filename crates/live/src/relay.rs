@@ -3,8 +3,8 @@
 //!
 //! Built on webrtc-rs. Differences from the Go/pion stack, all inherent to the library:
 //! UDP sockets are bound explicitly (the port range picks one free port per session for all
-//! interfaces), the remote IP filter is applied to the SDP candidates before they are handed to
-//! the peer connection, and RTCP of the senders is not drained by the relay.
+//! interfaces, IPv4 only), the remote IP filter is applied to the SDP candidates before they are
+//! handed to the peer connection, and RTCP of the senders is not drained by the relay.
 
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,6 +26,7 @@ use webrtc::media_stream::Track;
 use webrtc::media_stream::track_local::TrackLocal;
 use webrtc::media_stream::track_local::static_rtp::TrackLocalStaticRTP;
 use webrtc::media_stream::track_remote::{TrackRemote, TrackRemoteEvent};
+use webrtc::rtp_transceiver::RtpSender;
 use webrtc::peer_connection::{
     MediaEngine, PeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler, RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceCandidateType,
     RTCIceGatheringState, RTCIceServer, RTCPeerConnectionState, RTCSessionDescription, Registry, SettingEngineBuilder,
@@ -198,13 +199,20 @@ impl Peer {
     }
 }
 
+/// Output track of a leg plus its sender (for the negotiated payload type).
+#[derive(Clone)]
+struct ForwardTarget {
+    track: Arc<TrackLocalStaticRTP>,
+    sender: Arc<dyn RtpSender>,
+}
+
 /// Event handler of one peer connection; the session is attached after it is built.
 struct PeerHandler {
     peer: Peer,
     session: OnceLock<Weak<SessionInner>>,
     gathered: watch::Sender<bool>,
     /// Track the packets of this peer's remote audio are written to.
-    forward_to: watch::Receiver<Option<Arc<TrackLocalStaticRTP>>>,
+    forward_to: watch::Receiver<Option<ForwardTarget>>,
 }
 
 impl PeerHandler {
@@ -264,13 +272,24 @@ impl PeerConnectionEventHandler for PeerHandler {
 async fn relay_rtp(
     name: &str,
     source: Arc<dyn TrackRemote>,
-    destination: &mut watch::Receiver<Option<Arc<TrackLocalStaticRTP>>>,
+    destination: &mut watch::Receiver<Option<ForwardTarget>>,
     done: watch::Receiver<bool>,
 ) {
     let Ok(dest) = destination.wait_for(|d| d.is_some()).await.map(|d| d.clone()) else { return };
-    let Some(dest) = dest else { return };
+    let Some(target) = dest else { return };
+    let dest = target.track.clone();
     let dest_ssrc = dest.ssrcs().await.first().copied();
-    let dest_pt = OPUS_PAYLOAD_TYPE;
+    // The payload type the leg negotiated for Opus (the peer's offer may number it differently).
+    let dest_pt = match target.sender.get_parameters().await {
+        Ok(p) => p
+            .rtp_parameters
+            .codecs
+            .iter()
+            .find(|c| c.rtp_codec.mime_type.eq_ignore_ascii_case(MIME_TYPE_OPUS))
+            .map(|c| c.payload_type)
+            .unwrap_or(OPUS_PAYLOAD_TYPE),
+        Err(_) => OPUS_PAYLOAD_TYPE,
+    };
     loop {
         let event = source.poll().await;
         if *done.borrow() {
@@ -635,8 +654,8 @@ impl MediaRelayFactory for PionMediaRelay {
 
         let (down_gather_tx, down_gather_rx) = watch::channel(false);
         let (up_gather_tx, up_gather_rx) = watch::channel(false);
-        let (to_upstream_tx, to_upstream_rx) = watch::channel::<Option<Arc<TrackLocalStaticRTP>>>(None);
-        let (to_downstream_tx, to_downstream_rx) = watch::channel::<Option<Arc<TrackLocalStaticRTP>>>(None);
+        let (to_upstream_tx, to_upstream_rx) = watch::channel::<Option<ForwardTarget>>(None);
+        let (to_downstream_tx, to_downstream_rx) = watch::channel::<Option<ForwardTarget>>(None);
         let down_handler = Arc::new(PeerHandler { peer: Peer::Local, session: OnceLock::new(), gathered: down_gather_tx, forward_to: to_upstream_rx });
         let up_handler = Arc::new(PeerHandler { peer: Peer::Remote, session: OnceLock::new(), gathered: up_gather_tx, forward_to: to_downstream_rx });
 
@@ -720,15 +739,17 @@ impl MediaRelayFactory for PionMediaRelay {
             )))
         };
         let to_desktop = make_track("codex-live-downstream");
-        if let Err(e) = downstream.add_track(to_desktop.clone() as Arc<dyn TrackLocal>).await {
-            return Err(fail(&inner, format!("add downstream audio track: {e}")));
-        }
+        let desktop_sender = match downstream.add_track(to_desktop.clone() as Arc<dyn TrackLocal>).await {
+            Ok(sender) => sender,
+            Err(e) => return Err(fail(&inner, format!("add downstream audio track: {e}"))),
+        };
         let to_openai = make_track("codex-live-upstream");
-        if let Err(e) = upstream.add_track(to_openai.clone() as Arc<dyn TrackLocal>).await {
-            return Err(fail(&inner, format!("add upstream audio track: {e}")));
-        }
-        let _ = to_downstream_tx.send(Some(to_desktop));
-        let _ = to_upstream_tx.send(Some(to_openai));
+        let openai_sender = match upstream.add_track(to_openai.clone() as Arc<dyn TrackLocal>).await {
+            Ok(sender) => sender,
+            Err(e) => return Err(fail(&inner, format!("add upstream audio track: {e}"))),
+        };
+        let _ = to_downstream_tx.send(Some(ForwardTarget { track: to_desktop, sender: desktop_sender }));
+        let _ = to_upstream_tx.send(Some(ForwardTarget { track: to_openai, sender: openai_sender }));
 
         match upstream.create_data_channel(REALTIME_DATA_CHANNEL_LABEL, None).await {
             Ok(channel) => inner.bridge.attach_upstream(channel),

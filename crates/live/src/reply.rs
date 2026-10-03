@@ -55,9 +55,16 @@ impl Reply {
     }
 
     pub fn into_response(self) -> Response {
+        let mut headers = self.headers;
+        // net/http sniffs a missing Content-Type from the body (plain text vs binary).
+        if !headers.contains_key(header::CONTENT_TYPE) && !self.body.is_empty() {
+            let texty = std::str::from_utf8(&self.body).is_ok_and(|s| !s.bytes().any(|b| b < 0x20 && !matches!(b, b'\t' | b'\n' | b'\r' | 0x0c)));
+            let sniffed = if texty { "text/plain; charset=utf-8" } else { "application/octet-stream" };
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(sniffed));
+        }
         let mut resp = Response::new(Body::from(self.body));
         *resp.status_mut() = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        *resp.headers_mut() = self.headers;
+        *resp.headers_mut() = headers;
         resp
     }
 
