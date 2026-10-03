@@ -242,7 +242,7 @@ fn json_payloads_from_chunk(chunk: &[u8]) -> Vec<Vec<u8>> {
 
 /// The `type` of a frame that needs no bookkeeping beyond being forwarded: a flat object without
 /// `item` or `response` members (the only places the tool-call caches, output collector and
-/// pending-call tracking read) whose plain-string `type` is not `error`. `None` for everything
+/// pending-call tracking read) whose plain-string `type` is not one the bookkeeping keys on. `None` for everything
 /// else, which takes the full path. Decided from a top-level scan, no parse.
 fn plain_forward_event(payload: &[u8]) -> Option<&str> {
     let mut ty: Option<(usize, usize)> = None;
@@ -267,7 +267,12 @@ fn plain_forward_event(payload: &[u8]) -> Option<&str> {
     let (off, len) = ty?;
     let inner = payload[off..off + len].strip_prefix(b"\"")?.strip_suffix(b"\"")?;
     let name = std::str::from_utf8(inner).ok()?;
-    (!name.contains('\\') && name != WS_EVENT_TYPE_ERROR).then_some(name)
+    // Types the bookkeeping keys on stay on the full path even if a frame omits `item` / `response`.
+    let tracked = matches!(
+        name,
+        WS_EVENT_TYPE_ERROR | "response.created" | "response.completed" | "response.done" | "response.output_item.added" | "response.output_item.done"
+    );
+    (!name.contains('\\') && !tracked).then_some(name)
 }
 
 fn is_completion_event(event_type: &str) -> bool {
@@ -1274,6 +1279,24 @@ async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Only frames none of the turn bookkeeping looks at skip it.
+    #[test]
+    fn plain_events_are_forwarded_without_bookkeeping() {
+        let name = |s: &str| plain_forward_event(s.as_bytes()).map(str::to_string);
+        assert_eq!(name(r#"{"type":"response.output_text.delta","delta":"x"}"#).as_deref(), Some("response.output_text.delta"));
+        for tracked in [
+            r#"{"type":"response.created","response":{}}"#,
+            r#"{"type":"response.output_item.done","item":{}}"#,
+            r#"{"type":"response.completed"}"#,
+            r#"{"type":"error","error":{}}"#,
+            r#"{"type":"response.output_text.delta","item":{"x":1}}"#,
+            r#"{"delta":"no type"}"#,
+            r#"{"type":"a","type":"b"}"#,
+        ] {
+            assert_eq!(name(tracked), None, "{tracked}");
+        }
+    }
 
     #[test]
     fn json_payloads_are_extracted_from_sse_chunks() {
