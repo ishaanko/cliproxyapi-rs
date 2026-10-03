@@ -319,11 +319,15 @@ impl StreamPump {
 
     /// Translates one upstream payload and sends every resulting frame; false stops the stream.
     pub async fn feed(&mut self, payload: &[u8]) -> bool {
-        self.feed_with(payload, |line| line.to_vec()).await
+        self.feed_inner(payload, |line| line).await
     }
 
     /// [`feed`](Self::feed) with a rewrite applied to every frame before it is sent.
     pub async fn feed_with(&mut self, payload: &[u8], rewrite: impl Fn(&[u8]) -> Vec<u8>) -> bool {
+        self.feed_inner(payload, |line| rewrite(&line)).await
+    }
+
+    async fn feed_inner(&mut self, payload: &[u8], rewrite: impl Fn(Vec<u8>) -> Vec<u8>) -> bool {
         let lines = translate_stream_with_claude_input_tokens(
             &self.ctx,
             self.upstream,
@@ -337,7 +341,7 @@ impl StreamPump {
         );
         record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for line in lines {
-            if self.tx.send(Ok(Bytes::from(rewrite(&line)))).await.is_err() {
+            if self.tx.send(Ok(Bytes::from(rewrite(line)))).await.is_err() {
                 return false;
             }
         }

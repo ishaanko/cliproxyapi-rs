@@ -639,6 +639,24 @@ fn take_stop_without_usage(trace_id: &str) -> bool {
 /// that arrives in a later chunk of the same trace is dropped. Shared by AI Studio and
 /// Antigravity.
 pub fn filter_sse_usage_metadata(payload: &[u8]) -> Vec<u8> {
+    filter_sse_usage_metadata_cow(payload).into_owned()
+}
+
+/// [`filter_sse_usage_metadata`] that borrows `payload` when nothing changes. A single `data:`
+/// line whose top-level object has no `traceId`, `usageMetadata` or `response` member cannot be
+/// remembered, dropped or rewritten, which settles the usual mid-stream chunk without a parse.
+pub fn filter_sse_usage_metadata_cow(payload: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let line = trim_space(payload);
+    if let Some(rest) = line.strip_prefix(b"data:")
+        && !payload.contains(&b'\n')
+        && lacks_top_level_keys(trim_space(rest), &["traceId", "usageMetadata", "response"])
+    {
+        return std::borrow::Cow::Borrowed(payload);
+    }
+    std::borrow::Cow::Owned(filter_sse_usage_metadata_slow(payload))
+}
+
+fn filter_sse_usage_metadata_slow(payload: &[u8]) -> Vec<u8> {
     if payload.is_empty() {
         return payload.to_vec();
     }
@@ -779,6 +797,23 @@ pub fn strip_usage_metadata_from_json(raw_json: &[u8]) -> (Vec<u8>, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // The borrow gate may only fire where the full filter would leave the payload alone.
+    #[test]
+    fn sse_filter_gate_matches_full_filter() {
+        for p in [
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}],"modelVersion":"m"}"#,
+            r#"data: {"candidates":[],"usageMetadata":{"promptTokenCount":1}}"#,
+            r#"data: {"response":{"usageMetadata":{"promptTokenCount":1},"candidates":[]}}"#,
+            r#"data: {"traceId":"t","candidates":[{"finishReason":"STOP"}]}"#,
+            "data: {\"a\":1}\ndata: {\"usageMetadata\":{}}",
+            r#"{"usageMetadata":{"promptTokenCount":1}}"#,
+            "data: not json",
+        ] {
+            assert_eq!(filter_sse_usage_metadata_cow(p.as_bytes()).as_ref(), filter_sse_usage_metadata_slow(p.as_bytes()), "{p}");
+        }
+        assert!(matches!(filter_sse_usage_metadata_cow(br#"data: {"candidates":[]}"#), std::borrow::Cow::Borrowed(_)));
+    }
 
     #[test]
     fn openai_usage_with_cache_and_reasoning() {

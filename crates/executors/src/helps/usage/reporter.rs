@@ -34,7 +34,7 @@ use sha2::{Digest, Sha256};
 use super::accounting::{Detail, ensure_token_breakdown_for_provider};
 use super::parse::StreamUsageBuffer;
 use crate::helps::response_model::{
-    MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event, extract_response_model_event_doc,
+    FastModel, MAX_RESPONSE_MODEL_LENGTH, MODEL_SUBSTITUTION_WARNS, ModelSubstitutionKey, extract_response_model_event, extract_response_model_event_doc,
     is_model_substituted, normalize_model_name,
 };
 
@@ -87,8 +87,8 @@ struct Inner {
     sink: Option<Arc<dyn UsageSink>>,
     /// A terminal event already reported the served model; later frames skip parsing.
     response_model_final: AtomicBool,
-    /// The provider takes the generic response-model extraction (see `generic_model_fast`).
-    generic_model: bool,
+    /// Which no-parse response-model extraction applies to the provider.
+    fast_model: crate::helps::response_model::FastModel,
     published: AtomicBool,
     state: Mutex<State>,
 }
@@ -235,7 +235,7 @@ impl UsageReporter {
             requested_at_utc: Utc::now(),
             sink,
             response_model_final: AtomicBool::new(false),
-            generic_model: crate::helps::response_model::is_generic_provider(provider),
+            fast_model: crate::helps::response_model::fast_model_kind(provider),
             published: AtomicBool::new(false),
             state: Mutex::new(State {
                 stream: opts.is_some_and(|o| o.stream),
@@ -302,12 +302,17 @@ impl UsageReporter {
             return;
         }
         // Common chat chunk: decided without a parse or an allocation.
-        if self.inner.generic_model
+        if self.inner.fast_model != FastModel::No
             && let Some(data) = crate::helps::text::json_payload(payload)
-            && let Some((served, terminal)) = crate::helps::response_model::generic_model_fast(data)
         {
-            self.apply_response_model_ref(served, terminal);
-            return;
+            let fast = match self.inner.fast_model {
+                FastModel::Generic => crate::helps::response_model::generic_model_fast(data),
+                _ => crate::helps::response_model::gemini_model_fast(data),
+            };
+            if let Some((served, terminal)) = fast {
+                self.apply_response_model_ref(served, terminal);
+                return;
+            }
         }
         let (served, terminal) = extract_response_model_event(payload, &self.inner.provider);
         self.apply_response_model(served, terminal);

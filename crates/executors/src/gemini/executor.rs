@@ -33,7 +33,7 @@ use crate::helps::responses_usage::ensure_responses_usage_details;
 use crate::helps::session::ensure_session_id;
 use crate::helps::text::json_payload;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
-use crate::helps::usage::{UsageReporter, filter_sse_usage_metadata, parse_gemini_stream_usage, parse_gemini_usage};
+use crate::helps::usage::{UsageReporter, filter_sse_usage_metadata_cow, parse_gemini_stream_usage, parse_gemini_usage};
 
 const PROVIDER: &str = "gemini";
 const INTERACTIONS_PROVIDER: &str = "gemini-interactions";
@@ -421,7 +421,7 @@ impl GeminiExecutor {
                 let filtered = {
                     let _parse_scope = crate::helps::parse_cache::scope();
                     reporter.observe_response_model(&line);
-                    filter_sse_usage_metadata(&line)
+                    filter_sse_usage_metadata_cow(&line)
                 };
                 let Some(payload) = json_payload(&filtered) else { continue };
                 if let Some(detail) = parse_gemini_stream_usage(payload) {
