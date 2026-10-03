@@ -4,6 +4,7 @@
 //! handlers call before execution.
 
 use cpa_json::J;
+use crate::bodyview::Want;
 use serde_json::Value;
 
 /// `thinking.SuffixResult`.
@@ -275,15 +276,26 @@ fn usable(config: Option<Config>) -> Option<Config> {
     config.filter(|c| !effort_from_config(c).is_empty() || *c == Config::None)
 }
 
-/// The body parsed once, `None` unless it is valid JSON (metadata extraction treats anything else
-/// as "no settings").
-pub fn parse_if_valid(body: &[u8]) -> Option<Value> {
-    (!body.is_empty() && cpa_json::valid(body)).then(|| cpa_json::parse(body))
+/// Top-level members the request metadata reads for `provider` (`service_tier`, `generate` and
+/// whatever [`extract_reasoning_effort`] looks at), for [`crate::bodyview::mini_root`].
+pub fn metadata_keys(provider: &str) -> &'static [(&'static str, Want)] {
+    use Want::Value;
+    match provider.trim().to_lowercase().as_str() {
+        "claude" | "kimi" | "kimi-ai" | "kimi.ai" | "kimi.com" => {
+            &[("service_tier", Value), ("generate", Value), ("thinking", Value), ("output_config", Value)]
+        }
+        "gemini" => &[("service_tier", Value), ("generate", Value), ("generationConfig", Value)],
+        "antigravity" => &[("service_tier", Value), ("generate", Value), ("request", Value)],
+        "interactions" => &[("service_tier", Value), ("generate", Value), ("generation_config", Value)],
+        "openai" => &[("service_tier", Value), ("generate", Value), ("reasoning_effort", Value), ("reasoning", Value), ("input", Value)],
+        "codex" | "xai" | "openai-response" => &[("service_tier", Value), ("generate", Value), ("reasoning", Value), ("input", Value)],
+        _ => &[("service_tier", Value), ("generate", Value)],
+    }
 }
 
 /// `thinking.ExtractReasoningEffort`: canonical `reasoning_effort` label of the source request
 /// (empty when the request carries no thinking setting).
-/// `root` is the parsed body when it is valid JSON (see [`parse_if_valid`]).
+/// `root` holds the members listed by [`metadata_keys`] when the body is valid JSON.
 pub fn extract_reasoning_effort(root: Option<&Value>, provider: &str, model: &str) -> String {
     let provider = provider.trim().to_lowercase();
     let responses = provider == "codex" || provider == "openai-response";
@@ -328,7 +340,7 @@ mod tests {
     #[test]
     fn effort_sources() {
         let body = br#"{"reasoning_effort":"high"}"#;
-        let effort = |body: &[u8], provider: &str, model: &str| extract_reasoning_effort(parse_if_valid(body).as_ref(), provider, model);
+        let effort = |body: &[u8], provider: &str, model: &str| extract_reasoning_effort(crate::bodyview::mini_root(body, metadata_keys(provider)).as_ref(), provider, model);
         assert_eq!(effort(body, "openai", "m"), "high");
         assert_eq!(effort(body, "openai", "m(8192)"), "medium");
         let claude = br#"{"thinking":{"type":"enabled","budget_tokens":600}}"#;

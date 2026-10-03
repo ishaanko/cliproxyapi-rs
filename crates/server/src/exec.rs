@@ -21,7 +21,7 @@ use crate::headers::filter_upstream_headers;
 use crate::req::ReqInfo;
 use crate::sse_validate::SseJsonValidator;
 use crate::state::{AppState, HandlerSettings};
-use crate::thinking::{extract_reasoning_effort, parse_if_valid, parse_suffix};
+use crate::thinking::{extract_reasoning_effort, metadata_keys, parse_suffix};
 
 /// Result of a stream execution: filtered upstream headers plus the chunk channel. An `Err`
 /// item is terminal; a closed channel is a clean end.
@@ -238,9 +238,10 @@ impl Pipeline {
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::AUTH_SELECTION_MODEL.into(), json!(sel));
         }
-        // One parse of the body serves the effort, service tier and generate flag.
-        let body_root = parse_if_valid(&a.body);
-        let effort = extract_reasoning_effort(body_root.as_ref(), a.handler_type.unwrap_or(a.entry.as_str()), normalized_model);
+        // One validation and top-level scan of the body serves the effort, service tier and generate flag.
+        let provider = a.handler_type.unwrap_or(a.entry.as_str());
+        let body_root = crate::bodyview::mini_root(&a.body, metadata_keys(provider));
+        let effort = extract_reasoning_effort(body_root.as_ref(), provider, normalized_model);
         if !effort.is_empty() {
             md.insert(meta::REASONING_EFFORT.into(), json!(effort));
         }
@@ -733,7 +734,7 @@ mod tests {
 
     #[test]
     fn metadata_defaults() {
-        let root = |b: &[u8]| parse_if_valid(b);
+        let root = |b: &[u8]| crate::bodyview::mini_root(b, metadata_keys("claude"));
         assert_eq!(service_tier(root(br#"{"service_tier":" flex "}"#).as_ref()), "flex");
         assert_eq!(service_tier(root(b"{}").as_ref()), "auto");
         assert_eq!(service_tier(root(b"{").as_ref()), "auto");

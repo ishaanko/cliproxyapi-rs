@@ -26,12 +26,15 @@ fn rewrite_claude_dd_model_in_body(raw: Bytes) -> Bytes {
 /// `rewriteClaudeDDModelInBody`: decodes cloaked `claude-fable-5-dd-<reversed>` model ids. Also
 /// returns the parsed (rewritten) body, so the handler does not parse a large request twice.
 fn rewrite_claude_dd_model_with_root(raw: Bytes) -> (Bytes, Value) {
-    let mut root = cpa_json::parse(&raw);
-    let model = root.g("model").str();
+    use crate::bodyview::{Want, mini_root};
+    let fields = mini_root(&raw, &[("model", Want::Value), ("stream", Want::Value)]).unwrap_or_else(|| cpa_json::parse(&raw));
+    let model = fields.g("model").str();
     let resolved = resolve_claude_model_id_prefix(&model);
     if resolved == model {
-        return (raw, root);
+        return (raw, fields);
     }
+    // Rewriting needs the whole document.
+    let mut root = cpa_json::parse(&raw);
     cpa_json::set(&mut root, "model", resolved);
     (Bytes::from(cpa_json::to_vec(&root)), root)
 }

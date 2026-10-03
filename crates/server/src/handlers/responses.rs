@@ -17,6 +17,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use super::{ok_reply, read_request_body};
+use crate::bodyview::Want;
 use crate::error::{ErrorMessage, error_response_json};
 use crate::exec::{ExecArgs, Pipeline};
 use crate::forward::{StreamHooks, openai_error_reply, start_sse_stream, with_nonstream_keepalive};
@@ -33,7 +34,7 @@ pub async fn responses(State(st): State<AppState>, info: ReqInfo, body: Bytes) -
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
-    let root = cpa_json::parse(&raw);
+    let root = crate::bodyview::mini_root(&raw, &[("model", Want::Value), ("stream", Want::Value)]).unwrap_or_else(|| cpa_json::parse(&raw));
     let model = root.g("model").str();
     if matches!(root.g("stream").v(), Some(Value::Bool(true))) {
         stream_responses(&st, &info, &model, raw).await

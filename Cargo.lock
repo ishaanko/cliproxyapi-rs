@@ -1372,7 +1372,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "backtrace",
  "base64 0.22.1",
  "bytes",
  "chrono",
