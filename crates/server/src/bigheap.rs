@@ -3,7 +3,8 @@
 //! Request bodies and their copies are multi-megabyte `Vec`s that live for milliseconds while
 //! worker threads allocate and free them concurrently. mimalloc keeps freed memory in per-thread
 //! page/arena state for up to a second (`purge_delay`), so under load the resident set ended up
-//! ~2x the live heap. Blocks above [`MIN_SIZE`] are instead carved from one reserved virtual
+//! ~2x the live heap. Blocks above [`MIN_SIZE`] (8 KiB: request bodies, their copies and the
+//! long strings of parsed trees) are instead carved from one reserved virtual
 //! region in size classes (12.5% steps) with a shared free list per class:
 //!
 //! - a freed slot is reused by whichever thread asks next (most recent first, so it is still warm
@@ -27,7 +28,7 @@ use std::time::{Duration, Instant};
 /// Virtual address space reserved for slots (untouched pages cost nothing).
 const REGION: usize = 16 << 30;
 /// Requests larger than this (and at most [`MAX_SIZE`]) are served from the region.
-const MIN_SIZE: usize = 64 * 1024;
+const MIN_SIZE: usize = 8 * 1024;
 const MAX_SIZE: usize = 1 << 31;
 /// Free slots older than this have their pages returned to the OS.
 const AGE: Duration = Duration::from_millis(100);
@@ -35,8 +36,9 @@ const AGE: Duration = Duration::from_millis(100);
 const SWEEP_BUSY: Duration = Duration::from_millis(50);
 const SWEEP_IDLE: Duration = Duration::from_millis(500);
 
-/// Size classes: 8 per power of two, from 64 KiB up. Slot sizes are multiples of 4 KiB.
-const FIRST_HB: usize = 16;
+/// Size classes: 8 per power of two, from 8 KiB up. Slot sizes are multiples of 4 KiB (so the
+/// smallest classes have slack above 12.5%).
+const FIRST_HB: usize = 13;
 const NCLASS: usize = (31 - FIRST_HB) * 8;
 
 /// Start of the region, 0 until initialised (and forever if reserving it failed).
@@ -63,13 +65,13 @@ fn class_of(size: usize) -> (usize, usize) {
     let hb = (usize::BITS - 1 - n.leading_zeros()) as usize;
     let shift = hb - 3;
     let q = n >> shift; // 8..=15
-    ((hb - FIRST_HB) * 8 + (q & 7), (q + 1) << shift)
+    ((hb - FIRST_HB) * 8 + (q & 7), ((q + 1) << shift).next_multiple_of(4096))
 }
 
 /// Slot size of class `idx`.
 fn class_size(idx: usize) -> usize {
     let hb = idx / 8 + FIRST_HB;
-    (idx % 8 + 9) << (hb - 3)
+    ((idx % 8 + 9) << (hb - 3)).next_multiple_of(4096)
 }
 
 fn init() {
@@ -262,9 +264,9 @@ mod tests {
 
     #[test]
     fn class_sizes_cover_requests_and_are_page_multiples() {
-        for size in [MIN_SIZE + 1, 70_000, 100_000, 1 << 20, (2 << 20) + 5, 3_000_000, (1 << 30) + 1, MAX_SIZE - 1] {
+        for size in [MIN_SIZE + 1, 9_000, 20_000, 70_000, 100_000, 1 << 20, (2 << 20) + 5, 3_000_000, (1 << 30) + 1, MAX_SIZE - 1] {
             let (idx, cap) = class_of(size);
-            assert!(cap >= size && cap - size <= size / 8 + 1, "{size} -> {cap}");
+            assert!(cap >= size && cap - size <= size / 8 + 4096, "{size} -> {cap}");
             assert_eq!(cap % 4096, 0);
             assert_eq!(class_size(idx), cap);
             assert!(idx < NCLASS);

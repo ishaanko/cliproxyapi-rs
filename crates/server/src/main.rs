@@ -36,9 +36,9 @@ mod pgo_dump;
 // `-DMI_DEFAULT_ARENA_EAGER_COMMIT=0`; the runtime option `MIMALLOC_ARENA_EAGER_COMMIT` still
 // overrides it.
 //
-// On Linux, blocks above 64 KiB (request bodies and their copies) are served by `bigheap`, which
-// recycles them across threads and returns idle ones to the OS within ~100 ms. Under load that
-// keeps the resident set near the live heap instead of ~2x it with mimalloc alone.
+// On Linux, blocks above 8 KiB (request bodies, their copies, long tree strings) are served by
+// `bigheap`, which recycles them across threads and returns idle ones to the OS within ~100 ms.
+// Under load that keeps the resident set near the live heap instead of ~2x it with mimalloc alone.
 #[cfg(all(feature = "mimalloc", target_os = "linux"))]
 mod bigheap;
 #[cfg(all(feature = "mimalloc", target_os = "linux"))]
