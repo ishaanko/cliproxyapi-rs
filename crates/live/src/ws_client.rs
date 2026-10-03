@@ -158,7 +158,7 @@ async fn read_head<R: AsyncBufReadExt + Unpin>(reader: &mut R) -> io::Result<Str
 }
 
 /// HTTP `CONNECT` through `proxy` to `host:port`.
-async fn http_connect(proxy: &Url, host: &str, port: u16) -> io::Result<BoxIo> {
+pub(crate) async fn http_connect(proxy: &Url, host: &str, port: u16) -> io::Result<BoxIo> {
     let default_port = if proxy.scheme() == "https" { 443 } else { 80 };
     let (proxy_host, proxy_port) = authority(proxy, default_port)?;
     let mut stream: BoxIo = Box::new(tcp_connect(&proxy_host, proxy_port).await?);
@@ -184,7 +184,7 @@ async fn http_connect(proxy: &Url, host: &str, port: u16) -> io::Result<BoxIo> {
     Ok(Box::new(reader.into_inner()))
 }
 
-async fn socks5_connect(proxy: &Url, host: &str, port: u16) -> io::Result<BoxIo> {
+pub(crate) async fn socks5_connect(proxy: &Url, host: &str, port: u16) -> io::Result<BoxIo> {
     let (proxy_host, proxy_port) = authority(proxy, 1080)?;
     let stream = tcp_connect(&proxy_host, proxy_port).await?;
     let target = (host.to_string(), port);

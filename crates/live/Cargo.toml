@@ -34,6 +34,9 @@ webpki-roots = "1"
 tokio-socks = "0.5"
 webrtc = "0.21.0"
 rtc = "0.21.0"
+hmac = "0.12"
+sha1 = "0.10"
+crc32fast = "1"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
