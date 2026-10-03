@@ -62,6 +62,8 @@ pub mod selector;
 pub mod session;
 mod stream;
 #[cfg(test)]
+mod home_tests;
+#[cfg(test)]
 mod tests;
 pub mod usage;
 pub mod util;
