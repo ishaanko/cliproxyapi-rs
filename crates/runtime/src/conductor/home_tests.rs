@@ -99,11 +99,12 @@ struct Mock {
     steps: Mutex<HashMap<String, VecDeque<Step>>>,
     /// (auth id, model, home_upstream_model attribute, lifecycle present)
     calls: Mutex<Vec<(String, String, String, bool)>>,
+    refreshes: AtomicUsize,
 }
 
 impl Mock {
     fn new() -> Arc<Self> {
-        Arc::new(Mock { steps: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]) })
+        Arc::new(Mock { steps: Mutex::new(HashMap::new()), calls: Mutex::new(vec![]), refreshes: AtomicUsize::new(0) })
     }
 
     fn script(&self, auth_id: &str, steps: Vec<Step>) {
@@ -158,6 +159,7 @@ impl Executor for Mock {
     }
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        self.refreshes.fetch_add(1, Ordering::SeqCst);
         Ok(auth.clone())
     }
 
@@ -765,4 +767,70 @@ async fn query_credentials_are_forwarded_as_goog_api_key() {
     opts.headers.insert("authorization", "Bearer real".parse().unwrap());
     h.mgr.execute(&["mock".to_string()], request("m"), opts).await.unwrap();
     assert!(h.home.requests()[0]["headers"].get("x-goog-api-key").is_none());
+}
+
+fn repeated(auth_id: &str, n: usize) -> Vec<Result<Vec<u8>, HomeError>> {
+    (0..n).map(|_| dispatch_reply(auth_id, "m", json!({}))).collect()
+}
+
+// Go: TestHomeUnauthorized* (execute, count tokens, stream variants): a 401 is returned as is,
+// the credential is never refreshed and the request is never replayed.
+#[tokio::test]
+async fn home_unauthorized_returns_the_original_error_without_refresh() {
+    let h = Harness::new(repeated("a", 4));
+    h.exec.script("a", vec![Step::Err(status_err(401, "access token expired")); 4]);
+    let err = h.run("m").await.unwrap_err();
+    assert_eq!((err.status, err.message.as_str()), (401, "access token expired"));
+    assert_eq!(h.exec.call_ids(), ["a"]);
+    assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
+
+    let h = Harness::new(repeated("a", 4));
+    h.exec.script("a", vec![Step::Err(status_err(401, "access token expired")); 4]);
+    let err = h.mgr.execute_count(&["mock".to_string()], request("m"), Options::new(Format::OpenAI)).await.unwrap_err();
+    assert_eq!(err.status, 401);
+    assert_eq!(h.exec.call_ids(), ["a"]);
+    assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
+}
+
+// Go: TestManagerExecuteHomeStopsWhenDispatchRepeatsTriedAuth.
+#[tokio::test]
+async fn home_stops_when_dispatch_repeats_a_tried_auth() {
+    let h = Harness::new(repeated("a", 8));
+    h.exec.script("a", vec![Step::Err(status_err(401, "missing access token")); 8]);
+    let err = tokio::time::timeout(Duration::from_secs(1), h.run("m")).await.unwrap().unwrap_err();
+    assert_eq!(err.status, 401);
+    assert_eq!(h.exec.call_ids().len(), 1);
+    assert_eq!(h.home.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn home_unauthorized_streams_are_not_refreshed_or_replayed() {
+    // Synchronous failure.
+    let h = Harness::new(repeated("a", 4));
+    h.exec.script("a", vec![Step::Err(status_err(401, "access token expired")); 4]);
+    let err = h.stream("m").await.err().expect("stream error");
+    assert_eq!((err.status, err.message.as_str()), (401, "access token expired"));
+    assert_eq!(h.exec.call_ids().len(), 1);
+    assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
+
+    // 401 as the first chunk (bootstrap failure).
+    let h = Harness::new(repeated("a", 4));
+    h.exec.script("a", vec![Step::Stream(vec![Err(status_err(401, "access token expired"))]); 4]);
+    let chunks = match h.stream("m").await {
+        Ok(s) => drain(s).await,
+        Err(e) => vec![Err(e)],
+    };
+    assert_eq!(chunks.len(), 1);
+    assert_eq!(chunks[0].as_ref().err().map(|e| e.status), Some(401));
+    assert_eq!(h.exec.call_ids().len(), 1);
+    assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
+
+    // 401 after the stream started: payload and error both surface, no replay.
+    let h = Harness::new(repeated("a", 4));
+    h.exec.script("a", vec![Step::Stream(vec![Ok("started"), Err(status_err(401, "access token expired"))]); 4]);
+    let chunks = drain(h.stream("m").await.unwrap()).await;
+    assert!(chunks.iter().any(|c| matches!(c, Ok(b) if &b[..] == b"started")));
+    assert!(chunks.iter().any(|c| c.as_ref().err().is_some_and(|e| e.status == 401)));
+    assert_eq!(h.exec.call_ids().len(), 1);
+    assert_eq!(h.exec.refreshes.load(Ordering::SeqCst), 0);
 }
