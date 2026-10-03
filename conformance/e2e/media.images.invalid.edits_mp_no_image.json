@@ -1,0 +1,38 @@
+{
+  "id": "media.images.invalid.edits_mp_no_image",
+  "desc": "multipart edit without image",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "content_type": "multipart/form-data; boundary=e2eboundary0123456789",
+          "text": "--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngpt-image-2\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\np\r\n--e2eboundary0123456789--\r\n"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "Invalid request: image is required",
+              "type": "invalid_request_error"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

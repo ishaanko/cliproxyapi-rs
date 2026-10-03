@@ -4,6 +4,7 @@
 //! The harness drives it through `/__control/*`: `POST /__control/script` installs a script
 //! (and clears the log), `GET /__control/log` returns the requests seen since.
 
+pub mod media;
 pub mod replies;
 pub mod script;
 
@@ -188,14 +189,19 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
     let method = req.method().to_string();
     let query = req.uri().query().unwrap_or_default().to_string();
     let headers = headers_map(req.headers());
+    let host_header = headers.get("host").cloned().unwrap_or_default();
     let is_ws = headers.get("upgrade").is_some_and(|v| v.eq_ignore_ascii_case("websocket"));
 
     let trimmed = path.trim_start_matches('/');
     let (prefix, rest) = trimmed.split_once('/').map(|(a, b)| (a, format!("/{b}"))).unwrap_or((trimmed, "/".into()));
     let family = Family::from_prefix(prefix);
+    let media_op = media::route(prefix, &method, &rest);
     let cred = credential(&headers);
     let mut entry = LoggedRequest {
-        family: family.map(|f| f.prefix().to_string()).unwrap_or_else(|| "unknown".into()),
+        family: family
+            .map(|f| f.prefix().to_string())
+            .or_else(|| media_op.as_ref().map(|_| prefix.to_string()))
+            .unwrap_or_else(|| "unknown".into()),
         method,
         path: rest.clone(),
         query,
@@ -215,11 +221,38 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
     }
 
     let bytes = axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await.unwrap_or_default();
-    let body: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
+    let mut body: Value = serde_json::from_slice(&bytes).unwrap_or_else(|_| {
         if bytes.is_empty() { Value::Null } else { Value::String(String::from_utf8_lossy(&bytes).into_owned()) }
     });
+    // Multipart bodies are logged as a sorted description; their random boundary is masked.
+    let content_type = entry.headers.get("content-type").cloned().unwrap_or_default();
+    if content_type.starts_with("multipart/form-data")
+        && let Some(described) = media::describe_multipart(&content_type, &bytes)
+    {
+        body = described;
+        entry.headers.insert("content-type".into(), "multipart/form-data; boundary=<boundary>".into());
+    }
+    if let Some(op) = &media_op {
+        media::stabilize_body(op, &mut body);
+    }
     entry.body = body.clone();
     push_log(&mock, entry).await;
+
+    if let Some(op) = media_op {
+        let host = host_header.clone();
+        // The video file is a static download: it never consumes a scripted step.
+        let pick = if matches!(op, media::MediaOp::VideoFile(_)) {
+            Pick { reply: Reply::ok(script::Content::Text), delay_ms: 0, stall_ms: 0, chunking: Chunking::Whole, headers: vec![] }
+        } else {
+            mock.inner.lock().await.script.next(&cred)
+        };
+        if pick.delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(pick.delay_ms)).await;
+        }
+        let mut rendered = media::render(&op, &pick.reply, &body, &host);
+        rendered.headers.extend(pick.headers);
+        return to_response(rendered, pick.stall_ms, pick.chunking);
+    }
 
     let Some((family, (op, ctx))) = family.and_then(|f| classify(f, &rest, &body).map(|c| (f, c))) else {
         let rendered = Rendered {

@@ -1,0 +1,94 @@
+{
+  "id": "media.images.compat.edits_multipart_stream",
+  "desc": "compat edit stream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "content_type": "multipart/form-data; boundary=e2eboundary0123456789",
+          "text": "--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ncompat-image\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\np\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\ntrue\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\nPNGDATA-1\r\n--e2eboundary0123456789--\r\n"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-50b3c9a0d698bde0-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "image_generation.partial_image",
+              "data": {
+                "type": "image_generation.partial_image",
+                "partial_image_index": 0,
+                "b64_json": "AAE="
+              }
+            },
+            {
+              "event": "image_generation.completed",
+              "data": {
+                "type": "image_generation.completed",
+                "b64_json": "AAEC",
+                "usage": {
+                  "input_tokens": 5,
+                  "output_tokens": 7,
+                  "total_tokens": 12
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/images/edits",
+      "query": "",
+      "credential": "sk-compat-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-compat-2",
+        "cache-control": "no-cache",
+        "content-type": "multipart/form-data; boundary=<boundary>",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "fields": {
+          "model": [
+            "mock-image"
+          ],
+          "prompt": [
+            "p"
+          ],
+          "stream": [
+            "true"
+          ]
+        },
+        "files": [
+          {
+            "name": "image",
+            "filename": "a.png",
+            "content_type": "image/png",
+            "text": "PNGDATA-1"
+          }
+        ]
+      }
+    }
+  ]
+}
