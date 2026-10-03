@@ -21,6 +21,7 @@ use super::common::{
     compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
     translate_request, upstream_error, usage_metadata,
 };
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::wsrelay::{
     self, HttpRequest, MESSAGE_TYPE_HTTP_RESP, MESSAGE_TYPE_STREAM_CHUNK, MESSAGE_TYPE_STREAM_END,
@@ -254,6 +255,10 @@ impl Executor for AiStudioExecutor {
     }
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        let cfg = self.cfg.borrow().clone();
+        if let Some(result) = refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
         Ok(auth.clone())
     }
 

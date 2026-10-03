@@ -33,6 +33,7 @@ use cpa_translator::{Ctx, Format, Param};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
     gateway_error, patch_failure, apply_patch_original_request, apply_patch_requested,
     finalize_apply_patch_stream, initialize_apply_patch_stream, record_apply_patch_stream_failure,
@@ -747,6 +748,9 @@ impl Executor for KimiExecutor {
     /// Refreshes the OAuth token with the stored refresh token; credentials without one are
     /// returned unchanged. Failures carry no status (Go returns plain errors here).
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        if let Some(result) = refresh_auth_via_home(&self.config(), auth).await {
+            return result;
+        }
         let refresh_token = auth.metadata.get("refresh_token").and_then(Value::as_str).filter(|v| !v.trim().is_empty());
         let Some(refresh_token) = refresh_token else {
             return Ok(auth.clone());
