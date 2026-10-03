@@ -362,6 +362,30 @@ mod tests {
         assert_eq!(handle.await.unwrap(), ": keep-alive\n\n: keep-alive\n\ndata: [DONE]\n\n");
     }
 
+    // The first chunk after a quiet period goes out at once; chunks that follow within the gap
+    // are written together once it ends.
+    #[tokio::test(start_paused = true)]
+    async fn dense_chunks_share_a_write_per_gap() {
+        use http_body_util::BodyExt;
+        let (tx, rx) = mpsc::channel::<Result<Bytes, ErrorMessage>>(8);
+        let mut body = Box::pin(SseBody::new(Plain, rx.into(), Vec::new(), Duration::ZERO));
+        let next = async |body: &mut Pin<Box<SseBody<Plain>>>| {
+            let frame = body.frame().await.unwrap().unwrap();
+            String::from_utf8(frame.into_data().unwrap().to_vec()).unwrap()
+        };
+        let start = Instant::now();
+        tx.send(Ok(Bytes::from_static(b"a"))).await.unwrap();
+        assert_eq!(next(&mut body).await, "data: a\n\n");
+        assert!(start.elapsed() < FLUSH_GAP);
+        for c in [b"b", b"c"] {
+            tx.send(Ok(Bytes::from_static(c))).await.unwrap();
+        }
+        assert_eq!(next(&mut body).await, "data: b\n\ndata: c\n\n");
+        assert!(start.elapsed() >= FLUSH_GAP);
+        drop(tx);
+        assert_eq!(next(&mut body).await, "data: [DONE]\n\n");
+    }
+
     #[tokio::test(start_paused = true)]
     async fn nonstream_keepalive_commits_200_and_appends_body() {
         let reply = with_nonstream_keepalive(Duration::from_secs(5), async {
