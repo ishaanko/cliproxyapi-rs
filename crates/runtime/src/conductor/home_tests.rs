@@ -837,9 +837,11 @@ async fn home_unauthorized_streams_are_not_refreshed_or_replayed() {
 
 // ---- retained routes, alias changes and release acknowledgement (Go: home_force_mapping_test.go) ----
 
+type ReplyFn = Box<dyn Fn(&str, usize) -> Value + Send + Sync>;
+
 /// Dispatcher answering through a closure `(model, call number) -> reply`.
 struct DynHome {
-    reply: Box<dyn Fn(&str, usize) -> Value + Send + Sync>,
+    reply: ReplyFn,
     models: Mutex<Vec<String>>,
     /// Observed by the closure of tests that check ordering against release acknowledgements.
     on_call: Box<dyn Fn(usize) + Send + Sync>,
