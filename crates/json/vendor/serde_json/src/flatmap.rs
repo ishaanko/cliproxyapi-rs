@@ -1,3 +1,5 @@
+//! NOTICE: file added to serde_json 1.0.151 by cpa-json (Apache-2.0 section 4(b)).
+//!
 //! Insertion-ordered map backing `serde_json::Map` (replaces `IndexMap`).
 //!
 //! JSON objects in proxy traffic are tiny (a handful of keys), so entries live in one `Vec` and
