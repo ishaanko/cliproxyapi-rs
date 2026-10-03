@@ -8,7 +8,7 @@ use cpa_translator::Format;
 use cpa_translator::antigravity::claude as ag_claude;
 use serde_json::Value;
 
-use super::helpers::ensure_gemini_boundary_user_content;
+use crate::helps::gemini_content_turns::{ensure_gemini_boundary_user_content, ensure_gemini_leading_user_content};
 
 /// Gemini-family models (not Claude) use the reasoning replay ledger.
 pub(crate) fn uses_reasoning_replay_cache(model_name: &str) -> bool {
@@ -33,7 +33,7 @@ pub(crate) fn ensure_boundary_user_content(model_name: &str, payload: Vec<u8>) -
     if model_name.to_lowercase().contains("claude") {
         return payload;
     }
-    ensure_gemini_boundary_user_content(payload, "request.contents")
+    ensure_gemini_boundary_user_content(&payload, "request.contents")
 }
 
 /// Leading user turn only (countTokens).
@@ -41,7 +41,7 @@ pub(crate) fn ensure_leading_user_content(model_name: &str, payload: Vec<u8>) ->
     if model_name.to_lowercase().contains("claude") {
         return payload;
     }
-    super::helpers::ensure_gemini_leading_user_content(payload, "request.contents")
+    ensure_gemini_leading_user_content(&payload, "request.contents")
 }
 
 #[derive(Clone)]

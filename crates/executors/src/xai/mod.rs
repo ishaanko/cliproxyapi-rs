@@ -27,7 +27,7 @@ use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::proxy::{effective_proxy_url, new_proxy_aware_http_client};
 use crate::helps::usage::UsageReporter;
-use crate::openai_compat::errors::transport_error;
+use crate::helps::status::transport_error;
 use request::{IDENTIFIER, auth_metadata_string};
 
 /// Executor for xAI Grok's Responses API.

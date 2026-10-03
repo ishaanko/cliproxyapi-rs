@@ -89,7 +89,7 @@ impl AntigravityExecutor {
         let resp = self.send(p).await?;
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = resp.bytes().await.map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+        let body = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
         p.reporter.mark_first_response_byte();
         if !(200..300).contains(&status) {
             return Err(self.handle_upstream_error(p, status, &body));
@@ -107,7 +107,7 @@ impl AntigravityExecutor {
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let body = resp.bytes().await.map_err(|e| ExecError::new(0, e.without_url().to_string()))?;
+            let body = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
             return Err(self.handle_upstream_error(p, status, &body));
         }
         if p.use_credits {

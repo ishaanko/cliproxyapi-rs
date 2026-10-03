@@ -17,7 +17,7 @@ use futures_util::{Stream, StreamExt};
 use rand::RngCore;
 
 use super::pb;
-use super::sensitive::SensitiveWordMatcher;
+use crate::helps::cloak_obfuscate::SensitiveWordMatcher;
 use crate::helps::proxy::BoundedLru;
 
 pub const CONNECT_FLAG_DATA: u8 = 0x00;
