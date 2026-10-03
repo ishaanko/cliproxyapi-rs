@@ -12,6 +12,8 @@ cargo build --release
 ./target/release/cliproxy --config config.yaml
 ```
 
+Building needs `cmake`, a C++ compiler and libclang: the Claude Code and Chrome TLS fingerprints (`crates/tlsfp`) compile BoringSSL from source. If bindgen cannot find libclang, point `LIBCLANG_PATH` at the directory holding `libclang.so` (for example `uv pip install --target ~/.local/share/libclang libclang`, then `LIBCLANG_PATH=~/.local/share/libclang/clang/native`) and, if it also misses compiler headers, set `BINDGEN_EXTRA_CLANG_ARGS=-I/usr/lib/gcc/x86_64-linux-gnu/<version>/include`. Without them, build `cpa-executors` and `cpa-auth` with `--no-default-features` to drop the fingerprints (plain rustls).
+
 `config.example.yaml` documents every option; existing CLIProxyAPI configs and auth directories work unchanged. Log in to a provider with `--claude-login`, `--codex-login`, `--antigravity-login` and friends, or from the UI at `http://localhost:8317/management.html`.
 
 ## Compatibility

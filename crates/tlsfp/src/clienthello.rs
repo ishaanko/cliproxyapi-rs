@@ -146,7 +146,7 @@ impl ClientHello {
         let exts: Vec<u16> = self.extensions.iter().map(|(t, _)| *t).filter(|t| !is_grease(*t)).collect();
         let alpn = self
             .extension(16)
-            .and_then(|d| d.get(3..))
+            .and_then(|d| d.get(2..))
             .filter(|p| !p.is_empty())
             .map(|p| {
                 let len = usize::from(p[0]).min(p.len().saturating_sub(1));

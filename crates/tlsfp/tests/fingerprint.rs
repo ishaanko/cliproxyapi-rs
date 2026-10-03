@@ -85,6 +85,7 @@ async fn assert_deterministic_match(profile: Profile, host: &str, golden: &str) 
     assert_eq!(masked(&rust), masked(&go), "extension contents");
     assert_eq!(rust.record_len, go.record_len, "record length");
     assert_eq!(rust.ja3_string(), go.ja3_string());
+    eprintln!("{profile:?} ja3={} ja4={}", rust.ja3_string(), rust.ja4());
     assert_eq!(rust.ja4(), go.ja4());
 }
 
@@ -123,5 +124,6 @@ async fn chrome_matches_go() {
         assert_eq!(strip(&rust), strip(&go), "extension {ty}");
     }
     assert_eq!(rust.key_share_groups(), go.key_share_groups(), "key share groups");
+    eprintln!("Chrome ja4={} (go {})", rust.ja4(), go.ja4());
     assert_eq!(rust.ja4(), go.ja4(), "ja4");
 }

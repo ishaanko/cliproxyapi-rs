@@ -12,6 +12,8 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_socks::tcp::Socks5Stream;
 
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// A type-erased duplex connection.
 pub trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
@@ -129,8 +131,10 @@ impl Dialer {
 
 async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
     let stream = TcpStream::connect((host, port)).await?;
-    // Go enables TCP_NODELAY on every TCP connection.
+    // Go enables TCP_NODELAY and 15 s keep-alives (`net.Dialer` defaults) on every connection.
     stream.set_nodelay(true)?;
+    let keepalive = socket2::TcpKeepalive::new().with_time(KEEPALIVE).with_interval(KEEPALIVE);
+    socket2::SockRef::from(&stream).set_tcp_keepalive(&keepalive)?;
     Ok(stream)
 }
 

@@ -32,6 +32,7 @@ futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
 async-compression = { version = "0.4", features = ["tokio", "gzip", "zlib", "brotli", "zstd"] }
 tokio-socks = "0.5"
+socket2 = "0.6"
 tower-service = "0.3"
 url = "2"
 brotli = "9"
