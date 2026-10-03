@@ -756,7 +756,7 @@ mod tests {
         clear_codex_reasoning_replay_cache();
         let (req, opts) = claude_request("abc-1");
         let body = br#"{"model":"gpt-5","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]}"#.to_vec();
-        let (_, scope) = apply_replay_cache(Format::Claude, &req, &opts, body.clone());
+        let (_, scope) = apply_replay_cache(Format::Claude, &req, &opts, body.clone()).expect("replay");
         assert!(scope.valid());
         let completed = cpa_json::parse(
             br#"{"type":"response.completed","response":{"output":[
@@ -770,7 +770,7 @@ mod tests {
             {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]},
             {"type":"function_call_output","call_id":"call_1","output":"ok"}]}"#
             .to_vec();
-        let (patched, _) = apply_replay_cache(Format::Claude, &req, &opts, next);
+        let (patched, _) = apply_replay_cache(Format::Claude, &req, &opts, next).expect("replay");
         let parsed = cpa_json::parse(&patched);
         let types: Vec<String> = parsed.g("input").array().iter().map(|i| i.g("type").str()).collect();
         assert_eq!(types, ["message", "function_call", "function_call_output"]);
@@ -779,7 +779,7 @@ mod tests {
     #[test]
     fn non_claude_sources_never_replay() {
         let (req, opts) = claude_request("x");
-        let (body, scope) = apply_replay_cache(Format::OpenAI, &req, &opts, b"{}".to_vec());
+        let (body, scope) = apply_replay_cache(Format::OpenAI, &req, &opts, b"{}".to_vec()).expect("replay");
         assert!(!scope.valid());
         assert_eq!(body, b"{}");
     }

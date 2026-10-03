@@ -1,10 +1,15 @@
 //! Claude credential identity: agent session UUID derivation, device pool bootstrap and the
 //! `metadata.user_id` rewrite shared by native and cloaked OAuth requests (Go:
-//! helps/claude_credential_identity.go). Home KV coordination is not supported; the Go device
-//! pool mutex is not needed because callers hold `&mut Auth`.
+//! helps/claude_credential_identity.go). In Home mode the device pool is coordinated through Home
+//! KV; the Go device pool mutex is not needed because callers hold `&mut Auth`.
 
+use crate::helps::home_kv::client;
 use cpa_auth::Auth;
-use cpa_auth::claude::{ensure_device_id_pool, normalize_device_id_pool};
+use cpa_auth::claude::{
+    DEVICE_IDS_METADATA_KEY, ensure_device_id_pool, generate_device_id_pool, normalize_device_id_pool,
+};
+use cpa_home::KvSetOptions;
+use cpa_home::kv::hash_key_part;
 use cpa_json::J;
 use cpa_runtime::conductor::session::session_ids;
 use cpa_runtime::executor::{ExecError, ErrorCode, Metadata, meta};
@@ -117,10 +122,96 @@ fn select_device_id(device_ids: &[String], session_id: &str) -> Result<String, S
     Ok(normalized[0].clone())
 }
 
-/// Go: `EnsureClaudeCredentialDevicePoolRequired` (local branch): returns the credential's
-/// canonical single-device pool, creating or repairing it in `auth.metadata` when needed.
-pub fn ensure_claude_credential_device_pool_required(auth: &mut Auth) -> Vec<String> {
-    ensure_device_id_pool(&mut auth.metadata).0
+/// Go: `EnsureClaudeCredentialDevicePoolRequired`: returns the credential's canonical
+/// single-device pool, creating or repairing it in `auth.metadata` when needed. An already
+/// canonical pool is returned as is. Otherwise the pool is built locally, or, in Home mode,
+/// coordinated through Home KV (`cpa:claude:credential-device-pool:<hash of the credential
+/// identity>`) so every node of a remote dispatch clone agrees on one device id.
+pub async fn ensure_claude_credential_device_pool_required(auth: &mut Auth) -> Result<Vec<String>, ExecError> {
+    const PREFIX: &str = "ensure Claude credential device pool";
+    let fail = |detail: String| ExecError::new(0, format!("{PREFIX}: {detail}"));
+
+    let raw = auth.metadata.get(DEVICE_IDS_METADATA_KEY);
+    if has_canonical_device_id_pool(raw) {
+        return Ok(normalize_device_id_pool(raw));
+    }
+    let candidate = normalize_device_id_pool(raw);
+
+    let client = match client() {
+        Ok(None) => return Ok(ensure_device_id_pool(&mut auth.metadata).0),
+        Ok(Some(client)) => client,
+        Err(e) => return Err(fail(format!("Home KV client: {e}"))),
+    };
+    let mut identity = auth.ensure_index().trim().to_string();
+    if identity.is_empty() {
+        identity = auth.id.trim().to_string();
+    }
+    if identity.is_empty() {
+        return Err(fail("credential identity is empty".into()));
+    }
+    let key = format!("cpa:claude:credential-device-pool:{}", hash_key_part(&identity));
+    let store = |auth: &mut Auth, ids: &[String]| {
+        auth.metadata.insert(
+            DEVICE_IDS_METADATA_KEY.into(),
+            Value::Array(ids.iter().cloned().map(Value::String).collect()),
+        );
+    };
+
+    match client.kv_get(&key).await {
+        Err(e) => return Err(fail(format!("Home KV get: {e}"))),
+        Ok(Some(raw)) => {
+            if let Some(stored) = decode_device_pool(&raw) {
+                let device_ids = normalize_device_id_pool(Some(&stored));
+                if device_ids.len() == DEVICE_POOL_SIZE {
+                    if !has_canonical_device_id_pool(Some(&stored)) {
+                        let canonical = serde_json::to_vec(&device_ids)
+                            .map_err(|e| fail(format!("marshal canonical Home KV value: {e}")))?;
+                        let opts = KvSetOptions { xx: true, ..Default::default() };
+                        match client.kv_set(&key, &canonical, opts).await {
+                            Err(e) => return Err(fail(format!("canonicalize Home KV value: {e}"))),
+                            Ok(false) => return Err(fail("canonical Home KV value was not written".into())),
+                            Ok(true) => {}
+                        }
+                    }
+                    store(auth, &device_ids);
+                    return Ok(device_ids);
+                }
+            }
+        }
+        Ok(None) => {}
+    }
+
+    let device_ids = if candidate.len() == DEVICE_POOL_SIZE { candidate } else { generate_device_id_pool() };
+    let raw = serde_json::to_vec(&device_ids).map_err(|e| fail(format!("marshal Home KV value: {e}")))?;
+    let opts = KvSetOptions { nx: true, ..Default::default() };
+    if let Err(e) = client.kv_set(&key, &raw, opts).await {
+        return Err(fail(format!("Home KV set: {e}")));
+    }
+    let raw = match client.kv_get(&key).await {
+        Err(e) => return Err(fail(format!("Home KV reread: {e}"))),
+        Ok(None) => return Err(fail("Home KV value missing after set".into())),
+        Ok(Some(raw)) => raw,
+    };
+    let Some(stored) = decode_device_pool(&raw) else {
+        return Err(fail("decode Home KV value: not a JSON array of strings".into()));
+    };
+    let device_ids = normalize_device_id_pool(Some(&stored));
+    if device_ids.len() != DEVICE_POOL_SIZE {
+        return Err(fail(format!("Home KV pool has {} entries, want {DEVICE_POOL_SIZE}", device_ids.len())));
+    }
+    store(auth, &device_ids);
+    Ok(device_ids)
+}
+
+/// Size of a Claude credential's device pool (Go: `claudeauth.ClaudeDevicePoolSize`).
+const DEVICE_POOL_SIZE: usize = 1;
+
+/// A stored pool as a JSON array of strings (Go decodes into `[]string`: `null` reads as an empty
+/// pool and `null` elements as empty strings); `None` when it does not decode.
+fn decode_device_pool(raw: &[u8]) -> Option<Value> {
+    let items: Option<Vec<Option<String>>> = serde_json::from_slice(raw).ok()?;
+    let items = items.unwrap_or_default();
+    Some(Value::Array(items.into_iter().map(|s| Value::String(s.unwrap_or_default())).collect()))
 }
 
 /// Go: `ClaudeCredentialAccountUUID`: `account_uuid` (or legacy `accountUuid`) of the credential.
@@ -806,12 +897,12 @@ mod tests {
         assert!(!go_json_valid("[".repeat(10_001).as_bytes()));
     }
 
-    #[test]
-    fn device_pool_bootstrap_is_stable() {
+    #[tokio::test]
+    async fn device_pool_bootstrap_is_stable() {
         let mut auth = Auth::new("shared", "claude");
-        let first = ensure_claude_credential_device_pool_required(&mut auth);
+        let first = ensure_claude_credential_device_pool_required(&mut auth).await.expect("pool");
         assert_eq!(first.len(), 1);
-        assert_eq!(ensure_claude_credential_device_pool_required(&mut auth), first);
+        assert_eq!(ensure_claude_credential_device_pool_required(&mut auth).await.expect("pool"), first);
         assert!(has_canonical_device_id_pool(auth.metadata.get(DEVICE_IDS_METADATA_KEY)));
     }
 }

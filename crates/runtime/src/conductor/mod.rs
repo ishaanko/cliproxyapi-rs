@@ -62,7 +62,9 @@ pub use cooldown::{CooldownView, CoolingPolicy, ExecResult};
 pub use cooldown_state::{CooldownStateRecord, CooldownStateStore, FileCooldownStateStore};
 pub use credits::{
     ANTIGRAVITY_CREDITS_METADATA_KEY, AntigravityCreditsHint, antigravity_credits_hint,
-    has_known_antigravity_credits_hint, set_antigravity_credits_hint,
+    antigravity_credits_hint_async, get_antigravity_credits_hint_required,
+    has_known_antigravity_credits_hint, has_known_antigravity_credits_hint_async,
+    set_antigravity_credits_hint, set_antigravity_credits_hint_async,
 };
 pub use errors::{enrich_auth_selection_error, safe_response_headers};
 pub use events::{ErrorEventSink, Hook, ResultPolicy};

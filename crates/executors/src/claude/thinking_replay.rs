@@ -909,7 +909,7 @@ mod tests {
 
         let (req, opts) = test_request(first, session, true, Format::Claude);
         let scope = scope_for(&auth, &req, &opts);
-        assert!(cpa_core::cache::get_claude_thinking_replay_required(&scope.model_family, &scope.session_key).is_none());
+        assert!(cpa_core::cache::get_claude_thinking_replay_required(&scope.model_family, &scope.session_key).ok().flatten().is_none());
     }
 
     #[test]
