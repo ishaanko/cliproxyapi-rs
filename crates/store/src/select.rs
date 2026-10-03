@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use cpa_runtime::service::StoreBackend;
 
+use crate::gitstore::GitTokenStore;
+use crate::common::copy_config_template;
 use crate::object::{ObjectStoreConfig, ObjectTokenStore};
 use crate::postgres::{PostgresStore, PostgresStoreConfig};
 
@@ -102,6 +104,47 @@ pub fn open_from_env(wd: &Path, home_mode: bool) -> Result<Option<OpenedStore>, 
                 store: store.clone(),
                 persister: store.clone(),
                 auth_dir: store.auth_dir().to_path_buf(),
+                cooldown: None,
+            },
+        }));
+    }
+
+    if let Some(remote) = env("GITSTORE_GIT_URL") {
+        let root = local_base(env("GITSTORE_LOCAL_PATH")).join("gitstore");
+        let store = GitTokenStore::new(
+            &remote,
+            &env("GITSTORE_GIT_USERNAME").unwrap_or_default(),
+            &env("GITSTORE_GIT_TOKEN").unwrap_or_default(),
+            &env("GITSTORE_GIT_BRANCH").unwrap_or_default(),
+        );
+        store.set_base_dir(&root.join("auths").to_string_lossy());
+        store.ensure_repository().map_err(|e| format!("failed to prepare git token store: {e}"))?;
+        let mut config_path = store.config_path();
+        if config_path.as_os_str().is_empty() {
+            config_path = root.join("config").join("config.yaml");
+        }
+        match std::fs::metadata(&config_path) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::metadata(&example).map_err(|e| format!("failed to find template config file: {e}"))?;
+                copy_config_template(&example, &config_path)
+                    .map_err(|e| format!("failed to bootstrap git-backed config: {e}"))?;
+                store
+                    .persist_config()
+                    .map_err(|e| format!("failed to commit initial git-backed config: {e}"))?;
+                tracing::info!("git-backed config initialized from template: {}", config_path.display());
+            }
+            Err(e) => return Err(format!("failed to inspect git-backed config: {e}")),
+        }
+        tracing::info!("git-backed token store enabled, repository path: {}", root.display());
+        let store = Arc::new(store);
+        return Ok(Some(OpenedStore {
+            config_path,
+            auth_dir: store.auth_dir(),
+            backend: StoreBackend {
+                store: store.clone(),
+                persister: store.clone(),
+                auth_dir: store.auth_dir(),
                 cooldown: None,
             },
         }));
