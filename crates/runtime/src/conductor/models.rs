@@ -100,6 +100,23 @@ pub fn executor_key_from_auth(auth: &Auth) -> String {
     canonical_scheduling_provider(&auth.provider)
 }
 
+/// Index into `eligible` (canonical lowercase executor keys) of the executor serving `auth`:
+/// `canonical_scheduling_provider(executor_key_from_auth(auth))` found in the list, without
+/// allocating for the common plain-provider credential.
+pub(crate) fn eligible_executor_index(auth: &Auth, eligible: &[String]) -> Option<usize> {
+    let provider = auth.provider.trim();
+    let plain = auth.attr_ref("compat_name").is_empty()
+        && provider.is_ascii()
+        && !provider.eq_ignore_ascii_case("openai-compatibility")
+        && !provider.eq_ignore_ascii_case("kimi.com")
+        && !provider.eq_ignore_ascii_case("kimi.ai");
+    if plain {
+        return eligible.iter().position(|e| e.eq_ignore_ascii_case(provider));
+    }
+    let key = canonical_scheduling_provider(&executor_key_from_auth(auth));
+    eligible.iter().position(|e| *e == key)
+}
+
 /// Lowercased provider with the kimi domain spellings folded (Go: canonicalSchedulingProvider).
 pub fn canonical_scheduling_provider(key: &str) -> String {
     match key.trim().to_lowercase().as_str() {
@@ -311,6 +328,14 @@ pub fn oauth_model_alias_channel(provider: &str, auth_kind: &str) -> String {
         return String::new();
     }
     provider
+}
+
+/// Whether [`oauth_model_alias_channel`] is non-empty for this auth, without building it.
+pub(crate) fn has_oauth_alias_channel(auth: &Auth) -> bool {
+    let provider = auth.provider.trim();
+    !provider.is_empty()
+        && auth.auth_kind() != AUTH_KIND_API_KEY
+        && !provider.eq_ignore_ascii_case("gemini")
 }
 
 fn model_alias_channel(auth: &Auth) -> String {

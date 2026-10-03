@@ -11,11 +11,12 @@ use super::home_selection::{
 use super::cooldown::{CoolingPolicy, is_auth_blocked_for_model};
 use super::models::{
     AliasResult, apply_api_key_model_alias, apply_oauth_model_alias, execution_alias_pool_model,
+    has_oauth_alias_channel,
     execution_result_model, is_configured_model_routing_auth, openai_compat_model_pool_key,
     resolve_api_key_model_alias_with_result, resolve_oauth_model_alias_with_result,
     resolve_openai_compat_upstream_model_pool, rewrite_model_for_auth, rotate_strings,
 };
-use super::util::canonical_model_key;
+use super::util::{canonical_model_key, canonical_model_key_ref, rewrite_model_for_prefix_ref};
 
 /// Go: `homeForceMappingAliasResult`: Home told us to rewrite responses back to the alias.
 pub(super) fn home_force_mapping_alias_result(auth: &Auth, requested: &str) -> AliasResult {
@@ -39,6 +40,9 @@ impl Manager {
     /// Model name used for availability checks and state keys of this credential: prefix
     /// stripped, OAuth alias resolved (Go: selectionModelForAuth).
     pub(crate) fn selection_model_for_auth(&self, auth: &Auth, route_model: &str) -> String {
+        if !has_oauth_alias_channel(auth) {
+            return self.selection_model_ref(auth, route_model).to_string();
+        }
         let mut requested = rewrite_model_for_auth(route_model, auth);
         if requested.trim().is_empty() {
             requested = route_model.trim().to_string();
@@ -52,7 +56,17 @@ impl Manager {
         }
     }
 
+    /// [`Self::selection_model_for_auth`] for credentials without an OAuth alias channel (API
+    /// keys, plain Gemini), where only the prefix is stripped; borrowed from `route_model`.
+    pub(crate) fn selection_model_ref<'a>(&self, auth: &Auth, route_model: &'a str) -> &'a str {
+        let requested = rewrite_model_for_prefix_ref(route_model, &auth.prefix);
+        if requested.trim().is_empty() { route_model.trim() } else { requested }
+    }
+
     pub(crate) fn selection_model_key_for_auth(&self, auth: &Auth, route_model: &str) -> String {
+        if !has_oauth_alias_channel(auth) {
+            return canonical_model_key_ref(self.selection_model_ref(auth, route_model)).to_string();
+        }
         canonical_model_key(&self.selection_model_for_auth(auth, route_model))
     }
 

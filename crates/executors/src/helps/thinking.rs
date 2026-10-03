@@ -12,6 +12,7 @@ use cpa_core::thinking::{
     extract_summary_config, extract_translated_summary_config,
 };
 use cpa_runtime::conductor::resolved_model_info;
+use cpa_runtime::conductor::session::lazy::Doc;
 use cpa_runtime::executor::{Options, Request};
 use cpa_translator::Format;
 
@@ -40,6 +41,44 @@ pub fn apply_thinking_with_source_payload(
     apply_thinking_with_summary(body, model, from_format, to_format, provider_key, &summary)
 }
 
+/// Top-level keys the summary readers of `cpa_core::thinking` start their paths at, per protocol.
+/// `None` for protocols without summary support (the readers return the default for those).
+fn summary_roots(format: &str) -> Option<&'static [&'static str]> {
+    Some(match format {
+        "openai" => &["extra_body", "google", "thinking", "reasoning", "generationConfig", "generation_config", "include_reasoning", "reasoning_effort"],
+        "openai-response" | "codex" => &["reasoning"],
+        "claude" => &["thinking"],
+        "gemini" => &["generationConfig", "generation_config"],
+        "antigravity" => &["request"],
+        "interactions" => &["generation_config", "reasoning"],
+        _ => return None,
+    })
+}
+
+/// False when `body` is a well-formed object without any key the summary readers of `format`
+/// could look at, so reading it would return the default without needing a full parse.
+fn may_carry_summary(body: &[u8], format: &str) -> bool {
+    let Some(roots) = summary_roots(format) else {
+        return true;
+    };
+    match Doc::lazy(body) {
+        Some(doc) => roots.iter().any(|k| doc.has(k)),
+        None => true,
+    }
+}
+
+fn extract_summary(body: &[u8], format: &str) -> SummaryConfig {
+    if may_carry_summary(body, format) { extract_summary_config(body, format) } else { SummaryConfig::default() }
+}
+
+fn extract_explicit_summary(body: &[u8], format: &str) -> SummaryConfig {
+    if may_carry_summary(body, format) { extract_explicit_summary_config(body, format) } else { SummaryConfig::default() }
+}
+
+fn extract_translated_summary(body: &[u8], from: &str, to: &str) -> SummaryConfig {
+    if may_carry_summary(body, from) { extract_translated_summary_config(body, from, to) } else { SummaryConfig::default() }
+}
+
 /// Summary visibility to carry into the target payload. The translated target body wins so a
 /// request normalizer can remove or rewrite a canonical summary field; the original source is
 /// consulted only when the payload that was translated no longer carries the inbound intent, or
@@ -56,9 +95,9 @@ pub fn translated_request_summary_config(
     let to_format = to_format.trim().to_lowercase();
 
     let target_summary = if from_format == to_format {
-        extract_summary_config(body, &to_format)
+        extract_summary(body, &to_format)
     } else {
-        extract_explicit_summary_config(body, &to_format)
+        extract_explicit_summary(body, &to_format)
     };
     if target_summary.mode != SummaryMode::Unspecified {
         return target_summary;
@@ -66,12 +105,12 @@ pub fn translated_request_summary_config(
 
     // Each extraction parses a whole payload, so the original is read only when it can matter
     // (nothing in the translated source) and not at all when it is the same payload.
-    let current = extract_translated_summary_config(current_source_payload, &from_format, &to_format);
+    let current = extract_translated_summary(current_source_payload, &from_format, &to_format);
     if current.mode == SummaryMode::Unspecified {
         if current_source_payload == original_source_payload {
             return current;
         }
-        return extract_translated_summary_config(original_source_payload, &from_format, &to_format);
+        return extract_translated_summary(original_source_payload, &from_format, &to_format);
     }
 
     let has_transformer = match (Format::parse(&from_format), Format::parse(&to_format)) {

@@ -51,6 +51,19 @@ pub fn canonical_model_key(model: &str) -> String {
     }
 }
 
+/// [`canonical_model_key`] without allocating (selection scans call it per credential).
+pub fn canonical_model_key_ref(model: &str) -> &str {
+    let model = model.trim();
+    if model.is_empty() {
+        return "";
+    }
+    let name = match model.rfind('(') {
+        Some(open) if model.ends_with(')') => model[..open].trim(),
+        _ => model.trim(),
+    };
+    if name.is_empty() { model } else { name }
+}
+
 /// Go `strings.EqualFold` for the strings we compare (model names, keys, URLs).
 pub fn eq_fold(a: &str, b: &str) -> bool {
     a.eq_ignore_ascii_case(b) || a.to_lowercase() == b.to_lowercase()
@@ -99,15 +112,19 @@ pub fn meta_string(meta: &crate::executor::Metadata, key: &str) -> String {
 
 /// Strips `prefix` from a model, returning the model unchanged when it does not start with it.
 pub fn rewrite_model_for_prefix(model: &str, prefix: &str) -> String {
+    rewrite_model_for_prefix_ref(model, prefix).to_string()
+}
+
+/// [`rewrite_model_for_prefix`] as a borrowed slice.
+pub fn rewrite_model_for_prefix_ref<'a>(model: &'a str, prefix: &str) -> &'a str {
     let prefix = prefix.trim();
     if model.is_empty() || prefix.is_empty() {
-        return model.to_string();
+        return model;
     }
-    let needle = format!("{prefix}/");
-    match model.strip_prefix(&needle) {
-        Some(rest) => rest.to_string(),
-        None => model.to_string(),
-    }
+    model
+        .strip_prefix(prefix)
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(model)
 }
 
 /// Trims, drops empties and removes duplicates, keeping first occurrences (Go: dedupeStrings).

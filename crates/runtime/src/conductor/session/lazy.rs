@@ -49,12 +49,15 @@ pub enum MemberKind {
 impl<'a> Doc<'a> {
     /// Indexes `bytes`; empty input is a null document.
     pub fn new(bytes: &'a [u8]) -> Doc<'a> {
-        if let Some(members) = scan_members(bytes) {
-            return Doc {
-                kind: Kind::Lazy(Box::new(Lazy { members, full: OnceCell::new(), bytes })),
-            };
-        }
-        Doc::owned(cpa_json::parse(bytes))
+        Doc::lazy(bytes).unwrap_or_else(|| Doc::owned(cpa_json::parse(bytes)))
+    }
+
+    /// Like [`Doc::new`] but `None` unless the top-level object could be indexed (nothing is
+    /// parsed otherwise), for callers that only want the cheap path.
+    pub fn lazy(bytes: &'a [u8]) -> Option<Doc<'a>> {
+        scan_members(bytes).map(|members| Doc {
+            kind: Kind::Lazy(Box::new(Lazy { members, full: OnceCell::new(), bytes })),
+        })
     }
 
     pub fn owned(v: Value) -> Doc<'static> {
