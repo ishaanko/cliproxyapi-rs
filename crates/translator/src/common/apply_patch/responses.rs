@@ -6,7 +6,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use cpa_core::applypatch;
 use cpa_core::util::{
     ResponsesToolDescriptor, collect_responses_tool_descriptors, collect_responses_tool_winners,
-    qualify_responses_namespace_tool_name,
+    go_any, qualify_responses_namespace_tool_name,
 };
 use cpa_json::{J, Res, Value};
 
@@ -675,7 +675,7 @@ impl ApplyPatchResponsesBridge {
             for key in ["name", "namespace", "call_id"] {
                 let value = root.g(key);
                 if value.exists() {
-                    cpa_json::set(&mut item_value, key, value.value());
+                    cpa_json::set(&mut item_value, key, go_any(value.value()));
                 }
             }
             has_item = true;

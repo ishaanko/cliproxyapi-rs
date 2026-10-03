@@ -2,7 +2,11 @@
 //! expected outputs recorded from the Go translators) through the Rust registry.
 //!
 //! Usage: cpa-conformance [--pair client:upstream] [--kind request|stream|nonstream|token_count]
-//!                        [--show N] [--cases PATH]
+//!                        [--show N] [--cases PATH] [--ordered]
+//!
+//! `--ordered` additionally requires identical key order and number text after masking; the
+//! default comparison is order-insensitive. (String escaping such as Go's `\u003c` from sjson
+//! is not compared: the Value model cannot represent it.)
 //!
 //! Cases run in file order in one process, matching how the oracle recorded them (global
 //! caches such as the signature cache evolve identically). Filtering skips cases, which can
@@ -21,6 +25,7 @@ fn main() {
     let pair_filter = arg("--pair");
     let kind_filter = arg("--kind");
     let show: usize = arg("--show").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let ordered = args.iter().any(|a| a == "--ordered");
     let path = arg("--cases").unwrap_or_else(|| "conformance/translator_cases.jsonl.gz".into());
 
     let file = std::fs::File::open(&path).unwrap_or_else(|e| panic!("open {path}: {e}"));
@@ -48,7 +53,7 @@ fn main() {
             let msg = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()));
             Value::String(format!("<panic: {}>", msg.unwrap_or_default()))
         });
-        let ok = match diff(&kind, &expected, &actual) {
+        let ok = match diff(&kind, &expected, &actual, ordered) {
             None => true,
             Some(d) => {
                 if shown < show {
@@ -254,10 +259,26 @@ fn trunc(v: &Value) -> String {
     if s.len() > 300 { format!("{}…", &s[..s.char_indices().nth(300).map(|x| x.0).unwrap_or(s.len())]) } else { s }
 }
 
-fn diff(kind: &str, expected: &Value, actual: &Value) -> Option<String> {
+fn diff(kind: &str, expected: &Value, actual: &Value, ordered: bool) -> Option<String> {
     let mut e = structure_output(kind, expected);
     let mut a = structure_output(kind, actual);
     mask(&mut e, &mut vec![]);
     mask(&mut a, &mut vec![]);
-    first_diff(&e, &a, "$")
+    if let Some(d) = first_diff(&e, &a, "$") {
+        return Some(d);
+    }
+    if ordered {
+        let (es, as_) = (e.to_string(), a.to_string());
+        if es != as_ {
+            // Show a window around the first differing byte.
+            let at = es.bytes().zip(as_.bytes()).position(|(x, y)| x != y).unwrap_or(es.len().min(as_.len()));
+            let window = |s: &str| {
+                let lo = s.floor_char_boundary(at.saturating_sub(80));
+                let hi = s.floor_char_boundary((at + 160).min(s.len()));
+                s[lo..hi].to_string()
+            };
+            return Some(format!("ordered @{at}: expected ...{}... != actual ...{}...", window(&es), window(&as_)));
+        }
+    }
+    None
 }
