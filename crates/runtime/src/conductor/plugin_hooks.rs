@@ -207,8 +207,8 @@ fn merge_request_headers(current: &HeaderMap, updates: Option<&HeaderMap>, clear
 pub(crate) async fn apply_request_after_auth_interceptor(
     executor: &DynExecutor,
     provider: &str,
-    mut req: Request,
-    mut opts: Options,
+    req: Request,
+    opts: Options,
     requested_model: &str,
 ) -> Result<(Request, Options), ExecError> {
     if opts.request_after_auth.is_none() {

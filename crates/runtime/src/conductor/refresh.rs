@@ -285,10 +285,10 @@ impl Manager {
             return None;
         }
         // The refresh itself is rare and large; keep it out of the callers' future size.
-        Box::pin(self.refresh_after_unauthorized(auth, err)).await
+        Box::pin(self.refresh_after_unauthorized(auth)).await
     }
 
-    async fn refresh_after_unauthorized(&self, auth: &Auth, err: &ExecError) -> Option<Auth> {
+    async fn refresh_after_unauthorized(&self, auth: &Auth) -> Option<Auth> {
         tracing::debug!(
             "unauthorized response for {} ({}), refreshing credentials before fallback",
             auth.provider,

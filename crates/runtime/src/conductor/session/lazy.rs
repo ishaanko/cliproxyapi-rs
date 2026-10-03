@@ -319,6 +319,67 @@ fn value_end(b: &[u8], start: usize, depth: usize) -> Option<usize> {
     }
 }
 
+/// Allocation-free pass over the members of a top-level JSON object: calls `f(key, raw_value)`
+/// for each member in order (stopping early on `false`) and returns whether `bytes` is exactly one
+/// well-formed object (a stopped visit counts as well-formed up to that point only, so check the
+/// result only for complete visits). Duplicate keys are passed through as they appear.
+///
+/// Use it for cheap "does this event carry any of these keys" gates on hot streaming paths.
+pub fn visit_top_level(bytes: &[u8], mut f: impl FnMut(&str, &[u8]) -> bool) -> bool {
+    let mut i = skip_ws(bytes, 0);
+    if bytes.get(i) != Some(&b'{') {
+        return false;
+    }
+    i += 1;
+    let mut decoded;
+    loop {
+        i = skip_ws(bytes, i);
+        match bytes.get(i) {
+            Some(b'}') => {
+                i += 1;
+                break;
+            }
+            Some(b'"') => {}
+            _ => return false,
+        }
+        let Some(key_end) = string_end(bytes, i) else { return false };
+        let key_raw = &bytes[i + 1..key_end - 1];
+        let key: &str = if memchr::memchr(b'\\', key_raw).is_some() {
+            match serde_json::from_slice::<String>(&bytes[i..key_end]) {
+                Ok(k) => {
+                    decoded = k;
+                    &decoded
+                }
+                Err(_) => return false,
+            }
+        } else {
+            match std::str::from_utf8(key_raw) {
+                Ok(k) => k,
+                Err(_) => return false,
+            }
+        };
+        i = skip_ws(bytes, key_end);
+        if bytes.get(i) != Some(&b':') {
+            return false;
+        }
+        i = skip_ws(bytes, i + 1);
+        let Some(end) = value_end(bytes, i, 2) else { return false };
+        if !f(key, &bytes[i..end]) {
+            return true;
+        }
+        i = skip_ws(bytes, end);
+        match bytes.get(i) {
+            Some(b',') => i += 1,
+            Some(b'}') => {
+                i += 1;
+                break;
+            }
+            _ => return false,
+        }
+    }
+    skip_ws(bytes, i) == bytes.len()
+}
+
 /// Members of a top-level object, `None` unless `b` is exactly one well-formed object with unique
 /// keys (surrounding whitespace allowed).
 fn scan_members(b: &[u8]) -> Option<Vec<Member<'_>>> {
@@ -399,6 +460,28 @@ mod tests {
                 assert_eq!(lazy.g(path).value(), full.g(path).value(), "doc {doc:?} path {path:?}");
                 assert_eq!(lazy.g(path).exists(), full.g(path).exists(), "doc {doc:?} path {path:?}");
             }
+        }
+    }
+
+    #[test]
+    fn visit_top_level_reports_members_and_wellformedness() {
+        let collect = |doc: &str| {
+            let mut seen = Vec::new();
+            let ok = visit_top_level(doc.as_bytes(), |k, raw| {
+                seen.push((k.to_string(), String::from_utf8_lossy(raw).into_owned()));
+                true
+            });
+            (ok, seen)
+        };
+        let (ok, seen) = collect(r#" {"type":"ping","key":[1,{"a":"}"}],"n":null} "#);
+        assert!(ok);
+        assert_eq!(seen[0], ("type".into(), r#""ping""#.into()));
+        assert_eq!(seen[1], ("key".into(), r#"[1,{"a":"}"}]"#.into()));
+        assert_eq!(seen[2], ("n".into(), "null".into()));
+        // Duplicates are reported twice; malformed or non-object input is not well-formed.
+        assert_eq!(collect(r#"{"a":1,"a":2}"#).1.len(), 2);
+        for bad in [r#"{"a":1} x"#, r#"[1]"#, r#"{"a":"#, r#"{"a" 1}"#, ""] {
+            assert!(!collect(bad).0, "{bad:?}");
         }
     }
 
