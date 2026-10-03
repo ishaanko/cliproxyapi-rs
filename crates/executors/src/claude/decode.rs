@@ -33,19 +33,71 @@ fn kind_label(kind: &Kind) -> &'static str {
     }
 }
 
+/// Largest plain output one `feed` may produce, and of a whole body: a tiny compressed payload
+/// must not expand without bound (decompression bomb).
+const MAX_FEED_OUTPUT: usize = 32 << 20;
+const MAX_TOTAL_OUTPUT: usize = 256 << 20;
+
+/// Decoder output buffer that refuses to grow past the per-feed and total limits.
+#[derive(Default)]
+struct Sink {
+    buf: Vec<u8>,
+    /// Plain bytes already handed out by `take`.
+    taken: usize,
+}
+
+impl Sink {
+    fn take(&mut self) -> Vec<u8> {
+        let out = std::mem::take(&mut self.buf);
+        self.taken += out.len();
+        out
+    }
+}
+
+impl Write for Sink {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        if self.buf.len() + data.len() > MAX_FEED_OUTPUT || self.taken + self.buf.len() + data.len() > MAX_TOTAL_OUTPUT {
+            return Err(io::Error::other("decompressed body too large"));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Incremental decoder fed with compressed chunks.
 enum Push {
-    Gzip(Box<flate2::write::GzDecoder<Vec<u8>>>),
-    Zstd(Box<zstd::stream::write::Decoder<'static, Vec<u8>>>),
+    Gzip(Box<flate2::write::GzDecoder<Sink>>),
+    Zstd(Box<zstd::stream::write::Decoder<'static, Sink>>),
 }
 
 impl Push {
     fn new(kind: &Kind) -> Result<Self, String> {
         match kind {
-            Kind::Gzip => Ok(Push::Gzip(Box::new(flate2::write::GzDecoder::new(Vec::new())))),
-            Kind::Zstd => zstd::stream::write::Decoder::new(Vec::new())
+            Kind::Gzip => Ok(Push::Gzip(Box::new(flate2::write::GzDecoder::new(Sink::default())))),
+            Kind::Zstd => zstd::stream::write::Decoder::new(Sink::default())
                 .map(|d| Push::Zstd(Box::new(d)))
                 .map_err(|e| format!("magic-byte zstd: failed to create reader: {e}")),
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            Push::Gzip(_) => "gzip",
+            Push::Zstd(_) => "zstd",
+        }
+    }
+
+    /// Go fails at reader creation only on a bad gzip header; later corruption (or an oversized
+    /// output) surfaces as a read error.
+    fn describe(&self, e: &io::Error) -> String {
+        if matches!(self, Push::Gzip(_)) && e.to_string().contains("invalid gzip header") {
+            format!("magic-byte gzip: failed to create reader: {e}")
+        } else {
+            format!("magic-byte {}: read error: {e}", self.label())
         }
     }
 
@@ -54,22 +106,22 @@ impl Push {
         match self {
             Push::Gzip(d) => {
                 d.write_all(chunk)?;
-                Ok(std::mem::take(d.get_mut()))
+                Ok(d.get_mut().take())
             }
             Push::Zstd(d) => {
                 d.write_all(chunk)?;
                 d.flush()?;
-                Ok(std::mem::take(d.get_mut()))
+                Ok(d.get_mut().take())
             }
         }
     }
 
     fn finish(self) -> io::Result<Vec<u8>> {
         match self {
-            Push::Gzip(d) => d.finish(),
+            Push::Gzip(d) => d.finish().map(|mut sink| sink.take()),
             Push::Zstd(mut d) => {
                 d.flush()?;
-                Ok(std::mem::take(d.get_mut()))
+                Ok(d.get_mut().take())
             }
         }
     }
@@ -80,7 +132,11 @@ pub fn decode_body(body: Bytes) -> Result<Bytes, String> {
     let Some(kind) = sniff(&body) else { return Ok(body) };
     let label = kind_label(&kind);
     let mut decoder = Push::new(&kind)?;
-    let mut out = decoder.feed(&body).map_err(|e| format!("magic-byte {label}: failed to create reader: {e}"))?;
+    // Fed in slices so the per-feed output limit only trips on a bomb, not on a large body.
+    let mut out = Vec::new();
+    for piece in body.chunks(64 << 10) {
+        out.extend(decoder.feed(piece).map_err(|e| decoder.describe(&e))?);
+    }
     out.extend(decoder.finish().map_err(|e| format!("magic-byte {label}: {e}"))?);
     Ok(Bytes::from(out))
 }
@@ -109,9 +165,7 @@ impl<S> State<S> {
         let head = std::mem::take(&mut self.head);
         let Some(kind) = sniff(&head) else { return Ok(Bytes::from(head)) };
         let mut decoder = Push::new(&kind)?;
-        let out = decoder
-            .feed(&head)
-            .map_err(|e| format!("magic-byte {}: failed to create reader: {e}", kind_label(&kind)))?;
+        let out = decoder.feed(&head).map_err(|e| decoder.describe(&e))?;
         self.decoder = Some(decoder);
         Ok(Bytes::from(out))
     }
@@ -154,7 +208,7 @@ where
             let next = if st.ended { None } else { st.inner.next().await };
             let out = match next {
                 Some(Ok(chunk)) => match st.decoder.as_mut() {
-                    Some(d) => d.feed(&chunk).map(Bytes::from).map_err(|e| format!("read error: {e}")),
+                    Some(d) => d.feed(&chunk).map(Bytes::from).map_err(|e| d.describe(&e)),
                     None => Ok(chunk),
                 },
                 Some(Err(e)) => Err(e),
@@ -162,7 +216,7 @@ where
                     st.phase = Phase::Done;
                     match st.decoder.take().map(Push::finish) {
                         Some(Ok(rest)) if !rest.is_empty() => return Some((Ok(Bytes::from(rest)), st)),
-                        Some(Err(e)) => return Some((Err(format!("read error: {e}")), st)),
+                        Some(Err(e)) => return Some((Err(format!("magic-byte read error: {e}")), st)),
                         _ => return None,
                     }
                 }
@@ -197,6 +251,21 @@ mod tests {
         assert_eq!(decode_body(Bytes::from(zstd::encode_all(&plain[..], 0).unwrap())).unwrap(), plain.as_slice());
         assert_eq!(decode_body(Bytes::from_static(plain)).unwrap(), plain.as_slice());
         assert!(decode_body(Bytes::from_static(&[0x1f, 0x8b, 0, 0, 0])).is_err());
+    }
+
+    #[test]
+    fn decompression_bomb_and_mid_body_corruption_are_rejected_with_distinct_errors() {
+        let bomb = zstd::encode_all(&vec![0u8; MAX_FEED_OUTPUT + (8 << 20)][..], 0).unwrap();
+        let err = decode_body(Bytes::from(bomb)).unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+
+        let mut packed = gzip(&b"x".repeat(4096));
+        let mid = packed.len() / 2;
+        packed[mid..].fill(0xff);
+        let err = decode_body(Bytes::from(packed)).unwrap_err();
+        assert!(!err.contains("failed to create reader"), "{err}");
+        let err = decode_body(Bytes::from_static(&[0x1f, 0x8b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])).unwrap_err();
+        assert!(err.contains("failed to create reader"), "{err}");
     }
 
     #[tokio::test]

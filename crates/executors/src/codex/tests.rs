@@ -847,6 +847,56 @@ async fn duplex_stream_outlives_completion_and_forwards_steering_and_creates() {
     panic!("upstream socket was not closed");
 }
 
+fn completed_with_usage(id: &str, input: i64, output: i64) -> String {
+    format!(
+        r#"{{"type":"response.completed","response":{{"id":"{id}","status":"completed","output":[],"usage":{{"input_tokens":{input},"output_tokens":{output},"total_tokens":{}}}}}}}"#,
+        input + output
+    )
+}
+
+/// Go publishes one usage record per response of a steering socket (a new reporter on every
+/// later `response.created`), and a client that goes away closes the stream without an error or
+/// a failed record.
+#[tokio::test]
+async fn duplex_socket_records_usage_per_response_and_client_close_is_not_a_failure() {
+    let accepted = r#"{"type":"response.steer.accepted","steer":{"id":"s1","previous_response_id":"r1"},"sequence_number":7}"#;
+    let mock = ws_server(
+        vec![
+            frames(&[&created("r1", ""), &completed_with_usage("r1", 3, 4)]),
+            frames(&[accepted, &created("r2", "r1"), &completed_with_usage("r2", 5, 6)]),
+        ],
+        None,
+    )
+    .await;
+    let (exec, _keep) = steering_executor();
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let collector = cpa_runtime::usage_report::UsageCollector::new();
+    let mut opts = ws_opts("duplex-usage");
+    opts.ws_input = Some(cpa_runtime::executor::WebsocketInput::new(rx));
+    opts.usage_collector = Some(collector.clone());
+    let (req, _) = request(HELLO_ITEMS, true);
+    let mut result = exec.execute_stream(&api_key_auth(&mock.url, true), req, opts).await.expect("duplex stream");
+
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r1""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+    tx.send(Ok(br#"{"type":"response.steer","previous_response_id":"r1","input":"go"}"#.to_vec())).await.unwrap();
+    assert_eq!(next_chunk(&mut result).await.unwrap(), accepted);
+    assert!(next_chunk(&mut result).await.unwrap().contains(r#""id":"r2""#));
+    assert!(next_chunk(&mut result).await.unwrap().contains("response.completed"));
+
+    let records = collector.take();
+    let tokens: Vec<_> = records.iter().map(|r| (r.detail.input_tokens, r.detail.output_tokens, r.failed)).collect();
+    assert_eq!(tokens, vec![(3, 4, false), (5, 6, false)]);
+    assert_ne!(records[0].request_id, records[1].request_id);
+    assert!(records.iter().all(|r| r.executor_type == "CodexWebsocketsExecutor"));
+
+    // The client goes away: the stream just ends.
+    drop(tx);
+    let end = tokio::time::timeout(Duration::from_secs(5), result.chunks.recv()).await.expect("stream ends");
+    assert!(end.is_none(), "client close must not surface an error: {end:?}");
+    assert!(collector.take().is_empty(), "client close must not publish a failure record");
+}
+
 /// A response created with no pending create and no retained parent settings cannot be
 /// attributed to any request: the stream fails as a request-scoped connection error.
 #[tokio::test]

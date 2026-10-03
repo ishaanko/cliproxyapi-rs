@@ -1,9 +1,13 @@
 //! Usage record construction for completed upstream attempts.
 //!
-//! The Go executors publish usage themselves; here the conductor builds one
-//! [`UsageRecord`](crate::usage::UsageRecord) per attempt from the execution facts and the token
-//! counts it can read from the (already translated) response: either a `usage` object an
-//! executor placed in `Response.metadata["usage"]`, or the usage block of the client-format
+//! The Go executors publish usage themselves; here each attempt's options carry a
+//! [`UsageCollector`](crate::usage_report::UsageCollector) the executors' reporters publish into,
+//! and the conductor turns those reports into [`UsageRecord`](crate::usage::UsageRecord)s:
+//! tokens, response model and tier, reasoning effort, latency and failure come from the report,
+//! the endpoint, client metadata and response headers from the execution facts. Only when an
+//! executor published no report (an executor without a reporter) does the conductor fall back to
+//! the token counts it can read from the (already translated) response: either a `usage` object
+//! an executor placed in `Response.metadata["usage"]`, or the usage block of the client-format
 //! payload. Streams merge usage across chunks (latest value per field wins).
 
 use std::time::Duration;
@@ -18,6 +22,7 @@ use super::cooldown::ExecResult;
 use crate::executor::{Metadata, meta};
 use super::session::{bound_session_identity, normalize_to_canonical_uuid};
 use crate::usage::{TokenUsage, UsageExtra, UsageFailure, UsageRecord};
+use crate::usage_report::Record;
 
 /// Metadata key a client-facing layer may set with the downstream API key (sha-masked by the
 /// usage tracker, not here).
@@ -147,6 +152,9 @@ pub struct UsageFacts {
     pub upstream_model: String,
     /// Client-requested model.
     pub requested_model: String,
+    /// Records the executor's reporters published during the attempt; when present they replace
+    /// the response-derived `tokens`.
+    pub reports: Vec<Record>,
 }
 
 const MAX_FAILURE_BODY: usize = 2048;
@@ -237,6 +245,64 @@ pub fn build_usage_record(
             ..usage_extra(result, auth)
         },
     }
+}
+
+/// Builds the usage records of one finished attempt: one per executor report, or a single one
+/// from the response-derived `facts.tokens` when the executor reported none.
+pub fn build_usage_records(
+    result: &ExecResult,
+    auth: Option<&Auth>,
+    facts: &UsageFacts,
+    now: DateTime<Utc>,
+) -> Vec<UsageRecord> {
+    let base = build_usage_record(result, auth, facts, now);
+    if facts.reports.is_empty() {
+        return vec![base];
+    }
+    facts.reports.iter().map(|r| overlay_report(base.clone(), r, facts)).collect()
+}
+
+/// `base` (conductor facts) with everything the executor's report knows better: timing, model,
+/// outcome, tokens, served model and tier, reasoning effort, credential fingerprint and source.
+fn overlay_report(mut rec: UsageRecord, r: &Record, facts: &UsageFacts) -> UsageRecord {
+    let rep = r.to_usage_record();
+    rec.timestamp = rep.timestamp;
+    rec.latency_ms = rep.latency_ms;
+    rec.ttft_ms = rep.ttft_ms;
+    if !rep.model.is_empty() {
+        rec.model = rep.model;
+    }
+    if !rep.executor_type.is_empty() {
+        rec.executor_type = rep.executor_type;
+    }
+    rec.failed = rep.failed;
+    rec.fail = rep.fail;
+    rec.stream = rep.stream || facts.stream;
+    rec.tokens = rep.tokens;
+    let (x, rx) = (&mut rec.extra, rep.extra);
+    x.execution_id = rx.execution_id;
+    x.response_service_tier = rx.response_service_tier;
+    x.response_model = rx.response_model;
+    x.detail = rx.detail;
+    if !rx.queue_source.is_empty() {
+        x.queue_source = rx.queue_source;
+    }
+    if !rx.access_token_sha256.is_empty() {
+        x.access_token_sha256 = rx.access_token_sha256;
+    }
+    if rx.reasoning_effort.is_some() {
+        x.reasoning_effort = rx.reasoning_effort;
+    }
+    if rx.service_tier.is_some() {
+        x.service_tier = rx.service_tier;
+    }
+    if !rx.base_url.is_empty() {
+        x.base_url = rx.base_url;
+    }
+    if !rx.auth_id.is_empty() {
+        x.auth_id = rx.auth_id;
+    }
+    rec
 }
 
 fn int(v: &Value, path: &str) -> i64 {

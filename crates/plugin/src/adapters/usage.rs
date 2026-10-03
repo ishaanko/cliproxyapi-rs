@@ -53,9 +53,11 @@ impl UsageListener for UsageAdapter {
 /// The record a plugin sees (Go: the `pluginapi.UsageRecord` literal in `HandleUsage`).
 fn plugin_usage_record(r: &UsageRecord) -> PluginUsageRecord {
     let x = &r.extra;
+    let d = r.detail();
     let nanos = |ms: i64| ms.saturating_mul(1_000_000);
     PluginUsageRecord {
-        request_id: r.request_id.trim().to_string(),
+        // Go: the reporter's execution id; the inbound request id for records without one.
+        request_id: if x.execution_id.trim().is_empty() { r.request_id.trim() } else { x.execution_id.trim() }.to_string(),
         trace_id: x.trace_id.trim().to_string(),
         provider: r.provider.clone(),
         base_url: x.base_url.clone(),
@@ -70,7 +72,7 @@ fn plugin_usage_record(r: &UsageRecord) -> PluginUsageRecord {
         auth_type: r.auth_type.clone(),
         source: r.source.clone(),
         reasoning_effort: x.reasoning_effort.clone().unwrap_or_default(),
-        service_tier: x.service_tier.clone().unwrap_or_default(),
+        service_tier: x.service_tier.clone().unwrap_or_else(|| "default".into()),
         response_service_tier: x.response_service_tier.clone(),
         response_model: x.response_model.clone(),
         generate: x.generate.unwrap_or(true),
@@ -81,13 +83,13 @@ fn plugin_usage_record(r: &UsageRecord) -> PluginUsageRecord {
         failed: r.failed,
         failure: UsageFailure { status_code: i64::from(r.fail.status_code), body: r.fail.body.clone() },
         detail: UsageDetail {
-            input_tokens: r.tokens.input_tokens,
-            output_tokens: r.tokens.output_tokens,
-            reasoning_tokens: r.tokens.reasoning_tokens,
-            cached_tokens: r.tokens.cached_tokens,
-            cache_read_tokens: x.cache_read_tokens,
-            cache_creation_tokens: x.cache_creation_tokens,
-            total_tokens: r.tokens.total_tokens,
+            input_tokens: d.input_tokens,
+            output_tokens: d.output_tokens,
+            reasoning_tokens: d.reasoning_tokens,
+            cached_tokens: d.cached_tokens,
+            cache_read_tokens: d.cache_read_tokens,
+            cache_creation_tokens: d.cache_creation_tokens,
+            total_tokens: d.total_tokens,
         },
         response_headers: headers_to_go(&x.response_headers),
     }

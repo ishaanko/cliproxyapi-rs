@@ -20,7 +20,7 @@ use super::cooldown_state::{
     CooldownStateRecord, CooldownStateStore, records_equal, records_for_auth,
 };
 use super::events::build_error_event_payload;
-use super::usage::{UsageFacts, build_usage_record};
+use super::usage::{UsageFacts, build_usage_records};
 use super::util::{after, canonical_model_key, dedupe_strings};
 
 impl Manager {
@@ -93,7 +93,9 @@ impl Manager {
     ) {
         let tracker = self.usage.read().clone();
         if let (Some(tracker), Some(facts)) = (tracker, facts) {
-            tracker.record(build_usage_record(result, snapshot, facts, now));
+            for record in build_usage_records(result, snapshot, facts, now) {
+                tracker.record(record);
+            }
         }
     }
 

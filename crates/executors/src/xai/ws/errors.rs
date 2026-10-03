@@ -8,7 +8,7 @@ use cpa_json::{J, Value};
 use cpa_runtime::executor::{ErrorCode, ExecError};
 use http::{HeaderMap, HeaderName, HeaderValue};
 
-use super::conn::{CLOSE_MESSAGE_TOO_BIG, CloseInfo, ReadError};
+use crate::codex::ws::conn::{CLOSE_MESSAGE_TOO_BIG, CloseInfo, ReadError};
 use crate::helps::status::status_err;
 use crate::xai::response::status_err_for_body;
 use crate::xai::util::s;

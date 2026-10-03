@@ -9,8 +9,9 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 
 use crate::load::{self, Pcts, Running, Target};
-use crate::procs::{self, MOCK_PORT, Proc, SERVER_PORT};
-use crate::scenarios::{self, Scenario};
+use crate::meter::Meter;
+use crate::procs::{self, Proc, mock_port, server_port};
+use crate::scenarios::{self, Scenario, Shape};
 
 #[derive(Args, Clone)]
 pub struct RunArgs {
@@ -27,7 +28,7 @@ pub struct RunArgs {
     pub work_dir: PathBuf,
     #[arg(long, default_value_t = 5)]
     pub runs: usize,
-    #[arg(long, value_delimiter = ',', default_values_t = [1usize, 16, 64, 256])]
+    #[arg(long, value_delimiter = ',', default_values_t = [1usize, 16, 64, 256, 1024])]
     pub conc: Vec<usize>,
     /// Warmup seconds before each measured window.
     #[arg(long, default_value_t = 1.5)]
@@ -50,6 +51,9 @@ pub struct RunArgs {
     pub skip_stream: bool,
     #[arg(long)]
     pub skip_large: bool,
+    /// Skip the additional scenarios (long/native/Gemini/websocket/agent/slow-upstream).
+    #[arg(long)]
+    pub skip_extra: bool,
     #[arg(long, default_value_t = 2_000_000)]
     pub large_bytes: usize,
 }
@@ -65,9 +69,16 @@ pub struct Cell {
     pub rps: f64,
     /// Full request latency in microseconds.
     pub lat: Pcts,
+    /// Server CPU microseconds per request (identical to ms per 1k requests).
     pub cpu_ms_per_1k: Option<f64>,
+    /// User-space instructions per request (perf_event_open; `None` without a PMU).
+    pub instr_per_req: Option<f64>,
+    pub ctxsw_per_req: Option<f64>,
     pub rss_kb: Option<u64>,
     pub peak_kb: Option<u64>,
+    /// Idle RSS of the server (3 s after startup), copied into every cell so `peak_kb - idle_kb`
+    /// over the concurrency gives the memory per in-flight request.
+    pub idle_kb: Option<u64>,
     /// Stream timing (microseconds): first body byte, first marked delta, age of each delta.
     pub ttfb: Option<Pcts>,
     pub ttft: Option<Pcts>,
@@ -168,33 +179,34 @@ fn meta(a: &RunArgs, scenarios: &[&Scenario]) -> Meta {
 }
 
 fn mock_target() -> Target {
-    Target { addr: ([127, 0, 0, 1], MOCK_PORT).into(), method: hyper::Method::GET, path: String::new(), body: Default::default() }
+    Target { addr: ([127, 0, 0, 1], mock_port()).into(), method: hyper::Method::GET, path: String::new(), body: Default::default(), ws: false }
 }
 
 /// Retunes the mock's stream shape.
-async fn set_shape(first_ms: u64, gap_us: u64, chunks: usize) -> Result<()> {
-    let t = Target { path: format!("/__ctl?first_ms={first_ms}&gap_us={gap_us}&chunks={chunks}"), ..mock_target() };
+pub async fn set_shape(sh: Shape) -> Result<()> {
+    let Shape { first_ms, first_max_ms, gap_us, chunks } = sh;
+    let t = Target { path: format!("/__ctl?first_ms={first_ms}&first_max_ms={first_max_ms}&gap_us={gap_us}&chunks={chunks}"), ..mock_target() };
     load::once(&t).await?;
     Ok(())
 }
 
 /// What a request targets: a server under test, or the mock directly.
 #[derive(Clone, Copy, PartialEq)]
-enum Side {
+pub enum Side {
     Server,
     Direct,
 }
 
-fn target_for(sc: &Scenario, side: Side) -> Option<Target> {
+pub fn target_for(sc: &Scenario, side: Side) -> Option<Target> {
     let (port, path) = match side {
-        Side::Server => (SERVER_PORT, sc.path.clone()),
-        Side::Direct => (MOCK_PORT, sc.direct_path.clone()?),
+        Side::Server => (server_port(), sc.path.clone()),
+        Side::Direct => (mock_port(), sc.direct_path.clone()?),
     };
-    Some(Target { addr: ([127, 0, 0, 1], port).into(), method: sc.method.clone(), path, body: sc.body.clone() })
+    Some(Target { addr: ([127, 0, 0, 1], port).into(), method: sc.method.clone(), path, body: sc.body.clone(), ws: sc.ws })
 }
 
 /// Fails unless the target answers 200 with the expected content.
-async fn preflight(sc: &Scenario, t: &Target, who: &str, side: Side) -> Result<()> {
+pub async fn preflight(sc: &Scenario, t: &Target, who: &str, side: Side) -> Result<()> {
     let (status, body) = load::once(t).await?;
     let text = String::from_utf8_lossy(&body);
     if status != 200 || (side == Side::Server && !text.contains(sc.expect)) {
@@ -213,29 +225,27 @@ struct CellSpec<'a> {
     measure: f64,
     timing: bool,
     pid: Option<u32>,
+    meter: Option<&'a mut Meter>,
 }
 
-async fn run_cell(s: CellSpec<'_>) -> Result<Cell> {
+async fn run_cell(mut s: CellSpec<'_>) -> Result<Cell> {
     let running = Running::start(s.target, s.conc, s.timing);
     tokio::time::sleep(Duration::from_secs_f64(s.warmup)).await;
     if let Some(pid) = s.pid {
         procs::reset_peak(pid);
     }
-    let cpu0 = s.pid.and_then(procs::cpu_seconds);
+    let m0 = s.meter.as_deref_mut().map(Meter::sample);
     running.set_measuring(true);
     let t0 = Instant::now();
     tokio::time::sleep(Duration::from_secs_f64(s.measure)).await;
     running.set_measuring(false);
     let elapsed = t0.elapsed().as_secs_f64();
-    let cpu1 = s.pid.and_then(procs::cpu_seconds);
+    let m1 = s.meter.as_deref_mut().map(Meter::sample);
     let rss_kb = s.pid.and_then(procs::rss_kb);
     let peak_kb = s.pid.and_then(procs::peak_kb);
     let mut out = running.finish().await?;
     let requests = out.lat_us.len() as u64;
-    let cpu_ms_per_1k = match (cpu0, cpu1) {
-        (Some(a), Some(b)) if requests > 0 => Some((b - a) * 1e6 / requests as f64),
-        _ => None,
-    };
+    let per = m0.zip(m1).map(|(a, b)| b.since(&a, requests)).unwrap_or_default();
     let mut cell = Cell {
         kind: s.kind.into(),
         scenario: s.id.into(),
@@ -244,7 +254,9 @@ async fn run_cell(s: CellSpec<'_>) -> Result<Cell> {
         errors: out.errors,
         rps: requests as f64 / elapsed,
         lat: load::pcts(&mut out.lat_us),
-        cpu_ms_per_1k,
+        cpu_ms_per_1k: per.cpu_us,
+        instr_per_req: per.instr,
+        ctxsw_per_req: per.ctxsw,
         rss_kb,
         peak_kb,
         ..Default::default()
@@ -265,19 +277,24 @@ pub async fn run(a: RunArgs) -> Result<()> {
     let mut standard = scenarios::standard();
     let mut large = if a.skip_large { vec![] } else { scenarios::large(a.large_bytes) };
     let keep = |s: &Scenario| a.only.is_empty() || a.only.iter().any(|o| s.id.contains(o.as_str()));
+    let mut extra = if a.skip_extra { vec![] } else { scenarios::extras() };
     standard.retain(keep);
     large.retain(keep);
-    let all: Vec<&Scenario> = standard.iter().chain(&large).collect();
-    for l in &large {
+    extra.retain(keep);
+    let all: Vec<&Scenario> = standard.iter().chain(&large).chain(&extra).collect();
+    for l in large.iter().chain(&extra).filter(|s| s.id.starts_with("agent") || s.kind == "large") {
         eprintln!("{}: {} bytes", l.id, l.body.len());
     }
     let mut results = Results { meta: meta(&a, &all), records: vec![] };
     std::fs::create_dir_all(a.out.parent().unwrap_or(Path::new(".")))?;
 
+    // Free ports, so a run never collides with another benchmark process on the machine.
+    let (sp, mp) = procs::free_ports()?;
+    procs::set_ports(sp, mp);
     let exe = std::env::current_exe()?;
-    let mock = Proc::spawn(&exe, &["mock", "--port", &MOCK_PORT.to_string()], Some(&a.mock_cpus), Path::new("."), &[])?;
+    let mock = Proc::spawn(&exe, &["mock", "--port", &mock_port().to_string()], Some(&a.mock_cpus), Path::new("."), &[])?;
     tokio::time::sleep(Duration::from_millis(300)).await;
-    set_shape(0, 0, 20).await?;
+    set_shape(Shape::FAST).await?;
 
     for run in 0..a.runs {
         let mut order: Vec<&str> = a.servers.iter().map(String::as_str).collect();
@@ -288,7 +305,7 @@ pub async fn run(a: RunArgs) -> Result<()> {
         order.push("direct");
         for who in order {
             eprintln!("== run {}/{} server {who}", run + 1, a.runs);
-            let rec = run_one(&a, who, run, &standard, &large).await?;
+            let rec = run_one(&a, who, run, &standard, &large, &extra).await?;
             results.records.push(rec);
             std::fs::write(&a.out, serde_json::to_vec_pretty(&results)?)?;
         }
@@ -298,9 +315,9 @@ pub async fn run(a: RunArgs) -> Result<()> {
     Ok(())
 }
 
-async fn run_one(a: &RunArgs, who: &str, run: usize, standard: &[Scenario], large: &[Scenario]) -> Result<Record> {
+async fn run_one(a: &RunArgs, who: &str, run: usize, standard: &[Scenario], large: &[Scenario], extra: &[Scenario]) -> Result<Record> {
     let mut rec = Record { run, server: who.into(), loadavg: loadavg(), ..Default::default() };
-    let (side, proc) = if who == "direct" {
+    let (side, mut proc) = if who == "direct" {
         (Side::Direct, None)
     } else {
         let bin = if who == "go" { &a.go_bin } else { &a.rust_bin };
@@ -313,47 +330,65 @@ async fn run_one(a: &RunArgs, who: &str, run: usize, standard: &[Scenario], larg
     };
     let pid = proc.as_ref().map(|p| p.pid);
 
-    set_shape(0, 0, 20).await?;
+    set_shape(Shape::FAST).await?;
     // Warm every route (connection pools, caches, GC) and verify the responses.
-    for sc in standard.iter().chain(large) {
+    for sc in standard.iter().chain(large).chain(extra) {
         let Some(t) = target_for(sc, side) else { continue };
+        set_shape(sc.shape).await?;
         preflight(sc, &t, who, side).await?;
-        if !large.iter().any(|l| l.id == sc.id) {
+        if sc.kind != "large" {
             let r = Running::start(&t, 16, false);
             tokio::time::sleep(Duration::from_secs(2)).await;
             r.finish().await?;
         }
     }
 
+    // Preflights left the last scenario's shape behind.
+    set_shape(Shape::FAST).await?;
     for sc in standard {
         let Some(t) = target_for(sc, side) else { continue };
         for &conc in &a.conc {
-            let spec = CellSpec { kind: "tput", id: sc.id, target: &t, conc, warmup: a.warmup, measure: a.measure, timing: false, pid };
+            let spec = CellSpec { kind: "tput", id: sc.id, target: &t, conc, warmup: a.warmup, measure: a.measure, timing: false, pid, meter: proc.as_mut().and_then(|p| p.meter.as_mut()) };
             rec.cells.push(run_cell(spec).await?);
         }
     }
 
     if !a.skip_stream {
         // Upstream with think time and paced deltas, so added proxy latency is visible.
-        set_shape(20, 5000, 40).await?;
+        set_shape(Shape::PACED).await?;
         for sc in standard.iter().filter(|s| s.stream) {
             let Some(t) = target_for(sc, side) else { continue };
             for (conc, measure) in [(1usize, 8.0), (16, 6.0)] {
-                let spec = CellSpec { kind: "stream", id: sc.id, target: &t, conc, warmup: 1.0, measure, timing: true, pid };
+                let spec = CellSpec { kind: "stream", id: sc.id, target: &t, conc, warmup: 1.0, measure, timing: true, pid, meter: proc.as_mut().and_then(|p| p.meter.as_mut()) };
                 rec.cells.push(run_cell(spec).await?);
             }
         }
-        set_shape(0, 0, 20).await?;
+        set_shape(Shape::FAST).await?;
     }
 
     for sc in large {
         let Some(t) = target_for(sc, side) else { continue };
         for conc in [1usize, 8] {
-            let spec = CellSpec { kind: "large", id: sc.id, target: &t, conc, warmup: 1.0, measure: 6.0, timing: false, pid };
+            let spec = CellSpec { kind: "large", id: sc.id, target: &t, conc, warmup: 1.0, measure: 6.0, timing: false, pid, meter: proc.as_mut().and_then(|p| p.meter.as_mut()) };
             rec.cells.push(run_cell(spec).await?);
         }
     }
 
+    for sc in extra {
+        let Some(t) = target_for(sc, side) else { continue };
+        set_shape(sc.shape).await?;
+        // Slow upstreams need a warmup longer than their think time.
+        let warmup = if sc.shape.first_max_ms > 0 { a.warmup.max(3.0) } else { a.warmup };
+        for &conc in sc.conc {
+            let spec = CellSpec { kind: "extra", id: sc.id, target: &t, conc, warmup, measure: sc.measure_s, timing: false, pid, meter: proc.as_mut().and_then(|p| p.meter.as_mut()) };
+            rec.cells.push(run_cell(spec).await?);
+        }
+    }
+    set_shape(Shape::FAST).await?;
+
+    for c in &mut rec.cells {
+        c.idle_kb = rec.idle_rss_kb;
+    }
     if let Some(p) = proc {
         p.stop().await;
         tokio::time::sleep(Duration::from_millis(500)).await;

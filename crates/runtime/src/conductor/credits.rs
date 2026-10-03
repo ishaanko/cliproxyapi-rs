@@ -29,6 +29,7 @@ use super::models::{
 };
 use super::pick::pinned_auth_id;
 use super::usage::{UsageFacts, tokens_from_response};
+use crate::usage_report::UsageCollector;
 use super::{Manager, executor_locked};
 use crate::executor::{DynExecutor, ExecError, Options, Request, Response, StreamResult};
 
@@ -336,6 +337,9 @@ impl Manager {
                     self.state_model_for_execution(&c.auth, &route_model, upstream_model, pooled);
                 let mut exec_req = req.clone();
                 exec_req.model = upstream_model.clone();
+                let usage = UsageCollector::new();
+                let mut credits_opts = credits_opts.clone();
+                credits_opts.usage_collector = Some(usage.clone());
                 let started = Instant::now();
                 let res = c
                     .executor
@@ -358,6 +362,7 @@ impl Manager {
                     latency: started.elapsed(),
                     upstream_model: upstream_model.clone(),
                     requested_model: requested_model_alias(&credits_opts, &route_model),
+                    reports: usage.take(),
                     ..Default::default()
                 };
                 match res {

@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 T=$(realpath "${CARGO_TARGET_DIR:-target}")
-cargo build --release -p cpa-server
-cargo build --release -p cpa-e2e
-exec flock /home/ishaan/box/cliproxyapirust/tmp/e2e.lock \
+tools/shared.sh cargo build --release -p cpa-server
+tools/shared.sh cargo build --release -p cpa-e2e
+exec tools/shared.sh flock /home/ishaan/box/cliproxyapirust/tmp/e2e.lock \
   "$T/release/cpa-e2e" check --server "$T/release/cliproxy" "$@"
