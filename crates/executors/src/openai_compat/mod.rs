@@ -543,9 +543,8 @@ fn image_endpoint_path(opts: &Options) -> &'static str {
     let path = payload_request_path(opts);
     if path.ends_with("/images/edits") {
         IMAGES_EDITS_PATH
-    } else if path.ends_with("/images/generations") {
-        IMAGES_GENERATIONS_PATH
     } else {
+        // Anything else (including `/images/generations`) defaults to generations, as in Go.
         IMAGES_GENERATIONS_PATH
     }
 }
