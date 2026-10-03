@@ -170,3 +170,31 @@ async fn disabled_or_invalid_payloads_are_rejected() {
     let err = refresh_auth_via_home(&enabled_config(), &codex_auth()).await.unwrap().unwrap_err();
     assert_eq!((err.status, err.message.as_str()), (502, "home returned invalid auth payload"));
 }
+
+// Go: antigravity_executor_auth.go Refresh / ensureAccessToken: with Home enabled the credential
+// is refreshed at Home, never locally.
+fn antigravity_executor() -> cpa_runtime::executor::DynExecutor {
+    cpa_executors::antigravity::new(tokio::sync::watch::channel(Arc::new(enabled_config())).1)
+}
+
+#[tokio::test]
+async fn antigravity_refresh_goes_through_home() {
+    let reply = json!({"auth": {"id": "ag", "provider": "antigravity", "metadata": {"access_token": "from-home"}}});
+    let h = home_with_body(serde_json::to_vec(&reply).unwrap()).await;
+    let mut auth = Auth::new("ag", "antigravity");
+    auth.index = "ag".into();
+    auth.metadata.insert("refresh_token".into(), Value::String("local-only".into()));
+    let updated = antigravity_executor().refresh(&auth).await.unwrap();
+    assert_eq!(updated.metadata.get("access_token"), Some(&Value::String("from-home".into())));
+    assert_eq!(h.mock.commands().iter().filter(|c| c[0].eq_ignore_ascii_case("GET")).count(), 1);
+}
+
+#[tokio::test]
+async fn antigravity_request_auth_preparation_rejects_a_home_refresh_without_token() {
+    let reply = json!({"auth": {"id": "ag", "provider": "antigravity", "metadata": {}}});
+    let _h = home_with_body(serde_json::to_vec(&reply).unwrap()).await;
+    let mut auth = Auth::new("ag", "antigravity");
+    auth.index = "ag".into();
+    let err = antigravity_executor().prepare_request_auth(&auth).await.unwrap_err();
+    assert_eq!((err.status, err.message.as_str()), (401, "missing access token"));
+}
