@@ -90,7 +90,7 @@ fn mp4(data: &[u8]) -> Option<&'static str> {
         return None;
     }
     let box_size = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-    if data.len() < box_size || box_size % 4 != 0 || &data[4..8] != b"ftyp" {
+    if data.len() < box_size || !box_size.is_multiple_of(4) || &data[4..8] != b"ftyp" {
         return None;
     }
     let mut st = 8;
