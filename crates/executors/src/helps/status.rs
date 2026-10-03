@@ -105,7 +105,12 @@ pub fn error_chain_text(err: &(dyn std::error::Error + 'static)) -> String {
 /// Go-style message of a failed request or body read: [`error_chain_text`], except that a body
 /// cut short reads `unexpected EOF` (what Go surfaces and the conductor retries on).
 pub fn transport_message(err: &reqwest::Error) -> String {
-    let text = error_chain_text(err);
+    go_transport_text(error_chain_text(err))
+}
+
+/// [`transport_message`] for an already formatted cause chain (also used for the fingerprinted
+/// transports, whose errors carry no `reqwest::Error`).
+pub fn go_transport_text(text: String) -> String {
     const INCOMPLETE: [&str; 5] = [
         "unexpected eof",
         "unexpected end of file",
