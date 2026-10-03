@@ -184,6 +184,10 @@ pub struct Options {
     pub websocket_response_observer: Option<WebSocketResponseObserver>,
     /// Home-dispatched attempts: the selection owning the attempt's resources.
     pub lifecycle: Option<Arc<dyn ExecutionLifecycle>>,
+    /// Receives the usage records the executor's reporters publish for this attempt; the
+    /// conductor sets it per attempt and turns the records into usage events (Go: reporters
+    /// publish to the process-wide usage manager).
+    pub usage_collector: Option<crate::usage_report::UsageCollector>,
 }
 
 /// A frame from the downstream websocket reader; an error terminates the connection (Go:
@@ -261,6 +265,7 @@ impl Options {
             request_after_auth: None,
             websocket_response_observer: None,
             lifecycle: None,
+            usage_collector: None,
         }
     }
 

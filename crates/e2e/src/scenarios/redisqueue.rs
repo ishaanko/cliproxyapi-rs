@@ -1,7 +1,7 @@
 //! Redis-protocol usage output on the API port (`AUTH`, `SUBSCRIBE`, `LPOP`/`RPOP`) and its
 //! coexistence with HTTP and the management usage-queue endpoint.
 
-use super::bodies::{self, Family, Kind};
+use super::bodies::{self, FAMILIES, Family, Kind};
 use super::profiles;
 use crate::client::{Auth, HttpReq, RespAct, RespReq, Step as Req};
 use crate::config::MGMT_SECRET;
@@ -197,6 +197,25 @@ pub fn scenarios() -> Vec<Scenario> {
         )
         .profile(profiles::usage_stats),
     );
+    // Cache read/creation tokens, the served model and the provider's token-breakdown semantics
+    // (Claude buckets are independent, OpenAI and Gemini nest cache inside input) per family.
+    for f in FAMILIES {
+        let cached_chat = |stream| Req::Http(HttpReq::post("/v1/chat/completions", bodies::chat(f.model(), stream, Kind::Cached)));
+        out.push(
+            s(
+                &format!("usage.cached.{}", f.label()),
+                &format!("queued usage of cached-token responses, {} upstream, json and stream", f.label()),
+                Script::ok(Content::Cached),
+                vec![
+                    cached_chat(false),
+                    cached_chat(true),
+                    Req::Pause(SETTLE_MS),
+                    session(vec![auth(), cmd(&["LPOP", "usage"]), cmd(&["LPOP", "usage"])]),
+                ],
+            )
+            .profile(profiles::usage_stats),
+        );
+    }
     out.push(s(
         "usage_disabled",
         "no usage records are queued with usage-statistics-enabled off",

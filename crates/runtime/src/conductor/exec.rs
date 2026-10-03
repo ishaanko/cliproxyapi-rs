@@ -27,6 +27,7 @@ use super::pick::{Eligibility, Picked};
 use super::rules;
 use super::session;
 use super::usage::{UsageFacts, tokens_from_response};
+use crate::usage_report::UsageCollector;
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
 use crate::executor::{
@@ -567,6 +568,8 @@ impl Manager {
                 restore_model.is_some(),
             );
 
+            let usage = UsageCollector::new();
+            exec_opts.usage_collector = Some(usage.clone());
             let started = Instant::now();
             let mut res =
                 call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
@@ -616,6 +619,7 @@ impl Manager {
                 stream: false,
                 upstream_model: upstream_model.clone(),
                 requested_model: requested_model_alias(&exec_opts, route_model),
+                reports: usage.take(),
                 ..Default::default()
             };
             match res {

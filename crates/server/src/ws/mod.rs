@@ -46,6 +46,7 @@ const WS_CLOSE_REASON_MAX_BYTES: usize = 123;
 const CLOSE_MESSAGE_TOO_BIG: u16 = 1009;
 /// Go's `websocket.ErrCloseSent` text: the handler already closed the socket itself.
 const CLOSE_SENT: &str = "websocket: close sent";
+const CONTEXT_CANCELED: &str = "context canceled";
 
 /// `GET /v1/responses` upgrade.
 pub async fn responses_websocket(
@@ -556,8 +557,10 @@ async fn forward_turn(
             item = rx.recv() => {
                 let Some(item) = item else {
                     if (options.duplex_stream)() {
-                        // A duplex stream ends with its socket, not an individual response.
-                        return TurnEnd::Terminate(CLOSE_SENT.into());
+                        // A duplex stream ends with its socket, not an individual response: the
+                        // client went away, Go's context-done branch with no upstream error.
+                        note(CONTEXT_CANCELED);
+                        return TurnEnd::Terminate(CONTEXT_CANCELED.into());
                     }
                     if !completed {
                         let err = ErrorMessage::new(408, "stream closed before response.completed");
@@ -571,12 +574,6 @@ async fn forward_turn(
                 let chunk = match item {
                     Ok(chunk) => chunk,
                     Err(err) => {
-                        // The client went away under a steering stream: Go's context-done branch,
-                        // no upstream error to log.
-                        if err.status == 0 && err.text == "context canceled" {
-                            note(&err.text);
-                            return TurnEnd::Terminate(err.text);
-                        }
                         api_log.record_error(err.status_or_500(), &err.text);
                         note(&err.text);
                         if suppress(&err) {
