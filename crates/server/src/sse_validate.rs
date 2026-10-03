@@ -74,7 +74,7 @@ fn replace_all(haystack: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
 }
 
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+    memchr::memmem::find(haystack, needle)
 }
 
 /// Joined `data:` payload of a frame (`sseJSONValidationDataPayload`).
@@ -119,6 +119,21 @@ pub struct SseJsonValidator {
 }
 
 impl SseJsonValidator {
+    /// Fast path for the usual chunk, exactly one complete frame with no `\r` and nothing
+    /// pending: `Some(result)` says whether the chunk can be forwarded unchanged (what
+    /// [`add_chunk`](Self::add_chunk) would have returned for it), `None` leaves it to
+    /// `add_chunk`.
+    pub fn check_single_frame(&mut self, chunk: &[u8]) -> Option<Result<(), String>> {
+        if !self.pending.is_empty() || self.pending_err.is_some() || self.prev_ends_with_cr {
+            return None;
+        }
+        let frame_end = find(chunk, b"\n\n")? + 2;
+        if frame_end != chunk.len() || memchr::memchr(b'\r', chunk).is_some() {
+            return None;
+        }
+        Some(validate_frame(chunk))
+    }
+
     /// Adds a chunk and returns the complete, validated frames ready to forward.
     pub fn add_chunk(&mut self, chunk: &[u8]) -> Result<Vec<u8>, String> {
         if let Some(err) = self.pending_err.take() {

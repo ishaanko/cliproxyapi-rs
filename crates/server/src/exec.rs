@@ -555,6 +555,12 @@ pub(crate) fn validate_payload(validator: &mut Option<SseJsonValidator>, chunk: 
     let Some(v) = validator else {
         return Ok(Some(chunk));
     };
+    // One complete frame: forwarded as is, without reassembly copies.
+    match v.check_single_frame(&chunk) {
+        Some(Ok(())) => return Ok(Some(chunk)),
+        Some(Err(msg)) => return Err(ErrorMessage::new(502, msg)),
+        None => {}
+    }
     match v.add_chunk(&chunk) {
         Ok(out) if out.is_empty() => Ok(None),
         Ok(out) => Ok(Some(Bytes::from(out))),

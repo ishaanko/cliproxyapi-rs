@@ -61,6 +61,8 @@ pub async fn responses_websocket(
     // A failed handshake would otherwise leave the deferred request log waiting forever.
     let api_log = info.api_log.clone();
     let mut resp = ws
+        // tungstenite's 128 KB default read buffer is allocated per socket up front.
+        .read_buffer_size(16 * 1024)
         .max_message_size(1 << 30)
         .max_frame_size(1 << 30)
         .on_failed_upgrade(move |_| api_log.ws_finished())
@@ -236,6 +238,36 @@ fn json_payloads_from_chunk(chunk: &[u8]) -> Vec<Vec<u8>> {
         payloads.push(trimmed.to_vec());
     }
     payloads
+}
+
+/// The `type` of a frame that needs no bookkeeping beyond being forwarded: a flat object without
+/// `item` or `response` members (the only places the tool-call caches, output collector and
+/// pending-call tracking read) whose plain-string `type` is not `error`. `None` for everything
+/// else, which takes the full path. Decided from a top-level scan, no parse.
+fn plain_forward_event(payload: &[u8]) -> Option<&str> {
+    let mut ty: Option<(usize, usize)> = None;
+    let mut bail = false;
+    let complete = cpa_json::lazy::visit_top_level(payload, |key, raw| {
+        match key {
+            "item" | "response" => bail = true,
+            "type" => {
+                if ty.is_some() {
+                    bail = true;
+                } else {
+                    ty = Some((raw.as_ptr() as usize - payload.as_ptr() as usize, raw.len()));
+                }
+            }
+            _ => {}
+        }
+        !bail
+    });
+    if bail || !complete {
+        return None;
+    }
+    let (off, len) = ty?;
+    let inner = payload[off..off + len].strip_prefix(b"\"")?.strip_suffix(b"\"")?;
+    let name = std::str::from_utf8(inner).ok()?;
+    (!name.contains('\\') && name != WS_EVENT_TYPE_ERROR).then_some(name)
 }
 
 fn is_completion_event(event_type: &str) -> bool {
@@ -586,6 +618,18 @@ async fn forward_turn(
                     t.reset();
                 }
                 for payload_bytes in json_payloads_from_chunk(&chunk) {
+                    if let Some(name) = plain_forward_event(&payload_bytes) {
+                        api_log.mark_response_timestamp();
+                        let mut writer = Writer { socket, api_log: &api_log, timeline };
+                        if let Err(e) = writer.text(&payload_bytes).await {
+                            tracing::warn!(
+                                "responses websocket: downstream_out write failed id={session_id} event={name} error={e}"
+                            );
+                            note(&e.to_string());
+                            return TurnEnd::Terminate(e.to_string());
+                        }
+                        continue;
+                    }
                     let mut payload = cpa_json::parse(&payload_bytes);
                     let mut bytes = payload_bytes;
                     let event_type = payload.g("type").str();
