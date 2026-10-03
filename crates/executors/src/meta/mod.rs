@@ -509,7 +509,7 @@ async fn run_stream(
     let mut items = OutputItems::default();
     let mut scan_err = None;
 
-    while let Some(line) = lines.next_line().await {
+    while let Some(line) = lines.next_line_or_closed(&sc.tx).await {
         let line = match line {
             Ok(line) => line,
             Err(e) => {

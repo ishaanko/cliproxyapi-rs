@@ -548,7 +548,7 @@ fn image_endpoint_path(opts: &Options) -> &'static str {
 }
 
 fn has_refresh_token(auth: &Auth) -> bool {
-    ["refresh_token", "refreshToken"].iter().any(|k| auth.meta_str(k) != "")
+    ["refresh_token", "refreshToken"].iter().any(|k| !auth.meta_str(k).is_empty())
 }
 
 #[async_trait]

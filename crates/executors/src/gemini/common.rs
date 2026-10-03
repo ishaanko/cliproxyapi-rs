@@ -71,6 +71,7 @@ pub(crate) fn original_payload<'a>(req: &'a Request, opts: &'a Options) -> &'a [
 /// [`crate::helps::translate`]). Only a native Gemini client's malformed JSON is special: Go's
 /// sjson-based normalizer leaves such a body as unusable fragments that the later body edits
 /// discard, so nothing from the normalizer (default safety settings) survives; pass it through.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn translate_request(
     cfg: &Config,
     headers: &HeaderMap,
@@ -90,6 +91,7 @@ pub(crate) fn translate_request(
 
 /// Translates the payload-config baseline and the working payload; identical inputs are
 /// translated once. Returns `(original, working)`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn translate_request_pair(
     cfg: &Config,
     headers: &HeaderMap,

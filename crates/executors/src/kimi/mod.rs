@@ -323,7 +323,7 @@ impl KimiExecutor {
             let ctx = Ctx::default();
             initialize_apply_patch_stream(Format::OpenAI, response_format, &model, &apply_original, &body, &mut param);
             let mut scan_err = None;
-            while let Some(line) = lines.next_line().await {
+            while let Some(line) = lines.next_line_or_closed(&tx).await {
                 let line = match line {
                     Ok(line) => line,
                     Err(e) => {
@@ -529,7 +529,7 @@ impl KimiExecutor {
 
             let mut scan_err = None;
             let mut stopped = false;
-            while let Some(line) = lines.next_line().await {
+            while let Some(line) = lines.next_line_or_closed(&tx).await {
                 let line = match line {
                     Ok(line) => line,
                     Err(e) => {

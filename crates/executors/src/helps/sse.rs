@@ -152,6 +152,20 @@ impl LineReader {
             }
         }
     }
+
+    /// [`Self::next_line`], but a closed client channel ends the wait at once with a
+    /// `context canceled` read error instead of lingering until the next upstream frame. Go's
+    /// request context cancels the body read the same way.
+    pub async fn next_line_or_closed<T>(&mut self, client: &tokio::sync::mpsc::Sender<T>) -> Option<Result<Bytes, ScanError>> {
+        tokio::select! {
+            biased;
+            _ = client.closed() => {
+                self.failed = true;
+                Some(Err(ScanError::Read("context canceled".to_string())))
+            }
+            line = self.next_line() => line,
+        }
+    }
 }
 
 #[cfg(test)]

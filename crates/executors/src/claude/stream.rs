@@ -16,8 +16,8 @@ use super::thinking_replay::{clear_claude_thinking_replay_content, should_clear_
 use super::tool_remap::restore_claude_oauth_tool_names_from_stream_line;
 use super::ClaudeExecutor;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error, finalize_apply_patch_stream,
-    initialize_apply_patch_stream, record_apply_patch_stream_failure,
+    apply_patch_original_request, apply_patch_translation_error, end_apply_patch_stream, gateway_error,
+    initialize_apply_patch_stream, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER};
 use crate::helps::status::status_err;
@@ -115,7 +115,7 @@ async fn run_stream(
     if response_format == to {
         let mut event: Vec<u8> = Vec::new();
         let mut scan_error: Option<ExecError> = None;
-        while let Some(line) = lines.next_line().await {
+        while let Some(line) = lines.next_line_or_closed(tx).await {
             let line = match line {
                 Ok(line) => line,
                 Err(err) => {
@@ -154,9 +154,8 @@ async fn run_stream(
     // Other formats go through the stream translator.
     let mut param = Param::default();
     initialize_apply_patch_stream(to, response_format, &p.req.model, original_request, &p.body_for_translation, &mut param);
-    let gateway_err = || status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE);
     let mut scan_error: Option<ExecError> = None;
-    while let Some(line) = lines.next_line().await {
+    while let Some(line) = lines.next_line_or_closed(tx).await {
         let line = match line {
             Ok(line) => line,
             Err(err) => {
@@ -183,16 +182,14 @@ async fn run_stream(
                 *chunk = crate::helps::responses_usage::ensure_responses_usage_details(chunk);
             }
         }
-        record_apply_patch_stream_failure(&param, reporter, &gateway_err());
+        record_apply_patch_stream_failure(&param, reporter, &gateway_error());
         for chunk in chunks {
             if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
                 return Ok(());
             }
         }
-        // A retained tool-input failure ends the stream after its one translated frame. (Inlined
-        // from helps::apply_patch::stop_apply_patch_stream: its `&Param` borrow is not `Send`.)
-        if record_apply_patch_stream_failure(&param, reporter, &gateway_err()) {
-            let _ = tx.send(Err(gateway_err())).await;
+        // A retained tool-input failure ends the stream after its one translated frame.
+        if stop_apply_patch_stream(&param, reporter, tx, gateway_error()).await {
             return Ok(());
         }
         if upstream_completed {
@@ -200,15 +197,7 @@ async fn run_stream(
         }
     }
     // EOF check before any synthetic success: finalize frames, then the gateway error if failed.
-    let finalize_chunks = finalize_apply_patch_stream(&mut param);
-    let failed = record_apply_patch_stream_failure(&param, reporter, &gateway_err());
-    for chunk in finalize_chunks {
-        if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
-            return Ok(());
-        }
-    }
-    if failed {
-        let _ = tx.send(Err(gateway_err())).await;
+    if end_apply_patch_stream(&mut param, reporter, tx, gateway_error()).await {
         return Ok(());
     }
     if !upstream_completed && let Some(err) = scan_error {

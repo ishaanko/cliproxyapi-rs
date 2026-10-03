@@ -143,7 +143,7 @@ impl AntigravityExecutor {
         let mut finished = true;
         let mut read_error = None;
 
-        'lines: while let Some(line) = reader.next_line().await {
+        'lines: while let Some(line) = reader.next_line_or_closed(&out).await {
             let line = match line {
                 Ok(l) => l,
                 Err(err) => {

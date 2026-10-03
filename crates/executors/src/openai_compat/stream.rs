@@ -168,7 +168,7 @@ impl ChatStream {
 
     async fn run(&mut self, mut lines: LineReader) {
         let mut scan_err: Option<ScanError> = None;
-        while let Some(next) = lines.next_line().await {
+        while let Some(next) = lines.next_line_or_closed(&self.out).await {
             let line = match next {
                 Ok(line) => line,
                 Err(err) => {
