@@ -10,9 +10,9 @@ license.workspace = true
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
-cpa-executors = { path = "../executors" }
+cpa-executors = { path = "../executors", default-features = false }
 serde_json.workspace = true
 tokio.workspace = true
 bytes.workspace = true
