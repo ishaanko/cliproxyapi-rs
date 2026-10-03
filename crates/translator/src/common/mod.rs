@@ -21,6 +21,7 @@ mod claude_messages;
 mod claude_system;
 mod claude_user_id;
 mod devin_tools;
+pub mod fast;
 mod file_data;
 mod gemini;
 mod interactions_usage;
