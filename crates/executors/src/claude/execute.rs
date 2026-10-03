@@ -140,6 +140,8 @@ impl ClaudeExecutor {
         stream: bool,
         reporter: &UsageReporter,
     ) -> Result<Prepared, ExecError> {
+        // Stages and helpers below re-read the body many times; memoize its parse (see parse_cache).
+        let _parse_scope = crate::helps::parse_cache::scope();
         let mut req = req;
         let mut replay_scope = ClaudeThinkingReplayScope::default();
         if claude_thinking_replay_enabled(auth, &req, opts) {
@@ -252,7 +254,7 @@ impl ClaudeExecutor {
         }
         let mut context_management_state = ClaudeCodeContextManagementState {
             eligible: cloaked && is_anthropic_upstream_base(&base_url),
-            caller_owned: cpa_json::parse(&body).g("context_management").exists(),
+            caller_owned: crate::helps::parse_cache::parse(&body).g("context_management").exists(),
             ..Default::default()
         };
         let mut diagnostics_injected_by_cpa = false;
@@ -386,7 +388,7 @@ impl ClaudeExecutor {
         if !stream {
             // Payload rules may rewrite `stream`; keep body, headers and response parser on one
             // authority. Native non-stream Haiku helpers omit `stream` rather than send false.
-            let stream_field_exists = cpa_json::parse(&body).g("stream").exists();
+            let stream_field_exists = crate::helps::parse_cache::parse(&body).g("stream").exists();
             if !detection.helper_profile || stream_field_exists || upstream_stream {
                 body = set_bool_if_different_bytes(&body, "stream", upstream_stream);
             }
@@ -698,7 +700,7 @@ pub fn validate_claude_streaming_response(data: &[u8]) -> Result<(), ExecError> 
         if !cpa_json::valid(payload) {
             return Err(status_err(502, "claude executor: upstream returned malformed stream data"));
         }
-        let root = cpa_json::parse(payload);
+        let root = crate::helps::parse_cache::parse(payload);
         match root.g("type").str().as_str() {
             "error" => {
                 let mut message = root.g("error.message").str().trim().to_string();

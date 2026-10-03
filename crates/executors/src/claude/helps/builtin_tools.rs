@@ -44,7 +44,7 @@ pub fn augment_claude_builtin_tool_registry(
     // Valid bodies only parse the `tools` array; invalid ones fall back to the tolerant parser.
     let tools = match cpa_json::raw_at(body, "tools") {
         Some(raw) if cpa_json::valid(body) => cpa_json::parse_str(raw),
-        _ => cpa_json::parse(body)
+        _ => crate::helps::parse_cache::parse(body)
             .g("tools")
             .into_value()
             .unwrap_or(Value::Null),

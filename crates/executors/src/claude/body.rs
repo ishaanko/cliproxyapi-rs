@@ -6,12 +6,7 @@ use cpa_json::{J, Value};
 
 /// Parses `payload`, applies `f`, and re-serializes only when `f` reports a change.
 fn edit(payload: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
-    let mut v = cpa_json::parse(payload);
-    if f(&mut v) {
-        cpa_json::to_vec(&v)
-    } else {
-        payload.to_vec()
-    }
+    crate::helps::parse_cache::edit(payload, f)
 }
 
 /// Removes a top-level key (order-preserving); true when it existed.
@@ -114,7 +109,7 @@ pub fn normalize_claude_sampling_for_upstream(body: &[u8], native_owned: bool) -
 /// Go: `claudePayloadHasMidSystemMessage`. True when `messages` holds a `system` role turn
 /// (case and surrounding whitespace ignored).
 pub fn claude_payload_has_mid_system_message(payload: &[u8]) -> bool {
-    let v = cpa_json::parse(payload);
+    let v = crate::helps::parse_cache::parse(payload);
     v.get("messages")
         .and_then(Value::as_array)
         .is_some_and(|ms| ms.iter().any(is_system_role))

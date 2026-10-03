@@ -55,12 +55,7 @@ pub fn build_text_block_value(text: &str, cache_control: Option<&ClaudeCacheCont
 
 /// Parses `payload`, applies `f`, and re-serializes only when `f` reports a change.
 fn edit(payload: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
-    let mut v = cpa_json::parse(payload);
-    if f(&mut v) {
-        cpa_json::to_vec(&v)
-    } else {
-        payload.to_vec()
-    }
+    crate::helps::parse_cache::edit(payload, f)
 }
 
 fn has_cache_control(item: &Value) -> bool {
@@ -135,7 +130,7 @@ pub fn ensure_cache_control(payload: &[u8]) -> Vec<u8> {
 
 /// Go: `claudePayloadHasCacheableSystem`. False for an absent key, empty array, or blank string.
 pub fn claude_payload_has_cacheable_system(payload: &[u8]) -> bool {
-    has_cacheable_system(&cpa_json::parse(payload))
+    has_cacheable_system(&crate::helps::parse_cache::parse(payload))
 }
 
 fn has_cacheable_system(v: &Value) -> bool {
@@ -207,7 +202,7 @@ pub fn should_ensure_cache_control(
 
 /// Go: `countCacheControls`.
 pub fn count_cache_controls(payload: &[u8]) -> usize {
-    count_in(&cpa_json::parse(payload))
+    count_in(&crate::helps::parse_cache::parse(payload))
 }
 
 fn count_in(v: &Value) -> usize {
