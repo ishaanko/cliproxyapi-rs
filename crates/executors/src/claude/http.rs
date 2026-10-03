@@ -66,7 +66,7 @@ fn standard_client(request_proxy: &str, cfg: &Config, auth: &Auth) -> reqwest::C
         Ok(client) => client,
         Err(err) => {
             tracing::error!("failed to build claude http client: {err}");
-            reqwest::Client::new()
+            crate::helps::proxy::fallback_client()
         }
     }
 }

@@ -48,39 +48,44 @@ pub trait StreamHooks: Send + Unpin {
     }
 }
 
-
 /// Stop coalescing queued chunks into one write once this many bytes are pending.
 const BATCH_LIMIT: usize = 32 * 1024;
 
-/// Writes to one client are spaced at least this far apart. The first chunk after a quiet period
-/// goes out at once (token streams, where events are milliseconds apart, see no change); a dense
-/// burst, which would otherwise cost one socket write per event, is flushed once per gap. The tokio
-/// timer wheel rounds the wait up to a millisecond tick.
+/// Writes to one client are spaced at least this far apart. Go flushes after every chunk, which
+/// costs one socket write per SSE event; on a fast upstream that kernel time was about half of the
+/// proxy's CPU. The first chunk after a quiet period still goes out at once (token streams, where
+/// events are milliseconds apart, see no change); a dense burst is flushed once per gap, so it is
+/// delayed by at most the gap (the tokio timer wheel rounds the wait up to a millisecond tick).
+/// One millisecond is far below what a stream consumer can notice yet already cuts the writes of a
+/// burst by an order of magnitude; a longer gap saves little more and delays more, a shorter one
+/// is below the timer resolution. It is deliberately not configurable.
 const FLUSH_GAP: Duration = Duration::from_millis(1);
 
 /// SSE response body (Go: `ForwardStream`): pulls chunks from the stream when hyper polls the
 /// body, writes them through the dialect hooks and hands over everything that is already queued
-/// as one frame (one socket write; see [`FLUSH_GAP`] for dense bursts). It ends after the stream ends, errors, or a
-/// chunk reports a terminal failure; dropping it (client gone) drops the chunk source, which
+/// as one frame (one socket write; see [`FLUSH_GAP`] for dense bursts). It ends after the stream
+/// ends, errors, or a chunk reports a terminal failure; dropping it (client gone) drops the chunk source, which
 /// releases the upstream. Runs in the connection's own task: no pump task or channel per stream.
 pub struct SseBody<H: StreamHooks> {
     hooks: H,
     rx: ExecRx,
     /// Bytes the handler already wrote before committing the headers; sent first.
     initial: Vec<u8>,
-    ticker: Option<Pin<Box<Interval>>>,
+    ticker: Option<Interval>,
     buf: Vec<u8>,
     finished: bool,
     /// When the last frame was handed to hyper.
     last_flush: Option<Instant>,
     /// Wait for the end of the flush gap while a dense burst accumulates in `buf`.
     hold: Option<Pin<Box<Sleep>>>,
+    /// The deadline `hold` is set to.
+    hold_deadline: Option<Instant>,
 }
 
 impl<H: StreamHooks> SseBody<H> {
     pub fn new(hooks: H, rx: ExecRx, initial: Vec<u8>, keepalive: Duration) -> Self {
-        let ticker = (!keepalive.is_zero()).then(|| Box::pin(interval_at(Instant::now() + keepalive, keepalive)));
-        SseBody { hooks, rx, initial, ticker, buf: Vec::new(), finished: false, last_flush: None, hold: None }
+        let ticker = (!keepalive.is_zero()).then(|| interval_at(Instant::now() + keepalive, keepalive));
+        SseBody { hooks, rx, initial, ticker, buf: Vec::new(), finished: false, last_flush: None, hold: None, hold_deadline: None }
     }
 
     fn terminal(&mut self, err: &ErrorMessage) {
@@ -103,7 +108,7 @@ impl<H: StreamHooks> Body for SseBody<H> {
         }
         // A due keep-alive rides along with whatever is queued (the tick is independent of traffic).
         if let Some(t) = this.ticker.as_mut()
-            && t.as_mut().poll_tick(cx).is_ready()
+            && t.poll_tick(cx).is_ready()
         {
             this.hooks.write_keepalive(&mut this.buf);
         }
@@ -147,8 +152,12 @@ impl<H: StreamHooks> Body for SseBody<H> {
             let due = this.finished || this.buf.len() >= BATCH_LIMIT || this.last_flush.is_none_or(|t| t.elapsed() >= FLUSH_GAP);
             if !due && let Some(last) = this.last_flush {
                 let deadline = last + FLUSH_GAP;
+                // The deadline only moves when a flush happened, so re-arm just then.
                 let hold = this.hold.get_or_insert_with(|| Box::pin(sleep_until(deadline)));
-                hold.as_mut().reset(deadline);
+                if this.hold_deadline != Some(deadline) {
+                    hold.as_mut().reset(deadline);
+                    this.hold_deadline = Some(deadline);
+                }
                 if hold.as_mut().poll(cx).is_pending() {
                     return Poll::Pending;
                 }

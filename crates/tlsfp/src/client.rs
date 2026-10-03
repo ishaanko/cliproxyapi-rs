@@ -351,7 +351,7 @@ impl FingerprintClient {
         let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new())
             .http1_title_case_headers(true)
             // Caps hyper's per-connection read buffer (default grows to ~400 KB on a busy stream).
-            .http1_max_buf_size(32 * 1024)
+            .http1_max_buf_size(64 * 1024)
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(None)
             .build(connector);

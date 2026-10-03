@@ -526,7 +526,7 @@ impl Writer<'_> {
         self.socket.flush().await
     }
 
-    /// Queues the frame; the caller flushes (see `forward_turn`).
+    /// Queues the frame; `forward_turn` flushes within the gap and its caller flushes on the way out.
     async fn text_deferred(&mut self, payload: &[u8]) -> Result<(), axum::Error> {
         if self.timeline {
             self.api_log.ws_timeline_append("response", payload);
@@ -558,29 +558,8 @@ struct ForwardOptions<'a> {
     duplex_stream: &'a (dyn Fn() -> bool + Sync),
 }
 
-/// Forwards one turn's events (see [`forward_turn_inner`]) and flushes what is still queued on
-/// every way out.
 #[allow(clippy::too_many_arguments)]
 async fn forward_turn(
-    socket: &mut Conn,
-    disconnects: &mut Disconnects,
-    info: &ReqInfo,
-    keepalive: Duration,
-    timeline: bool,
-    rx: &mut crate::exec::ExecRx,
-    tool_turn: &mut Option<ToolCacheTurn>,
-    session_key: &str,
-    session_id: &str,
-    suppress: &(dyn Fn(&ErrorMessage) -> bool + Sync),
-    options: ForwardOptions<'_>,
-) -> TurnEnd {
-    let end = forward_turn_inner(socket, disconnects, info, keepalive, timeline, rx, tool_turn, session_key, session_id, suppress, options).await;
-    let _ = socket.flush().await;
-    end
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn forward_turn_inner(
     socket: &mut Conn,
     disconnects: &mut Disconnects,
     info: &ReqInfo,
@@ -623,10 +602,17 @@ async fn forward_turn_inner(
     let mut last_flush: Option<Instant> = None;
     let hold = tokio::time::sleep(WS_FLUSH_GAP);
     tokio::pin!(hold);
+    let mut hold_deadline: Option<Instant> = None;
     loop {
         if dirty {
             match last_flush {
-                Some(t) if t.elapsed() < WS_FLUSH_GAP => hold.as_mut().reset(t + WS_FLUSH_GAP),
+                Some(t) if t.elapsed() < WS_FLUSH_GAP => {
+                    // The deadline only moves when a flush happened, so re-arm just then.
+                    if hold_deadline != Some(t + WS_FLUSH_GAP) {
+                        hold.as_mut().reset(t + WS_FLUSH_GAP);
+                        hold_deadline = Some(t + WS_FLUSH_GAP);
+                    }
+                }
                 _ => {
                     if let Err(e) = socket.flush().await {
                         note(&e.to_string());
@@ -876,6 +862,8 @@ fn upstream_disconnects(manager: &Manager, session_id: &str) -> Disconnects {
 /// request-shape faults as an error frame, otherwise close silently (the client reconnects, which
 /// implies a full-context resend).
 async fn close_for_upstream_disconnect(socket: &mut Conn, session_id: &str, text: &str) -> String {
+    // Frames queued inside the flush gap must reach the client before the socket goes away.
+    let _ = socket.flush().await;
     let err = disconnect_error(text);
     if let Some(frame) = close_frame_for_upstream_error(&err) {
         let _ = socket.send(Message::Close(Some(frame))).await;
@@ -1222,6 +1210,8 @@ async fn run_session(
             ForwardOptions { preserve_completion_output: &preserve_output, duplex_stream: &is_duplex },
         )
         .await;
+        // Frames still queued inside the flush gap go out on every way out of the turn.
+        let _ = socket.flush().await;
         let (selected_last, selected_mode, selected_seen, pinned_attempted) = match observed_selection.lock() {
             Ok(g) => (g.last_attempted.clone(), g.mode, g.observed, g.pinned_attempted),
             Err(_) => (String::new(), UpstreamMode::Unknown, false, false),
@@ -1279,6 +1269,29 @@ async fn run_session(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A silent close (the upstream error is not exposed to the client) must not drop frames that
+    // were queued but not yet flushed.
+    #[tokio::test]
+    async fn silent_disconnect_close_flushes_queued_frames() {
+        use futures_util::StreamExt;
+        let app = axum::Router::new().route(
+            "/",
+            axum::routing::get(|ws: WebSocketUpgrade| async move {
+                ws.on_upgrade(|socket| async move {
+                    let mut conn = Conn::direct(socket);
+                    conn.feed(Message::Text("queued".into())).await.unwrap();
+                    close_for_upstream_disconnect(&mut conn, "test", "upstream went away").await;
+                })
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{addr}/")).await.unwrap();
+        let first = tokio::time::timeout(Duration::from_secs(5), client.next()).await.unwrap();
+        assert_eq!(first.unwrap().unwrap().into_text().unwrap().as_str(), "queued");
+    }
 
     // Only frames none of the turn bookkeeping looks at skip it.
     #[test]

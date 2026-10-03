@@ -47,15 +47,6 @@ fn is_error_event(event: &str) -> bool {
     ["error", "response.error", "response.failed"].iter().any(|e| event.eq_ignore_ascii_case(e))
 }
 
-/// Go: openAICompatStreamDataError. `Some(err)` when `payload` carries an upstream error.
-#[cfg(test)]
-pub fn stream_data_error(payload: &[u8], event: &str) -> Option<ExecError> {
-    if payload.is_empty() || !cpa_json::valid(payload) {
-        return None;
-    }
-    stream_data_error_valid(payload, event)
-}
-
 /// True when a well-formed top-level object visibly cannot be an upstream error payload: no
 /// non-null `error`, no `response` (which may hold `response.error`), not both `code` and
 /// `message`, and a `type` that is not an error type. Anything unusual answers false so the full
@@ -82,7 +73,8 @@ fn clearly_not_error(payload: &[u8]) -> bool {
     complete && !bail && !(code && message)
 }
 
-/// [`stream_data_error`] for a payload already known to be valid JSON.
+/// Go: openAICompatStreamDataError. `Some(err)` when `payload`, already known to be valid JSON,
+/// carries an upstream error.
 pub fn stream_data_error_valid(payload: &[u8], event: &str) -> Option<ExecError> {
     if !is_error_event(event) && clearly_not_error(payload) {
         return None;
@@ -373,7 +365,7 @@ mod tests {
     // Shapes from Go's TestOpenAICompatExecutorResponsesStreamHandlesAdditionalErrorShapes.
     #[test]
     fn stream_error_payload_status() {
-        let err = |p: &str, ev: &str| stream_data_error(p.as_bytes(), ev).map(|e| e.status);
+        let err = |p: &str, ev: &str| stream_data_error_valid(p.as_bytes(), ev).map(|e| e.status);
         assert_eq!(err(r#"{"error":{"message":"x","status_code":429}}"#, ""), Some(429));
         assert_eq!(err(r#"{"code":500,"message":"oops"}"#, ""), Some(502));
         assert_eq!(err(r#"{"type":"response.failed","response":{"error":{"status":400}}}"#, ""), Some(400));

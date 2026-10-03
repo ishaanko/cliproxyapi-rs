@@ -225,7 +225,7 @@ impl AntigravityExecutor {
             Ok(client) => client,
             Err(err) => {
                 tracing::error!("antigravity executor: failed to build http client: {err}");
-                reqwest::Client::new()
+                crate::helps::proxy::fallback_client()
             }
         }
     }

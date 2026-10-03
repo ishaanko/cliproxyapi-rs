@@ -22,9 +22,16 @@ use cpa_config::Config;
 use parking_lot::Mutex;
 
 /// Cap on hyper's HTTP/1 read buffer per upstream connection. Its default grows to ~400 KB on a
-/// connection that keeps filling reads (any fast stream), which dominated per-stream memory; 32 KB
-/// still reads hundreds of SSE events per syscall (BytesMut growth can double it). Also bounds a response head.
-pub const UPSTREAM_HTTP1_MAX_BUF: usize = 32 * 1024;
+/// connection that keeps filling reads (any fast stream), which dominated per-stream memory; 64 KB
+/// still reads hundreds of SSE events per syscall (the buffer can briefly double it). The cap also
+/// bounds a response head, so it stays well above any real one. It only applies to HTTP/1
+/// connections; HTTP/2 (negotiated by ALPN) has its own framing and is unaffected.
+pub const UPSTREAM_HTTP1_MAX_BUF: usize = 64 * 1024;
+
+/// Client for the paths that fall back after a failed build: default settings plus the read cap.
+pub fn fallback_client() -> reqwest::Client {
+    reqwest::Client::builder().http1_max_buf_size(UPSTREAM_HTTP1_MAX_BUF).build().unwrap_or_else(|_| reqwest::Client::new())
+}
 
 /// Bounds how many clients a [`TransportCache`] keeps alive; every cached client owns an
 /// independent connection pool, so unbounded keys would let idle sockets grow without limit.
@@ -217,7 +224,7 @@ fn cached_client(proxy_url: &str, timeout: Option<Duration>, no_compression: boo
         Ok(client) => client,
         Err(err) => {
             tracing::error!("failed to build http client: {err}");
-            reqwest::Client::new()
+            fallback_client()
         }
     }
 }

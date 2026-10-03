@@ -115,11 +115,11 @@ pub fn generic_model_fast(data: &[u8]) -> Option<(&str, bool)> {
             return None;
         }
     }
-    if let Some(s) = get(status) {
-        if s.starts_with(b"\"") {
-            let v = plain(s)?;
-            terminal |= v == b"completed" || v == b"incomplete";
-        }
+    if let Some(s) = get(status)
+        && s.starts_with(b"\"")
+    {
+        let v = plain(s)?;
+        terminal |= v == b"completed" || v == b"incomplete";
     }
     Some((served, terminal))
 }
