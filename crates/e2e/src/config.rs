@@ -76,6 +76,8 @@ pub struct ConfigSpec {
     pub force_model_prefix: bool,
     /// `usage-statistics-enabled`: records usage events for the management usage queue.
     pub usage_statistics: bool,
+    /// `request-log`: write a log file for every request (otherwise only error requests).
+    pub request_log: bool,
     pub claude: Vec<KeyEntry>,
     pub codex: Vec<KeyEntry>,
     pub gemini: Vec<KeyEntry>,
@@ -106,6 +108,7 @@ impl ConfigSpec {
             bootstrap_retries: 0,
             force_model_prefix: false,
             usage_statistics: false,
+            request_log: false,
             claude: keys("anthropic", "claude"),
             codex: keys("codex", "codex"),
             gemini: keys("gemini", "gemini"),
@@ -272,6 +275,7 @@ impl ConfigSpec {
         }
         m.insert("force-model-prefix".into(), json!(self.force_model_prefix));
         m.insert("usage-statistics-enabled".into(), json!(self.usage_statistics));
+        m.insert("request-log".into(), json!(self.request_log));
         m.insert("disable-cooling".into(), json!(self.disable_cooling));
         if let Some(t) = self.transient_cooldown_seconds {
             m.insert("transient-error-cooldown-seconds".into(), json!(t));
@@ -321,7 +325,10 @@ impl ConfigSpec {
                 "streaming": self.streaming(),
             },
             "oauth": {"auth-dir": auth_dir.to_string_lossy()},
-            "observability": {"usage": {"usage-statistics-enabled": self.usage_statistics}},
+            "observability": {
+                "usage": {"usage-statistics-enabled": self.usage_statistics},
+                "logs": {"request-log": self.request_log},
+            },
             "api-keys": api_keys,
         })
     }

@@ -211,6 +211,7 @@ impl Pipeline {
             opts.response_format = Some(a.exit.unwrap_or(a.entry));
         }
         opts.metadata = metadata;
+        opts.api_log = self.info.api_log.exec_handle();
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
         let on_selected = a.on_selected_auth.clone();

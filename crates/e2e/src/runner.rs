@@ -14,6 +14,7 @@ use crate::scenario::{Capture, Scenario, StepCapture, UpstreamCapture};
 use crate::server::ServerProc;
 
 const WS_SETTLE_MS: u64 = 500;
+const LOG_SETTLE_MS: u64 = 400;
 
 pub struct RunOpts {
     pub server_bin: PathBuf,
@@ -64,6 +65,11 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
     }
     let log: Vec<LoggedRequest> = http.get(format!("{mock}/log")).send().await?.json().await.context("read mock log")?;
     let server_port = server.port;
+    let log_dir = server.dir.join("logs");
+    if s.capture_logs {
+        // Request logs are written after the response body completes.
+        tokio::time::sleep(std::time::Duration::from_millis(LOG_SETTLE_MS)).await;
+    }
     server.stop().await;
 
     let mut n = Normalizer::new(opts.mock_port, server_port, &opts.work_dir.to_string_lossy());
@@ -106,7 +112,21 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
             }
         })
         .collect();
-    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), steps, upstream, volatile: vec![] })
+    let request_logs = if s.capture_logs { read_request_logs(&log_dir).iter().map(|t| n.request_log(t)).collect() } else { vec![] };
+    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), steps, upstream, request_logs, volatile: vec![] })
+}
+
+/// Request-log files under `dir`, oldest first (the application log `main.log` is not one).
+fn read_request_logs(dir: &std::path::Path) -> Vec<String> {
+    let mut files: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".log") && !e.file_name().to_string_lossy().starts_with("main"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, std::fs::read_to_string(e.path()).ok()?)))
+        .collect();
+    files.sort_by_key(|f| f.0);
+    files.into_iter().map(|f| f.1).collect()
 }
 
 /// The model-list endpoints return Go-map-ordered arrays; their order carries no meaning.

@@ -139,3 +139,14 @@ pub fn no_management(s: &mut ConfigSpec) {
 pub fn open_access(s: &mut ConfigSpec) {
     s.client_keys.clear();
 }
+
+/// `request-log: true`: every request writes a log file, with the upstream sections.
+pub fn request_log(s: &mut ConfigSpec) {
+    s.request_log = true;
+}
+
+/// Request log on plus Codex upstream websockets.
+pub fn request_log_codex_ws(s: &mut ConfigSpec) {
+    request_log(s);
+    codex_websockets(s);
+}

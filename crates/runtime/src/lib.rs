@@ -6,6 +6,7 @@
 //!   model registration and the `/v1/models` payloads.
 //! - `usage`: usage accounting.
 
+pub mod apilog;
 pub mod conductor;
 pub mod executor;
 pub mod service;

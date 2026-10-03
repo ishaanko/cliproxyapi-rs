@@ -87,6 +87,9 @@ pub struct Options {
     /// call, including failover picks (Go: selected-auth callbacks in metadata). Handlers use it
     /// for websocket pinning and request logs.
     pub selected_auth: Option<SelectedAuthCallback>,
+    /// Upstream request/response capture of the inbound request (Go: the gin context carried
+    /// by `ctx`). Empty outside inbound requests.
+    pub api_log: crate::apilog::ApiLogHandle,
 }
 
 /// Callback invoked with `(auth_id, auth_index)` when a credential is selected.
@@ -112,6 +115,7 @@ impl Options {
             metadata: Metadata::new(),
             proxy_url: String::new(),
             selected_auth: None,
+            api_log: Default::default(),
         }
     }
 
