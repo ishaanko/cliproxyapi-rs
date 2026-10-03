@@ -69,7 +69,42 @@ pub fn scenarios() -> Vec<Scenario> {
     ] {
         add(&format!("secrets.{id}"), desc, vec![HttpReq::post("/v1/realtime/client_secrets", body).into()]);
     }
-    add("secrets.malformed", "malformed JSON", vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).raw("{broken").into()]);
+    add(
+        "secrets.html_and_unicode",
+        "response escaping of <, >, & and non-ASCII text",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!({"session": {"instructions": "a<b&c>d \u{e9}\u{2028}", "voice": "alloy"}})).into()],
+    );
+    add(
+        "secrets.number_formats",
+        "session numbers and nesting survive the canonical re-encoding",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!(null))
+            .raw(r#"{"session":{"temperature":0.8,"max_response_output_tokens":4096,"n":1e3,"big":12345678901234567890,"tools":[{"type":"function","name":"x","parameters":{"b":1,"a":2}}],"flag":true,"nothing":null}}"#)
+            .into()],
+    );
+    add(
+        "secrets.field_types",
+        "non-string type and blank model fall back to the defaults",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!({"session": {"type": 5, "model": "  "}})).into()],
+    );
+    add(
+        "secrets.duplicate_keys",
+        "the last duplicate key wins",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).raw(r#"{"session":{"model":"a","model":"gpt-realtime-mini"}}"#).into()],
+    );
+    add(
+        "secrets.case_insensitive_keys",
+        "request members match case-insensitively",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).raw(r#"{"SESSION":{"model":"x"},"Expires_After":{"SECONDS":30}}"#).into()],
+    );
+    add(
+        "secrets.lifetime_float",
+        "fractional seconds do not decode",
+        vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).raw(r#"{"expires_after":{"seconds":60.5}}"#).into()],
+    );
+    add("secrets.session_null", "explicit null session", vec![HttpReq::post("/v1/realtime/client_secrets", json!({"session": null})).into()]);
+    add("secrets.session_string", "string session", vec![HttpReq::post("/v1/realtime/client_secrets", json!({"session": "x"})).into()]);
+    add("secrets.null_body", "JSON null body", vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).into()]);
+    add("secrets.malformed","malformed JSON", vec![HttpReq::post("/v1/realtime/client_secrets", json!(null)).raw("{broken").into()]);
     add("secrets.missing_key", "no credentials (realtime-shaped error)", vec![post("/v1/realtime/client_secrets").auth(Auth::None).into()]);
     add("secrets.invalid_key", "wrong credentials", vec![post("/v1/realtime/client_secrets").auth(Auth::Bearer("wrong-key")).into()]);
     add("secrets.second_key", "the second configured client key", vec![post("/v1/realtime/client_secrets").auth(Auth::Bearer(crate::config::CLIENT_KEY_2)).into()]);
@@ -156,7 +191,22 @@ pub fn scenarios() -> Vec<Scenario> {
         "session field that is not an object",
         vec![HttpReq::post("/v1/realtime/calls", json!({"sdp": sdp, "session": "x"})).into()],
     );
-    add("call.empty_body", "no body and no content type", vec![HttpReq::post("/v1/live", json!(null)).raw("").into()]);
+    add("call.json_null", "JSON null call request", vec![HttpReq::post("/v1/realtime/calls", json!(null)).into()]);
+    add("call.unknown_content_type", "an unrelated content type", vec![post("/v1/live").typed("image/png", "xx").into()]);
+    add(
+        "call.multipart_lf_only",
+        "multipart with LF-only line endings",
+        vec![post("/v1/live")
+            .typed("multipart/form-data; boundary=lf", "--lf\nContent-Disposition: form-data; name=\"sdp\"\n\nv=0\n--lf--\n")
+            .into()],
+    );
+    add(
+        "call.multipart_truncated",
+        "multipart body cut inside a part",
+        vec![post("/v1/live").typed("multipart/form-data; boundary=cut", "--cut\r\nContent-Disposition: form-data; name=\"sdp\"\r\n\r\nv=0").into()],
+    );
+    add("call.multipart_empty", "multipart content type with an empty body", vec![post("/v1/live").typed("multipart/form-data; boundary=x", "").into()]);
+    add("call.empty_body","no body and no content type", vec![HttpReq::post("/v1/live", json!(null)).raw("").into()]);
 
     // ---- sideband, hangup and direct websocket (none of them has a session or credential)
     add("sideband.not_upgrade", "sideband GET without an upgrade", vec![HttpReq::get("/v1/live/call-123").into()]);

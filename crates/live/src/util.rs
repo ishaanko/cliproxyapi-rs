@@ -147,7 +147,7 @@ fn go_kind(v: &Value) -> &'static str {
     }
 }
 
-/// `json.Unmarshal(body, &map[string]json.RawMessage)`: syntax errors and non-object roots carry
+/// `json.Unmarshal(body, &map[string]json.RawMessage)` (Go 1.25 names the value type `jsontext.Value`): syntax errors and non-object roots carry
 /// Go's messages. A JSON `null` decodes to an empty map.
 pub fn unmarshal_raw_map(body: &[u8]) -> Result<RawMap, String> {
     go_json::check_valid(body)?;
@@ -155,7 +155,7 @@ pub fn unmarshal_raw_map(body: &[u8]) -> Result<RawMap, String> {
         Ok(Value::Null) => Ok(RawMap::new()),
         Ok(Value::Object(_)) => serde_json::from_slice::<RawMap>(body).map_err(|e| e.to_string()),
         Ok(other) => Err(format!(
-            "json: cannot unmarshal {} into Go value of type map[string]json.RawMessage",
+            "json: cannot unmarshal {} into Go value of type map[string]jsontext.Value",
             go_kind(&other)
         )),
         Err(e) => Err(e.to_string()),
@@ -340,7 +340,7 @@ mod tests {
         assert_eq!(marshal_raw_map(&map), "{\"a\":\"\\u003cx\\u003e\",\"b\":[1,2]}");
         assert_eq!(
             unmarshal_raw_map(b"[1]").unwrap_err(),
-            "json: cannot unmarshal array into Go value of type map[string]json.RawMessage"
+            "json: cannot unmarshal array into Go value of type map[string]jsontext.Value"
         );
     }
 
