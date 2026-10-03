@@ -697,7 +697,7 @@ pub fn validate_claude_streaming_response(data: &[u8]) -> Result<(), ExecError> 
             continue;
         }
         has_data = true;
-        if !cpa_json::valid(payload) {
+        if !crate::helps::parse_cache::valid(payload) {
             return Err(status_err(502, "claude executor: upstream returned malformed stream data"));
         }
         let root = crate::helps::parse_cache::parse(payload);

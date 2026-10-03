@@ -431,7 +431,7 @@ pub fn is_claude_subagent_request(headers: &HeaderMap, body: &[u8]) -> bool {
 /// Go: `ClaudePayloadHas1hTTL`: any tool, system or message content block with
 /// `cache_control.ttl == "1h"`.
 pub fn claude_payload_has_1h_ttl(payload: &[u8]) -> bool {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return false;
     }
     let root = crate::helps::parse_cache::parse(payload);

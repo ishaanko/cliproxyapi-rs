@@ -21,7 +21,9 @@ const CAPACITY: usize = 3;
 
 struct Entry {
     bytes: Vec<u8>,
-    value: Arc<Value>,
+    /// Result of `cpa_json::valid(bytes)` once asked.
+    valid: Option<bool>,
+    value: Option<Arc<Value>>,
 }
 
 #[derive(Default)]
@@ -58,6 +60,10 @@ impl Drop for Scope {
     }
 }
 
+fn active() -> bool {
+    CACHE.with(|c| c.borrow().depth) > 0
+}
+
 /// Removes and returns the entry holding exactly `bytes`.
 fn take_entry(bytes: &[u8]) -> Option<Entry> {
     CACHE.with(|c| {
@@ -83,40 +89,50 @@ fn put_entry(entry: Entry) {
 
 /// `cpa_json::parse(bytes)` shared through the memo; the result is read-only.
 pub fn parse(bytes: &[u8]) -> Arc<Value> {
-    if let Some(entry) = take_entry(bytes) {
-        let value = Arc::clone(&entry.value);
-        put_entry(entry);
-        return value;
+    if !active() {
+        return Arc::new(cpa_json::parse(bytes));
     }
-    let value = Arc::new(cpa_json::parse(bytes));
-    if CACHE.with(|c| c.borrow().depth) > 0 {
-        put_entry(Entry { bytes: bytes.to_vec(), value: Arc::clone(&value) });
-    }
+    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: bytes.to_vec(), valid: None, value: None });
+    let value = Arc::clone(entry.value.get_or_insert_with(|| Arc::new(cpa_json::parse(bytes))));
+    put_entry(entry);
     value
+}
+
+/// `cpa_json::valid(bytes)`, computed once per distinct body.
+pub fn valid(bytes: &[u8]) -> bool {
+    if !active() {
+        return cpa_json::valid(bytes);
+    }
+    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: bytes.to_vec(), valid: None, value: None });
+    let ok = *entry.valid.get_or_insert_with(|| cpa_json::valid(bytes));
+    put_entry(entry);
+    ok
 }
 
 /// Parses `bytes` (from the memo when possible), applies `f`, and returns the re-serialized body
 /// when `f` reports a change, else a copy of `bytes`. The edited value is memoized under the
 /// returned bytes so the next stage does not parse them again.
 pub fn edit(bytes: &[u8], f: impl FnOnce(&mut Value) -> bool) -> Vec<u8> {
-    let active = CACHE.with(|c| c.borrow().depth) > 0;
-    let (mut value, kept) = match take_entry(bytes) {
-        // Take the value out of the Arc when this was its last owner, else copy it.
-        Some(entry) => match Arc::try_unwrap(entry.value) {
-            Ok(v) => (v, Some(entry.bytes)),
-            Err(shared) => ((*shared).clone(), Some(entry.bytes)),
-        },
-        None => (cpa_json::parse(bytes), None),
+    let active = active();
+    let mut entry = take_entry(bytes).unwrap_or_else(|| Entry { bytes: Vec::new(), valid: None, value: None });
+    // Take the value out of the Arc when this was its last owner, else copy it.
+    let mut value = match entry.value.take() {
+        Some(shared) => Arc::try_unwrap(shared).unwrap_or_else(|shared| (*shared).clone()),
+        None => cpa_json::parse(bytes),
     };
     if f(&mut value) {
         let out = cpa_json::to_vec(&value);
         if active {
-            put_entry(Entry { bytes: out.clone(), value: Arc::new(value) });
+            put_entry(Entry { bytes: out.clone(), valid: Some(true), value: Some(Arc::new(value)) });
         }
         out
     } else {
         if active {
-            put_entry(Entry { bytes: kept.unwrap_or_else(|| bytes.to_vec()), value: Arc::new(value) });
+            if entry.bytes.is_empty() {
+                entry.bytes = bytes.to_vec();
+            }
+            entry.value = Some(Arc::new(value));
+            put_entry(entry);
         }
         bytes.to_vec()
     }

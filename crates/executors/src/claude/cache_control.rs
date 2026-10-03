@@ -144,7 +144,7 @@ fn has_cacheable_system(v: &Value) -> bool {
 /// Go: `upgradeClaudeCacheControlTTL`. Adds `ttl` to every existing ttl-less marker, rebuilding
 /// the object as `{type, ttl, scope?}`; never creates a marker.
 pub fn upgrade_claude_cache_control_ttl(payload: &[u8], ttl: &str) -> Vec<u8> {
-    if ttl.is_empty() || payload.is_empty() || !cpa_json::valid(payload) {
+    if ttl.is_empty() || payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return payload.to_vec();
     }
     edit(payload, |v| {
@@ -177,7 +177,7 @@ pub fn upgrade_claude_cache_control_ttl(payload: &[u8], ttl: &str) -> Vec<u8> {
 
 /// Go: `stripClaudeCacheControlTTL`. Removes `ttl` from every cache_control object.
 pub fn strip_claude_cache_control_ttl(payload: &[u8]) -> Vec<u8> {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return payload.to_vec();
     }
     edit(payload, |v| {
@@ -212,7 +212,7 @@ fn count_in(v: &Value) -> usize {
 /// Go: `normalizeCacheControlTTL`. Once a non-1h marker is seen (tools, system, messages
 /// order), every later 1h ttl is deleted.
 pub fn normalize_cache_control_ttl(payload: &[u8]) -> Vec<u8> {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return payload.to_vec();
     }
     edit(payload, |v| {
@@ -272,7 +272,7 @@ fn strip_section(v: &mut Value, key: &str, preserve_last: bool, excess: &mut usi
 /// Go: `enforceCacheControlLimit`. Strips excess markers: system (keep last), tools (keep last),
 /// message blocks, then the last system, then the last tool.
 pub fn enforce_cache_control_limit(payload: &[u8], max_blocks: usize) -> Vec<u8> {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return payload.to_vec();
     }
     edit(payload, |v| {
@@ -443,29 +443,30 @@ fn inject_system(v: &mut Value) -> bool {
 /// Go: `ensureModelMaxTokens`. Fills a missing `max_tokens` for models the registry knows as
 /// Claude (registered `MaxCompletionTokens`, else 1024); unregistered models stay unset.
 pub fn ensure_model_max_tokens(body: &[u8], model_id: &str) -> Vec<u8> {
-    if body.is_empty() || !cpa_json::valid(body) {
+    if body.is_empty() || !crate::helps::parse_cache::valid(body) {
         return body.to_vec();
     }
-    let mut v = cpa_json::parse(body);
-    if v.g("max_tokens").exists() {
-        return body.to_vec();
-    }
-    let model_id = model_id.trim();
-    let registry = global_registry();
-    if !registry
-        .get_model_providers(model_id)
-        .iter()
-        .any(|p| p.eq_ignore_ascii_case("claude"))
-    {
-        return body.to_vec();
-    }
-    let max_tokens = registry
-        .get_model_info(model_id, "claude")
-        .map(|info| info.max_completion_tokens)
-        .filter(|n| *n > 0)
-        .unwrap_or(DEFAULT_MODEL_MAX_TOKENS);
-    cpa_json::set(&mut v, "max_tokens", max_tokens);
-    cpa_json::to_vec(&v)
+    edit(body, |v| {
+        if v.g("max_tokens").exists() {
+            return false;
+        }
+        let model_id = model_id.trim();
+        let registry = global_registry();
+        if !registry
+            .get_model_providers(model_id)
+            .iter()
+            .any(|p| p.eq_ignore_ascii_case("claude"))
+        {
+            return false;
+        }
+        let max_tokens = registry
+            .get_model_info(model_id, "claude")
+            .map(|info| info.max_completion_tokens)
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_MODEL_MAX_TOKENS);
+        cpa_json::set(v, "max_tokens", max_tokens);
+        true
+    })
 }
 
 #[cfg(test)]
