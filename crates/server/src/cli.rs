@@ -486,10 +486,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_flags_are_recorded() {
-        let c = run("-tui -standalone=false -discover tok");
-        assert_eq!(c.unsupported, vec!["discover"]);
-        assert!(c.tui && !c.standalone);
+    fn tui_and_discover_flags_are_parsed() {
+        let c = run("-tui -standalone=false -discover");
+        assert!(c.tui && !c.standalone && c.discover);
+        assert!(c.unsupported.is_empty());
     }
 
     #[test]
