@@ -11,13 +11,13 @@ license.workspace = true
 # Impersonated TLS ClientHellos (Claude Code for api.anthropic.com, Chrome for chatgpt.com) on
 # BoringSSL; needs cmake, a C++ compiler and libclang to build (see crates/tlsfp).
 default = ["tls-fingerprint"]
-tls-fingerprint = ["dep:cpa-tlsfp"]
+tls-fingerprint = ["dep:cpa-tlsfp", "cpa-auth/tls-fingerprint"]
 
 [dependencies]
 cpa-json.workspace = true
 cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-tlsfp = { path = "../tlsfp", optional = true }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
