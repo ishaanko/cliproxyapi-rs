@@ -13,7 +13,10 @@
 //!   request-scoped rules (pure, unit-tested without executors).
 //! - `selector`, `session`: strategies and session affinity; `models`: aliases, prefixes, pools.
 //!
-//! Not ported (Go-only features): the Home control plane, plugin schedulers/interceptors, the
+//! Plugin hooks (`plugin_hooks`): a plugin scheduler consulted before the selector and the
+//! request-after-auth interceptor run per attempt.
+//!
+//! Not ported (Go-only features): the Home control plane, the
 //! redis usage queue, the scheduler's incremental index (selection recomputes per request),
 //! per-auth `RoundTripper`s (executors resolve `Auth::proxy_url` themselves), downstream-websocket
 //! transport preference and the LCP prefix matcher.
@@ -43,6 +46,7 @@ mod lifecycle;
 pub mod merge;
 pub mod models;
 mod pick;
+mod plugin_hooks;
 mod refresh;
 mod results;
 mod retry;
@@ -68,6 +72,7 @@ pub use errors::{enrich_auth_selection_error, safe_response_headers};
 pub use events::{ErrorEventSink, Hook, ResultPolicy};
 pub use lifecycle::UpdateOptions;
 pub use models::{ResolvedModelInfo, codex_api_key_model_is_compat, resolved_model_info};
+pub use plugin_hooks::PluginScheduler;
 pub use refresh::ForceRefreshResult;
 pub use selector::{Selector, SelectorConfig, Strategy};
 
@@ -130,6 +135,7 @@ pub struct Core {
     pub(crate) persist_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<(u64, u64)>>>>,
     pub(crate) refresh_state: Mutex<refresh::RefreshState>,
     pub(crate) selector_config: Mutex<SelectorConfig>,
+    pub(crate) plugin_scheduler: RwLock<Option<Arc<dyn PluginScheduler>>>,
 }
 
 impl Default for Manager {
@@ -176,6 +182,7 @@ impl Manager {
             persist_locks: Mutex::new(HashMap::new()),
             refresh_state: Mutex::new(refresh::RefreshState::default()),
             selector_config: Mutex::new(selector_config),
+            plugin_scheduler: RwLock::new(None),
         };
         Manager {
             core: Arc::new(core),

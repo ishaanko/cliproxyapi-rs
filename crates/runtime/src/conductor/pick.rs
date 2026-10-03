@@ -121,6 +121,20 @@ pub(crate) fn pinned_auth_id(meta_map: &Metadata) -> String {
     meta_trimmed(meta_map, meta::PINNED_AUTH_ID)
 }
 
+/// How [`Manager::pick_mixed_inner`] finishes: select normally, only collect the candidates a
+/// plugin scheduler is offered, or apply the scheduler's decision.
+enum Mode<'a> {
+    Normal,
+    Collect { across: bool, out: &'a mut Vec<Auth> },
+    Force(Forced),
+}
+
+/// A plugin scheduler decision.
+enum Forced {
+    Auth(String),
+    Strategy(Strategy),
+}
+
 /// A chosen credential with the executor that serves it.
 pub(crate) struct Picked {
     pub auth: Auth,
@@ -245,6 +259,7 @@ impl Manager {
 
     /// One credential for the request across `providers` (Go: pickNextMixed). `meta_map` receives
     /// session-affinity bookkeeping (canonical/parent session ids, affinity namespace).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn pick_next_mixed(
         &self,
         providers: &[String],
@@ -255,6 +270,107 @@ impl Manager {
         tried: &HashSet<String>,
         eligibility: &Eligibility,
     ) -> Result<Picked, ExecError> {
+        match self.pick_mixed_inner(providers, route_model, headers, original_request, meta_map, tried, eligibility, Mode::Normal)? {
+            Some(p) => Ok(p),
+            None => Err(auth_not_found("selector returned no auth")),
+        }
+    }
+
+    /// [`Self::pick_next_mixed`] that first offers the candidates to the plugin scheduler (Go:
+    /// `pickViaPluginScheduler`). `scheduler_provider` is `mixed` for multi-provider routes.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn pick_next_mixed_plugin(
+        &self,
+        scheduler_provider: &str,
+        providers: &[String],
+        route_model: &str,
+        opts: &mut crate::executor::Options,
+        tried: &HashSet<String>,
+        eligibility: &Eligibility,
+    ) -> Result<Picked, ExecError> {
+        let Some(scheduler) = self.active_plugin_scheduler() else {
+            return self.pick_next_mixed(providers, route_model, &opts.headers, &opts.original_request, &mut opts.metadata, tried, eligibility);
+        };
+        let across = scheduler.wants_across_priorities();
+        let mut available: Vec<Auth> = Vec::new();
+        let mut md = opts.metadata.clone();
+        self.pick_mixed_inner(
+            providers,
+            route_model,
+            &opts.headers,
+            &opts.original_request,
+            &mut md,
+            tried,
+            eligibility,
+            Mode::Collect { across, out: &mut available },
+        )?;
+        if available.is_empty() {
+            return self.pick_next_mixed(providers, route_model, &opts.headers, &opts.original_request, &mut opts.metadata, tried, eligibility);
+        }
+        let provider_key = scheduler_provider.trim().to_lowercase();
+        let req = cpa_pluginapi::api::SchedulerPickRequest {
+            provider: if provider_key == "mixed" { String::new() } else { provider_key.clone() },
+            providers: super::plugin_hooks::scheduler_providers(&provider_key, providers),
+            model: route_model.to_string(),
+            stream: opts.stream,
+            options: super::plugin_hooks::scheduler_options(opts),
+            candidates: super::plugin_hooks::scheduler_auth_candidates(&available),
+            ..Default::default()
+        };
+        let resp = match scheduler.pick_auth(req).await? {
+            Some(r) if r.handled => r,
+            _ => {
+                return self.pick_next_mixed(providers, route_model, &opts.headers, &opts.original_request, &mut opts.metadata, tried, eligibility);
+            }
+        };
+        if resp.reject {
+            let code = resp.reject_code.trim();
+            let message = resp.reject_reason.trim();
+            return Err(super::errors::auth_error(
+                if code.is_empty() { "auth_unavailable" } else { code },
+                if message.is_empty() { "scheduler rejected candidate selection" } else { message },
+                0,
+            ));
+        }
+        let forced = if let Some(a) = available.iter().find(|a| a.id == resp.auth_id.trim()) {
+            Some(Forced::Auth(a.id.clone()))
+        } else {
+            match resp.delegate_builtin.trim() {
+                "round-robin" => Some(Forced::Strategy(Strategy::RoundRobin)),
+                "fill-first" => Some(Forced::Strategy(Strategy::FillFirst)),
+                _ => None,
+            }
+        };
+        match forced {
+            Some(f) => match self.pick_mixed_inner(
+                providers,
+                route_model,
+                &opts.headers,
+                &opts.original_request,
+                &mut opts.metadata,
+                tried,
+                eligibility,
+                Mode::Force(f),
+            )? {
+                Some(p) => Ok(p),
+                None => Err(auth_not_found("selector returned no auth")),
+            },
+            None => self.pick_next_mixed(providers, route_model, &opts.headers, &opts.original_request, &mut opts.metadata, tried, eligibility),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn pick_mixed_inner(
+        &self,
+        providers: &[String],
+        route_model: &str,
+        headers: &HeaderMap,
+        original_request: &Bytes,
+        meta_map: &mut Metadata,
+        tried: &HashSet<String>,
+        eligibility: &Eligibility,
+        mut mode: Mode<'_>,
+    ) -> Result<Option<Picked>, ExecError> {
         let now = self.now();
         let selector = self.selector();
         let affinity = selector.affinity();
@@ -381,7 +497,45 @@ impl Manager {
             by_priority.get(&best_priority).cloned().unwrap_or_default();
         top.sort_by(|a, b| a.0.id.cmp(&b.0.id));
 
-        let chosen: &Auth = if let Some(aff) = affinity {
+        if let Mode::Collect { across, out } = &mut mode {
+            // Candidates offered to a plugin scheduler: the best tier, or every tier on request.
+            let src: Vec<&Auth> = if *across {
+                let mut all: Vec<&Auth> = by_priority.values().flatten().map(|(a, _)| *a).collect();
+                all.sort_by(|a, b| a.id.cmp(&b.id));
+                all
+            } else {
+                top.iter().map(|(a, _)| *a).collect()
+            };
+            **out = src.into_iter().cloned().collect();
+            return Ok(None);
+        }
+
+        let chosen: &Auth = if let Mode::Force(forced) = &mode {
+            match forced {
+                Forced::Auth(id) => {
+                    let mut all: Vec<(&Auth, &str)> = by_priority.values().flatten().copied().collect();
+                    all.sort_by(|a, b| a.0.id.cmp(&b.0.id));
+                    match all.iter().find(|(a, _)| &a.id == id) {
+                        Some((a, _)) => a,
+                        None => return Err(auth_not_found("selector returned no auth")),
+                    }
+                }
+                Forced::Strategy(strategy) => {
+                    let top_cands = to_cands(&top);
+                    let canonical = canonical_model_key(route_model);
+                    let idx = if eligible.len() == 1 {
+                        let key = format!("{}:{canonical}:{best_priority}", eligible[0]);
+                        selector.pick_ordered_with(*strategy, &key, &top_cands)
+                    } else {
+                        selector.pick_mixed_with(*strategy, &eligible, &canonical, best_priority, &top_cands)
+                    };
+                    match idx {
+                        Some(i) => top[i].0,
+                        None => return Err(auth_not_found("selector returned no auth")),
+                    }
+                }
+            }
+        } else if let Some(aff) = affinity {
             let mut all: Vec<(&Auth, &str)> = by_priority.values().flatten().copied().collect();
             all.sort_by(|a, b| a.0.id.cmp(&b.0.id));
             let all_ids: Vec<&str> = all.iter().map(|(a, _)| a.id.as_str()).collect();
@@ -432,11 +586,11 @@ impl Manager {
         let Some(executor) = executor_locked(&st, &provider) else {
             return Err(super::errors::executor_not_found());
         };
-        Ok(Picked {
+        Ok(Some(Picked {
             auth: chosen.clone(),
             executor,
             provider: executor_key_from_auth(chosen),
-        })
+        }))
     }
 
     /// Selects one credential through the configured strategy without executing anything (Go:

@@ -398,15 +398,15 @@ impl Manager {
                     None => auth_not_found("no auth available").into(),
                 });
             }
-            let picked = match self.pick_next_mixed(
+            let scheduler_provider = "mixed";
+            let picked = match self.pick_next_mixed_plugin(
+                scheduler_provider,
                 providers,
                 &route_model,
-                &opts.headers,
-                &opts.original_request,
-                &mut opts.metadata,
+                &mut opts,
                 &tried,
                 &eligibility,
-            ) {
+            ).await {
                 Ok(p) => p,
                 Err(e) => {
                     return Err(match last_err {
@@ -539,6 +539,18 @@ impl Manager {
                 &exec_opts.headers,
                 &payload,
             );
+            let requested_alias = requested_model_alias(&exec_opts, route_model);
+            match super::plugin_hooks::apply_request_after_auth_interceptor(
+                &executor, provider, exec_req, exec_opts, &requested_alias,
+            )
+            .await
+            {
+                Ok((r, o)) => {
+                    exec_req = r;
+                    exec_opts = o;
+                }
+                Err(e) => return AuthAttempt::Return(Fail::stop(e)),
+            }
             let cfg = self.cfg();
             attach_resolved_execution_model_info(
                 &cfg,

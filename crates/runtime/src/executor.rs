@@ -7,6 +7,8 @@
 //! cooldown, retry and failover.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -64,6 +66,86 @@ pub struct Request {
     pub metadata: Metadata,
 }
 
+/// A selected-auth request before executor translation (Go: `RequestAfterAuthInterceptRequest`).
+#[derive(Debug, Clone)]
+pub struct RequestAfterAuthInterceptRequest {
+    pub source_format: Format,
+    /// Upstream protocol selected for this attempt.
+    pub to_format: Format,
+    pub model: String,
+    pub requested_model: String,
+    pub stream: bool,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+    pub metadata: Metadata,
+}
+
+/// Modifications returned by a [`RequestAfterAuthInterceptor`] (Go: `RequestAfterAuthInterceptResponse`).
+#[derive(Debug, Clone, Default)]
+pub struct RequestAfterAuthInterceptResponse {
+    /// Overrides the inbound request path in `metadata[request_path]`.
+    pub path: String,
+    /// Replaces matching request headers; `None` leaves them alone.
+    pub headers: Option<HeaderMap>,
+    /// Replaces the request body when non-empty.
+    pub body: Bytes,
+    pub clear_headers: Vec<String>,
+    /// Prevents the selected executor from receiving the request.
+    pub terminate: bool,
+    pub status_code: u16,
+    pub response_headers: HeaderMap,
+    pub response_body: Bytes,
+}
+
+pub type InterceptFuture = Pin<Box<dyn Future<Output = RequestAfterAuthInterceptResponse> + Send>>;
+
+/// Rewrites a request after credential selection and before executor translation (Go:
+/// `RequestAfterAuthInterceptor`).
+#[derive(Clone)]
+pub struct RequestAfterAuthInterceptor(pub Arc<dyn Fn(RequestAfterAuthInterceptRequest) -> InterceptFuture + Send + Sync>);
+
+impl std::fmt::Debug for RequestAfterAuthInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RequestAfterAuthInterceptor")
+    }
+}
+
+/// An upstream WebSocket response event observed during execution (Go: `WebSocketResponseEvent`).
+#[derive(Debug, Clone, Default)]
+pub struct WebSocketResponseEvent {
+    pub request_id: String,
+    pub trace_id: String,
+    pub source_format: String,
+    pub model: String,
+    pub requested_model: String,
+    pub provider: String,
+    pub auth_id: String,
+    pub auth_label: String,
+    pub auth_type: String,
+    pub event_type: String,
+    pub payload: Bytes,
+    pub metadata: Metadata,
+}
+
+/// Receives upstream WebSocket response events (Go: `WebSocketResponseObserver`). Must not block.
+#[derive(Clone)]
+pub struct WebSocketResponseObserver(pub Arc<dyn Fn(WebSocketResponseEvent) + Send + Sync>);
+
+impl std::fmt::Debug for WebSocketResponseObserver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WebSocketResponseObserver")
+    }
+}
+
+/// A plugin-defined downstream response that replaces upstream execution (Go:
+/// `RequestTerminatedError`).
+#[derive(Debug, Clone, Default)]
+pub struct RequestTerminated {
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+}
+
 /// Per-execution options (Go: executor.Options).
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -87,6 +169,10 @@ pub struct Options {
     /// call, including failover picks (Go: selected-auth callbacks in metadata). Handlers use it
     /// for websocket pinning and request logs.
     pub selected_auth: Option<SelectedAuthCallback>,
+    /// Plugin hook run after credential selection, before executor translation.
+    pub request_after_auth: Option<RequestAfterAuthInterceptor>,
+    /// Plugin observer of upstream WebSocket response events.
+    pub websocket_response_observer: Option<WebSocketResponseObserver>,
 }
 
 /// Callback invoked with `(auth_id, auth_index)` when a credential is selected.
@@ -112,6 +198,8 @@ impl Options {
             metadata: Metadata::new(),
             proxy_url: String::new(),
             selected_auth: None,
+            request_after_auth: None,
+            websocket_response_observer: None,
         }
     }
 
@@ -189,6 +277,8 @@ pub struct ExecError {
     /// Text of the underlying upstream error a conductor-generated error wraps (Go
     /// `WithCause`); used to render "last upstream error" details in the HTTP layer.
     pub cause_text: Option<String>,
+    /// Set when a plugin ended the request with its own downstream response (never retried).
+    pub terminated: Option<Arc<RequestTerminated>>,
 }
 
 impl ExecError {
@@ -207,7 +297,20 @@ impl ExecError {
             auth_code: None,
             upstream_attempted: true,
             cause_text: None,
+            terminated: None,
         }
+    }
+
+    /// A plugin-terminated request (Go: `RequestTerminatedError`).
+    pub fn request_terminated(terminated: RequestTerminated) -> Self {
+        let mut e = ExecError::new(terminated.status, "request terminated by plugin");
+        e.upstream_attempted = false;
+        e.terminated = Some(Arc::new(terminated));
+        e
+    }
+
+    pub fn is_request_terminated(&self) -> bool {
+        self.terminated.is_some()
     }
 
     /// The upstream response headers of a failed attempt (Go: the response-headers context
@@ -291,6 +394,12 @@ pub trait Executor: Send + Sync {
     /// `Ok(None)` keeps the credential unchanged.
     async fn prepare_request_auth(&self, _auth: &Auth) -> Result<Option<Auth>, ExecError> {
         Ok(None)
+    }
+
+    /// Upstream protocol the executor will receive for this request, when it chooses one (Go:
+    /// `RequestToFormat`, implemented by plugin executors).
+    fn request_to_format(&self, _req: &Request, _opts: &Options) -> Option<Format> {
+        None
     }
 
     /// Whether this executor's tool contract supports the Codex `apply_patch` tool for `model`
