@@ -114,6 +114,7 @@ fn route_exists(method: &str, path: &str) -> bool {
     ROUTE_TABLE
         .iter()
         .chain(cpa_management::GIN_ROUTES)
+        .chain(crate::realtime::ROUTES)
         .any(|(m, pattern)| *m == method && pattern_matches(pattern, path))
 }
 
@@ -176,6 +177,8 @@ fn proxy_routes(state: &AppState) -> Router {
         .route("/messages/count_tokens", post(claude::count_tokens))
         .route("/responses", get(ws::responses_websocket).post(responses::responses))
         .route("/responses/compact", post(responses::compact))
+        .route("/live", post(crate::realtime::live_call))
+        .route("/live/{call_id}", get(crate::realtime::live_sideband))
         .route_layer(from_fn(crate::reqlog::capture_handler_errors))
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
@@ -204,6 +207,7 @@ fn proxy_routes(state: &AppState) -> Router {
         .route_layer(auth())
         .method_not_allowed_fallback(fallback);
 
+    let live = cpa_live::Handler::new(state.manager.clone(), state.config.clone());
     let mut router = Router::new()
         .route("/healthz", get(healthz_get).head(healthz_head))
         .route("/", get(root))
@@ -216,7 +220,9 @@ fn proxy_routes(state: &AppState) -> Router {
         .nest("/v1", v1)
         .nest("/openai/v1", openai_v1)
         .nest("/backend-api/codex", codex_direct)
-        .nest("/v1beta", v1beta);
+        .nest("/v1beta", v1beta)
+        .merge(crate::realtime::routes(state, &live))
+        .layer(axum::Extension(live));
     if state.keep_alive.is_some() {
         router = router.route("/keep-alive", get(keep_alive));
     }
