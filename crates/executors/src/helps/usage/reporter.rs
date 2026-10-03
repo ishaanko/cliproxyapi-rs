@@ -454,7 +454,8 @@ impl UsageReporter {
     /// Wraps an upstream body stream so the first non-empty chunk marks TTFT: the first response
     /// byte, or with `packet_only` only the first-packet fallback (protocol-aware streaming
     /// executors mark effective TTFT on substantive token events instead).
-    pub fn observe_body_stream<S, E>(&self, stream: S, packet_only: bool) -> impl Stream<Item = Result<Bytes, E>>
+    /// The result owns a clone of the reporter (`use<S, E>`), so it can move into spawned tasks.
+    pub fn observe_body_stream<S, E>(&self, stream: S, packet_only: bool) -> impl Stream<Item = Result<Bytes, E>> + use<S, E>
     where
         S: Stream<Item = Result<Bytes, E>>,
     {

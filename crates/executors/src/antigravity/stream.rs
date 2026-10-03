@@ -8,7 +8,7 @@ use http::HeaderValue;
 use tokio::sync::{mpsc, oneshot};
 
 use super::AntigravityExecutor;
-use super::claude_input_tokens::ClaudeInputTokenState;
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use super::compaction::{build_compaction_stream_chunks, has_responses_compaction_trigger};
 use super::credits::clear_credits_failure_state;
 use super::execute::expand_capsules_in_request;
@@ -16,8 +16,8 @@ use super::grounding::{resolve_grounding_urls, should_resolve_grounding_urls};
 use super::pipeline::{Mode, Prepared, base_model_of};
 use super::replay_capture::ReplayAccumulator;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, finalize_apply_patch_stream,
-    initialize_apply_patch_stream, record_apply_patch_stream_failure,
+    apply_patch_original_request, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream,
+    record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
 use crate::helps::proxy::effective_proxy_url;
 use crate::helps::responses_usage::ensure_responses_usage_details;
@@ -28,37 +28,6 @@ use crate::helps::usage::{
 };
 
 const STREAM_CHANNEL_CAPACITY: usize = 16;
-
-fn gateway_error() -> ExecError {
-    ExecError::new(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
-
-type ChunkSender = mpsc::Sender<Result<Bytes, ExecError>>;
-
-/// Propagates a retained tool-input failure after its frame. Local twin of `helps::apply_patch`'s
-/// stop/end helpers, which hold `&Param` across an await and so cannot run in a spawned task.
-async fn stop_on_apply_patch_failure(param: &mut Param, reporter: &UsageReporter, out: &ChunkSender) -> bool {
-    if !record_apply_patch_stream_failure(param, reporter, &gateway_error()) {
-        return false;
-    }
-    let _ = out.send(Err(gateway_error())).await;
-    true
-}
-
-/// EOF check before any synthetic success: sends the finalize frames, then the failure if any.
-async fn end_apply_patch(param: &mut Param, reporter: &UsageReporter, out: &ChunkSender) -> bool {
-    let chunks = finalize_apply_patch_stream(param);
-    let failed = record_apply_patch_stream_failure(param, reporter, &gateway_error());
-    for chunk in chunks {
-        if out.send(Ok(Bytes::from(chunk))).await.is_err() {
-            return true;
-        }
-    }
-    if failed {
-        let _ = out.send(Err(gateway_error())).await;
-    }
-    failed
-}
 
 impl AntigravityExecutor {
     pub(crate) async fn execute_stream_impl(
@@ -104,7 +73,7 @@ impl AntigravityExecutor {
         if !(200..300).contains(&status) {
             let body = match resp.bytes().await {
                 Ok(b) => b,
-                Err(e) => return Err((p, ExecError::new(0, e.without_url().to_string()))),
+                Err(e) => return Err((p, crate::helps::status::transport_error(&e))),
             };
             let err = self.handle_upstream_error(&p, status, &body);
             return Err((p, err));
@@ -169,16 +138,16 @@ impl AntigravityExecutor {
 
         let proxy = effective_proxy_url(&opts.proxy_url, Some(&p.auth), Some(&p.cfg));
         let resolve_grounding = should_resolve_grounding_urls(p.from, &p.original_payload, &p.translated);
+        // `finished` stays true until the client left or an apply_patch failure ended the stream;
+        // a read error is held back so the apply_patch end hook still runs first (Go order).
         let mut finished = true;
+        let mut read_error = None;
 
-        'lines: while let Some(line) = reader.next_line().await {
+        'lines: while let Some(line) = reader.next_line_or_closed(&out).await {
             let line = match line {
                 Ok(l) => l,
                 Err(err) => {
-                    let err = ExecError::from(err);
-                    reporter.publish_failure(&err);
-                    let _ = out.send(Err(err)).await;
-                    finished = false;
+                    read_error = Some(ExecError::from(err));
                     break 'lines;
                 }
             };
@@ -206,16 +175,19 @@ impl AntigravityExecutor {
                     break 'lines;
                 }
             }
-            if stop_on_apply_patch_failure(&mut param, &reporter, &out).await {
+            if stop_apply_patch_stream(&param, &reporter, &out, gateway_error()).await {
                 finished = false;
                 break 'lines;
             }
         }
 
-        if finished && end_apply_patch(&mut param, &reporter, &out).await {
+        if finished && end_apply_patch_stream(&mut param, &reporter, &out, gateway_error()).await {
             finished = false;
         }
-        if finished {
+        if let Some(err) = read_error.take().filter(|_| finished) {
+            reporter.publish_failure(&err);
+            let _ = out.send(Err(err)).await;
+        } else if finished {
             // Only a clean end of stream may produce a synthetic terminal event: translating
             // [DONE] after a read error would report a truncated stream as complete.
             let tail = translate(&mut param, b"[DONE]", &mut claude_tokens);

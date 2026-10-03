@@ -26,16 +26,15 @@ use super::response::{
 };
 use super::util::s;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, record_apply_patch_stream_failure,
+    ChunkSender, gateway_error, record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
 use crate::helps::session::ensure_session_id;
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER, ScanError};
 use crate::helps::status::status_err;
 use crate::helps::text::trim_space;
 use crate::helps::usage::{StreamUsageBuffer, UsageReporter, parse_codex_usage};
-use crate::openai_compat::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
-use crate::openai_compat::errors::transport_message;
-use crate::openai_compat::translate::{observe_body, stop_apply_patch_stream};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
+use crate::helps::status::transport_message;
 
 impl XaiExecutor {
     /// Go: ExecuteStream.
@@ -126,12 +125,8 @@ struct XaiStream {
 }
 
 impl XaiStream {
-    fn gateway_error() -> ExecError {
-        status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-    }
-
     fn translate(&mut self, line: &[u8]) -> Vec<Vec<u8>> {
-        translate_stream_with_claude_input_tokens(
+        self.claude.translate_stream(
             self.prepared.to,
             self.prepared.response_format,
             &self.model,
@@ -139,7 +134,6 @@ impl XaiStream {
             &self.prepared.body,
             line,
             &mut self.param,
-            &mut self.claude,
         )
     }
 
@@ -148,7 +142,7 @@ impl XaiStream {
     async fn emit(&mut self, translated_line: &[u8]) -> bool {
         let (lines, err_bridge) = self.prepared.apply_patch.stream(translated_line);
         if err_bridge.is_some() {
-            self.reporter.publish_failure(&Self::gateway_error());
+            self.reporter.publish_failure(&gateway_error());
         }
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         for mut line in lines {
@@ -179,17 +173,17 @@ impl XaiStream {
             }
             chunks.extend(self.translate(&line));
         }
-        record_apply_patch_stream_failure(&self.param, &self.reporter, &Self::gateway_error());
+        record_apply_patch_stream_failure(&self.param, &self.reporter, &gateway_error());
         for chunk in chunks {
             if self.out.send(Ok(Bytes::from(chunk))).await.is_err() {
                 return false;
             }
         }
-        if stop_apply_patch_stream(&mut self.param, &self.reporter, &self.out, Self::gateway_error()).await {
+        if stop_apply_patch_stream(&self.param, &self.reporter, &self.out, gateway_error()).await {
             return false;
         }
         if err_bridge.is_some() {
-            let err = Self::gateway_error();
+            let err = gateway_error();
             self.reporter.publish_failure(&err);
             let _ = self.out.send(Err(err)).await;
             return false;
@@ -216,7 +210,7 @@ impl XaiStream {
     async fn run(&mut self, mut lines: LineReader) {
         let mut pending_event_line: Option<Vec<u8>> = None;
         let mut scan_err: Option<ScanError> = None;
-        while let Some(next) = lines.next_line().await {
+        while let Some(next) = lines.next_line_or_closed(&self.out).await {
             let line = match next {
                 Ok(line) => line,
                 Err(err) => {
@@ -257,11 +251,10 @@ impl XaiStream {
                     }
                     self.reporter.observe_response_model(&event_bytes);
                     let normalized_event_name = event.event_type();
-                    if normalized_event_name == "response.completed" || normalized_event_name == "response.incomplete" {
-                        if let Some(detail) = parse_codex_usage(&event_bytes) {
+                    if (normalized_event_name == "response.completed" || normalized_event_name == "response.incomplete")
+                        && let Some(detail) = parse_codex_usage(&event_bytes) {
                             self.usage.observe(detail, true);
                         }
-                    }
                     if has_pending {
                         let mut event_line = format!("event: {normalized_event_name}").into_bytes();
                         if i == 0
@@ -295,7 +288,7 @@ impl XaiStream {
         }
         let (finish_events, err_finish) = self.prepared.apply_patch.finish_stream();
         if err_finish.is_some() {
-            self.reporter.publish_failure(&Self::gateway_error());
+            self.reporter.publish_failure(&gateway_error());
         }
         for event in finish_events {
             for chunk in self.translate(&event) {
@@ -305,7 +298,7 @@ impl XaiStream {
             }
         }
         if err_finish.is_some() {
-            let err = Self::gateway_error();
+            let err = gateway_error();
             self.reporter.publish_failure(&err);
             let _ = self.out.send(Err(err)).await;
             return;
@@ -343,7 +336,7 @@ fn spawn_stream(
     let (tx, rx) = mpsc::channel(16);
     let (usage_tx, usage_rx) = oneshot::channel();
     let lines = LineReader::new(
-        Box::pin(observe_body(reporter.clone(), resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
+        Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     tokio::spawn(async move {

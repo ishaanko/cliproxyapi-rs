@@ -1,5 +1,5 @@
 //! One upstream websocket connection: a reader task feeds received frames to the session's active
-//! request and answers pings; writes are serialized through a mutex (Go: `readUpstreamLoop`, the
+//! request and has pings answered; writes are serialized through a mutex (Go: `readUpstreamLoop`, the
 //! ping/close handlers of `configureConn` and `writeMessage`).
 
 use std::fmt;
@@ -110,8 +110,13 @@ async fn run(mut reader: WsReader, conn: Arc<WsConn>, session: Arc<Session>, mut
     loop {
         let event = tokio::select! {
             biased;
-            _ = shutdown.changed() => break,
-            event = tokio::time::timeout(IDLE_TIMEOUT, reader.read_event(&conn.writer)) => event,
+            _ = shutdown.changed() => {
+                // Closed locally (invalidate/close): the active request must still get a terminal
+                // read instead of waiting forever (Go: ReadMessage fails on the closed socket).
+                session.fail_active(conn.id, ReadError::Other("read tcp: use of closed network connection".to_string()));
+                break;
+            }
+            event = tokio::time::timeout(IDLE_TIMEOUT, reader.read_event()) => event,
         };
         let error = match event {
             Err(_) => ReadError::Other("read tcp: i/o timeout".to_string()),
@@ -126,6 +131,14 @@ async fn run(mut reader: WsReader, conn: Arc<WsConn>, session: Arc<Session>, mut
                     }
                 }
                 session.deliver(conn.id, Read::Text(payload)).await;
+                continue;
+            }
+            Ok(Ok(Incoming::Ping(payload))) => {
+                // Answered from a task so the reader never waits on a request that is mid-write.
+                let conn = Arc::clone(&conn);
+                tokio::spawn(async move {
+                    let _ = conn.writer.lock().await.send_pong(&payload).await;
+                });
                 continue;
             }
             Ok(Ok(Incoming::Binary)) => {

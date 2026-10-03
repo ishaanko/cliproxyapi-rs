@@ -2,8 +2,8 @@
 //!
 //! Go's dialer offers `permessage-deflate` (and never compresses outbound), so servers may send
 //! compressed frames; a general websocket library would reject those, hence this small codec.
-//! Reading and writing are separate halves so a reader task can answer pings through the shared
-//! writer while requests write concurrently.
+//! Reading and writing are separate halves so the reader never waits on a request that is
+//! mid-write; pings are surfaced to the caller, which answers them through the shared writer.
 
 use std::io;
 
@@ -23,11 +23,17 @@ const OP_PONG: u8 = 0xA;
 /// Deflate tail every compressed message omits (RFC 7692 section 7.2.1).
 const DEFLATE_TAIL: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
 
+/// Largest frame or reassembled message the reader accepts (Go's gorilla has no limit, but an
+/// unbounded buffer lets a peer exhaust memory); larger ones are protocol errors.
+const MAX_MESSAGE_LEN: u64 = 256 << 20;
+
 /// What the reader hands back.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Incoming {
     Text(Vec<u8>),
     Binary,
+    /// Peer ping; the caller answers it with [`WsWriter::send_pong`] off the reader task.
+    Ping(Vec<u8>),
     /// Peer close frame; code 1005 when it carried none.
     Close { code: u16, reason: String },
 }
@@ -107,7 +113,7 @@ impl WsWriter {
         self.write_frame(OP_TEXT, payload).await
     }
 
-    async fn send_pong(&mut self, payload: &[u8]) -> io::Result<()> {
+    pub async fn send_pong(&mut self, payload: &[u8]) -> io::Result<()> {
         self.write_frame(OP_PONG, payload).await
     }
 
@@ -157,6 +163,9 @@ impl WsReader {
             n => (n as u64, 2),
         };
         let mask_len = if masked { 4 } else { 0 };
+        if len > MAX_MESSAGE_LEN || len > isize::MAX as u64 {
+            return Err(protocol_error("read limit exceeded"));
+        }
         let total = header as u64 + mask_len as u64 + len;
         if (self.buf.len() as u64) < total {
             return Ok(None);
@@ -195,6 +204,9 @@ impl WsReader {
                 .map_err(|e| protocol_error(&format!("inflate: {e}")))?;
             consumed += (inflater.total_in() - before_in) as usize;
             let progressed = inflater.total_in() != before_in || inflater.total_out() != before_out;
+            if out.len() as u64 > MAX_MESSAGE_LEN {
+                return Err(protocol_error("read limit exceeded"));
+            }
             if (consumed >= input.len() && out.len() < out.capacity()) || !progressed {
                 break;
             }
@@ -202,12 +214,12 @@ impl WsReader {
         Ok(out)
     }
 
-    /// Reads until one data message or a close frame; pings are answered through `writer`.
-    pub async fn read_event(&mut self, writer: &tokio::sync::Mutex<WsWriter>) -> io::Result<Incoming> {
+    /// Reads until one data message, ping or close frame.
+    pub async fn read_event(&mut self) -> io::Result<Incoming> {
         loop {
             while let Some(frame) = self.parse_frame()? {
                 match frame.opcode {
-                    OP_PING => writer.lock().await.send_pong(&frame.payload).await?,
+                    OP_PING => return Ok(Incoming::Ping(frame.payload)),
                     OP_PONG => {}
                     OP_CLOSE => {
                         return Ok(match frame.payload.as_slice() {
@@ -231,6 +243,9 @@ impl WsReader {
                         let Some((opcode, compressed, mut data)) = self.fragments.take() else {
                             return Err(protocol_error("unexpected continuation frame"));
                         };
+                        if (data.len() as u64).saturating_add(frame.payload.len() as u64) > MAX_MESSAGE_LEN {
+                            return Err(protocol_error("read limit exceeded"));
+                        }
                         data.extend_from_slice(&frame.payload);
                         if frame.fin {
                             return self.finish(opcode, compressed, data);
@@ -285,18 +300,19 @@ mod tests {
 
     async fn run(deflate: Deflate, wire: Vec<u8>) -> Vec<io::Result<Incoming>> {
         let (client, mut server) = tokio::io::duplex(1 << 16);
-        let (mut reader, writer) = split(Box::new(client), &[], deflate);
-        let writer = tokio::sync::Mutex::new(writer);
+        let (mut reader, _writer) = split(Box::new(client), &[], deflate);
         server.write_all(&wire).await.unwrap();
         server.shutdown().await.unwrap();
-        // Keep the read side open so pong writes of the client succeed.
         tokio::spawn(async move {
             let mut sink = Vec::new();
             let _ = server.read_to_end(&mut sink).await;
         });
         let mut out = Vec::new();
         loop {
-            let ev = reader.read_event(&writer).await;
+            let ev = reader.read_event().await;
+            if matches!(ev, Ok(Incoming::Ping(_))) {
+                continue;
+            }
             let done = ev.is_err() || matches!(ev, Ok(Incoming::Close { .. }));
             out.push(ev);
             if done {
@@ -342,6 +358,14 @@ mod tests {
         assert!(events[0].is_err());
         let events = run(Deflate::default(), server_frame(OP_TEXT, true, false, &[0xff, 0xfe])).await;
         assert!(events[0].is_err());
+    }
+
+    #[tokio::test]
+    async fn oversized_frame_length_is_a_protocol_error_not_a_panic() {
+        let mut wire = vec![0x81, 127];
+        wire.extend_from_slice(&u64::MAX.to_be_bytes());
+        let events = run(Deflate::default(), wire).await;
+        assert!(events[0].as_ref().is_err_and(|e| e.kind() == io::ErrorKind::InvalidData));
     }
 
     #[test]

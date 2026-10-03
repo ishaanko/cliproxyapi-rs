@@ -12,11 +12,10 @@ use futures_util::StreamExt;
 use http::HeaderMap;
 use tokio::sync::{mpsc, oneshot};
 
-use super::errors::{transport_error, transport_message};
-use super::translate::{end_apply_patch_stream, observe_body};
-use super::claude_input_tokens::{ClaudeInputTokenState, translate_stream_with_claude_input_tokens};
+use crate::helps::status::{transport_error, transport_message};
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, apply_patch_translation_error, initialize_apply_patch_stream,
+    ChunkSender, apply_patch_translation_error, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream,
     record_apply_patch_stream_failure,
 };
 use crate::helps::sse::{LineReader, STREAM_SCANNER_BUFFER, ScanError};
@@ -92,10 +91,6 @@ struct ChatStream {
 }
 
 impl ChatStream {
-    fn gateway_error() -> ExecError {
-        status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-    }
-
     /// Reports a stream failure to usage and the client. With `contains_payload` the usage log
     /// gets a generic message instead of the upstream payload.
     async fn publish_error(&mut self, err: ExecError, contains_payload: bool) {
@@ -110,7 +105,7 @@ impl ChatStream {
     }
 
     fn translate(&mut self, raw: &[u8]) -> Vec<Vec<u8>> {
-        translate_stream_with_claude_input_tokens(
+        self.claude.translate_stream(
             self.p.to,
             self.p.response_format,
             &self.p.model,
@@ -118,7 +113,6 @@ impl ChatStream {
             &self.p.translated,
             raw,
             &mut self.param,
-            &mut self.claude,
         )
     }
 
@@ -154,7 +148,7 @@ impl ChatStream {
         let mut line = b"data: ".to_vec();
         line.extend_from_slice(&payload);
         let chunks = self.translate(&line);
-        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &Self::gateway_error());
+        record_apply_patch_stream_failure(&self.param, &self.p.reporter, &gateway_error());
         for chunk in chunks {
             if self.out.send(Ok(Bytes::from(chunk))).await.is_err() {
                 self.aborted = true;
@@ -162,7 +156,7 @@ impl ChatStream {
             }
         }
         if apply_patch_translation_error(&self.param).is_some() {
-            self.publish_error(Self::gateway_error(), false).await;
+            self.publish_error(gateway_error(), false).await;
             return true;
         }
         if is_done {
@@ -174,7 +168,7 @@ impl ChatStream {
 
     async fn run(&mut self, mut lines: LineReader) {
         let mut scan_err: Option<ScanError> = None;
-        while let Some(next) = lines.next_line().await {
+        while let Some(next) = lines.next_line_or_closed(&self.out).await {
             let line = match next {
                 Ok(line) => line,
                 Err(err) => {
@@ -213,7 +207,7 @@ impl ChatStream {
         }
         if !self.failed
             && !self.aborted
-            && end_apply_patch_stream(&mut self.param, &self.p.reporter, &self.out, Self::gateway_error()).await
+            && end_apply_patch_stream(&mut self.param, &self.p.reporter, &self.out, gateway_error()).await
         {
             return;
         }
@@ -235,7 +229,7 @@ impl ChatStream {
             }
             // Other protocols stay compatible with providers that omit [DONE].
             let chunks = self.translate(b"data: [DONE]");
-            record_apply_patch_stream_failure(&self.param, &self.p.reporter, &Self::gateway_error());
+            record_apply_patch_stream_failure(&self.param, &self.p.reporter, &gateway_error());
             for chunk in chunks {
                 if self.out.send(Ok(Bytes::from(chunk))).await.is_err() {
                     return;
@@ -252,7 +246,7 @@ pub fn spawn_chat_stream(resp: reqwest::Response, headers: HeaderMap, p: ChatStr
     let (tx, rx) = mpsc::channel(16);
     let (usage_tx, usage_rx) = oneshot::channel();
     let lines = LineReader::new(
-        Box::pin(observe_body(p.reporter.clone(), resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
+        Box::pin(p.reporter.observe_body_stream(resp.bytes_stream(), false).map(|r| r.map_err(|e| transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     tokio::spawn(async move {
@@ -288,7 +282,7 @@ pub fn spawn_image_stream(resp: reqwest::Response, headers: HeaderMap, reporter:
     let (tx, rx) = mpsc::channel(16);
     tokio::spawn(async move {
         let mut observer = StreamResponseModelObserver::new(reporter.clone());
-        let mut body = Box::pin(observe_body(reporter.clone(), resp.bytes_stream(), false));
+        let mut body = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
         while let Some(chunk) = body.next().await {
             match chunk {
                 Ok(chunk) => {
