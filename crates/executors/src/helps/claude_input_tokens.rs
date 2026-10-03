@@ -28,6 +28,31 @@ impl ClaudeInputTokenState {
         Self { upstream_format, response_format, original_request: original_request.to_vec(), handled: !enabled }
     }
 
+    /// [`translate_stream_with_claude_input_tokens`] with a default [`Ctx`] and this state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn translate_stream(
+        &mut self,
+        upstream_format: Format,
+        response_format: Format,
+        model: &str,
+        original_request: &[u8],
+        request: &[u8],
+        raw: &[u8],
+        param: &mut Param,
+    ) -> Vec<Vec<u8>> {
+        translate_stream_with_claude_input_tokens(
+            &Ctx::default(),
+            upstream_format,
+            response_format,
+            model,
+            original_request,
+            request,
+            raw,
+            param,
+            Some(self),
+        )
+    }
+
     /// Whether the patch already happened or is not applicable.
     pub fn handled(&self) -> bool {
         self.handled

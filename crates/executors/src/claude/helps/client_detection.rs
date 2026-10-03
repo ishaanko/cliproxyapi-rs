@@ -9,7 +9,7 @@ use cpa_json::{J, Kind};
 use http::HeaderMap;
 use regex::Regex;
 
-use super::code_session::CLAUDE_CODE_SESSION_HEADER;
+use crate::helps::session::CLAUDE_CODE_SESSION_HEADER;
 use super::credential_identity::{go_json_valid, skip_claude_json_value, skip_claude_json_whitespace};
 use super::device_profile::{
     ClaudeDeviceProfile, default_claude_device_profile, meets_claude_device_profile_baseline,

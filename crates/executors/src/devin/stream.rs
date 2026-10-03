@@ -14,24 +14,20 @@ use cpa_translator::{Format, Param};
 use futures_util::Stream;
 use tokio::sync::oneshot;
 
-use super::claude_tokens::ClaudeInputTokenState;
+use crate::helps::claude_input_tokens::ClaudeInputTokenState;
 use super::wire::{
     CONNECT_FLAG_END_STREAM, ConnectFrameReader, FrameError, FrameResult, ToolCallDelta, Usage,
     Utf8SplitBuffer, go_lossy, parse_frame, parse_response_dimension_groups, parse_trailer_error,
 };
 use crate::helps::apply_patch::{
-    APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, ChunkSender, finalize_apply_patch_stream,
-    initialize_apply_patch_stream, is_apply_patch_upstream_tool, record_apply_patch_stream_failure,
+    ChunkSender, end_apply_patch_stream, gateway_error, initialize_apply_patch_stream, is_apply_patch_upstream_tool,
+    record_apply_patch_stream_failure, stop_apply_patch_stream,
 };
 use crate::helps::status::status_err;
 use crate::helps::usage::{UsageReporter, parse_interactions_stream_usage};
 
 /// Upper bound of distinct tool calls per response; extra calls are dropped.
 pub const MAX_TOOL_CALLS: usize = 128;
-
-fn apply_patch_gateway_error() -> ExecError {
-    status_err(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
-}
 
 /// Error without an HTTP status (stream read failures, truncated streams).
 fn plain_error(message: impl Into<String>) -> ExecError {
@@ -249,7 +245,7 @@ impl StreamState {
         record_apply_patch_stream_failure(
             &self.param,
             &self.p.reporter,
-            &apply_patch_gateway_error(),
+            &gateway_error(),
         );
         for line in lines {
             if !self.send_chunk(line).await {
@@ -264,33 +260,14 @@ impl StreamState {
     }
 
     /// EOF check before any synthetic success: delivers the bridge's finalize frames, then the
-    /// gateway error if the stream failed. True means the caller must stop. Mirrors
-    /// `end_apply_patch_stream`, which cannot run on a spawned task (its future borrows the translator state across an await).
+    /// gateway error if the stream failed. True means the caller must stop.
     async fn end_apply_patch(&mut self) -> bool {
-        let chunks = finalize_apply_patch_stream(&mut self.param);
-        record_apply_patch_stream_failure(
-            &self.param,
-            &self.p.reporter,
-            &apply_patch_gateway_error(),
-        );
-        for chunk in chunks {
-            if !self.send_chunk(chunk).await {
-                return true;
-            }
-        }
-        self.stop_if_apply_patch_failed().await
+        end_apply_patch_stream(&mut self.param, &self.p.reporter, &self.out, gateway_error()).await
     }
 
-    /// Forwards the sanitized gateway error when the bridge recorded a tool input failure
-    /// (the shared `stop_apply_patch_stream` helper borrows the translator state across an await,
-    /// which the spawned stream task cannot do).
+    /// Forwards the sanitized gateway error when the bridge recorded a tool input failure.
     async fn stop_if_apply_patch_failed(&mut self) -> bool {
-        let err = apply_patch_gateway_error();
-        if !record_apply_patch_stream_failure(&self.param, &self.p.reporter, &err) {
-            return false;
-        }
-        let _ = self.out.send(Err(err)).await;
-        true
+        stop_apply_patch_stream(&self.param, &self.p.reporter, &self.out, gateway_error()).await
     }
 
     fn translate(&mut self, raw: &[u8]) -> Vec<Vec<u8>> {
@@ -698,7 +675,7 @@ pub async fn stream_frames<S, E>(
         let _ = st.send_chunk(b"data: [DONE]\n\n".to_vec()).await;
     } else {
         let lines = st.translate(b"[DONE]");
-        record_apply_patch_stream_failure(&st.param, &st.p.reporter, &apply_patch_gateway_error());
+        record_apply_patch_stream_failure(&st.param, &st.p.reporter, &gateway_error());
         for line in lines {
             if !st.send_chunk(line).await {
                 break;
@@ -922,7 +899,7 @@ where
     if !original.is_empty() {
         for b in &builders {
             if b.legacy && is_apply_patch_upstream_tool(original, &b.name) {
-                return Err(apply_patch_gateway_error());
+                return Err(gateway_error());
             }
         }
     }

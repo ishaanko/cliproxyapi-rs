@@ -16,6 +16,12 @@ use super::usage::UsageReporter;
 /// Deliberately excludes upstream JSON and patch text.
 pub const APPLY_PATCH_UPSTREAM_ERROR_MESSAGE: &str = "Invalid apply_patch tool arguments received from upstream.";
 
+/// The sanitized 502 every executor reports for a failed apply_patch bridge (Go: the per-executor
+/// `statusErr{code: 502, msg: ApplyPatchUpstreamErrorMessage}`).
+pub fn gateway_error() -> ExecError {
+    ExecError::new(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)
+}
+
 /// Output side of a stream result (the sender half of `StreamResult::chunks`).
 pub type ChunkSender = mpsc::Sender<Result<Bytes, ExecError>>;
 
@@ -48,6 +54,13 @@ pub fn record_apply_patch_stream_failure(param: &Param, reporter: &UsageReporter
     }
     reporter.publish_failure(gateway_err);
     true
+}
+
+/// The sanitized gateway error when the translator retained an apply_patch failure (published
+/// first), for callers that deliver it themselves.
+pub fn patch_failure(param: &Param, reporter: &UsageReporter) -> Option<ExecError> {
+    let err = gateway_error();
+    record_apply_patch_stream_failure(param, reporter, &err).then_some(err)
 }
 
 /// Propagates a retained failure after its one translated frame: records it and sends the
@@ -127,6 +140,17 @@ mod tests {
         assert!(apply_patch_requested(CUSTOM_PATCH.as_bytes()));
         assert!(!apply_patch_requested(br#"{"tools":[{"type":"function","name":"apply_patch","parameters":{}}]}"#));
         assert!(!apply_patch_requested(b"not json"));
+    }
+
+    /// The helpers run inside spawned stream tasks, so their futures must be `Send`.
+    #[test]
+    fn helper_futures_are_send() {
+        fn send<T: Send>(_: T) {}
+        let reporter = UsageReporter::new("kimi", "KimiExecutor", "m", None, None);
+        let (tx, _rx) = mpsc::channel(1);
+        let mut param = Param::default();
+        send(end_apply_patch_stream(&mut param, &reporter, &tx, gateway_error()));
+        send(stop_apply_patch_stream(&param, &reporter, &tx, gateway_error()));
     }
 
     #[tokio::test]
