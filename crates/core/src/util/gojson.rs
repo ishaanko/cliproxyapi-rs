@@ -43,8 +43,17 @@ pub fn go_json_sorted(v: &Value, style: GoJsonStyle) -> Option<String> {
 
 /// What Go's `gjson.Result.Value()` followed by a marshal produces (sorted keys, float64
 /// numbers); the value unchanged when a number overflows float64. Port sites where Go passes
-/// `v.Value()` or a `[]interface{}` to sjson through this.
+/// `v.Value()` or a `[]interface{}` to sjson through this. A bare number is the one exception:
+/// sjson formats a float64 argument itself (`strconv.FormatFloat(f, 'f', -1, 64)`, never an
+/// exponent) instead of marshaling it; sites that append a `Value()` to a slice marshaled later
+/// only ever hold objects, where the difference cannot show.
 pub fn go_any(v: Value) -> Value {
+    if let Value::Number(n) = &v {
+        return match n.to_string().parse::<f64>() {
+            Ok(f) if f.is_finite() => cpa_json::num_f64(f),
+            _ => v,
+        };
+    }
     match go_json_sorted(&v, GoJsonStyle::MARSHAL_ANY) {
         Some(s) => cpa_json::parse_str(&s),
         None => v,
