@@ -359,11 +359,7 @@ impl App {
             TAB_AUTH_FILES => self.auth.init(),
             TAB_API_KEYS => self.keys.init(),
             TAB_OAUTH => {}
-            TAB_LOGS => {
-                if self.logs_enabled {
-                    self.logs.init();
-                }
-            }
+            TAB_LOGS if self.logs_enabled => self.logs.init(),
             _ => {}
         }
     }

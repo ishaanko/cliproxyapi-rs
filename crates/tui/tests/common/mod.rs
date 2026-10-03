@@ -77,7 +77,9 @@ impl MockData {
     }
 }
 
-async fn handle(State(m): State<(Arc<Mutex<Vec<Call>>>, Arc<Mutex<MockData>>)>, req: Request) -> Response {
+type MockState = (Arc<Mutex<Vec<Call>>>, Arc<Mutex<MockData>>);
+
+async fn handle(State(m): State<MockState>, req: Request) -> Response {
     let (calls, data) = m;
     let method = req.method().to_string();
     let path = req.uri().path_and_query().map(|p| p.to_string()).unwrap_or_default();
