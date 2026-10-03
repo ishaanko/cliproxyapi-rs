@@ -1,0 +1,250 @@
+{
+  "id": "media.videos.openai.retrieve_states",
+  "desc": "retrieve of failed, pending and error shapes",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/openai/v1/videos/vid_failed",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e330910b925fcb4-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "id": "vid_failed",
+            "model": "grok-imagine-video",
+            "status": "failed",
+            "progress": 0,
+            "error": {
+              "code": "content_policy",
+              "message": "blocked by policy"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/openai/v1/videos/vid_pending",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e6c24efacd90668-<uuid:2>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "id": "vid_pending",
+            "model": "grok-imagine-video",
+            "status": "queued",
+            "progress": 10
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/openai/v1/videos/vid_string_error",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e330910b925fcb4-<uuid:3>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "id": "vid_string_error",
+            "model": "grok-imagine-video",
+            "status": "failed",
+            "progress": 0,
+            "error": {
+              "code": "E_PLAIN",
+              "message": "plain failure"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/openai/v1/videos/vid_code_only",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e6c24efacd90668-<uuid:4>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "id": "vid_code_only",
+            "model": "grok-imagine-video",
+            "status": "failed",
+            "progress": 0,
+            "error": {
+              "code": "quota_exceeded",
+              "message": "quota_exceeded"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/openai/v1/videos/vid_nourl",
+        "auth": "Client",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-3e330910b925fcb4-<uuid:5>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "object": "video",
+            "id": "vid_nourl",
+            "model": "grok-imagine-video",
+            "status": "completed",
+            "progress": 100
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "xai",
+      "method": "GET",
+      "path": "/videos/vid_failed",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": null
+    },
+    {
+      "family": "xai",
+      "method": "GET",
+      "path": "/videos/vid_pending",
+      "query": "",
+      "credential": "sk-xai-2",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": null
+    },
+    {
+      "family": "xai",
+      "method": "GET",
+      "path": "/videos/vid_string_error",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": null
+    },
+    {
+      "family": "xai",
+      "method": "GET",
+      "path": "/videos/vid_code_only",
+      "query": "",
+      "credential": "sk-xai-2",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": null
+    },
+    {
+      "family": "xai",
+      "method": "GET",
+      "path": "/videos/vid_nourl",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": null
+    }
+  ]
+}

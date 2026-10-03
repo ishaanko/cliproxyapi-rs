@@ -10,11 +10,13 @@ use crate::headers::write_upstream_headers;
 use crate::reply::{JSON, Reply};
 use crate::req::ReqInfo;
 
+pub mod alpha_search;
 pub mod claude;
 pub mod gemini;
 pub mod images;
 pub mod openai;
 pub mod responses;
+pub mod videos;
 
 
 /// `ReadRequestBody`: raw body plus `Content-Encoding` decoding; failures become the 400 reply.

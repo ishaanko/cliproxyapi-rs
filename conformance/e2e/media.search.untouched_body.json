@@ -1,0 +1,62 @@
+{
+  "id": "media.search.untouched_body",
+  "desc": "body without cache fields is forwarded as sent",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/alpha/search",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "query": "q"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-80228c41b545cfb8-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "search_mock",
+            "results": [
+              {
+                "title": "Mock result",
+                "url": "https://example.com/mock"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/alpha/search",
+      "query": "",
+      "credential": "sk-codex-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-1",
+        "content-type": "application/json",
+        "originator": "codex_cli_rs",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "query": "q"
+      }
+    }
+  ]
+}

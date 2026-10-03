@@ -25,6 +25,7 @@ pub mod apply_patch_responses;
 pub mod claude_input_tokens;
 pub mod cloak_obfuscate;
 pub mod codex_tool_integers;
+pub mod content_type;
 pub mod gemini_content_turns;
 pub mod id_cache;
 pub mod json_retry;

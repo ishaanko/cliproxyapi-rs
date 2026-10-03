@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a4ea26e497b070e8e/target/release/cliproxy`
+- server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `1eaa7b61ff64b91e`
-- scenarios: 753 total, 753 passed, 0 failed
+- goldens digest: `2d8ac49173691096`
+- scenarios: 899 total, 899 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -760,3 +760,149 @@
 | `mgmt.oauth_status` | PASS | OAuth session endpoints without a started login |  |
 | `mgmt.plugins` | PASS | plugin endpoints with plugins disabled |  |
 | `mgmt.unknown_route` | PASS | unknown management paths |  |
+| `media.images.codex.gen_json` | PASS | codex image generation, options pass through |  |
+| `media.images.codex.gen_default_model` | PASS | no model defaults to gpt-image-2 |  |
+| `media.images.codex.gen_model_variants` | PASS | gpt-image-1.5 and 2.5 models |  |
+| `media.images.codex.gen_stream_false` | PASS | stream false drops the flag |  |
+| `media.images.codex.gen_stream` | PASS | codex image generation stream relayed |  |
+| `media.images.codex.gen_stream_string_flag` | PASS | stream given as the string true |  |
+| `media.images.codex.gen_stream_cut_clean` | PASS | stream ends without the completed event |  |
+| `media.images.codex.gen_stream_cut_abort` | PASS | upstream drops the stream |  |
+| `media.images.codex.gen_stream_error_event` | PASS | in-band error event mid stream |  |
+| `media.images.codex.gen_stream_http_error` | PASS | stream request fails before data |  |
+| `media.images.codex.gen_401` | PASS | upstream 401 |  |
+| `media.images.codex.gen_400` | PASS | upstream 400 |  |
+| `media.images.codex.gen_500_failover` | PASS | 500 then success on the second key |  |
+| `media.images.codex.gen_429_all` | PASS | every key rate limited |  |
+| `media.images.codex.gen_rr` | PASS | round robin across codex keys |  |
+| `media.images.codex.gen_non_json_answer` | PASS | upstream answers plain text |  |
+| `media.images.codex.gen_passthrough_headers` | PASS | upstream headers are relayed with passthrough |  |
+| `media.images.codex.gen_client_headers` | PASS | client Codex headers reach the upstream, user agent does not |  |
+| `media.images.codex.edits_json` | PASS | edit with JSON body |  |
+| `media.images.codex.edits_json_stream` | PASS | edit stream with JSON body |  |
+| `media.images.codex.edits_multipart` | PASS | edit with image, mask and options as multipart |  |
+| `media.images.codex.edits_multipart_multi` | PASS | edit with image[] files and no content type |  |
+| `media.images.codex.edits_multipart_stream` | PASS | edit stream with multipart body |  |
+| `media.images.codex.edits_multipart_stream_yes` | PASS | stream flag spelled yes |  |
+| `media.images.codex.edits_error` | PASS | edit upstream 500 on every key |  |
+| `media.images.codex.no_retry_500` | PASS | single attempt, upstream 500 |  |
+| `media.images.xai.gen_b64` | PASS | xAI generation returns b64_json |  |
+| `media.images.xai.gen_url` | PASS | response_format url |  |
+| `media.images.xai.gen_options` | PASS | size, quality and n map to xAI options |  |
+| `media.images.xai.gen_aspect` | PASS | aspect ratios and prefixed models |  |
+| `media.images.xai.gen_stream` | PASS | stream is synthesized from a normal call |  |
+| `media.images.xai.gen_stream_url` | PASS | stream with url format |  |
+| `media.images.xai.gen_empty_data` | PASS | upstream returns no images |  |
+| `media.images.xai.gen_invalid_answer` | PASS | upstream returns invalid JSON |  |
+| `media.images.xai.gen_stream_empty_data` | PASS | stream with an empty upstream answer |  |
+| `media.images.xai.gen_data_only_urls` | PASS | answer with only urls and a data url conversion |  |
+| `media.images.xai.gen_401` | PASS | upstream 401 |  |
+| `media.images.xai.gen_stream_401` | PASS | stream, upstream 401 |  |
+| `media.images.xai.gen_500_failover` | PASS | 500 then success on the second xAI key |  |
+| `media.images.xai.gen_rr` | PASS | round robin across xAI keys |  |
+| `media.images.xai.edits_json_string` | PASS | edit with an image string |  |
+| `media.images.xai.edits_json_object` | PASS | edit with image_url object |  |
+| `media.images.xai.edits_json_images` | PASS | edit with several images |  |
+| `media.images.xai.edits_json_no_image` | PASS | edit without any image |  |
+| `media.images.xai.edits_json_stream` | PASS | edit stream |  |
+| `media.images.xai.edits_multipart` | PASS | edit with uploaded images |  |
+| `media.images.xai.edits_multipart_multi` | PASS | edit with two uploaded images |  |
+| `media.images.xai.edits_multipart_stream` | PASS | edit stream from multipart |  |
+| `media.images.compat.gen_json` | PASS | compat image generation re-shaped |  |
+| `media.images.compat.gen_url` | PASS | compat generation, url format |  |
+| `media.images.compat.gen_stream` | PASS | compat stream relayed |  |
+| `media.images.compat.gen_stream_error` | PASS | compat stream with an in-band error |  |
+| `media.images.compat.gen_stream_cut_clean` | PASS | compat stream ends early |  |
+| `media.images.compat.gen_stream_http_error` | PASS | compat stream fails before data |  |
+| `media.images.compat.gen_500` | PASS | compat upstream 500 |  |
+| `media.images.compat.gen_empty_data` | PASS | compat answer without images |  |
+| `media.images.compat.edits_json` | PASS | compat edit with JSON body |  |
+| `media.images.compat.edits_multipart` | PASS | compat edit with multipart body |  |
+| `media.images.compat.edits_multipart_stream` | PASS | compat edit stream |  |
+| `media.images.invalid.gen_not_json` | PASS | generations body is not JSON |  |
+| `media.images.invalid.gen_unsupported_model` | PASS | chat model on the images endpoint |  |
+| `media.images.invalid.gen_unknown_prefix` | PASS | unknown provider prefix on an image model |  |
+| `media.images.invalid.gen_prefixed_model` | PASS | provider prefix on a codex image model |  |
+| `media.images.invalid.gen_no_prompt` | PASS | prompt missing |  |
+| `media.images.invalid.gen_blank_prompt` | PASS | prompt blank |  |
+| `media.images.invalid.chat_model_image_only` | PASS | image model on chat completions |  |
+| `media.images.invalid.edits_not_json` | PASS | edit JSON body invalid |  |
+| `media.images.invalid.edits_unsupported_model` | PASS | edit with a chat model |  |
+| `media.images.invalid.edits_no_prompt_json` | PASS | edit JSON without prompt |  |
+| `media.images.invalid.edits_mp_unsupported_model` | PASS | multipart edit with a chat model |  |
+| `media.images.invalid.edits_mp_no_prompt` | PASS | multipart edit without prompt |  |
+| `media.images.invalid.edits_mp_no_image` | PASS | multipart edit without image |  |
+| `media.images.invalid.edits_mp_bad_stream_flag` | PASS | unparseable stream flag counts as false |  |
+| `media.images.invalid.edits_text_plain` | PASS | edit with an unsupported content type |  |
+| `media.images.invalid.edits_multipart_no_boundary` | PASS | multipart edit without a boundary |  |
+| `media.images.invalid.edits_no_content_type` | PASS | edit without a content type |  |
+| `media.images.invalid.gen_missing_auth` | PASS | images endpoint needs a client key |  |
+| `media.images.invalid.edits_missing_auth` | PASS | edits endpoint needs a client key |  |
+| `media.images.mode.all_gen` | PASS | disable-image-generation true: generations is a 404 |  |
+| `media.images.mode.all_edits` | PASS | disable-image-generation true: edits is a 404 |  |
+| `media.images.mode.all_invalid_first` | PASS | disabled endpoint answers 404 before validation |  |
+| `media.images.mode.chat_gen` | PASS | chat mode keeps the images endpoints |  |
+| `media.images.mode.chat_edits` | PASS | chat mode keeps image edits |  |
+| `media.images.mode.chat_responses_tool` | PASS | chat mode strips the image tool from responses |  |
+| `media.images.keepalive.gen` | PASS | non-stream keep-alive newlines before a slow image answer |  |
+| `media.images.keepalive.stream` | PASS | stream keep-alive before the first event |  |
+| `media.images.keepalive.xai_stream` | PASS | xAI stream keep-alive while the call runs |  |
+| `media.images.keepalive.stream_error` | PASS | stream keep-alive then upstream error |  |
+| `media.images.no_retry.xai_500` | PASS | xAI 500 without retries |  |
+| `media.videos.native.create_generations` | PASS | native video generation |  |
+| `media.videos.native.create_root` | PASS | POST /v1/videos is a generation |  |
+| `media.videos.native.create_edits` | PASS | native video edit |  |
+| `media.videos.native.create_extensions` | PASS | native video extension |  |
+| `media.videos.native.create_preview_alias` | PASS | preview alias is normalized in the payload |  |
+| `media.videos.native.retrieve` | PASS | native retrieve |  |
+| `media.videos.native.retrieve_states` | PASS | native retrieve of failed and pending videos |  |
+| `media.videos.native.create_then_retrieve` | PASS | retrieve reuses the credential that created the video |  |
+| `media.videos.native.unsupported_model` | PASS | sora is not a native xAI model |  |
+| `media.videos.native.foreign_prefix` | PASS | foreign provider prefix rejected |  |
+| `media.videos.native.not_json` | PASS | native body is not JSON |  |
+| `media.videos.native.upstream_500` | PASS | native create upstream 500 on every key |  |
+| `media.videos.native.upstream_401` | PASS | native create upstream 401 |  |
+| `media.videos.native.retrieve_404` | PASS | native retrieve upstream 404 |  |
+| `media.videos.native.missing_auth` | PASS | videos need a client key |  |
+| `media.videos.native.passthrough_headers` | PASS | upstream headers relayed with passthrough |  |
+| `media.videos.native.ttl_expired` | PASS | binding expires with a tiny ttl |  |
+| `media.videos.native.ttl_invalid` | PASS | invalid ttl falls back to the default |  |
+| `media.videos.openai.create_json` | PASS | OpenAI-shaped create |  |
+| `media.videos.openai.create_defaults` | PASS | create with defaults |  |
+| `media.videos.openai.create_options` | PASS | size, aspect ratio, resolution and clamped seconds |  |
+| `media.videos.openai.create_input_reference` | PASS | image reference |  |
+| `media.videos.openai.create_references` | PASS | reference images |  |
+| `media.videos.openai.create_form_multipart` | PASS | multipart form create |  |
+| `media.videos.openai.create_form_urlencoded` | PASS | urlencoded form create |  |
+| `media.videos.openai.create_errors` | PASS | request validation errors become failed video resources |  |
+| `media.videos.openai.create_unsupported_model` | PASS | model not supported on the OpenAI route |  |
+| `media.videos.openai.create_not_json` | PASS | create body is not JSON |  |
+| `media.videos.openai.create_upstream_500` | PASS | create upstream 500 |  |
+| `media.videos.openai.create_upstream_429` | PASS | create upstream 429 on every key |  |
+| `media.videos.openai.create_no_request_id` | PASS | upstream answers without a request id |  |
+| `media.videos.openai.create_status_mapping` | PASS | upstream status and progress are mapped |  |
+| `media.videos.openai.retrieve_done` | PASS | retrieve of a finished video |  |
+| `media.videos.openai.retrieve_states` | PASS | retrieve of failed, pending and error shapes |  |
+| `media.videos.openai.create_then_retrieve` | PASS | retrieve is bound to the creating credential |  |
+| `media.videos.openai.retrieve_404` | PASS | retrieve upstream 404 |  |
+| `media.videos.openai.retrieve_encoded_id` | PASS | blank id is rejected |  |
+| `media.videos.openai.content` | PASS | video download |  |
+| `media.videos.openai.content_variants` | PASS | variant query |  |
+| `media.videos.openai.content_problems` | PASS | content with a missing url, bad url or missing file |  |
+| `media.videos.openai.content_upstream_500` | PASS | content, poll fails upstream |  |
+| `media.videos.openai.ttl_expired` | PASS | binding expires, retrieve rotates keys |  |
+| `media.videos.openai.passthrough_headers` | PASS | retrieve relays upstream headers with passthrough |  |
+| `media.videos.openai.keepalive` | PASS | non-stream keep-alive on a slow create |  |
+| `media.search.v1_ok` | PASS | alpha search forwarded with cache fields removed |  |
+| `media.search.codex_alias_path` | PASS | same endpoint under /backend-api/codex |  |
+| `media.search.untouched_body` | PASS | body without cache fields is forwarded as sent |  |
+| `media.search.client_headers` | PASS | selected client headers are forwarded |  |
+| `media.search.not_json` | PASS | non-JSON body is forwarded verbatim |  |
+| `media.search.upstream_errors` | PASS | upstream status and body are relayed |  |
+| `media.search.upstream_text` | PASS | upstream non-JSON answer |  |
+| `media.search.rr_same_key` | PASS | only the alpha-search key is used |  |
+| `media.search.no_eligible_key` | PASS | no key allows alpha search |  |
+| `media.search.model_alias` | PASS | alias resolved to the upstream model |  |
+| `media.search.unknown_model` | PASS | model without a matching credential |  |
+| `media.search.missing_auth` | PASS | alpha search needs a client key |  |
+| `media.search.wrong_method` | PASS | GET is not routed |  |

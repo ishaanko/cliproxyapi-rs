@@ -1,0 +1,74 @@
+{
+  "id": "media.images.xai.edits_multipart_stream",
+  "desc": "edit stream from multipart",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/images/edits",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "content_type": "multipart/form-data; boundary=e2eboundary0123456789",
+          "text": "--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\ngrok-imagine-image\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\np\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"stream\"\r\n\r\n1\r\n--e2eboundary0123456789\r\nContent-Disposition: form-data; name=\"image\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\nPNGDATA-1\r\n--e2eboundary0123456789--\r\n"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-3e330910b925fcb4-<uuid:1>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "event": "image_edit.completed",
+              "data": {
+                "type": "image_edit.completed",
+                "b64_json": "AAEC0",
+                "usage": {
+                  "input_tokens": 5,
+                  "output_tokens": 7,
+                  "total_tokens": 12
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "xai",
+      "method": "POST",
+      "path": "/images/edits",
+      "query": "",
+      "credential": "sk-xai-1",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-xai-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "user-agent": "<go-default-ua>"
+      },
+      "body": {
+        "image": {
+          "type": "image_url",
+          "url": "data:image/png;base64,UE5HREFUQS0x"
+        },
+        "model": "grok-imagine-image",
+        "prompt": "p",
+        "response_format": "b64_json"
+      }
+    }
+  ]
+}

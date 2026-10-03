@@ -22,6 +22,8 @@ pub enum Layout {
 pub struct ModelCfg {
     pub name: String,
     pub alias: String,
+    /// Callable through the image endpoints (`image: true`).
+    pub image: bool,
 }
 
 /// One upstream API key (one credential).
@@ -39,6 +41,8 @@ pub struct KeyEntry {
     pub weight: Option<i64>,
     /// `request-scoped-errors` rules.
     pub scoped_errors: Vec<ScopedRule>,
+    /// Codex key may serve the Alpha Search endpoint (`alpha-search`).
+    pub alpha_search: Option<bool>,
 }
 
 /// Custom upstream error classification rule (`status` + body substring -> `action`).
@@ -80,6 +84,11 @@ pub struct ConfigSpec {
     pub codex: Vec<KeyEntry>,
     pub gemini: Vec<KeyEntry>,
     pub compat: Vec<CompatProvider>,
+    /// xAI keys (none by default: they would add models to every listing).
+    pub xai: Vec<KeyEntry>,
+    /// `multimedia` settings (`disable-image-generation`, `gpt-image-2-base-model`,
+    /// `video-result-auth-cache-ttl`).
+    pub multimedia: Vec<(&'static str, Value)>,
 }
 
 impl ConfigSpec {
@@ -114,18 +123,27 @@ impl ConfigSpec {
                 base_url: base("compat"),
                 keys: vec!["sk-compat-1".into(), "sk-compat-2".into()],
                 models: vec![
-                    ModelCfg { name: "mock-gpt-4o".into(), alias: "compat-gpt-4o".into() },
-                    ModelCfg { name: "mock-reason".into(), alias: "compat-reason".into() },
+                    ModelCfg { name: "mock-gpt-4o".into(), alias: "compat-gpt-4o".into(), image: false },
+                    ModelCfg { name: "mock-reason".into(), alias: "compat-reason".into(), image: false },
                 ],
                 prefix: None,
                 headers: vec![],
             }],
+            xai: vec![],
+            multimedia: vec![],
         }
     }
 }
 
 fn model_list(models: &[ModelCfg]) -> Value {
-    Value::Array(models.iter().map(|m| json!({"name": m.name, "alias": m.alias})).collect())
+    let one = |m: &ModelCfg| {
+        let mut v = json!({"name": m.name, "alias": m.alias});
+        if m.image {
+            v["image"] = json!(true);
+        }
+        v
+    };
+    Value::Array(models.iter().map(one).collect())
 }
 
 /// Settings that stay key-level in both layouts.
@@ -135,6 +153,9 @@ fn key_fields(k: &KeyEntry, m: &mut Map<String, Value>) {
     }
     if let Some(w) = k.websockets {
         m.insert("websockets".into(), json!(w));
+    }
+    if let Some(a) = k.alpha_search {
+        m.insert("alpha-search".into(), json!(a));
     }
 }
 
@@ -282,6 +303,12 @@ impl ConfigSpec {
         m.insert("claude-api-key".into(), legacy_keys(&self.claude));
         m.insert("codex-api-key".into(), legacy_keys(&self.codex));
         m.insert("gemini-api-key".into(), legacy_keys(&self.gemini));
+        if !self.xai.is_empty() {
+            m.insert("xai-api-key".into(), legacy_keys(&self.xai));
+        }
+        for (key, value) in &self.multimedia {
+            m.insert((*key).into(), value.clone());
+        }
         m.insert("openai-compatibility".into(), Value::Array(self.compat.iter().map(|c| compat_value(c, "api-key-entries")).collect()));
         Value::Object(m)
     }
@@ -303,13 +330,17 @@ impl ConfigSpec {
         routing.insert("force-model-prefix".into(), json!(self.force_model_prefix));
         routing.insert("retry".into(), Value::Object(retry));
         routing.insert("cooldown".into(), Value::Object(cooldown));
-        let api_keys = json!({
+        let mut api_keys = json!({
             "claude": v8_groups(&self.claude, "claude"),
             "codex": v8_groups(&self.codex, "codex"),
             "gemini": v8_groups(&self.gemini, "gemini"),
             "openai-compatibility": self.compat.iter().map(|c| compat_value(c, "keys")).collect::<Vec<_>>(),
         });
-        json!({
+        if !self.xai.is_empty() {
+            api_keys["xai"] = v8_groups(&self.xai, "xai");
+        }
+        let multimedia: Map<String, Value> = self.multimedia.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect();
+        let mut out = json!({
             "config-version": 8,
             "server": {"host": "127.0.0.1", "port": port},
             "management": self.management(),
@@ -323,7 +354,11 @@ impl ConfigSpec {
             "oauth": {"auth-dir": auth_dir.to_string_lossy()},
             "observability": {"usage": {"usage-statistics-enabled": self.usage_statistics}},
             "api-keys": api_keys,
-        })
+        });
+        if !multimedia.is_empty() {
+            out["multimedia"] = Value::Object(multimedia);
+        }
+        out
     }
 }
 
