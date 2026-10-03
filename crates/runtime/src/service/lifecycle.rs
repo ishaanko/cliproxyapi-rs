@@ -19,7 +19,11 @@ use tokio::sync::{MutexGuard, watch};
 use tokio::task::JoinHandle;
 
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
-use super::models::{ModelRegistration, apply_registration, openai_compat_info_from_auth, resolve_models_for_auth};
+use super::models::{
+    ModelRegistration, apply_model_prefixes, apply_oauth_model_alias_for_auth, apply_oauth_settings_for_auth, apply_excluded_models,
+    apply_registration, oauth_excluded_models, openai_compat_info_from_auth, resolve_models_for_auth_with,
+};
+use super::plugins::ServicePlugins;
 use super::sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 use crate::conductor::{CooldownStateStore, FileCooldownStateStore, Manager, SharedManager};
 use crate::executor::{DynExecutor, ExecError};
@@ -113,6 +117,7 @@ pub struct ServiceBuilder {
     config_path: PathBuf,
     executors: Vec<DynExecutor>,
     executor_factory: Option<ExecutorFactory>,
+    plugins: Option<Arc<dyn ServicePlugins>>,
     manager: Option<SharedManager>,
     usage: Option<Arc<UsageTracker>>,
     port: Option<Arc<dyn ManagerPort>>,
@@ -130,6 +135,7 @@ impl ServiceBuilder {
             config_path: config_path.into(),
             executors: Vec::new(),
             executor_factory: None,
+            plugins: None,
             manager: None,
             usage: None,
             port: None,
@@ -154,6 +160,12 @@ impl ServiceBuilder {
     /// Creates executors on demand for providers none of the registered executors handles.
     pub fn executor_factory(mut self, factory: ExecutorFactory) -> Self {
         self.executor_factory = Some(factory);
+        self
+    }
+
+    /// Attaches the plugin host's model hooks (Go: `WithPluginHost`).
+    pub fn plugins(mut self, plugins: Arc<dyn ServicePlugins>) -> Self {
+        self.plugins = Some(plugins);
         self
     }
 
@@ -242,6 +254,7 @@ impl ServiceBuilder {
             pending_executors: Mutex::new(self.executors),
             registered_executors: Mutex::new(registered),
             executor_factory: self.executor_factory,
+            plugins: self.plugins,
             prober: self.antigravity_probe.then(Prober::default),
             probes: Mutex::new(Vec::new()),
             watch: self.watch,
@@ -272,6 +285,7 @@ struct Inner {
     pending_executors: Mutex<Vec<DynExecutor>>,
     registered_executors: Mutex<HashSet<String>>,
     executor_factory: Option<ExecutorFactory>,
+    plugins: Option<Arc<dyn ServicePlugins>>,
     prober: Option<Prober>,
     probes: Mutex<Vec<JoinHandle<()>>>,
     watch: bool,
@@ -453,6 +467,17 @@ impl Service {
         let action = if inner.port.get(&auth.id).is_some() { AuthUpdateAction::Modify } else { AuthUpdateAction::Add };
         let update = AuthUpdate { action, id: auth.id.clone(), auth: Some(auth) };
         inner.apply_updates_locked(&guard, vec![update]).await;
+    }
+
+    /// Go `refreshPluginModelRegistrations`: re-registers the models of every auth (after the
+    /// plugin set or its models changed).
+    pub async fn refresh_model_registrations(&self) {
+        let inner = &self.inner;
+        let _guard = inner.apply_lock.lock().await;
+        let cfg = inner.config();
+        for auth in inner.port.list() {
+            inner.register_models(&cfg, &auth).await;
+        }
     }
 
     /// Waits for in-flight Antigravity capability probes (Go: `WaitAntigravityProbes`).
@@ -781,13 +806,72 @@ impl Inner {
         if self.port.get(&auth.id).is_none_or(|c| c.disabled) {
             return;
         }
-        let registration = resolve_models_for_auth(cfg, auth);
+        if self.try_register_plugin_models(cfg, auth).await {
+            self.port.models_registered(&auth.id).await;
+            return;
+        }
+        let registration = resolve_models_for_auth_with(cfg, auth, self.plugins.as_deref());
         let registered = matches!(registration, ModelRegistration::Register { .. });
         apply_registration(self.registry, &auth.id, registration);
         if registered {
             self.probe_antigravity(cfg, auth);
         }
         self.port.models_registered(&auth.id).await;
+    }
+
+    /// Go `tryRegisterPluginModelsForAuth`: lets the plugin owning the auth's provider discover its
+    /// models. True when a plugin handled the auth (the built-in rules are skipped).
+    async fn try_register_plugin_models(&self, cfg: &Arc<Config>, auth: &Auth) -> bool {
+        let Some(plugins) = self.plugins.as_deref() else { return false };
+        let result = plugins.models_for_auth(auth).await;
+        if !result.handled {
+            return false;
+        }
+        if result.err.is_some() {
+            return true;
+        }
+        let mut provider = result.provider.trim().to_lowercase();
+        if provider.is_empty() {
+            provider = auth.provider.trim().to_lowercase();
+        }
+        let mut active = auth.clone();
+        if let Some(mut update) = result.auth {
+            update.id = auth.id.clone();
+            if update.provider.is_empty() {
+                update.provider = auth.provider.clone();
+            }
+            if update.file_name.is_empty() {
+                update.file_name = auth.file_name.clone();
+            }
+            for (k, v) in &auth.attributes {
+                update.attributes.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            if let Ok(updated) = self.port.update(update, false).await {
+                active = updated;
+            }
+        }
+        let active_provider = active.provider.trim().to_lowercase();
+        if !active_provider.is_empty() {
+            provider = active_provider;
+        }
+        if provider.is_empty() {
+            provider = auth.provider.trim().to_lowercase();
+        }
+        let kind = active.auth_kind().to_string();
+        let mut excluded = oauth_excluded_models(cfg, &provider, &kind);
+        if let Some(val) = active.attributes.get("excluded_models").filter(|v| !v.trim().is_empty()) {
+            excluded = val.split(',').map(str::to_string).collect();
+        }
+        let models = apply_excluded_models(result.models, &excluded);
+        let models = apply_oauth_model_alias_for_auth(cfg, &provider, &kind, &active.attributes, models);
+        if models.is_empty() {
+            self.registry.unregister_client(&active.id);
+            return true;
+        }
+        let models = apply_oauth_settings_for_auth(cfg, &provider, &kind, models);
+        let models = apply_model_prefixes(models, &active.prefix, cfg.force_model_prefix);
+        apply_registration(self.registry, &active.id, super::models::finalize_registration(&provider, models));
+        true
     }
 
     /// Go `asyncProbeAntigravityCapabilities`: flags web-search models after the fact, if the

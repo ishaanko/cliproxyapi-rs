@@ -8,5 +8,6 @@ pub mod models;
 pub mod quota;
 pub mod refresh_compat;
 pub mod routing;
+pub mod service;
 pub mod translation;
 pub mod usage;
