@@ -718,6 +718,7 @@ dependencies = [
  "cpa-core",
  "cpa-json",
  "cpa-runtime",
+ "cpa-tlsfp",
  "cpa-translator",
  "flate2",
  "futures-util",
