@@ -21,6 +21,11 @@ use cpa_auth::http::{ProxySetting, parse_proxy};
 use cpa_config::Config;
 use parking_lot::Mutex;
 
+/// Cap on hyper's HTTP/1 read buffer per upstream connection. Its default grows to ~400 KB on a
+/// connection that keeps filling reads (any fast stream), which dominated per-stream memory; 64 KB
+/// still reads hundreds of SSE events per syscall. Also bounds a response head.
+pub const UPSTREAM_HTTP1_MAX_BUF: usize = 64 * 1024;
+
 /// Bounds how many clients a [`TransportCache`] keeps alive; every cached client owns an
 /// independent connection pool, so unbounded keys would let idle sockets grow without limit.
 pub const DEFAULT_TRANSPORT_CACHE_CAPACITY: usize = 64;
@@ -166,6 +171,7 @@ fn build_client(
 ) -> Result<reqwest::Client, reqwest::Error> {
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
+        .http1_max_buf_size(UPSTREAM_HTTP1_MAX_BUF)
         .connect_timeout(Duration::from_secs(30))
         .tcp_keepalive(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(90));

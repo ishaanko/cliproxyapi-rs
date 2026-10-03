@@ -171,6 +171,7 @@ fn build_client(setting: &ProxySetting, pool: PoolSettings) -> Result<reqwest::C
     }
     builder = builder
         .http1_only()
+        .http1_max_buf_size(crate::helps::proxy::UPSTREAM_HTTP1_MAX_BUF)
         .connect_timeout(Duration::from_secs(30))
         .tcp_keepalive(Duration::from_secs(30))
         // Go's transport asks for gzip only.

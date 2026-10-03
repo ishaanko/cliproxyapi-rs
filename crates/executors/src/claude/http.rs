@@ -25,6 +25,7 @@ fn build_client(setting: &ProxySetting) -> Result<reqwest::Client, reqwest::Erro
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
         .http1_only()
+        .http1_max_buf_size(crate::helps::proxy::UPSTREAM_HTTP1_MAX_BUF)
         .connect_timeout(Duration::from_secs(30))
         .tcp_keepalive(Duration::from_secs(30))
         .pool_idle_timeout(Duration::from_secs(90));

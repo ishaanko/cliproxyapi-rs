@@ -59,3 +59,5 @@ codegen-units = 16
 # serde_json with a flat insertion-ordered map instead of IndexMap (see crates/json/vendor/serde_json/src/flatmap.rs)
 [patch.crates-io]
 serde_json = { path = "crates/json/vendor/serde_json" }
+# reqwest with a `http1_max_buf_size` builder option (caps the per-connection read buffer, see crates/executors/vendor/reqwest)
+reqwest = { path = "crates/executors/vendor/reqwest" }
