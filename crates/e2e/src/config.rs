@@ -356,7 +356,10 @@ impl ConfigSpec {
         }
         m.insert("force-model-prefix".into(), json!(self.force_model_prefix));
         m.insert("usage-statistics-enabled".into(), json!(self.usage_statistics));
-        m.insert("request-log".into(), json!(self.request_log));
+        // Emitted only when on: the management config goldens predate the key.
+        if self.request_log {
+            m.insert("request-log".into(), json!(true));
+        }
         m.insert("disable-cooling".into(), json!(self.disable_cooling));
         if let Some(t) = self.transient_cooldown_seconds {
             m.insert("transient-error-cooldown-seconds".into(), json!(t));
@@ -421,10 +424,12 @@ impl ConfigSpec {
             "oauth": {"auth-dir": auth_dir.to_string_lossy()},
             "observability": {
                 "usage": {"usage-statistics-enabled": self.usage_statistics},
-                "logs": {"request-log": self.request_log},
             },
             "api-keys": api_keys,
         });
+        if self.request_log {
+            out["observability"]["logs"] = json!({"request-log": true});
+        }
         if !multimedia.is_empty() {
             out["multimedia"] = Value::Object(multimedia);
         }
