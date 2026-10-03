@@ -5140,10 +5140,10 @@ dependencies = [
 name = "serde_json"
 version = "1.0.151"
 dependencies = [
- "foldhash 0.2.0",
  "hashbrown 0.17.1",
  "itoa",
  "memchr",
+ "serde",
  "serde_core",
  "zmij",
 ]

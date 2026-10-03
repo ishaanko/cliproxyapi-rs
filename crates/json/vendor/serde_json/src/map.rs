@@ -1,3 +1,5 @@
+// NOTICE: modified from serde_json 1.0.151 by cpa-json (Apache-2.0 section 4(b)): `preserve_order` uses
+// crate::flatmap instead of IndexMap. See crates/json/vendor/serde_json.patch.
 //! A map of String to serde_json::Value.
 //!
 //! By default the map is backed by a [`BTreeMap`]. Enable the `preserve_order`

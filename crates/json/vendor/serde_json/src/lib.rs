@@ -1,3 +1,5 @@
+// NOTICE: modified from serde_json 1.0.151 by cpa-json (Apache-2.0 section 4(b)): `preserve_order` uses
+// crate::flatmap instead of IndexMap. See crates/json/vendor/serde_json.patch.
 //! # Serde JSON
 //!
 //! JSON is a ubiquitous open-standard format that uses human-readable text to

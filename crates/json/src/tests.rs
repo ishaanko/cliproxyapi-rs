@@ -179,3 +179,12 @@ fn raw_children_and_deep_malformed_input() {
     evil.extend(std::iter::repeat_n(b'[', 200_000));
     assert!(parse(&evil).is_null());
 }
+
+/// gjson `Float()` of an out-of-range literal is +/-Inf (ParseFloat's result on range errors).
+#[test]
+fn float_of_out_of_range_literal_is_infinite() {
+    let v = parse_str(r#"{"a":1e400,"b":-1e400,"c":1.5}"#);
+    assert_eq!(v.g("a").float(), f64::INFINITY);
+    assert_eq!(v.g("b").float(), f64::NEG_INFINITY);
+    assert_eq!(v.g("c").float(), 1.5);
+}

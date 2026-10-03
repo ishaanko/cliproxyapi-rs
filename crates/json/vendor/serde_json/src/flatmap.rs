@@ -1,9 +1,12 @@
+//! NOTICE: file added to serde_json 1.0.151 by cpa-json (Apache-2.0 section 4(b)).
+//!
 //! Insertion-ordered map backing `serde_json::Map` (replaces `IndexMap`).
 //!
 //! JSON objects in proxy traffic are tiny (a handful of keys), so entries live in one `Vec` and
 //! lookups scan it; no hash is computed and there is no second allocation. Past
-//! [`INDEX_THRESHOLD`] entries a hash index of positions (`HashTable<u32>`, randomly seeded so
-//! client-chosen keys cannot be crafted to collide) keeps lookups O(1).
+//! [`INDEX_THRESHOLD`] entries a hash index of positions (`HashTable<u32>`) keeps lookups O(1).
+//! Keys are client-chosen, so the index uses std's randomly keyed SipHash, like `IndexMap` did;
+//! foldhash was tried and disclaims HashDoS resistance, so a sender could aim keys at one bucket.
 //!
 //! The API mirrors the subset of `indexmap::IndexMap` that `serde_json::Map` uses, including its
 //! order semantics: `insert` of an existing key keeps the key's position, `shift_remove`
@@ -18,12 +21,13 @@ use core::iter::FusedIterator;
 use core::mem;
 use core::slice;
 use hashbrown::HashTable;
+use std::collections::hash_map::RandomState;
 use std::sync::LazyLock;
 
 /// Maps with more entries than this get a hash index.
 const INDEX_THRESHOLD: usize = 16;
 
-static HASHER: LazyLock<foldhash::fast::RandomState> = LazyLock::new(foldhash::fast::RandomState::default);
+static HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
 
 fn hash_of<Q: Hash + ?Sized>(key: &Q) -> u64 {
     HASHER.hash_one(key)
@@ -174,11 +178,16 @@ impl<K: Eq + Hash, V> FlatMap<K, V> {
         }
     }
 
-    /// Inserts at `index`, moving the key there when it already exists.
+    /// Inserts at `index`, moving the key there when it already exists (its value is replaced).
+    /// Panics like `IndexMap::shift_insert`: `index` must be below `len` for an existing key and
+    /// at most `len` for a new one.
+    #[track_caller]
     pub fn shift_insert(&mut self, index: usize, key: K, value: V) -> Option<V> {
+        let len = self.entries.len();
+        let exists = self.find(&key).is_some();
+        assert!(if exists { index < len } else { index <= len }, "index out of bounds: the len is {len} but the index is {index}");
         let old = self.shift_remove(&key);
-        let at = index.min(self.entries.len());
-        self.entries.insert(at, (key, value));
+        self.entries.insert(index, (key, value));
         self.reindex();
         old
     }
