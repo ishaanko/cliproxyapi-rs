@@ -1,0 +1,7414 @@
+{
+  "meta": {
+    "date": "2026-10-03 01:08 UTC",
+    "cpu_model": "AMD Ryzen 7 7800X3D 8-Core Processor",
+    "logical_cpus": 16,
+    "mem_total_mb": 25039,
+    "kernel": "6.18.33.2-microsoft-standard-WSL2",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "go_version": "go version go1.27.1 linux/amd64",
+    "rust_commit": "1bb7380",
+    "go_commit": "6fecc6e",
+    "go_bin_bytes": 68027520,
+    "rust_bin_bytes": 54355632,
+    "rust_stripped_bytes": 43054464,
+    "server_cpus": "0-7",
+    "mock_cpus": "8-11",
+    "load_cpus": "12-15",
+    "runs": 5,
+    "warmup_s": 1.5,
+    "measure_s": 5.0,
+    "conc": [
+      1,
+      16,
+      64,
+      256
+    ],
+    "large_bytes": 2000000,
+    "scenarios": [
+      [
+        "chat-compat-json",
+        "OpenAI chat, non-stream, passthrough to OpenAI-compatible upstream"
+      ],
+      [
+        "chat-claude-stream",
+        "OpenAI chat, SSE, translated to a Claude upstream"
+      ],
+      [
+        "responses-codex-stream",
+        "OpenAI Responses, SSE, to a Codex upstream"
+      ],
+      [
+        "claude-gemini-json",
+        "Claude messages, non-stream, translated to a Gemini upstream"
+      ],
+      [
+        "models",
+        "GET /v1/models (answered by the server, no upstream)"
+      ],
+      [
+        "large-chat-claude",
+        "2 MB OpenAI chat conversation translated to a Claude upstream"
+      ],
+      [
+        "large-claude-gemini",
+        "2 MB Claude conversation translated to a Gemini upstream"
+      ]
+    ]
+  },
+  "records": [
+    {
+      "run": 0,
+      "server": "go",
+      "loadavg": 8.72,
+      "startup_ms": 1023.450738,
+      "idle_rss_kb": 54040,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 5581,
+          "errors": 0,
+          "rps": 1115.862043326386,
+          "lat": {
+            "p50": 855,
+            "p90": 969,
+            "p99": 1595
+          },
+          "cpu_ms_per_1k": 641.4621035656689,
+          "rss_kb": 67696,
+          "peak_kb": 68180,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 36178,
+          "errors": 0,
+          "rps": 7234.206262162055,
+          "lat": {
+            "p50": 2013,
+            "p90": 3242,
+            "p99": 5640
+          },
+          "cpu_ms_per_1k": 784.4546409420093,
+          "rss_kb": 70572,
+          "peak_kb": 82580,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 34096,
+          "errors": 0,
+          "rps": 6818.118878161966,
+          "lat": {
+            "p50": 8553,
+            "p90": 14588,
+            "p99": 23493
+          },
+          "cpu_ms_per_1k": 786.0159549507276,
+          "rss_kb": 80992,
+          "peak_kb": 87328,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 38817,
+          "errors": 0,
+          "rps": 7762.236786901404,
+          "lat": {
+            "p50": 32109,
+            "p90": 40999,
+            "p99": 58673
+          },
+          "cpu_ms_per_1k": 812.7882113506971,
+          "rss_kb": 108760,
+          "peak_kb": 113060,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 3371,
+          "errors": 0,
+          "rps": 673.9876944154493,
+          "lat": {
+            "p50": 1444,
+            "p90": 1653,
+            "p99": 2214
+          },
+          "cpu_ms_per_1k": 1569.2672797389473,
+          "rss_kb": 69612,
+          "peak_kb": 70028,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 19985,
+          "errors": 0,
+          "rps": 3996.186776790161,
+          "lat": {
+            "p50": 3802,
+            "p90": 5590,
+            "p99": 8609
+          },
+          "cpu_ms_per_1k": 1665.2489367025269,
+          "rss_kb": 80512,
+          "peak_kb": 94540,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 20120,
+          "errors": 0,
+          "rps": 4023.2595391981085,
+          "lat": {
+            "p50": 15326,
+            "p90": 23865,
+            "p99": 34314
+          },
+          "cpu_ms_per_1k": 1709.7415506958255,
+          "rss_kb": 83372,
+          "peak_kb": 92408,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 20226,
+          "errors": 0,
+          "rps": 4044.419842736712,
+          "lat": {
+            "p50": 61271,
+            "p90": 87327,
+            "p99": 124841
+          },
+          "cpu_ms_per_1k": 1756.6498566201933,
+          "rss_kb": 112136,
+          "peak_kb": 122908,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2775,
+          "errors": 0,
+          "rps": 554.8603607343996,
+          "lat": {
+            "p50": 1733,
+            "p90": 2049,
+            "p99": 3616
+          },
+          "cpu_ms_per_1k": 1913.5135135135142,
+          "rss_kb": 70212,
+          "peak_kb": 70388,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 16046,
+          "errors": 0,
+          "rps": 3208.514493819663,
+          "lat": {
+            "p50": 4506,
+            "p90": 7449,
+            "p99": 12782
+          },
+          "cpu_ms_per_1k": 1892.683534837343,
+          "rss_kb": 77476,
+          "peak_kb": 86516,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 18768,
+          "errors": 0,
+          "rps": 3752.8938217224604,
+          "lat": {
+            "p50": 16147,
+            "p90": 24623,
+            "p99": 37971
+          },
+          "cpu_ms_per_1k": 1926.1508951406638,
+          "rss_kb": 81180,
+          "peak_kb": 84564,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 18444,
+          "errors": 0,
+          "rps": 3688.144803288583,
+          "lat": {
+            "p50": 66109,
+            "p90": 87201,
+            "p99": 139067
+          },
+          "cpu_ms_per_1k": 2050.531338104532,
+          "rss_kb": 106864,
+          "peak_kb": 117940,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 6001,
+          "errors": 0,
+          "rps": 1199.9778653774638,
+          "lat": {
+            "p50": 821,
+            "p90": 886,
+            "p99": 1168
+          },
+          "cpu_ms_per_1k": 623.2294617563755,
+          "rss_kb": 70600,
+          "peak_kb": 71564,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 37054,
+          "errors": 13,
+          "rps": 7409.8388460917895,
+          "lat": {
+            "p50": 1879,
+            "p90": 3046,
+            "p99": 8278
+          },
+          "cpu_ms_per_1k": 834.9975711124304,
+          "rss_kb": 76336,
+          "peak_kb": 84040,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 36225,
+          "errors": 0,
+          "rps": 7238.3551682404905,
+          "lat": {
+            "p50": 7701,
+            "p90": 14088,
+            "p99": 29623
+          },
+          "cpu_ms_per_1k": 865.4244306418226,
+          "rss_kb": 86756,
+          "peak_kb": 89240,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 17021,
+          "errors": 0,
+          "rps": 3403.598608631765,
+          "lat": {
+            "p50": 69437,
+            "p90": 126067,
+            "p99": 171665
+          },
+          "cpu_ms_per_1k": 851.3013336466723,
+          "rss_kb": 107908,
+          "peak_kb": 117852,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 8021,
+          "errors": 0,
+          "rps": 1603.7942423020095,
+          "lat": {
+            "p50": 481,
+            "p90": 757,
+            "p99": 4093
+          },
+          "cpu_ms_per_1k": 360.3042014711366,
+          "rss_kb": 71908,
+          "peak_kb": 72912,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 83604,
+          "errors": 0,
+          "rps": 16706.423414299643,
+          "lat": {
+            "p50": 809,
+            "p90": 1437,
+            "p99": 3571
+          },
+          "cpu_ms_per_1k": 295.4404095497815,
+          "rss_kb": 87216,
+          "peak_kb": 96992,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 104725,
+          "errors": 0,
+          "rps": 20941.70452542072,
+          "lat": {
+            "p50": 2208,
+            "p90": 5914,
+            "p99": 14394
+          },
+          "cpu_ms_per_1k": 309.85915492957787,
+          "rss_kb": 96284,
+          "peak_kb": 105292,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 85623,
+          "errors": 0,
+          "rps": 17123.021928600643,
+          "lat": {
+            "p50": 6618,
+            "p90": 42660,
+            "p99": 90192
+          },
+          "cpu_ms_per_1k": 320.47463882367987,
+          "rss_kb": 110756,
+          "peak_kb": 117360,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 3.2496325413011276,
+          "lat": {
+            "p50": 290764,
+            "p90": 294823,
+            "p99": 297752
+          },
+          "cpu_ms_per_1k": 7692.30769230944,
+          "rss_kb": 83900,
+          "peak_kb": 109192,
+          "ttfb": {
+            "p50": 22507,
+            "p90": 22782,
+            "p99": 22898
+          },
+          "ttft": {
+            "p50": 34589,
+            "p90": 34744,
+            "p99": 34986
+          },
+          "chunk": {
+            "p50": 354,
+            "p90": 388,
+            "p99": 710
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 305,
+          "errors": 0,
+          "rps": 50.816129761275235,
+          "lat": {
+            "p50": 292053,
+            "p90": 294627,
+            "p99": 296828
+          },
+          "cpu_ms_per_1k": 6098.36065573775,
+          "rss_kb": 74288,
+          "peak_kb": 74448,
+          "ttfb": {
+            "p50": 22804,
+            "p90": 23680,
+            "p99": 24188
+          },
+          "ttft": {
+            "p50": 34890,
+            "p90": 36142,
+            "p99": 36585
+          },
+          "chunk": {
+            "p50": 516,
+            "p90": 641,
+            "p99": 779
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9973242141156193,
+          "lat": {
+            "p50": 318053,
+            "p90": 330921,
+            "p99": 337343
+          },
+          "cpu_ms_per_1k": 9999.999999995642,
+          "rss_kb": 71920,
+          "peak_kb": 71920,
+          "ttfb": {
+            "p50": 22878,
+            "p90": 27474,
+            "p99": 28795
+          },
+          "ttft": {
+            "p50": 47417,
+            "p90": 53629,
+            "p99": 54272
+          },
+          "chunk": {
+            "p50": 538,
+            "p90": 2639,
+            "p99": 5710
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.99148981308591,
+          "lat": {
+            "p50": 311332,
+            "p90": 319761,
+            "p99": 330894
+          },
+          "cpu_ms_per_1k": 5729.166666666588,
+          "rss_kb": 73560,
+          "peak_kb": 73776,
+          "ttfb": {
+            "p50": 22441,
+            "p90": 24300,
+            "p99": 29263
+          },
+          "ttft": {
+            "p50": 46915,
+            "p90": 50643,
+            "p99": 55310
+          },
+          "chunk": {
+            "p50": 565,
+            "p90": 825,
+            "p99": 4558
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 21,
+          "errors": 0,
+          "rps": 3.499224552010335,
+          "lat": {
+            "p50": 267788,
+            "p90": 287588,
+            "p99": 334030
+          },
+          "cpu_ms_per_1k": 322380.9523809515,
+          "rss_kb": 100540,
+          "peak_kb": 115420,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 129,
+          "errors": 0,
+          "rps": 21.496764855121512,
+          "lat": {
+            "p50": 341269,
+            "p90": 404625,
+            "p99": 443305
+          },
+          "cpu_ms_per_1k": 355193.7984496119,
+          "rss_kb": 186872,
+          "peak_kb": 276448,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 49,
+          "errors": 0,
+          "rps": 8.165256612584868,
+          "lat": {
+            "p50": 119550,
+            "p90": 123402,
+            "p99": 134921
+          },
+          "cpu_ms_per_1k": 146734.6938775498,
+          "rss_kb": 97564,
+          "peak_kb": 116268,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 275,
+          "errors": 0,
+          "rps": 45.828019780665855,
+          "lat": {
+            "p50": 146744,
+            "p90": 259672,
+            "p99": 375383
+          },
+          "cpu_ms_per_1k": 142072.72727272747,
+          "rss_kb": 287972,
+          "peak_kb": 346752,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 0,
+      "server": "rust",
+      "loadavg": 9.24,
+      "startup_ms": 1036.291125,
+      "idle_rss_kb": 20268,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 4801,
+          "errors": 0,
+          "rps": 959.9713714902175,
+          "lat": {
+            "p50": 1026,
+            "p90": 1134,
+            "p99": 1268
+          },
+          "cpu_ms_per_1k": 718.6002916059145,
+          "rss_kb": 79288,
+          "peak_kb": 79288,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 38350,
+          "errors": 0,
+          "rps": 7668.530527039993,
+          "lat": {
+            "p50": 1916,
+            "p90": 2648,
+            "p99": 5516
+          },
+          "cpu_ms_per_1k": 857.3663624511081,
+          "rss_kb": 80492,
+          "peak_kb": 80492,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 40797,
+          "errors": 0,
+          "rps": 8157.848021624113,
+          "lat": {
+            "p50": 7665,
+            "p90": 10747,
+            "p99": 13695
+          },
+          "cpu_ms_per_1k": 844.9150672843596,
+          "rss_kb": 86176,
+          "peak_kb": 86176,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 38947,
+          "errors": 0,
+          "rps": 7788.077395986688,
+          "lat": {
+            "p50": 31226,
+            "p90": 49848,
+            "p99": 67513
+          },
+          "cpu_ms_per_1k": 884.535394253729,
+          "rss_kb": 122732,
+          "peak_kb": 122732,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 2178,
+          "errors": 0,
+          "rps": 435.4908119145754,
+          "lat": {
+            "p50": 2261,
+            "p90": 2550,
+            "p99": 3025
+          },
+          "cpu_ms_per_1k": 2662.9935720844733,
+          "rss_kb": 122744,
+          "peak_kb": 122744,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 9302,
+          "errors": 0,
+          "rps": 1860.0858794851706,
+          "lat": {
+            "p50": 7121,
+            "p90": 13716,
+            "p99": 30954
+          },
+          "cpu_ms_per_1k": 2340.3569124919386,
+          "rss_kb": 122760,
+          "peak_kb": 122760,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 12848,
+          "errors": 1,
+          "rps": 2567.8521328987135,
+          "lat": {
+            "p50": 22182,
+            "p90": 42152,
+            "p99": 66429
+          },
+          "cpu_ms_per_1k": 2650.9962640099625,
+          "rss_kb": 122844,
+          "peak_kb": 122844,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 4504,
+          "errors": 0,
+          "rps": 900.6033329086241,
+          "lat": {
+            "p50": 199319,
+            "p90": 527831,
+            "p99": 995166
+          },
+          "cpu_ms_per_1k": 2873.001776198934,
+          "rss_kb": 132500,
+          "peak_kb": 132500,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2246,
+          "errors": 0,
+          "rps": 449.0706311936809,
+          "lat": {
+            "p50": 2201,
+            "p90": 2633,
+            "p99": 4597
+          },
+          "cpu_ms_per_1k": 2702.5823686553845,
+          "rss_kb": 132500,
+          "peak_kb": 132500,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 15328,
+          "errors": 0,
+          "rps": 3065.0237779817585,
+          "lat": {
+            "p50": 4955,
+            "p90": 7196,
+            "p99": 10234
+          },
+          "cpu_ms_per_1k": 2137.9175365344454,
+          "rss_kb": 132504,
+          "peak_kb": 132504,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 7247,
+          "errors": 0,
+          "rps": 1446.4186840438742,
+          "lat": {
+            "p50": 32968,
+            "p90": 91907,
+            "p99": 167144
+          },
+          "cpu_ms_per_1k": 2333.379329377677,
+          "rss_kb": 132512,
+          "peak_kb": 132512,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 8496,
+          "errors": 0,
+          "rps": 1698.862154078867,
+          "lat": {
+            "p50": 113862,
+            "p90": 275558,
+            "p99": 531127
+          },
+          "cpu_ms_per_1k": 2650.6591337099853,
+          "rss_kb": 142372,
+          "peak_kb": 142372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 4807,
+          "errors": 0,
+          "rps": 961.2059949880016,
+          "lat": {
+            "p50": 1007,
+            "p90": 1152,
+            "p99": 1405
+          },
+          "cpu_ms_per_1k": 715.6230497191591,
+          "rss_kb": 142372,
+          "peak_kb": 142372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 18677,
+          "errors": 0,
+          "rps": 3732.352190313737,
+          "lat": {
+            "p50": 3194,
+            "p90": 7653,
+            "p99": 19687
+          },
+          "cpu_ms_per_1k": 805.8039299673401,
+          "rss_kb": 142372,
+          "peak_kb": 142372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 23649,
+          "errors": 0,
+          "rps": 4724.80990147218,
+          "lat": {
+            "p50": 11188,
+            "p90": 23990,
+            "p99": 40978
+          },
+          "cpu_ms_per_1k": 803.4166349528522,
+          "rss_kb": 142376,
+          "peak_kb": 142376,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 25622,
+          "errors": 0,
+          "rps": 5123.615499662215,
+          "lat": {
+            "p50": 41649,
+            "p90": 85142,
+            "p99": 162276
+          },
+          "cpu_ms_per_1k": 864.4914526578713,
+          "rss_kb": 142780,
+          "peak_kb": 142780,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 11275,
+          "errors": 0,
+          "rps": 2254.5178618862606,
+          "lat": {
+            "p50": 405,
+            "p90": 496,
+            "p99": 1022
+          },
+          "cpu_ms_per_1k": 172.062084257206,
+          "rss_kb": 142780,
+          "peak_kb": 142780,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 65955,
+          "errors": 0,
+          "rps": 13188.578653452983,
+          "lat": {
+            "p50": 855,
+            "p90": 2096,
+            "p99": 6620
+          },
+          "cpu_ms_per_1k": 237.28299598210867,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 62276,
+          "errors": 0,
+          "rps": 12422.354546752644,
+          "lat": {
+            "p50": 3121,
+            "p90": 11051,
+            "p99": 28569
+          },
+          "cpu_ms_per_1k": 241.50555591239126,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 37313,
+          "errors": 0,
+          "rps": 7456.2958643939055,
+          "lat": {
+            "p50": 30659,
+            "p90": 60123,
+            "p99": 92148
+          },
+          "cpu_ms_per_1k": 254.06694717658775,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.124469840738541,
+          "lat": {
+            "p50": 298574,
+            "p90": 314364,
+            "p99": 328031
+          },
+          "cpu_ms_per_1k": 7599.999999997635,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": {
+            "p50": 23598,
+            "p90": 28725,
+            "p99": 32615
+          },
+          "ttft": {
+            "p50": 35304,
+            "p90": 41153,
+            "p99": 47722
+          },
+          "chunk": {
+            "p50": 383,
+            "p90": 2709,
+            "p99": 11865
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 304,
+          "errors": 0,
+          "rps": 50.656870522845594,
+          "lat": {
+            "p50": 293039,
+            "p90": 304584,
+            "p99": 336500
+          },
+          "cpu_ms_per_1k": 4671.052631578813,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": {
+            "p50": 23204,
+            "p90": 25581,
+            "p99": 33696
+          },
+          "ttft": {
+            "p50": 35287,
+            "p90": 37282,
+            "p99": 50926
+          },
+          "chunk": {
+            "p50": 471,
+            "p90": 719,
+            "p99": 5818
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9991491383902895,
+          "lat": {
+            "p50": 313373,
+            "p90": 327585,
+            "p99": 331287
+          },
+          "cpu_ms_per_1k": 10000.000000000378,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": {
+            "p50": 23745,
+            "p90": 28626,
+            "p99": 36675
+          },
+          "ttft": {
+            "p50": 47710,
+            "p90": 54771,
+            "p99": 60706
+          },
+          "chunk": {
+            "p50": 786,
+            "p90": 1677,
+            "p99": 6966
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.996552055691126,
+          "lat": {
+            "p50": 310285,
+            "p90": 314946,
+            "p99": 318947
+          },
+          "cpu_ms_per_1k": 5104.166666666762,
+          "rss_kb": 142908,
+          "peak_kb": 142908,
+          "ttfb": {
+            "p50": 22460,
+            "p90": 23177,
+            "p99": 23723
+          },
+          "ttft": {
+            "p50": 46624,
+            "p90": 47907,
+            "p99": 48778
+          },
+          "chunk": {
+            "p50": 500,
+            "p90": 606,
+            "p99": 1266
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 15,
+          "errors": 0,
+          "rps": 2.4994152526371227,
+          "lat": {
+            "p50": 366679,
+            "p90": 423086,
+            "p99": 433223
+          },
+          "cpu_ms_per_1k": 397333.33333333576,
+          "rss_kb": 183544,
+          "peak_kb": 193824,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 85,
+          "errors": 0,
+          "rps": 14.16440430912454,
+          "lat": {
+            "p50": 507228,
+            "p90": 560140,
+            "p99": 602834
+          },
+          "cpu_ms_per_1k": 556235.2941176468,
+          "rss_kb": 278372,
+          "peak_kb": 304176,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 3.9993653647064673,
+          "lat": {
+            "p50": 221811,
+            "p90": 268568,
+            "p99": 396684
+          },
+          "cpu_ms_per_1k": 244166.66666666724,
+          "rss_kb": 233812,
+          "peak_kb": 235504,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 76,
+          "errors": 0,
+          "rps": 12.664467619063016,
+          "lat": {
+            "p50": 578393,
+            "p90": 888822,
+            "p99": 998939
+          },
+          "cpu_ms_per_1k": 370131.5789473698,
+          "rss_kb": 239020,
+          "peak_kb": 283068,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 0,
+      "server": "direct",
+      "loadavg": 15.02,
+      "startup_ms": null,
+      "idle_rss_kb": null,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 20504,
+          "errors": 0,
+          "rps": 4099.947242133235,
+          "lat": {
+            "p50": 240,
+            "p90": 274,
+            "p99": 309
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 228233,
+          "errors": 0,
+          "rps": 45637.71884514747,
+          "lat": {
+            "p50": 341,
+            "p90": 443,
+            "p99": 577
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 266234,
+          "errors": 0,
+          "rps": 53204.412736030565,
+          "lat": {
+            "p50": 972,
+            "p90": 1537,
+            "p99": 6153
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 199728,
+          "errors": 0,
+          "rps": 39934.22777022096,
+          "lat": {
+            "p50": 5512,
+            "p90": 11505,
+            "p99": 18865
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 7457,
+          "errors": 0,
+          "rps": 1491.206682053428,
+          "lat": {
+            "p50": 358,
+            "p90": 1137,
+            "p99": 6581
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 79919,
+          "errors": 0,
+          "rps": 15982.87497512794,
+          "lat": {
+            "p50": 679,
+            "p90": 1479,
+            "p99": 6483
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 54255,
+          "errors": 0,
+          "rps": 10843.776734766416,
+          "lat": {
+            "p50": 4679,
+            "p90": 10705,
+            "p99": 29352
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 94695,
+          "errors": 0,
+          "rps": 18923.66458014182,
+          "lat": {
+            "p50": 11623,
+            "p90": 23514,
+            "p99": 56195
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 1564,
+          "errors": 0,
+          "rps": 312.38131994012775,
+          "lat": {
+            "p50": 1283,
+            "p90": 8011,
+            "p99": 13666
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 25006,
+          "errors": 0,
+          "rps": 4991.1189967455775,
+          "lat": {
+            "p50": 1848,
+            "p90": 7232,
+            "p99": 12322
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 45583,
+          "errors": 0,
+          "rps": 9114.601736590314,
+          "lat": {
+            "p50": 5358,
+            "p90": 12376,
+            "p99": 41105
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 104867,
+          "errors": 0,
+          "rps": 20968.88632979175,
+          "lat": {
+            "p50": 11304,
+            "p90": 21295,
+            "p99": 34416
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 3928,
+          "errors": 0,
+          "rps": 785.1467691595926,
+          "lat": {
+            "p50": 771,
+            "p90": 1641,
+            "p99": 10007
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 24930,
+          "errors": 0,
+          "rps": 4985.487533759625,
+          "lat": {
+            "p50": 992,
+            "p90": 8019,
+            "p99": 17364
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 138718,
+          "errors": 0,
+          "rps": 27723.93488068958,
+          "lat": {
+            "p50": 1252,
+            "p90": 5733,
+            "p99": 10991
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 242282,
+          "errors": 0,
+          "rps": 48379.00141578138,
+          "lat": {
+            "p50": 4366,
+            "p90": 9558,
+            "p99": 16164
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.124313799539962,
+          "lat": {
+            "p50": 301325,
+            "p90": 307391,
+            "p99": 370619
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 22031,
+            "p90": 25223,
+            "p99": 29238
+          },
+          "ttft": {
+            "p50": 34520,
+            "p90": 38348,
+            "p99": 41273
+          },
+          "chunk": {
+            "p50": 381,
+            "p90": 658,
+            "p99": 4295
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.979409172752554,
+          "lat": {
+            "p50": 308798,
+            "p90": 331465,
+            "p99": 337699
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21863,
+            "p90": 23587,
+            "p99": 28059
+          },
+          "ttft": {
+            "p50": 34344,
+            "p90": 37842,
+            "p99": 42752
+          },
+          "chunk": {
+            "p50": 393,
+            "p90": 1377,
+            "p99": 6413
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9996889007642578,
+          "lat": {
+            "p50": 308861,
+            "p90": 317319,
+            "p99": 326719
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21571,
+            "p90": 25167,
+            "p99": 30712
+          },
+          "ttft": {
+            "p50": 45977,
+            "p90": 49952,
+            "p99": 58067
+          },
+          "chunk": {
+            "p50": 183,
+            "p90": 557,
+            "p99": 3770
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 272,
+          "errors": 0,
+          "rps": 45.327345998873,
+          "lat": {
+            "p50": 321134,
+            "p90": 346013,
+            "p99": 350417
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 22228,
+            "p90": 25881,
+            "p99": 38134
+          },
+          "ttft": {
+            "p50": 47136,
+            "p90": 51214,
+            "p99": 67753
+          },
+          "chunk": {
+            "p50": 411,
+            "p90": 1602,
+            "p99": 8064
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 1542,
+          "errors": 0,
+          "rps": 256.9189204565868,
+          "lat": {
+            "p50": 2724,
+            "p90": 7791,
+            "p99": 11048
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 4904,
+          "errors": 0,
+          "rps": 817.1978569106183,
+          "lat": {
+            "p50": 8769,
+            "p90": 14625,
+            "p99": 21959
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 1234,
+          "errors": 0,
+          "rps": 205.59747564607014,
+          "lat": {
+            "p50": 3514,
+            "p90": 9651,
+            "p99": 15173
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 4971,
+          "errors": 0,
+          "rps": 828.2625567272001,
+          "lat": {
+            "p50": 8780,
+            "p90": 15448,
+            "p99": 24793
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "server": "rust",
+      "loadavg": 27.43,
+      "startup_ms": 1024.504229,
+      "idle_rss_kb": 20628,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 4384,
+          "errors": 0,
+          "rps": 876.4921105844513,
+          "lat": {
+            "p50": 1074,
+            "p90": 1281,
+            "p99": 2885
+          },
+          "cpu_ms_per_1k": 757.2992700729928,
+          "rss_kb": 73308,
+          "peak_kb": 73308,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 24795,
+          "errors": 0,
+          "rps": 4956.257815553332,
+          "lat": {
+            "p50": 2763,
+            "p90": 5195,
+            "p99": 8707
+          },
+          "cpu_ms_per_1k": 820.7299858842512,
+          "rss_kb": 74492,
+          "peak_kb": 74492,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 26631,
+          "errors": 0,
+          "rps": 5323.947740111391,
+          "lat": {
+            "p50": 10831,
+            "p90": 17875,
+            "p99": 34896
+          },
+          "cpu_ms_per_1k": 972.550786677181,
+          "rss_kb": 82276,
+          "peak_kb": 82276,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 25831,
+          "errors": 0,
+          "rps": 5165.493321255903,
+          "lat": {
+            "p50": 45354,
+            "p90": 77349,
+            "p99": 113982
+          },
+          "cpu_ms_per_1k": 975.5719871472257,
+          "rss_kb": 131856,
+          "peak_kb": 131856,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 2131,
+          "errors": 0,
+          "rps": 426.132714155794,
+          "lat": {
+            "p50": 2288,
+            "p90": 2619,
+            "p99": 3293
+          },
+          "cpu_ms_per_1k": 2679.493195682782,
+          "rss_kb": 131868,
+          "peak_kb": 131868,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 14475,
+          "errors": 0,
+          "rps": 2894.444408501344,
+          "lat": {
+            "p50": 5313,
+            "p90": 7329,
+            "p99": 10057
+          },
+          "cpu_ms_per_1k": 2391.0189982728853,
+          "rss_kb": 131884,
+          "peak_kb": 131884,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 6998,
+          "errors": 0,
+          "rps": 1399.2562324079295,
+          "lat": {
+            "p50": 30561,
+            "p90": 107514,
+            "p99": 187825
+          },
+          "cpu_ms_per_1k": 2625.0357244927127,
+          "rss_kb": 131976,
+          "peak_kb": 131976,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 8531,
+          "errors": 1,
+          "rps": 1706.115082898871,
+          "lat": {
+            "p50": 115554,
+            "p90": 261922,
+            "p99": 483602
+          },
+          "cpu_ms_per_1k": 2794.514124956043,
+          "rss_kb": 149368,
+          "peak_kb": 149368,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 1633,
+          "errors": 0,
+          "rps": 326.5816243623746,
+          "lat": {
+            "p50": 2345,
+            "p90": 5483,
+            "p99": 11912
+          },
+          "cpu_ms_per_1k": 2327.0055113288495,
+          "rss_kb": 149368,
+          "peak_kb": 149368,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 8708,
+          "errors": 0,
+          "rps": 1738.8491833676023,
+          "lat": {
+            "p50": 8161,
+            "p90": 14627,
+            "p99": 24106
+          },
+          "cpu_ms_per_1k": 2008.4979329352363,
+          "rss_kb": 149372,
+          "peak_kb": 149372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 12153,
+          "errors": 0,
+          "rps": 2430.130728633595,
+          "lat": {
+            "p50": 22925,
+            "p90": 46442,
+            "p99": 71052
+          },
+          "cpu_ms_per_1k": 2451.246605776353,
+          "rss_kb": 149380,
+          "peak_kb": 149380,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 8632,
+          "errors": 0,
+          "rps": 1725.200051595793,
+          "lat": {
+            "p50": 124100,
+            "p90": 264225,
+            "p99": 379377
+          },
+          "cpu_ms_per_1k": 2547.4976830398527,
+          "rss_kb": 156960,
+          "peak_kb": 156960,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 4284,
+          "errors": 0,
+          "rps": 856.5925379129172,
+          "lat": {
+            "p50": 1069,
+            "p90": 1296,
+            "p99": 3532
+          },
+          "cpu_ms_per_1k": 753.9682539682582,
+          "rss_kb": 156960,
+          "peak_kb": 156960,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 13822,
+          "errors": 0,
+          "rps": 2761.978986214842,
+          "lat": {
+            "p50": 4015,
+            "p90": 11963,
+            "p99": 25436
+          },
+          "cpu_ms_per_1k": 805.2380263348283,
+          "rss_kb": 156960,
+          "peak_kb": 156960,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 12362,
+          "errors": 0,
+          "rps": 2471.816213367812,
+          "lat": {
+            "p50": 18969,
+            "p90": 52861,
+            "p99": 100302
+          },
+          "cpu_ms_per_1k": 835.625303348976,
+          "rss_kb": 156836,
+          "peak_kb": 156836,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 7692,
+          "errors": 0,
+          "rps": 1538.1640065720262,
+          "lat": {
+            "p50": 144307,
+            "p90": 276301,
+            "p99": 407459
+          },
+          "cpu_ms_per_1k": 906.1362454498142,
+          "rss_kb": 157840,
+          "peak_kb": 157840,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 7987,
+          "errors": 0,
+          "rps": 1597.0246260691458,
+          "lat": {
+            "p50": 459,
+            "p90": 858,
+            "p99": 4643
+          },
+          "cpu_ms_per_1k": 201.57756354075545,
+          "rss_kb": 157840,
+          "peak_kb": 157840,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 80529,
+          "errors": 0,
+          "rps": 16102.851039801099,
+          "lat": {
+            "p50": 773,
+            "p90": 1480,
+            "p99": 4924
+          },
+          "cpu_ms_per_1k": 230.72433533261292,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 59962,
+          "errors": 0,
+          "rps": 11987.837992288521,
+          "lat": {
+            "p50": 4280,
+            "p90": 9985,
+            "p99": 18263
+          },
+          "cpu_ms_per_1k": 239.98532403855754,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 60995,
+          "errors": 0,
+          "rps": 12191.89173453985,
+          "lat": {
+            "p50": 19238,
+            "p90": 35412,
+            "p99": 53809
+          },
+          "cpu_ms_per_1k": 250.5123370768091,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.1245564817056475,
+          "lat": {
+            "p50": 306523,
+            "p90": 320406,
+            "p99": 345284
+          },
+          "cpu_ms_per_1k": 8799.999999998818,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": {
+            "p50": 26695,
+            "p90": 31126,
+            "p99": 40220
+          },
+          "ttft": {
+            "p50": 37706,
+            "p90": 46448,
+            "p99": 50477
+          },
+          "chunk": {
+            "p50": 985,
+            "p90": 5257,
+            "p99": 11568
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 276,
+          "errors": 0,
+          "rps": 45.992396805249136,
+          "lat": {
+            "p50": 314832,
+            "p90": 339606,
+            "p99": 360850
+          },
+          "cpu_ms_per_1k": 4347.82608695648,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": {
+            "p50": 27948,
+            "p90": 35581,
+            "p99": 44101
+          },
+          "ttft": {
+            "p50": 40138,
+            "p90": 48749,
+            "p99": 60135
+          },
+          "chunk": {
+            "p50": 1212,
+            "p90": 5772,
+            "p99": 12112
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.124888481714142,
+          "lat": {
+            "p50": 308755,
+            "p90": 311268,
+            "p99": 314318
+          },
+          "cpu_ms_per_1k": 9200.000000000728,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": {
+            "p50": 22614,
+            "p90": 23229,
+            "p99": 24236
+          },
+          "ttft": {
+            "p50": 46757,
+            "p90": 47450,
+            "p99": 51979
+          },
+          "chunk": {
+            "p50": 356,
+            "p90": 453,
+            "p99": 3813
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 274,
+          "errors": 0,
+          "rps": 45.62762364903706,
+          "lat": {
+            "p50": 316748,
+            "p90": 342517,
+            "p99": 354064
+          },
+          "cpu_ms_per_1k": 4598.540145985368,
+          "rss_kb": 157968,
+          "peak_kb": 157968,
+          "ttfb": {
+            "p50": 23385,
+            "p90": 29055,
+            "p99": 33994
+          },
+          "ttft": {
+            "p50": 48486,
+            "p90": 55611,
+            "p99": 62843
+          },
+          "chunk": {
+            "p50": 655,
+            "p90": 2842,
+            "p99": 7547
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 12,
+          "errors": 0,
+          "rps": 1.9994831879152173,
+          "lat": {
+            "p50": 410390,
+            "p90": 542769,
+            "p99": 899465
+          },
+          "cpu_ms_per_1k": 454999.9999999983,
+          "rss_kb": 205776,
+          "peak_kb": 213924,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 58,
+          "errors": 0,
+          "rps": 9.659972550408538,
+          "lat": {
+            "p50": 664162,
+            "p90": 932035,
+            "p99": 1228180
+          },
+          "cpu_ms_per_1k": 644137.931034483,
+          "rss_kb": 288324,
+          "peak_kb": 323260,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 17,
+          "errors": 0,
+          "rps": 2.8325001156576444,
+          "lat": {
+            "p50": 329958,
+            "p90": 373086,
+            "p99": 472292
+          },
+          "cpu_ms_per_1k": 341176.4705882326,
+          "rss_kb": 237160,
+          "peak_kb": 240516,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 101,
+          "errors": 0,
+          "rps": 16.829173831924173,
+          "lat": {
+            "p50": 406386,
+            "p90": 612572,
+            "p99": 701096
+          },
+          "cpu_ms_per_1k": 372376.2376237625,
+          "rss_kb": 254780,
+          "peak_kb": 282992,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "server": "go",
+      "loadavg": 20.75,
+      "startup_ms": 85.217205,
+      "idle_rss_kb": 53908,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 1479,
+          "errors": 0,
+          "rps": 295.7457623565533,
+          "lat": {
+            "p50": 1978,
+            "p90": 8044,
+            "p99": 12953
+          },
+          "cpu_ms_per_1k": 757.268424611222,
+          "rss_kb": 67936,
+          "peak_kb": 68212,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 24375,
+          "errors": 0,
+          "rps": 4874.1023823808,
+          "lat": {
+            "p50": 2607,
+            "p90": 5727,
+            "p99": 12066
+          },
+          "cpu_ms_per_1k": 739.6923076923077,
+          "rss_kb": 80636,
+          "peak_kb": 86300,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 10540,
+          "errors": 0,
+          "rps": 2106.3401955005847,
+          "lat": {
+            "p50": 27145,
+            "p90": 54042,
+            "p99": 79368
+          },
+          "cpu_ms_per_1k": 702.0872865275147,
+          "rss_kb": 83992,
+          "peak_kb": 90956,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 12640,
+          "errors": 0,
+          "rps": 2527.500075650037,
+          "lat": {
+            "p50": 96619,
+            "p90": 144830,
+            "p99": 198901
+          },
+          "cpu_ms_per_1k": 757.9113924050631,
+          "rss_kb": 106328,
+          "peak_kb": 120412,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 874,
+          "errors": 0,
+          "rps": 174.78256148940554,
+          "lat": {
+            "p50": 4551,
+            "p90": 10234,
+            "p99": 16735
+          },
+          "cpu_ms_per_1k": 1807.7803203661308,
+          "rss_kb": 68740,
+          "peak_kb": 70148,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 4289,
+          "errors": 0,
+          "rps": 857.4986621076554,
+          "lat": {
+            "p50": 16615,
+            "p90": 31906,
+            "p99": 53373
+          },
+          "cpu_ms_per_1k": 1727.6754488225686,
+          "rss_kb": 77552,
+          "peak_kb": 90236,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 4766,
+          "errors": 0,
+          "rps": 952.9344825310242,
+          "lat": {
+            "p50": 61804,
+            "p90": 108240,
+            "p99": 163775
+          },
+          "cpu_ms_per_1k": 1821.233738984475,
+          "rss_kb": 79868,
+          "peak_kb": 94068,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 5533,
+          "errors": 0,
+          "rps": 1106.3457924932982,
+          "lat": {
+            "p50": 213280,
+            "p90": 369610,
+            "p99": 460508
+          },
+          "cpu_ms_per_1k": 2000.7229351165747,
+          "rss_kb": 123556,
+          "peak_kb": 128036,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2448,
+          "errors": 0,
+          "rps": 489.50789145389984,
+          "lat": {
+            "p50": 1866,
+            "p90": 2334,
+            "p99": 6285
+          },
+          "cpu_ms_per_1k": 2022.0588235294128,
+          "rss_kb": 69088,
+          "peak_kb": 70112,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 14147,
+          "errors": 0,
+          "rps": 2828.446309564544,
+          "lat": {
+            "p50": 4582,
+            "p90": 8252,
+            "p99": 26058
+          },
+          "cpu_ms_per_1k": 1886.619071181169,
+          "rss_kb": 79972,
+          "peak_kb": 88164,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 5011,
+          "errors": 0,
+          "rps": 1001.9472780365031,
+          "lat": {
+            "p50": 59750,
+            "p90": 102874,
+            "p99": 141722
+          },
+          "cpu_ms_per_1k": 1953.7018559169812,
+          "rss_kb": 85112,
+          "peak_kb": 87788,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 5721,
+          "errors": 0,
+          "rps": 1144.0510207608356,
+          "lat": {
+            "p50": 209697,
+            "p90": 319461,
+            "p99": 439420
+          },
+          "cpu_ms_per_1k": 2125.502534521936,
+          "rss_kb": 111568,
+          "peak_kb": 120440,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 3259,
+          "errors": 0,
+          "rps": 651.6065916953088,
+          "lat": {
+            "p50": 936,
+            "p90": 2486,
+            "p99": 9050
+          },
+          "cpu_ms_per_1k": 739.4906413010116,
+          "rss_kb": 70788,
+          "peak_kb": 71428,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 26339,
+          "errors": 0,
+          "rps": 5265.978809675678,
+          "lat": {
+            "p50": 2584,
+            "p90": 5047,
+            "p99": 9283
+          },
+          "cpu_ms_per_1k": 763.1269220547474,
+          "rss_kb": 82880,
+          "peak_kb": 85764,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 25985,
+          "errors": 0,
+          "rps": 5183.023871433597,
+          "lat": {
+            "p50": 9907,
+            "p90": 21862,
+            "p99": 49752
+          },
+          "cpu_ms_per_1k": 857.032903598229,
+          "rss_kb": 87112,
+          "peak_kb": 94396,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 22971,
+          "errors": 0,
+          "rps": 4593.31819406504,
+          "lat": {
+            "p50": 50123,
+            "p90": 84388,
+            "p99": 124581
+          },
+          "cpu_ms_per_1k": 830.6125114274538,
+          "rss_kb": 113176,
+          "peak_kb": 122236,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 11344,
+          "errors": 0,
+          "rps": 2268.300434502566,
+          "lat": {
+            "p50": 424,
+            "p90": 505,
+            "p99": 810
+          },
+          "cpu_ms_per_1k": 321.75599435825404,
+          "rss_kb": 71888,
+          "peak_kb": 72632,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 31328,
+          "errors": 0,
+          "rps": 6245.385423600952,
+          "lat": {
+            "p50": 1536,
+            "p90": 5430,
+            "p99": 13852
+          },
+          "cpu_ms_per_1k": 318.8840653728297,
+          "rss_kb": 79712,
+          "peak_kb": 90836,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 26405,
+          "errors": 0,
+          "rps": 5276.818372616256,
+          "lat": {
+            "p50": 7722,
+            "p90": 28888,
+            "p99": 57192
+          },
+          "cpu_ms_per_1k": 336.299943192577,
+          "rss_kb": 95100,
+          "peak_kb": 101496,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 56417,
+          "errors": 0,
+          "rps": 11282.42320164647,
+          "lat": {
+            "p50": 7475,
+            "p90": 65911,
+            "p99": 127756
+          },
+          "cpu_ms_per_1k": 327.73809312795703,
+          "rss_kb": 112756,
+          "peak_kb": 125388,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 3.2481563574140595,
+          "lat": {
+            "p50": 290516,
+            "p90": 300782,
+            "p99": 306686
+          },
+          "cpu_ms_per_1k": 8846.153846154546,
+          "rss_kb": 85688,
+          "peak_kb": 108624,
+          "ttfb": {
+            "p50": 22677,
+            "p90": 24493,
+            "p99": 25029
+          },
+          "ttft": {
+            "p50": 34673,
+            "p90": 37343,
+            "p99": 39547
+          },
+          "chunk": {
+            "p50": 367,
+            "p90": 1163,
+            "p99": 5828
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 272,
+          "errors": 0,
+          "rps": 45.324032282912476,
+          "lat": {
+            "p50": 320991,
+            "p90": 347945,
+            "p99": 360160
+          },
+          "cpu_ms_per_1k": 5183.823529411857,
+          "rss_kb": 74292,
+          "peak_kb": 74292,
+          "ttfb": {
+            "p50": 27043,
+            "p90": 38785,
+            "p99": 51143
+          },
+          "ttft": {
+            "p50": 41301,
+            "p90": 51150,
+            "p99": 63596
+          },
+          "chunk": {
+            "p50": 1341,
+            "p90": 6582,
+            "p99": 36330
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9984455874419904,
+          "lat": {
+            "p50": 319869,
+            "p90": 327443,
+            "p99": 332706
+          },
+          "cpu_ms_per_1k": 8749.999999999147,
+          "rss_kb": 70924,
+          "peak_kb": 70952,
+          "ttfb": {
+            "p50": 23636,
+            "p90": 26181,
+            "p99": 27995
+          },
+          "ttft": {
+            "p50": 47741,
+            "p90": 55436,
+            "p99": 58319
+          },
+          "chunk": {
+            "p50": 951,
+            "p90": 1978,
+            "p99": 5338
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 280,
+          "errors": 0,
+          "rps": 46.65613046824346,
+          "lat": {
+            "p50": 322143,
+            "p90": 356894,
+            "p99": 384131
+          },
+          "cpu_ms_per_1k": 5749.999999999845,
+          "rss_kb": 73488,
+          "peak_kb": 73488,
+          "ttfb": {
+            "p50": 23550,
+            "p90": 32032,
+            "p99": 41890
+          },
+          "ttft": {
+            "p50": 48684,
+            "p90": 58874,
+            "p99": 82733
+          },
+          "chunk": {
+            "p50": 778,
+            "p90": 4649,
+            "p99": 22220
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 20,
+          "errors": 0,
+          "rps": 3.331375587728298,
+          "lat": {
+            "p50": 274867,
+            "p90": 293786,
+            "p99": 333281
+          },
+          "cpu_ms_per_1k": 337500.0,
+          "rss_kb": 118728,
+          "peak_kb": 118728,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 49,
+          "errors": 0,
+          "rps": 8.165168453515745,
+          "lat": {
+            "p50": 858357,
+            "p90": 1006945,
+            "p99": 1121553
+          },
+          "cpu_ms_per_1k": 490612.2448979584,
+          "rss_kb": 283680,
+          "peak_kb": 341112,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 4.330761051822037,
+          "lat": {
+            "p50": 206783,
+            "p90": 343433,
+            "p99": 371755
+          },
+          "cpu_ms_per_1k": 227692.30769230612,
+          "rss_kb": 93924,
+          "peak_kb": 128336,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 177,
+          "errors": 0,
+          "rps": 29.497100838114658,
+          "lat": {
+            "p50": 211279,
+            "p90": 393693,
+            "p99": 611181
+          },
+          "cpu_ms_per_1k": 178926.55367231646,
+          "rss_kb": 265724,
+          "peak_kb": 332324,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "server": "direct",
+      "loadavg": 20.66,
+      "startup_ms": null,
+      "idle_rss_kb": null,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 16805,
+          "errors": 0,
+          "rps": 3358.177995419685,
+          "lat": {
+            "p50": 240,
+            "p90": 336,
+            "p99": 931
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 120183,
+          "errors": 0,
+          "rps": 24031.84311294238,
+          "lat": {
+            "p50": 415,
+            "p90": 764,
+            "p99": 5437
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 274991,
+          "errors": 0,
+          "rps": 54993.5051164786,
+          "lat": {
+            "p50": 1005,
+            "p90": 1508,
+            "p99": 5679
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 553200,
+          "errors": 0,
+          "rps": 110625.11519162575,
+          "lat": {
+            "p50": 2076,
+            "p90": 3639,
+            "p99": 6500
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 14939,
+          "errors": 0,
+          "rps": 2987.20448465508,
+          "lat": {
+            "p50": 326,
+            "p90": 396,
+            "p99": 489
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 132416,
+          "errors": 0,
+          "rps": 26478.477807085103,
+          "lat": {
+            "p50": 566,
+            "p90": 780,
+            "p99": 1376
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 221465,
+          "errors": 0,
+          "rps": 44285.29688260434,
+          "lat": {
+            "p50": 1349,
+            "p90": 2099,
+            "p99": 3383
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 333625,
+          "errors": 0,
+          "rps": 66712.30104664656,
+          "lat": {
+            "p50": 3542,
+            "p90": 5946,
+            "p99": 9056
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 15389,
+          "errors": 0,
+          "rps": 3077.328385269247,
+          "lat": {
+            "p50": 313,
+            "p90": 372,
+            "p99": 474
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 114014,
+          "errors": 0,
+          "rps": 22790.989253549025,
+          "lat": {
+            "p50": 598,
+            "p90": 889,
+            "p99": 3907
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 112034,
+          "errors": 0,
+          "rps": 22403.885375493628,
+          "lat": {
+            "p50": 2259,
+            "p90": 5270,
+            "p99": 10294
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 184055,
+          "errors": 0,
+          "rps": 36803.85330999194,
+          "lat": {
+            "p50": 5880,
+            "p90": 12782,
+            "p99": 20566
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 12070,
+          "errors": 0,
+          "rps": 2413.6122903551836,
+          "lat": {
+            "p50": 275,
+            "p90": 570,
+            "p99": 3711
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 151633,
+          "errors": 0,
+          "rps": 30324.177832036323,
+          "lat": {
+            "p50": 415,
+            "p90": 662,
+            "p99": 3864
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 342309,
+          "errors": 0,
+          "rps": 68444.09449834823,
+          "lat": {
+            "p50": 894,
+            "p90": 1284,
+            "p99": 1961
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 456581,
+          "errors": 0,
+          "rps": 91304.26589331789,
+          "lat": {
+            "p50": 2441,
+            "p90": 4477,
+            "p99": 8834
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.1245270973558927,
+          "lat": {
+            "p50": 302140,
+            "p90": 324019,
+            "p99": 331741
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21551,
+            "p90": 22489,
+            "p99": 25831
+          },
+          "ttft": {
+            "p50": 33755,
+            "p90": 37558,
+            "p99": 39541
+          },
+          "chunk": {
+            "p50": 214,
+            "p90": 2099,
+            "p99": 8987
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 307,
+          "errors": 0,
+          "rps": 51.15455829746006,
+          "lat": {
+            "p50": 290510,
+            "p90": 292617,
+            "p99": 294484
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21382,
+            "p90": 21927,
+            "p99": 22313
+          },
+          "ttft": {
+            "p50": 33650,
+            "p90": 34315,
+            "p99": 34871
+          },
+          "chunk": {
+            "p50": 182,
+            "p90": 228,
+            "p99": 285
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.1245644650063698,
+          "lat": {
+            "p50": 308481,
+            "p90": 315620,
+            "p99": 318099
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21461,
+            "p90": 21564,
+            "p99": 23006
+          },
+          "ttft": {
+            "p50": 45896,
+            "p90": 47161,
+            "p99": 47669
+          },
+          "chunk": {
+            "p50": 138,
+            "p90": 161,
+            "p99": 221
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.98663713716309,
+          "lat": {
+            "p50": 310580,
+            "p90": 316191,
+            "p99": 334015
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21645,
+            "p90": 22201,
+            "p99": 24473
+          },
+          "ttft": {
+            "p50": 46262,
+            "p90": 47181,
+            "p99": 50689
+          },
+          "chunk": {
+            "p50": 196,
+            "p90": 303,
+            "p99": 1002
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 4154,
+          "errors": 0,
+          "rps": 692.2725534184458,
+          "lat": {
+            "p50": 1425,
+            "p90": 1610,
+            "p99": 2108
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 15112,
+          "errors": 0,
+          "rps": 2518.176679848302,
+          "lat": {
+            "p50": 2996,
+            "p90": 4330,
+            "p99": 5650
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 3949,
+          "errors": 0,
+          "rps": 658.1007005170654,
+          "lat": {
+            "p50": 1485,
+            "p90": 1751,
+            "p99": 2180
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 14498,
+          "errors": 0,
+          "rps": 2416.2015456470285,
+          "lat": {
+            "p50": 3076,
+            "p90": 4471,
+            "p99": 6259
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "server": "go",
+      "loadavg": 10.26,
+      "startup_ms": 1013.567209,
+      "idle_rss_kb": 53836,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 3727,
+          "errors": 0,
+          "rps": 745.1404498469757,
+          "lat": {
+            "p50": 951,
+            "p90": 2001,
+            "p99": 8027
+          },
+          "cpu_ms_per_1k": 700.2951435470887,
+          "rss_kb": 67716,
+          "peak_kb": 67716,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 33432,
+          "errors": 0,
+          "rps": 6685.459160680685,
+          "lat": {
+            "p50": 2134,
+            "p90": 3728,
+            "p99": 6421
+          },
+          "cpu_ms_per_1k": 771.1174922230199,
+          "rss_kb": 70792,
+          "peak_kb": 85336,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 39161,
+          "errors": 0,
+          "rps": 7830.597327306215,
+          "lat": {
+            "p50": 7696,
+            "p90": 11727,
+            "p99": 18799
+          },
+          "cpu_ms_per_1k": 823.2680472919488,
+          "rss_kb": 80412,
+          "peak_kb": 83484,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 15350,
+          "errors": 0,
+          "rps": 3061.9042028115978,
+          "lat": {
+            "p50": 81862,
+            "p90": 138543,
+            "p99": 197905
+          },
+          "cpu_ms_per_1k": 755.0488599348537,
+          "rss_kb": 104600,
+          "peak_kb": 121204,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 3113,
+          "errors": 0,
+          "rps": 622.3895619980242,
+          "lat": {
+            "p50": 1536,
+            "p90": 1829,
+            "p99": 3322
+          },
+          "cpu_ms_per_1k": 1660.7773851590066,
+          "rss_kb": 69656,
+          "peak_kb": 70160,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 17814,
+          "errors": 0,
+          "rps": 3562.1714869006796,
+          "lat": {
+            "p50": 4103,
+            "p90": 6571,
+            "p99": 11460
+          },
+          "cpu_ms_per_1k": 1690.8049848433818,
+          "rss_kb": 79260,
+          "peak_kb": 97448,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 17665,
+          "errors": 0,
+          "rps": 3532.305721778079,
+          "lat": {
+            "p50": 17320,
+            "p90": 27302,
+            "p99": 38906
+          },
+          "cpu_ms_per_1k": 1758.845174073027,
+          "rss_kb": 90424,
+          "peak_kb": 95316,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 16511,
+          "errors": 0,
+          "rps": 3301.4737213416424,
+          "lat": {
+            "p50": 73663,
+            "p90": 107551,
+            "p99": 147877
+          },
+          "cpu_ms_per_1k": 1846.647689419174,
+          "rss_kb": 118028,
+          "peak_kb": 131340,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2062,
+          "errors": 0,
+          "rps": 412.18324140675566,
+          "lat": {
+            "p50": 2029,
+            "p90": 3471,
+            "p99": 9403
+          },
+          "cpu_ms_per_1k": 2124.1513094083393,
+          "rss_kb": 70124,
+          "peak_kb": 70828,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 15115,
+          "errors": 0,
+          "rps": 3022.5425327470925,
+          "lat": {
+            "p50": 4514,
+            "p90": 7950,
+            "p99": 19190
+          },
+          "cpu_ms_per_1k": 1879.5898114455856,
+          "rss_kb": 79628,
+          "peak_kb": 88836,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 11311,
+          "errors": 0,
+          "rps": 2261.736984894358,
+          "lat": {
+            "p50": 24557,
+            "p90": 47869,
+            "p99": 84694
+          },
+          "cpu_ms_per_1k": 2041.3756520201603,
+          "rss_kb": 83520,
+          "peak_kb": 90324,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 14691,
+          "errors": 0,
+          "rps": 2936.9145600750708,
+          "lat": {
+            "p50": 79605,
+            "p90": 124576,
+            "p99": 181598
+          },
+          "cpu_ms_per_1k": 2183.649853651895,
+          "rss_kb": 113076,
+          "peak_kb": 123048,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 3255,
+          "errors": 0,
+          "rps": 650.7694630955439,
+          "lat": {
+            "p50": 1053,
+            "p90": 2418,
+            "p99": 8592
+          },
+          "cpu_ms_per_1k": 761.9047619047675,
+          "rss_kb": 75040,
+          "peak_kb": 75848,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 14685,
+          "errors": 0,
+          "rps": 2936.5646390221286,
+          "lat": {
+            "p50": 4288,
+            "p90": 10121,
+            "p99": 18943
+          },
+          "cpu_ms_per_1k": 747.0207694926816,
+          "rss_kb": 76820,
+          "peak_kb": 85120,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 33976,
+          "errors": 0,
+          "rps": 6794.028894216223,
+          "lat": {
+            "p50": 8842,
+            "p90": 14898,
+            "p99": 22334
+          },
+          "cpu_ms_per_1k": 890.0400282552392,
+          "rss_kb": 83564,
+          "peak_kb": 95320,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 34083,
+          "errors": 0,
+          "rps": 6814.478152768347,
+          "lat": {
+            "p50": 35531,
+            "p90": 49774,
+            "p99": 74507
+          },
+          "cpu_ms_per_1k": 889.5930522547895,
+          "rss_kb": 113096,
+          "peak_kb": 120588,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 8952,
+          "errors": 0,
+          "rps": 1790.1439048771986,
+          "lat": {
+            "p50": 462,
+            "p90": 685,
+            "p99": 2716
+          },
+          "cpu_ms_per_1k": 348.52546916890134,
+          "rss_kb": 71580,
+          "peak_kb": 72484,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 31364,
+          "errors": 0,
+          "rps": 6262.504651520556,
+          "lat": {
+            "p50": 1466,
+            "p90": 5485,
+            "p99": 13988
+          },
+          "cpu_ms_per_1k": 315.9673511031746,
+          "rss_kb": 75956,
+          "peak_kb": 91616,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 53476,
+          "errors": 0,
+          "rps": 10693.865198162284,
+          "lat": {
+            "p50": 3563,
+            "p90": 14129,
+            "p99": 33366
+          },
+          "cpu_ms_per_1k": 323.1356122372669,
+          "rss_kb": 93832,
+          "peak_kb": 102992,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 102250,
+          "errors": 0,
+          "rps": 20445.42588798406,
+          "lat": {
+            "p50": 5798,
+            "p90": 34626,
+            "p99": 78255
+          },
+          "cpu_ms_per_1k": 312.1760391198051,
+          "rss_kb": 94040,
+          "peak_kb": 122720,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 3.2495812776416555,
+          "lat": {
+            "p50": 290567,
+            "p90": 306213,
+            "p99": 309198
+          },
+          "cpu_ms_per_1k": 8846.153846154546,
+          "rss_kb": 74776,
+          "peak_kb": 92388,
+          "ttfb": {
+            "p50": 22546,
+            "p90": 23153,
+            "p99": 27226
+          },
+          "ttft": {
+            "p50": 34611,
+            "p90": 35391,
+            "p99": 39000
+          },
+          "chunk": {
+            "p50": 358,
+            "p90": 565,
+            "p99": 4518
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.99096647641477,
+          "lat": {
+            "p50": 307490,
+            "p90": 348959,
+            "p99": 412094
+          },
+          "cpu_ms_per_1k": 5069.444444444176,
+          "rss_kb": 74456,
+          "peak_kb": 75156,
+          "ttfb": {
+            "p50": 25530,
+            "p90": 37579,
+            "p99": 48996
+          },
+          "ttft": {
+            "p50": 37897,
+            "p90": 53643,
+            "p99": 67890
+          },
+          "chunk": {
+            "p50": 948,
+            "p90": 6544,
+            "p99": 21891
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 23,
+          "errors": 0,
+          "rps": 2.8748059782664748,
+          "lat": {
+            "p50": 322659,
+            "p90": 341672,
+            "p99": 355819
+          },
+          "cpu_ms_per_1k": 13478.260869562844,
+          "rss_kb": 72284,
+          "peak_kb": 74608,
+          "ttfb": {
+            "p50": 23338,
+            "p90": 29513,
+            "p99": 35244
+          },
+          "ttft": {
+            "p50": 47812,
+            "p90": 52592,
+            "p99": 58563
+          },
+          "chunk": {
+            "p50": 488,
+            "p90": 2609,
+            "p99": 6955
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 288,
+          "errors": 0,
+          "rps": 47.9861810915255,
+          "lat": {
+            "p50": 311892,
+            "p90": 324994,
+            "p99": 349528
+          },
+          "cpu_ms_per_1k": 6006.944444444507,
+          "rss_kb": 72852,
+          "peak_kb": 74020,
+          "ttfb": {
+            "p50": 22823,
+            "p90": 24531,
+            "p99": 28924
+          },
+          "ttft": {
+            "p50": 47059,
+            "p90": 49049,
+            "p99": 53378
+          },
+          "chunk": {
+            "p50": 584,
+            "p90": 1252,
+            "p99": 6195
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 14,
+          "errors": 0,
+          "rps": 2.3327161914928563,
+          "lat": {
+            "p50": 350852,
+            "p90": 564260,
+            "p99": 574639
+          },
+          "cpu_ms_per_1k": 470000.0000000029,
+          "rss_kb": 92708,
+          "peak_kb": 125916,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 61,
+          "errors": 0,
+          "rps": 10.163998249528229,
+          "lat": {
+            "p50": 529111,
+            "p90": 1379478,
+            "p99": 1570375
+          },
+          "cpu_ms_per_1k": 451803.2786885237,
+          "rss_kb": 255720,
+          "peak_kb": 333844,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 32,
+          "errors": 0,
+          "rps": 5.332134481099897,
+          "lat": {
+            "p50": 164650,
+            "p90": 242819,
+            "p99": 308261
+          },
+          "cpu_ms_per_1k": 207187.49999999985,
+          "rss_kb": 91900,
+          "peak_kb": 137144,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 71,
+          "errors": 0,
+          "rps": 11.829343713668857,
+          "lat": {
+            "p50": 647769,
+            "p90": 843918,
+            "p99": 954499
+          },
+          "cpu_ms_per_1k": 207746.47887323942,
+          "rss_kb": 259560,
+          "peak_kb": 320204,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "server": "rust",
+      "loadavg": 17.8,
+      "startup_ms": 103.023484,
+      "idle_rss_kb": 20480,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 1782,
+          "errors": 0,
+          "rps": 356.3058565815294,
+          "lat": {
+            "p50": 1974,
+            "p90": 5964,
+            "p99": 12003
+          },
+          "cpu_ms_per_1k": 892.2558922558942,
+          "rss_kb": 65124,
+          "peak_kb": 65124,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 7927,
+          "errors": 0,
+          "rps": 1585.1951287474824,
+          "lat": {
+            "p50": 8620,
+            "p90": 17681,
+            "p99": 29672
+          },
+          "cpu_ms_per_1k": 878.0118582061301,
+          "rss_kb": 66276,
+          "peak_kb": 66276,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 9530,
+          "errors": 0,
+          "rps": 1904.6191971738335,
+          "lat": {
+            "p50": 30237,
+            "p90": 52692,
+            "p99": 86355
+          },
+          "cpu_ms_per_1k": 901.3641133263375,
+          "rss_kb": 77140,
+          "peak_kb": 77140,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 23162,
+          "errors": 0,
+          "rps": 4631.884138726079,
+          "lat": {
+            "p50": 49444,
+            "p90": 89502,
+            "p99": 135615
+          },
+          "cpu_ms_per_1k": 964.5108367153091,
+          "rss_kb": 116228,
+          "peak_kb": 116228,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 1715,
+          "errors": 0,
+          "rps": 342.6342920979305,
+          "lat": {
+            "p50": 2370,
+            "p90": 4330,
+            "p99": 9830
+          },
+          "cpu_ms_per_1k": 2664.723032069975,
+          "rss_kb": 116232,
+          "peak_kb": 116232,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 3883,
+          "errors": 0,
+          "rps": 776.4080331138126,
+          "lat": {
+            "p50": 18086,
+            "p90": 34341,
+            "p99": 57673
+          },
+          "cpu_ms_per_1k": 2240.535668297709,
+          "rss_kb": 116244,
+          "peak_kb": 116244,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 4964,
+          "errors": 0,
+          "rps": 992.6114762801446,
+          "lat": {
+            "p50": 45951,
+            "p90": 129827,
+            "p99": 227623
+          },
+          "cpu_ms_per_1k": 2550.362610797743,
+          "rss_kb": 114288,
+          "peak_kb": 115292,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 11361,
+          "errors": 0,
+          "rps": 2271.718323474781,
+          "lat": {
+            "p50": 87849,
+            "p90": 212445,
+            "p99": 361168
+          },
+          "cpu_ms_per_1k": 2865.064695009242,
+          "rss_kb": 126536,
+          "peak_kb": 126536,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2237,
+          "errors": 0,
+          "rps": 447.2494155942636,
+          "lat": {
+            "p50": 2224,
+            "p90": 2629,
+            "p99": 3451
+          },
+          "cpu_ms_per_1k": 2856.504246759046,
+          "rss_kb": 126536,
+          "peak_kb": 126536,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 9693,
+          "errors": 0,
+          "rps": 1938.2380650531602,
+          "lat": {
+            "p50": 7180,
+            "p90": 13085,
+            "p99": 24153
+          },
+          "cpu_ms_per_1k": 2056.122975343029,
+          "rss_kb": 126516,
+          "peak_kb": 126516,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 6067,
+          "errors": 0,
+          "rps": 1213.2560199962925,
+          "lat": {
+            "p50": 44526,
+            "p90": 92918,
+            "p99": 151652
+          },
+          "cpu_ms_per_1k": 2305.9172572935568,
+          "rss_kb": 126524,
+          "peak_kb": 126524,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 3258,
+          "errors": 0,
+          "rps": 651.5034629531741,
+          "lat": {
+            "p50": 299815,
+            "p90": 652815,
+            "p99": 918529
+          },
+          "cpu_ms_per_1k": 2728.6678944137466,
+          "rss_kb": 135668,
+          "peak_kb": 135668,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 1110,
+          "errors": 0,
+          "rps": 221.92087526591249,
+          "lat": {
+            "p50": 2813,
+            "p90": 8909,
+            "p99": 16407
+          },
+          "cpu_ms_per_1k": 1000.0000000000124,
+          "rss_kb": 135672,
+          "peak_kb": 135672,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 4584,
+          "errors": 0,
+          "rps": 916.3354902969231,
+          "lat": {
+            "p50": 14347,
+            "p90": 33358,
+            "p99": 64339
+          },
+          "cpu_ms_per_1k": 876.9633507853364,
+          "rss_kb": 135672,
+          "peak_kb": 135672,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 5684,
+          "errors": 0,
+          "rps": 1135.9040372889428,
+          "lat": {
+            "p50": 49208,
+            "p90": 92124,
+            "p99": 144967
+          },
+          "cpu_ms_per_1k": 876.1435608726231,
+          "rss_kb": 135676,
+          "peak_kb": 135676,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 11783,
+          "errors": 0,
+          "rps": 2356.2492859600306,
+          "lat": {
+            "p50": 79445,
+            "p90": 210092,
+            "p99": 406716
+          },
+          "cpu_ms_per_1k": 869.8973096834422,
+          "rss_kb": 136172,
+          "peak_kb": 136172,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 6390,
+          "errors": 0,
+          "rps": 1277.6905116713485,
+          "lat": {
+            "p50": 514,
+            "p90": 1133,
+            "p99": 5350
+          },
+          "cpu_ms_per_1k": 219.092331768389,
+          "rss_kb": 136172,
+          "peak_kb": 136172,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 40735,
+          "errors": 0,
+          "rps": 8145.361946534611,
+          "lat": {
+            "p50": 933,
+            "p90": 4210,
+            "p99": 15749
+          },
+          "cpu_ms_per_1k": 228.79587578249718,
+          "rss_kb": 136300,
+          "peak_kb": 136300,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 24994,
+          "errors": 0,
+          "rps": 4997.887715563727,
+          "lat": {
+            "p50": 11619,
+            "p90": 21582,
+            "p99": 41624
+          },
+          "cpu_ms_per_1k": 238.85732575818304,
+          "rss_kb": 136300,
+          "peak_kb": 136300,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 40999,
+          "errors": 0,
+          "rps": 8180.020716451636,
+          "lat": {
+            "p50": 28358,
+            "p90": 51712,
+            "p99": 83211
+          },
+          "cpu_ms_per_1k": 245.12792994951124,
+          "rss_kb": 136044,
+          "peak_kb": 136044,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 3.2492933412471756,
+          "lat": {
+            "p50": 296998,
+            "p90": 305427,
+            "p99": 310281
+          },
+          "cpu_ms_per_1k": 8076.92307692229,
+          "rss_kb": 135080,
+          "peak_kb": 135260,
+          "ttfb": {
+            "p50": 25383,
+            "p90": 30247,
+            "p99": 33550
+          },
+          "ttft": {
+            "p50": 38533,
+            "p90": 40660,
+            "p99": 54112
+          },
+          "chunk": {
+            "p50": 1035,
+            "p90": 3582,
+            "p99": 8097
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 272,
+          "errors": 0,
+          "rps": 45.33217425763583,
+          "lat": {
+            "p50": 324901,
+            "p90": 349595,
+            "p99": 363955
+          },
+          "cpu_ms_per_1k": 4448.529411764631,
+          "rss_kb": 134976,
+          "peak_kb": 134976,
+          "ttfb": {
+            "p50": 29847,
+            "p90": 42526,
+            "p99": 71361
+          },
+          "ttft": {
+            "p50": 42634,
+            "p90": 57750,
+            "p99": 72446
+          },
+          "chunk": {
+            "p50": 1215,
+            "p90": 5711,
+            "p99": 29415
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.999644374161577,
+          "lat": {
+            "p50": 313743,
+            "p90": 339598,
+            "p99": 355562
+          },
+          "cpu_ms_per_1k": 10833.333333332956,
+          "rss_kb": 134576,
+          "peak_kb": 134576,
+          "ttfb": {
+            "p50": 22909,
+            "p90": 26973,
+            "p99": 30484
+          },
+          "ttft": {
+            "p50": 46956,
+            "p90": 54466,
+            "p99": 69272
+          },
+          "chunk": {
+            "p50": 389,
+            "p90": 1401,
+            "p99": 11751
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 273,
+          "errors": 0,
+          "rps": 45.49226093239062,
+          "lat": {
+            "p50": 315746,
+            "p90": 336099,
+            "p99": 345130
+          },
+          "cpu_ms_per_1k": 4945.054945055029,
+          "rss_kb": 134240,
+          "peak_kb": 134364,
+          "ttfb": {
+            "p50": 23521,
+            "p90": 32000,
+            "p99": 40091
+          },
+          "ttft": {
+            "p50": 47885,
+            "p90": 57184,
+            "p99": 70182
+          },
+          "chunk": {
+            "p50": 636,
+            "p90": 2649,
+            "p99": 6341
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 14,
+          "errors": 0,
+          "rps": 2.3327983484112953,
+          "lat": {
+            "p50": 360573,
+            "p90": 490188,
+            "p99": 538766
+          },
+          "cpu_ms_per_1k": 424999.9999999992,
+          "rss_kb": 199172,
+          "peak_kb": 199172,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 80,
+          "errors": 0,
+          "rps": 13.325089504651187,
+          "lat": {
+            "p50": 519645,
+            "p90": 634733,
+            "p99": 934381
+          },
+          "cpu_ms_per_1k": 557750.0000000001,
+          "rss_kb": 257796,
+          "peak_kb": 309244,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 15,
+          "errors": 0,
+          "rps": 2.4996299818568106,
+          "lat": {
+            "p50": 358647,
+            "p90": 529418,
+            "p99": 725009
+          },
+          "cpu_ms_per_1k": 330666.6666666653,
+          "rss_kb": 235840,
+          "peak_kb": 236544,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 143,
+          "errors": 0,
+          "rps": 23.82688319352434,
+          "lat": {
+            "p50": 308836,
+            "p90": 374580,
+            "p99": 417714
+          },
+          "cpu_ms_per_1k": 318601.3986013986,
+          "rss_kb": 246280,
+          "peak_kb": 272472,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "server": "direct",
+      "loadavg": 20.06,
+      "startup_ms": null,
+      "idle_rss_kb": null,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 20280,
+          "errors": 0,
+          "rps": 4055.2879717268665,
+          "lat": {
+            "p50": 239,
+            "p90": 277,
+            "p99": 322
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 239463,
+          "errors": 0,
+          "rps": 47882.65381514951,
+          "lat": {
+            "p50": 329,
+            "p90": 418,
+            "p99": 522
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 463673,
+          "errors": 0,
+          "rps": 92709.86713977405,
+          "lat": {
+            "p50": 641,
+            "p90": 985,
+            "p99": 1441
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 301136,
+          "errors": 0,
+          "rps": 60175.006774614,
+          "lat": {
+            "p50": 3257,
+            "p90": 8114,
+            "p99": 14558
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 13238,
+          "errors": 0,
+          "rps": 2647.1865719310676,
+          "lat": {
+            "p50": 353,
+            "p90": 428,
+            "p99": 763
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 119516,
+          "errors": 0,
+          "rps": 23897.853199475703,
+          "lat": {
+            "p50": 582,
+            "p90": 901,
+            "p99": 3064
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 231659,
+          "errors": 0,
+          "rps": 46320.976399785344,
+          "lat": {
+            "p50": 1289,
+            "p90": 2009,
+            "p99": 3184
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 294722,
+          "errors": 0,
+          "rps": 58937.12443594946,
+          "lat": {
+            "p50": 3903,
+            "p90": 7003,
+            "p99": 11414
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 13950,
+          "errors": 0,
+          "rps": 2789.5303920429033,
+          "lat": {
+            "p50": 330,
+            "p90": 417,
+            "p99": 735
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 140922,
+          "errors": 0,
+          "rps": 28179.31445657657,
+          "lat": {
+            "p50": 546,
+            "p90": 745,
+            "p99": 1004
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 210016,
+          "errors": 0,
+          "rps": 41996.26986793819,
+          "lat": {
+            "p50": 1425,
+            "p90": 2225,
+            "p99": 3532
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 296881,
+          "errors": 0,
+          "rps": 59371.01067681179,
+          "lat": {
+            "p50": 3985,
+            "p90": 6807,
+            "p99": 9783
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 19303,
+          "errors": 0,
+          "rps": 3859.8479472259623,
+          "lat": {
+            "p50": 253,
+            "p90": 289,
+            "p99": 347
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 121743,
+          "errors": 0,
+          "rps": 24337.343146457628,
+          "lat": {
+            "p50": 373,
+            "p90": 822,
+            "p99": 5398
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 155850,
+          "errors": 0,
+          "rps": 31159.692442291413,
+          "lat": {
+            "p50": 1255,
+            "p90": 5007,
+            "p99": 8644
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 340718,
+          "errors": 0,
+          "rps": 68122.61435179063,
+          "lat": {
+            "p50": 2871,
+            "p90": 7231,
+            "p99": 13833
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 26,
+          "errors": 0,
+          "rps": 3.2495286806425288,
+          "lat": {
+            "p50": 296904,
+            "p90": 308554,
+            "p99": 309261
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21660,
+            "p90": 23752,
+            "p99": 27674
+          },
+          "ttft": {
+            "p50": 34136,
+            "p90": 36545,
+            "p99": 37305
+          },
+          "chunk": {
+            "p50": 191,
+            "p90": 656,
+            "p99": 4332
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 304,
+          "errors": 0,
+          "rps": 50.63127096115152,
+          "lat": {
+            "p50": 291237,
+            "p90": 298802,
+            "p99": 315754
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21552,
+            "p90": 22201,
+            "p99": 23261
+          },
+          "ttft": {
+            "p50": 33903,
+            "p90": 34553,
+            "p99": 35309
+          },
+          "chunk": {
+            "p50": 194,
+            "p90": 303,
+            "p99": 3655
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.999549515655541,
+          "lat": {
+            "p50": 318693,
+            "p90": 335622,
+            "p99": 340542
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 21960,
+            "p90": 22211,
+            "p99": 25800
+          },
+          "ttft": {
+            "p50": 46323,
+            "p90": 50196,
+            "p99": 52653
+          },
+          "chunk": {
+            "p50": 382,
+            "p90": 645,
+            "p99": 4237
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 256,
+          "errors": 0,
+          "rps": 42.62461274775489,
+          "lat": {
+            "p50": 332686,
+            "p90": 399686,
+            "p99": 416519
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 22159,
+            "p90": 29755,
+            "p99": 32019
+          },
+          "ttft": {
+            "p50": 49363,
+            "p90": 59281,
+            "p99": 72057
+          },
+          "chunk": {
+            "p50": 345,
+            "p90": 2551,
+            "p99": 5820
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 1626,
+          "errors": 0,
+          "rps": 270.9393757793462,
+          "lat": {
+            "p50": 2573,
+            "p90": 7314,
+            "p99": 12315
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 8814,
+          "errors": 0,
+          "rps": 1467.118639434642,
+          "lat": {
+            "p50": 4751,
+            "p90": 8717,
+            "p99": 15147
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 3124,
+          "errors": 0,
+          "rps": 520.4970136145621,
+          "lat": {
+            "p50": 1633,
+            "p90": 2455,
+            "p99": 7103
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 7723,
+          "errors": 0,
+          "rps": 1286.7932146122496,
+          "lat": {
+            "p50": 5399,
+            "p90": 9830,
+            "p99": 16015
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "server": "rust",
+      "loadavg": 18.51,
+      "startup_ms": 1028.2012849999999,
+      "idle_rss_kb": 20496,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 1458,
+          "errors": 0,
+          "rps": 291.51732889221677,
+          "lat": {
+            "p50": 2595,
+            "p90": 7088,
+            "p99": 12800
+          },
+          "cpu_ms_per_1k": 967.0781893004091,
+          "rss_kb": 77204,
+          "peak_kb": 78044,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 6881,
+          "errors": 0,
+          "rps": 1376.0505997094983,
+          "lat": {
+            "p50": 8811,
+            "p90": 23397,
+            "p99": 48491
+          },
+          "cpu_ms_per_1k": 898.1252724894638,
+          "rss_kb": 78348,
+          "peak_kb": 78348,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 8341,
+          "errors": 0,
+          "rps": 1667.3685629978504,
+          "lat": {
+            "p50": 35102,
+            "p90": 61218,
+            "p99": 88187
+          },
+          "cpu_ms_per_1k": 915.9573192662751,
+          "rss_kb": 86740,
+          "peak_kb": 86740,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 6899,
+          "errors": 0,
+          "rps": 1379.4753291695822,
+          "lat": {
+            "p50": 166468,
+            "p90": 280755,
+            "p99": 376362
+          },
+          "cpu_ms_per_1k": 992.8975213799093,
+          "rss_kb": 122388,
+          "peak_kb": 122388,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 741,
+          "errors": 0,
+          "rps": 148.15445933410135,
+          "lat": {
+            "p50": 5680,
+            "p90": 11874,
+            "p99": 17905
+          },
+          "cpu_ms_per_1k": 2388.663967611331,
+          "rss_kb": 122388,
+          "peak_kb": 122388,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 5960,
+          "errors": 0,
+          "rps": 1191.862222872388,
+          "lat": {
+            "p50": 10340,
+            "p90": 25350,
+            "p99": 45228
+          },
+          "cpu_ms_per_1k": 2244.9664429530194,
+          "rss_kb": 122400,
+          "peak_kb": 122400,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 7140,
+          "errors": 0,
+          "rps": 1427.717180362764,
+          "lat": {
+            "p50": 36632,
+            "p90": 82957,
+            "p99": 149635
+          },
+          "cpu_ms_per_1k": 2635.8543417366936,
+          "rss_kb": 122428,
+          "peak_kb": 122428,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 11355,
+          "errors": 0,
+          "rps": 2270.4259954406843,
+          "lat": {
+            "p50": 89195,
+            "p90": 207234,
+            "p99": 386326
+          },
+          "cpu_ms_per_1k": 2933.5094671950687,
+          "rss_kb": 133344,
+          "peak_kb": 133344,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2262,
+          "errors": 0,
+          "rps": 452.32266105723164,
+          "lat": {
+            "p50": 2185,
+            "p90": 2649,
+            "p99": 4780
+          },
+          "cpu_ms_per_1k": 2656.940760389045,
+          "rss_kb": 133372,
+          "peak_kb": 133372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 3420,
+          "errors": 0,
+          "rps": 683.9551901285545,
+          "lat": {
+            "p50": 20680,
+            "p90": 38002,
+            "p99": 72679
+          },
+          "cpu_ms_per_1k": 1909.356725146199,
+          "rss_kb": 133372,
+          "peak_kb": 133372,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 4608,
+          "errors": 0,
+          "rps": 921.4338931120886,
+          "lat": {
+            "p50": 60873,
+            "p90": 120277,
+            "p99": 192169
+          },
+          "cpu_ms_per_1k": 2189.6701388888837,
+          "rss_kb": 133396,
+          "peak_kb": 133396,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 4430,
+          "errors": 0,
+          "rps": 885.300966533885,
+          "lat": {
+            "p50": 235439,
+            "p90": 463409,
+            "p99": 792276
+          },
+          "cpu_ms_per_1k": 2591.42212189616,
+          "rss_kb": 141036,
+          "peak_kb": 141036,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 1724,
+          "errors": 0,
+          "rps": 344.6810185251722,
+          "lat": {
+            "p50": 2283,
+            "p90": 6152,
+            "p99": 11344
+          },
+          "cpu_ms_per_1k": 870.0696055684455,
+          "rss_kb": 141036,
+          "peak_kb": 141036,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 11088,
+          "errors": 0,
+          "rps": 2217.2936050570197,
+          "lat": {
+            "p50": 5541,
+            "p90": 13584,
+            "p99": 28143
+          },
+          "cpu_ms_per_1k": 808.0808080808088,
+          "rss_kb": 141044,
+          "peak_kb": 141044,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 6186,
+          "errors": 0,
+          "rps": 1236.9726533325206,
+          "lat": {
+            "p50": 46171,
+            "p90": 85932,
+            "p99": 130801
+          },
+          "cpu_ms_per_1k": 856.7733591981868,
+          "rss_kb": 140952,
+          "peak_kb": 140952,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 10293,
+          "errors": 0,
+          "rps": 2058.2435982433667,
+          "lat": {
+            "p50": 96283,
+            "p90": 209100,
+            "p99": 445656
+          },
+          "cpu_ms_per_1k": 885.0675216166339,
+          "rss_kb": 139420,
+          "peak_kb": 141532,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 3066,
+          "errors": 0,
+          "rps": 613.0249813678195,
+          "lat": {
+            "p50": 993,
+            "p90": 3693,
+            "p99": 11050
+          },
+          "cpu_ms_per_1k": 244.61839530332682,
+          "rss_kb": 130188,
+          "peak_kb": 130524,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 10543,
+          "errors": 0,
+          "rps": 2107.1164901136385,
+          "lat": {
+            "p50": 5896,
+            "p90": 15971,
+            "p99": 29307
+          },
+          "cpu_ms_per_1k": 238.07265484207443,
+          "rss_kb": 130424,
+          "peak_kb": 130712,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 33197,
+          "errors": 0,
+          "rps": 6633.916298644879,
+          "lat": {
+            "p50": 8190,
+            "p90": 16532,
+            "p99": 31535
+          },
+          "cpu_ms_per_1k": 234.96099045094385,
+          "rss_kb": 130312,
+          "peak_kb": 130712,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 26588,
+          "errors": 0,
+          "rps": 5316.401428993917,
+          "lat": {
+            "p50": 44103,
+            "p90": 78247,
+            "p99": 118949
+          },
+          "cpu_ms_per_1k": 240.33398525650725,
+          "rss_kb": 127128,
+          "peak_kb": 130712,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.998936460547435,
+          "lat": {
+            "p50": 310846,
+            "p90": 331339,
+            "p99": 332840
+          },
+          "cpu_ms_per_1k": 9166.666666666619,
+          "rss_kb": 120980,
+          "peak_kb": 127652,
+          "ttfb": {
+            "p50": 28578,
+            "p90": 30726,
+            "p99": 37462
+          },
+          "ttft": {
+            "p50": 39819,
+            "p90": 46850,
+            "p99": 51324
+          },
+          "chunk": {
+            "p50": 1139,
+            "p90": 7632,
+            "p99": 12033
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 224,
+          "errors": 0,
+          "rps": 37.323486253072865,
+          "lat": {
+            "p50": 393179,
+            "p90": 446621,
+            "p99": 487495
+          },
+          "cpu_ms_per_1k": 4642.857142857108,
+          "rss_kb": 120532,
+          "peak_kb": 121636,
+          "ttfb": {
+            "p50": 37707,
+            "p90": 46805,
+            "p99": 64651
+          },
+          "ttft": {
+            "p50": 51680,
+            "p90": 65318,
+            "p99": 80792
+          },
+          "chunk": {
+            "p50": 4519,
+            "p90": 10760,
+            "p99": 19017
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 23,
+          "errors": 0,
+          "rps": 2.8746492999720266,
+          "lat": {
+            "p50": 325335,
+            "p90": 337984,
+            "p99": 341970
+          },
+          "cpu_ms_per_1k": 9999.999999999554,
+          "rss_kb": 120584,
+          "peak_kb": 120868,
+          "ttfb": {
+            "p50": 27240,
+            "p90": 31149,
+            "p99": 34773
+          },
+          "ttft": {
+            "p50": 52668,
+            "p90": 58697,
+            "p99": 60371
+          },
+          "chunk": {
+            "p50": 1164,
+            "p90": 7407,
+            "p99": 12380
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 176,
+          "errors": 0,
+          "rps": 29.312288805198573,
+          "lat": {
+            "p50": 474488,
+            "p90": 574073,
+            "p99": 663366
+          },
+          "cpu_ms_per_1k": 4545.4545454546105,
+          "rss_kb": 101220,
+          "peak_kb": 108836,
+          "ttfb": {
+            "p50": 39881,
+            "p90": 52429,
+            "p99": 66394
+          },
+          "ttft": {
+            "p50": 74244,
+            "p90": 101734,
+            "p99": 111994
+          },
+          "chunk": {
+            "p50": 7770,
+            "p90": 15945,
+            "p99": 22589
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 2,
+          "errors": 0,
+          "rps": 0.33329259559041075,
+          "lat": {
+            "p50": 1684866,
+            "p90": 2752087,
+            "p99": 2752087
+          },
+          "cpu_ms_per_1k": 799999.999999983,
+          "rss_kb": 129244,
+          "peak_kb": 137676,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 10,
+          "errors": 0,
+          "rps": 1.665575830532784,
+          "lat": {
+            "p50": 2404679,
+            "p90": 2858580,
+            "p99": 3210577
+          },
+          "cpu_ms_per_1k": 1084000.0000000033,
+          "rss_kb": 268380,
+          "peak_kb": 310616,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 3,
+          "errors": 0,
+          "rps": 0.49976084469525994,
+          "lat": {
+            "p50": 1493230,
+            "p90": 1738786,
+            "p99": 1738786
+          },
+          "cpu_ms_per_1k": 516666.66666667047,
+          "rss_kb": 232008,
+          "peak_kb": 242844,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 22,
+          "errors": 0,
+          "rps": 3.6642190269841457,
+          "lat": {
+            "p50": 1505099,
+            "p90": 1856392,
+            "p99": 2067996
+          },
+          "cpu_ms_per_1k": 485454.54545454314,
+          "rss_kb": 245676,
+          "peak_kb": 276420,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "server": "go",
+      "loadavg": 58.05,
+      "startup_ms": 1024.69182,
+      "idle_rss_kb": 55192,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 740,
+          "errors": 0,
+          "rps": 147.9780427220648,
+          "lat": {
+            "p50": 4025,
+            "p90": 15110,
+            "p99": 25017
+          },
+          "cpu_ms_per_1k": 891.8918918918921,
+          "rss_kb": 65576,
+          "peak_kb": 66064,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 3746,
+          "errors": 0,
+          "rps": 747.4171974187054,
+          "lat": {
+            "p50": 19893,
+            "p90": 36006,
+            "p99": 59987
+          },
+          "cpu_ms_per_1k": 712.7602776294715,
+          "rss_kb": 68364,
+          "peak_kb": 71872,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 8426,
+          "errors": 0,
+          "rps": 1681.5514564179196,
+          "lat": {
+            "p50": 32263,
+            "p90": 70873,
+            "p99": 103831
+          },
+          "cpu_ms_per_1k": 696.6532162354615,
+          "rss_kb": 70012,
+          "peak_kb": 83352,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 8939,
+          "errors": 0,
+          "rps": 1784.1595875747316,
+          "lat": {
+            "p50": 139436,
+            "p90": 208028,
+            "p99": 291667
+          },
+          "cpu_ms_per_1k": 698.0646604765636,
+          "rss_kb": 97628,
+          "peak_kb": 108032,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 619,
+          "errors": 0,
+          "rps": 123.70372329719514,
+          "lat": {
+            "p50": 7498,
+            "p90": 14595,
+            "p99": 23993
+          },
+          "cpu_ms_per_1k": 1873.9903069466886,
+          "rss_kb": 62308,
+          "peak_kb": 63808,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 4159,
+          "errors": 0,
+          "rps": 831.224442075614,
+          "lat": {
+            "p50": 17407,
+            "p90": 32062,
+            "p99": 53059
+          },
+          "cpu_ms_per_1k": 1743.207501803318,
+          "rss_kb": 75960,
+          "peak_kb": 82456,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 3629,
+          "errors": 0,
+          "rps": 724.8566008736188,
+          "lat": {
+            "p50": 80362,
+            "p90": 140019,
+            "p99": 210719
+          },
+          "cpu_ms_per_1k": 1840.7274731330945,
+          "rss_kb": 80256,
+          "peak_kb": 91836,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 3797,
+          "errors": 0,
+          "rps": 759.2258334419633,
+          "lat": {
+            "p50": 301454,
+            "p90": 522989,
+            "p99": 679133
+          },
+          "cpu_ms_per_1k": 1867.2636291809313,
+          "rss_kb": 103780,
+          "peak_kb": 118472,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 606,
+          "errors": 0,
+          "rps": 121.17269855505403,
+          "lat": {
+            "p50": 7983,
+            "p90": 14112,
+            "p99": 20897
+          },
+          "cpu_ms_per_1k": 1782.1782178217795,
+          "rss_kb": 62064,
+          "peak_kb": 63252,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 5041,
+          "errors": 0,
+          "rps": 1007.0566211452202,
+          "lat": {
+            "p50": 14329,
+            "p90": 27841,
+            "p99": 43724
+          },
+          "cpu_ms_per_1k": 1928.1888514183704,
+          "rss_kb": 71948,
+          "peak_kb": 80488,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 4639,
+          "errors": 0,
+          "rps": 927.5275321092446,
+          "lat": {
+            "p50": 62916,
+            "p90": 115807,
+            "p99": 159955
+          },
+          "cpu_ms_per_1k": 1965.940935546452,
+          "rss_kb": 78116,
+          "peak_kb": 88300,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 4923,
+          "errors": 0,
+          "rps": 984.4908426088441,
+          "lat": {
+            "p50": 237330,
+            "p90": 368524,
+            "p99": 568471
+          },
+          "cpu_ms_per_1k": 2122.6894170221417,
+          "rss_kb": 109024,
+          "peak_kb": 111788,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 1943,
+          "errors": 0,
+          "rps": 388.5814039706153,
+          "lat": {
+            "p50": 1971,
+            "p90": 5030,
+            "p99": 11545
+          },
+          "cpu_ms_per_1k": 792.5887802367432,
+          "rss_kb": 63508,
+          "peak_kb": 64208,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 10257,
+          "errors": 0,
+          "rps": 2051.261388883412,
+          "lat": {
+            "p50": 6047,
+            "p90": 15637,
+            "p99": 29745
+          },
+          "cpu_ms_per_1k": 782.879984400897,
+          "rss_kb": 66196,
+          "peak_kb": 78824,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 9441,
+          "errors": 0,
+          "rps": 1887.7641239474956,
+          "lat": {
+            "p50": 30244,
+            "p90": 60199,
+            "p99": 105733
+          },
+          "cpu_ms_per_1k": 753.0981887511915,
+          "rss_kb": 83600,
+          "peak_kb": 89308,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 10485,
+          "errors": 0,
+          "rps": 2096.557443978823,
+          "lat": {
+            "p50": 117184,
+            "p90": 175304,
+            "p99": 247125
+          },
+          "cpu_ms_per_1k": 770.6247019551752,
+          "rss_kb": 111264,
+          "peak_kb": 112568,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 2587,
+          "errors": 0,
+          "rps": 517.2982449521863,
+          "lat": {
+            "p50": 1390,
+            "p90": 3746,
+            "p99": 9133
+          },
+          "cpu_ms_per_1k": 382.6826439891802,
+          "rss_kb": 65312,
+          "peak_kb": 66064,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 16975,
+          "errors": 0,
+          "rps": 3392.6789658605503,
+          "lat": {
+            "p50": 2974,
+            "p90": 10536,
+            "p99": 20931
+          },
+          "cpu_ms_per_1k": 349.33726067746727,
+          "rss_kb": 70576,
+          "peak_kb": 82956,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 16590,
+          "errors": 0,
+          "rps": 3314.204621255126,
+          "lat": {
+            "p50": 13497,
+            "p90": 43628,
+            "p99": 79847
+          },
+          "cpu_ms_per_1k": 336.3471971066915,
+          "rss_kb": 77164,
+          "peak_kb": 103584,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 16664,
+          "errors": 0,
+          "rps": 3330.752652959279,
+          "lat": {
+            "p50": 39364,
+            "p90": 188296,
+            "p99": 355417
+          },
+          "cpu_ms_per_1k": 334.2534805568887,
+          "rss_kb": 109516,
+          "peak_kb": 111776,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.1242226160886073,
+          "lat": {
+            "p50": 303513,
+            "p90": 313407,
+            "p99": 330007
+          },
+          "cpu_ms_per_1k": 8399.999999999181,
+          "rss_kb": 96836,
+          "peak_kb": 96836,
+          "ttfb": {
+            "p50": 24105,
+            "p90": 28969,
+            "p99": 32115
+          },
+          "ttft": {
+            "p50": 37340,
+            "p90": 45615,
+            "p99": 46633
+          },
+          "chunk": {
+            "p50": 953,
+            "p90": 4048,
+            "p99": 8210
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 270,
+          "errors": 0,
+          "rps": 44.99286932760105,
+          "lat": {
+            "p50": 343268,
+            "p90": 372378,
+            "p99": 407644
+          },
+          "cpu_ms_per_1k": 4592.592592592521,
+          "rss_kb": 67020,
+          "peak_kb": 73044,
+          "ttfb": {
+            "p50": 30736,
+            "p90": 40383,
+            "p99": 53718
+          },
+          "ttft": {
+            "p50": 44143,
+            "p90": 54992,
+            "p99": 65169
+          },
+          "chunk": {
+            "p50": 3064,
+            "p90": 8034,
+            "p99": 14067
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 23,
+          "errors": 0,
+          "rps": 2.8746180329729047,
+          "lat": {
+            "p50": 323637,
+            "p90": 333938,
+            "p99": 345816
+          },
+          "cpu_ms_per_1k": 9999.999999999554,
+          "rss_kb": 63748,
+          "peak_kb": 65980,
+          "ttfb": {
+            "p50": 23911,
+            "p90": 27254,
+            "p99": 30554
+          },
+          "ttft": {
+            "p50": 50448,
+            "p90": 54211,
+            "p99": 55897
+          },
+          "chunk": {
+            "p50": 938,
+            "p90": 4200,
+            "p99": 7354
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 257,
+          "errors": 0,
+          "rps": 42.82868637803263,
+          "lat": {
+            "p50": 337791,
+            "p90": 385105,
+            "p99": 417546
+          },
+          "cpu_ms_per_1k": 5408.560311284104,
+          "rss_kb": 66996,
+          "peak_kb": 66996,
+          "ttfb": {
+            "p50": 27233,
+            "p90": 35956,
+            "p99": 43889
+          },
+          "ttft": {
+            "p50": 54101,
+            "p90": 67926,
+            "p99": 77420
+          },
+          "chunk": {
+            "p50": 1983,
+            "p90": 7452,
+            "p99": 14874
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 7,
+          "errors": 0,
+          "rps": 1.1665550382373544,
+          "lat": {
+            "p50": 797531,
+            "p90": 974156,
+            "p99": 974156
+          },
+          "cpu_ms_per_1k": 505714.2857142846,
+          "rss_kb": 88016,
+          "peak_kb": 132988,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 38,
+          "errors": 0,
+          "rps": 6.33234186484748,
+          "lat": {
+            "p50": 1133416,
+            "p90": 1274663,
+            "p99": 1377866
+          },
+          "cpu_ms_per_1k": 475526.3157894735,
+          "rss_kb": 235724,
+          "peak_kb": 331968,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 16,
+          "errors": 0,
+          "rps": 2.665652081276853,
+          "lat": {
+            "p50": 324570,
+            "p90": 424481,
+            "p99": 648820
+          },
+          "cpu_ms_per_1k": 265000.0000000006,
+          "rss_kb": 100372,
+          "peak_kb": 129612,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 40,
+          "errors": 0,
+          "rps": 6.659739163810123,
+          "lat": {
+            "p50": 1014099,
+            "p90": 1148213,
+            "p99": 1261017
+          },
+          "cpu_ms_per_1k": 220749.9999999996,
+          "rss_kb": 332436,
+          "peak_kb": 372524,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "server": "direct",
+      "loadavg": 41.22,
+      "startup_ms": null,
+      "idle_rss_kb": null,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 4289,
+          "errors": 0,
+          "rps": 857.6286698053756,
+          "lat": {
+            "p50": 778,
+            "p90": 1118,
+            "p99": 8444
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 61839,
+          "errors": 0,
+          "rps": 12357.42043413603,
+          "lat": {
+            "p50": 703,
+            "p90": 3525,
+            "p99": 6826
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 100210,
+          "errors": 0,
+          "rps": 20010.011607250424,
+          "lat": {
+            "p50": 1409,
+            "p90": 7680,
+            "p99": 13965
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 151358,
+          "errors": 0,
+          "rps": 30260.319116439117,
+          "lat": {
+            "p50": 6832,
+            "p90": 15952,
+            "p99": 33808
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 735,
+          "errors": 0,
+          "rps": 146.53118805831377,
+          "lat": {
+            "p50": 6685,
+            "p90": 12782,
+            "p99": 20967
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 9913,
+          "errors": 0,
+          "rps": 1982.34110664794,
+          "lat": {
+            "p50": 6767,
+            "p90": 15588,
+            "p99": 39539
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 28175,
+          "errors": 0,
+          "rps": 5625.995478341407,
+          "lat": {
+            "p50": 11545,
+            "p90": 20054,
+            "p99": 25271
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 97496,
+          "errors": 0,
+          "rps": 19497.764484888903,
+          "lat": {
+            "p50": 12128,
+            "p90": 22685,
+            "p99": 36688
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 1278,
+          "errors": 0,
+          "rps": 254.61825946534043,
+          "lat": {
+            "p50": 1525,
+            "p90": 9967,
+            "p99": 16024
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 12276,
+          "errors": 0,
+          "rps": 2454.2775632138546,
+          "lat": {
+            "p50": 4598,
+            "p90": 12151,
+            "p99": 32026
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 32175,
+          "errors": 0,
+          "rps": 6423.896282428031,
+          "lat": {
+            "p50": 7604,
+            "p90": 16796,
+            "p99": 58946
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 70179,
+          "errors": 0,
+          "rps": 14033.277582907549,
+          "lat": {
+            "p50": 16736,
+            "p90": 30554,
+            "p99": 53486
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 2337,
+          "errors": 0,
+          "rps": 467.3047929103288,
+          "lat": {
+            "p50": 924,
+            "p90": 5981,
+            "p99": 14447
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 12504,
+          "errors": 0,
+          "rps": 2495.7701341862926,
+          "lat": {
+            "p50": 4219,
+            "p90": 13654,
+            "p99": 28050
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 48483,
+          "errors": 0,
+          "rps": 9679.437491985,
+          "lat": {
+            "p50": 4249,
+            "p90": 15770,
+            "p99": 31629
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 116067,
+          "errors": 0,
+          "rps": 23203.840365826883,
+          "lat": {
+            "p50": 8667,
+            "p90": 20270,
+            "p99": 44630
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 25,
+          "errors": 0,
+          "rps": 3.1248066568847146,
+          "lat": {
+            "p50": 302195,
+            "p90": 319037,
+            "p99": 324206
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 22189,
+            "p90": 25449,
+            "p99": 28739
+          },
+          "ttft": {
+            "p50": 34449,
+            "p90": 42965,
+            "p99": 45647
+          },
+          "chunk": {
+            "p50": 457,
+            "p90": 2281,
+            "p99": 4489
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 241,
+          "errors": 0,
+          "rps": 40.15946311651609,
+          "lat": {
+            "p50": 355607,
+            "p90": 402489,
+            "p99": 455533
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 25251,
+            "p90": 33194,
+            "p99": 44132
+          },
+          "ttft": {
+            "p50": 40038,
+            "p90": 51668,
+            "p99": 65249
+          },
+          "chunk": {
+            "p50": 485,
+            "p90": 4107,
+            "p99": 9706
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 23,
+          "errors": 0,
+          "rps": 2.8746107424914853,
+          "lat": {
+            "p50": 326981,
+            "p90": 341811,
+            "p99": 356249
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 22173,
+            "p90": 26105,
+            "p99": 28239
+          },
+          "ttft": {
+            "p50": 47232,
+            "p90": 56261,
+            "p99": 63130
+          },
+          "chunk": {
+            "p50": 410,
+            "p90": 708,
+            "p99": 4139
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 256,
+          "errors": 0,
+          "rps": 42.65714058067504,
+          "lat": {
+            "p50": 356292,
+            "p90": 410772,
+            "p99": 429702
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": {
+            "p50": 24408,
+            "p90": 30452,
+            "p99": 34040
+          },
+          "ttft": {
+            "p50": 51962,
+            "p90": 61311,
+            "p99": 65944
+          },
+          "chunk": {
+            "p50": 523,
+            "p90": 5371,
+            "p99": 9868
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 771,
+          "errors": 0,
+          "rps": 128.32881235865253,
+          "lat": {
+            "p50": 7812,
+            "p90": 13152,
+            "p99": 20918
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 2307,
+          "errors": 0,
+          "rps": 384.3981580004839,
+          "lat": {
+            "p50": 17201,
+            "p90": 29785,
+            "p99": 91042
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 577,
+          "errors": 0,
+          "rps": 96.15353619617315,
+          "lat": {
+            "p50": 8795,
+            "p90": 16304,
+            "p99": 24016
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 2709,
+          "errors": 0,
+          "rps": 451.12346250885435,
+          "lat": {
+            "p50": 16639,
+            "p90": 28404,
+            "p99": 42817
+          },
+          "cpu_ms_per_1k": null,
+          "rss_kb": null,
+          "peak_kb": null,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    },
+    {
+      "run": 4,
+      "server": "go",
+      "loadavg": 55.6,
+      "startup_ms": 1022.0092329999999,
+      "idle_rss_kb": 54232,
+      "cells": [
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 1,
+          "requests": 1102,
+          "errors": 0,
+          "rps": 220.33442851813987,
+          "lat": {
+            "p50": 2480,
+            "p90": 10616,
+            "p99": 17993
+          },
+          "cpu_ms_per_1k": 798.5480943738647,
+          "rss_kb": 68588,
+          "peak_kb": 68588,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 16,
+          "requests": 5317,
+          "errors": 0,
+          "rps": 1062.5554651904456,
+          "lat": {
+            "p50": 12055,
+            "p90": 27961,
+            "p99": 68099
+          },
+          "cpu_ms_per_1k": 707.1656949407561,
+          "rss_kb": 77792,
+          "peak_kb": 77848,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 64,
+          "requests": 23537,
+          "errors": 0,
+          "rps": 4705.616303200958,
+          "lat": {
+            "p50": 11192,
+            "p90": 22702,
+            "p99": 48206
+          },
+          "cpu_ms_per_1k": 791.9445978671878,
+          "rss_kb": 81076,
+          "peak_kb": 86356,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-compat-json",
+          "conc": 256,
+          "requests": 18642,
+          "errors": 0,
+          "rps": 3727.6480111293,
+          "lat": {
+            "p50": 63713,
+            "p90": 102925,
+            "p99": 154793
+          },
+          "cpu_ms_per_1k": 796.5883488896043,
+          "rss_kb": 103136,
+          "peak_kb": 114244,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 2240,
+          "errors": 0,
+          "rps": 447.98591290377436,
+          "lat": {
+            "p50": 1742,
+            "p90": 3640,
+            "p99": 8753
+          },
+          "cpu_ms_per_1k": 1745.535714285716,
+          "rss_kb": 67804,
+          "peak_kb": 69444,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 14114,
+          "errors": 0,
+          "rps": 2822.109941628027,
+          "lat": {
+            "p50": 4903,
+            "p90": 9054,
+            "p99": 16328
+          },
+          "cpu_ms_per_1k": 1696.8966983137313,
+          "rss_kb": 82880,
+          "peak_kb": 91740,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 64,
+          "requests": 6918,
+          "errors": 0,
+          "rps": 1383.3903914546675,
+          "lat": {
+            "p50": 38144,
+            "p90": 87587,
+            "p99": 132085
+          },
+          "cpu_ms_per_1k": 1811.217114773056,
+          "rss_kb": 86516,
+          "peak_kb": 105208,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "chat-claude-stream",
+          "conc": 256,
+          "requests": 10391,
+          "errors": 0,
+          "rps": 2077.8239832583513,
+          "lat": {
+            "p50": 104182,
+            "p90": 205986,
+            "p99": 296485
+          },
+          "cpu_ms_per_1k": 1881.4358579539983,
+          "rss_kb": 124524,
+          "peak_kb": 125556,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 2524,
+          "errors": 0,
+          "rps": 504.68099874390117,
+          "lat": {
+            "p50": 1867,
+            "p90": 2265,
+            "p99": 5355
+          },
+          "cpu_ms_per_1k": 2072.10776545166,
+          "rss_kb": 69612,
+          "peak_kb": 70504,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 14627,
+          "errors": 0,
+          "rps": 2924.890545489677,
+          "lat": {
+            "p50": 4456,
+            "p90": 8061,
+            "p99": 24769
+          },
+          "cpu_ms_per_1k": 1884.8704450673406,
+          "rss_kb": 73752,
+          "peak_kb": 87404,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 64,
+          "requests": 17347,
+          "errors": 0,
+          "rps": 3468.7832135755243,
+          "lat": {
+            "p50": 17182,
+            "p90": 27886,
+            "p99": 41371
+          },
+          "cpu_ms_per_1k": 1993.4282584884986,
+          "rss_kb": 84216,
+          "peak_kb": 84956,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "responses-codex-stream",
+          "conc": 256,
+          "requests": 17109,
+          "errors": 0,
+          "rps": 3421.189034482893,
+          "lat": {
+            "p50": 70621,
+            "p90": 103217,
+            "p99": 145384
+          },
+          "cpu_ms_per_1k": 2135.133555438658,
+          "rss_kb": 110804,
+          "peak_kb": 118236,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 1,
+          "requests": 1746,
+          "errors": 0,
+          "rps": 349.1289565865337,
+          "lat": {
+            "p50": 1844,
+            "p90": 6611,
+            "p99": 13161
+          },
+          "cpu_ms_per_1k": 836.1970217640203,
+          "rss_kb": 70856,
+          "peak_kb": 70856,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 16,
+          "requests": 17137,
+          "errors": 0,
+          "rps": 3426.5688199426017,
+          "lat": {
+            "p50": 3347,
+            "p90": 9085,
+            "p99": 20423
+          },
+          "cpu_ms_per_1k": 742.253603314464,
+          "rss_kb": 83196,
+          "peak_kb": 86744,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 64,
+          "requests": 6817,
+          "errors": 0,
+          "rps": 1360.5142119445302,
+          "lat": {
+            "p50": 43190,
+            "p90": 84425,
+            "p99": 121306
+          },
+          "cpu_ms_per_1k": 756.9312014082478,
+          "rss_kb": 87308,
+          "peak_kb": 94952,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "claude-gemini-json",
+          "conc": 256,
+          "requests": 6408,
+          "errors": 0,
+          "rps": 1281.352388389222,
+          "lat": {
+            "p50": 179755,
+            "p90": 307251,
+            "p99": 389358
+          },
+          "cpu_ms_per_1k": 777.1535580524373,
+          "rss_kb": 110968,
+          "peak_kb": 122636,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 1,
+          "requests": 1730,
+          "errors": 0,
+          "rps": 345.72740175715376,
+          "lat": {
+            "p50": 1345,
+            "p90": 7936,
+            "p99": 14032
+          },
+          "cpu_ms_per_1k": 421.96531791908563,
+          "rss_kb": 77308,
+          "peak_kb": 77588,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 16,
+          "requests": 10428,
+          "errors": 0,
+          "rps": 2083.8444793884814,
+          "lat": {
+            "p50": 4970,
+            "p90": 17075,
+            "p99": 39982
+          },
+          "cpu_ms_per_1k": 337.552742616032,
+          "rss_kb": 71576,
+          "peak_kb": 85428,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 64,
+          "requests": 16503,
+          "errors": 0,
+          "rps": 3295.7537318997474,
+          "lat": {
+            "p50": 13948,
+            "p90": 40287,
+            "p99": 83229
+          },
+          "cpu_ms_per_1k": 332.0608374234999,
+          "rss_kb": 87936,
+          "peak_kb": 91972,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "tput",
+          "scenario": "models",
+          "conc": 256,
+          "requests": 21526,
+          "errors": 0,
+          "rps": 4269.95980058188,
+          "lat": {
+            "p50": 29030,
+            "p90": 144179,
+            "p99": 271154
+          },
+          "cpu_ms_per_1k": 347.02220570472775,
+          "rss_kb": 95236,
+          "peak_kb": 111096,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9983117226284692,
+          "lat": {
+            "p50": 319991,
+            "p90": 338296,
+            "p99": 348119
+          },
+          "cpu_ms_per_1k": 11249.999999999243,
+          "rss_kb": 62156,
+          "peak_kb": 95396,
+          "ttfb": {
+            "p50": 30067,
+            "p90": 52458,
+            "p99": 61242
+          },
+          "ttft": {
+            "p50": 40351,
+            "p90": 75844,
+            "p99": 80592
+          },
+          "chunk": {
+            "p50": 1126,
+            "p90": 9698,
+            "p99": 34495
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "chat-claude-stream",
+          "conc": 16,
+          "requests": 224,
+          "errors": 0,
+          "rps": 37.325578490274104,
+          "lat": {
+            "p50": 377769,
+            "p90": 479947,
+            "p99": 526487
+          },
+          "cpu_ms_per_1k": 4776.7857142859375,
+          "rss_kb": 63332,
+          "peak_kb": 64148,
+          "ttfb": {
+            "p50": 40656,
+            "p90": 63832,
+            "p99": 88052
+          },
+          "ttft": {
+            "p50": 59922,
+            "p90": 79955,
+            "p99": 110967
+          },
+          "chunk": {
+            "p50": 5619,
+            "p90": 14654,
+            "p99": 28808
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 1,
+          "requests": 24,
+          "errors": 0,
+          "rps": 2.9994381482455093,
+          "lat": {
+            "p50": 330404,
+            "p90": 344528,
+            "p99": 347092
+          },
+          "cpu_ms_per_1k": 9583.333333331722,
+          "rss_kb": 60460,
+          "peak_kb": 63300,
+          "ttfb": {
+            "p50": 26681,
+            "p90": 32188,
+            "p99": 40828
+          },
+          "ttft": {
+            "p50": 51464,
+            "p90": 56202,
+            "p99": 59585
+          },
+          "chunk": {
+            "p50": 907,
+            "p90": 4151,
+            "p99": 9231
+          }
+        },
+        {
+          "kind": "stream",
+          "scenario": "responses-codex-stream",
+          "conc": 16,
+          "requests": 224,
+          "errors": 0,
+          "rps": 37.30946070700738,
+          "lat": {
+            "p50": 392962,
+            "p90": 420931,
+            "p99": 463615
+          },
+          "cpu_ms_per_1k": 5357.142857142806,
+          "rss_kb": 62848,
+          "peak_kb": 64332,
+          "ttfb": {
+            "p50": 31978,
+            "p90": 40501,
+            "p99": 64483
+          },
+          "ttft": {
+            "p50": 60295,
+            "p90": 79477,
+            "p99": 91577
+          },
+          "chunk": {
+            "p50": 3963,
+            "p90": 9063,
+            "p99": 17408
+          }
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 1,
+          "requests": 6,
+          "errors": 0,
+          "rps": 0.9998831015001902,
+          "lat": {
+            "p50": 732778,
+            "p90": 1256758,
+            "p99": 1256758
+          },
+          "cpu_ms_per_1k": 558333.3333333371,
+          "rss_kb": 95264,
+          "peak_kb": 119268,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-chat-claude",
+          "conc": 8,
+          "requests": 15,
+          "errors": 0,
+          "rps": 2.4995355704606164,
+          "lat": {
+            "p50": 2225098,
+            "p90": 2361534,
+            "p99": 2388437
+          },
+          "cpu_ms_per_1k": 607333.3333333342,
+          "rss_kb": 219756,
+          "peak_kb": 319164,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 1,
+          "requests": 15,
+          "errors": 0,
+          "rps": 2.496405770251479,
+          "lat": {
+            "p50": 398731,
+            "p90": 496872,
+            "p99": 591935
+          },
+          "cpu_ms_per_1k": 242666.66666666575,
+          "rss_kb": 91736,
+          "peak_kb": 127560,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        },
+        {
+          "kind": "large",
+          "scenario": "large-claude-gemini",
+          "conc": 8,
+          "requests": 46,
+          "errors": 0,
+          "rps": 7.6650769820786095,
+          "lat": {
+            "p50": 885002,
+            "p90": 1224782,
+            "p99": 1316581
+          },
+          "cpu_ms_per_1k": 221956.52173913,
+          "rss_kb": 256072,
+          "peak_kb": 339928,
+          "ttfb": null,
+          "ttft": null,
+          "chunk": null
+        }
+      ]
+    }
+  ]
+}
