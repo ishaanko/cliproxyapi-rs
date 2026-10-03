@@ -5,12 +5,17 @@
 //! times per request) dominated the proxy's CPU, so [`Doc`] indexes the top-level object with one
 //! raw scan and parses a member only when a lookup reaches it. Anything that is not a well-formed
 //! top-level object (arrays, leading text, trailing text, duplicate keys, absurd nesting) falls
-//! back to `cpa_json::parse`, so lookups agree with a full parse.
+//! back to `crate::parse`, so lookups agree with a full parse.
+//!
+//! A member parsed alone can differ from the same member inside a full parse only when strict
+//! parsing fails: the lenient fallback needs a container to latch onto, so a bare string with a bad
+//! escape or invalid UTF-8 would come back `Null` while the whole-document fallback decodes it. Such
+//! members (parsed `Null` though their text is not `null`) take their value from the full parse.
 
 use std::borrow::Cow;
 use std::cell::OnceCell;
 
-use cpa_json::{J, MAX_DEPTH, Res, Value};
+use crate::{J, MAX_DEPTH, PATH_CLASS, Res, Value};
 
 /// A parsed-on-demand JSON document.
 pub struct Doc<'a> {
@@ -49,7 +54,7 @@ pub enum MemberKind {
 impl<'a> Doc<'a> {
     /// Indexes `bytes`; empty input is a null document.
     pub fn new(bytes: &'a [u8]) -> Doc<'a> {
-        Doc::lazy(bytes).unwrap_or_else(|| Doc::owned(cpa_json::parse(bytes)))
+        Doc::lazy(bytes).unwrap_or_else(|| Doc::owned(crate::parse(bytes)))
     }
 
     /// Like [`Doc::new`] but `None` unless the top-level object could be indexed (nothing is
@@ -90,7 +95,7 @@ impl<'a> Doc<'a> {
                 let Some(m) = l.member(first) else {
                     return Res::NONE;
                 };
-                let v = m.value();
+                let v = l.value(m);
                 match rest {
                     None => Res::of(v),
                     Some(r) => v.g(r),
@@ -111,7 +116,11 @@ impl<'a> Doc<'a> {
     /// members yield a document whose lookups all miss, like a lookup into a scalar.
     pub fn sub(&self, key: &str) -> Option<Doc<'a>> {
         match &self.kind {
-            Kind::Lazy(l) => l.member(key).map(|m| Doc::new(m.raw)),
+            Kind::Lazy(l) => l.member(key).map(|m| match m.raw.first() {
+                Some(b'{' | b'[') => Doc::new(m.raw),
+                // Scalars: the value a full parse gives (see the module docs).
+                _ => Doc::owned(l.value(m).clone()),
+            }),
             Kind::Owned(v) => match v {
                 Value::Object(m) => m.get(key).map(|c| Doc::owned(c.clone())),
                 _ => None,
@@ -122,7 +131,7 @@ impl<'a> Doc<'a> {
     /// Parsed top-level member `key`.
     pub fn get(&self, key: &str) -> Option<&Value> {
         match &self.kind {
-            Kind::Lazy(l) => l.member(key).map(Member::value),
+            Kind::Lazy(l) => l.member(key).map(|m| l.value(m)),
             Kind::Owned(v) => match v {
                 Value::Object(m) => m.get(key),
                 _ => None,
@@ -165,10 +174,10 @@ impl<'a> Doc<'a> {
                 if m.raw.first() != Some(&b'[') {
                     return None;
                 }
-                Some(Elements::Raw { bytes: m.raw, pos: 1 })
+                Some(Elements(Inner::Raw { owner: l, member: m, bytes: m.raw, pos: 1, idx: 0 }))
             }
             Kind::Owned(_) => match self.get(key) {
-                Some(Value::Array(a)) => Some(Elements::Parsed(a.iter())),
+                Some(Value::Array(a)) => Some(Elements(Inner::Parsed(a.iter()))),
                 _ => None,
             },
         }
@@ -187,29 +196,54 @@ impl<'a> Lazy<'a> {
     }
 
     fn full(&self) -> &Value {
-        self.full.get_or_init(|| cpa_json::parse(self.bytes))
+        self.full.get_or_init(|| crate::parse(self.bytes))
+    }
+
+    /// Parsed value of `m` (as a full parse of the document would give it).
+    fn value<'s>(&'s self, m: &'s Member<'a>) -> &'s Value {
+        m.parsed.get_or_init(|| {
+            let v = crate::parse(m.raw);
+            if v.is_null() && !is_null_literal(m.raw) {
+                if let Some(full) = self.full().get(&*m.key) {
+                    return full.clone();
+                }
+            }
+            v
+        })
+    }
+
+    /// Element `idx` of array member `m`, parsed alone with the same fallback as [`Lazy::value`].
+    fn element(&self, m: &Member<'a>, idx: usize, raw: &[u8]) -> Value {
+        let v = crate::parse(raw);
+        if v.is_null() && !is_null_literal(raw) {
+            if let Some(full) = self.full().get(&*m.key).and_then(|a| a.get(idx)) {
+                return full.clone();
+            }
+        }
+        v
     }
 }
 
-impl Member<'_> {
-    fn value(&self) -> &Value {
-        self.parsed.get_or_init(|| cpa_json::parse(self.raw))
-    }
+/// Whether `raw` (one scanned value) is the literal `null`.
+fn is_null_literal(raw: &[u8]) -> bool {
+    raw == b"null"
 }
 
 /// Array elements in order (see [`Doc::elements`]).
-pub enum Elements<'a> {
+pub struct Elements<'a>(Inner<'a>);
+
+enum Inner<'a> {
     Parsed(std::slice::Iter<'a, Value>),
-    Raw { bytes: &'a [u8], pos: usize },
+    Raw { owner: &'a Lazy<'a>, member: &'a Member<'a>, bytes: &'a [u8], pos: usize, idx: usize },
 }
 
 impl<'a> Iterator for Elements<'a> {
     type Item = Cow<'a, Value>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Elements::Parsed(it) => it.next().map(Cow::Borrowed),
-            Elements::Raw { bytes, pos } => {
+        match &mut self.0 {
+            Inner::Parsed(it) => it.next().map(Cow::Borrowed),
+            Inner::Raw { owner, member, bytes, pos, idx } => {
                 let b = *bytes;
                 let mut i = skip_ws(b, *pos);
                 if b.get(i) == Some(&b',') {
@@ -224,24 +258,12 @@ impl<'a> Iterator for Elements<'a> {
                     return None;
                 };
                 *pos = end;
-                Some(Cow::Owned(cpa_json::parse(&b[i..end])))
+                *idx += 1;
+                Some(Cow::Owned(owner.element(member, *idx - 1, &b[i..end])))
             }
         }
     }
 }
-
-/// Bytes that make a path head more than a literal key for gjson: escapes, wildcards, queries,
-/// modifiers, pipes.
-const SPECIAL: [bool; 256] = {
-    let mut t = [false; 256];
-    let specials = *b"\\*?#@|()\"";
-    let mut i = 0;
-    while i < specials.len() {
-        t[specials[i] as usize] = true;
-        i += 1;
-    }
-    t
-};
 
 /// Splits `path` at its first `.`; `None` when the head is not a plain literal key (the caller
 /// then evaluates the path against the whole document).
@@ -250,7 +272,7 @@ fn split_plain_head(path: &str) -> Option<(&str, Option<&str>)> {
         if b == b'.' {
             return Some((&path[..i], Some(&path[i + 1..])));
         }
-        if SPECIAL[b as usize] {
+        if PATH_CLASS[usize::from(b)] == 2 {
             return None;
         }
     }
@@ -446,20 +468,39 @@ mod tests {
         r#"null"#,
         "",
     ];
+    /// Well-formed objects whose string members fail strict parsing (bad escape, invalid UTF-8):
+    /// a member parsed alone is `Null`, the whole-document fallback decodes it.
+    const LENIENT: &[&[u8]] = &[
+        br#"{"model":"a\xb","messages":[]}"#,
+        b"{\"model\":\"ab\xff\xfecd\",\"x\":1}",
+        br#"{"session_id":"s\q1"}"#,
+        br#"{"messages":[1,"a\xb",{"k":"v"},"\q"],"model":"m"}"#,
+        br#"{"model":"ok","metadata":{"user_id":"u\x"},"x":tru}"#,
+    ];
     const PATHS: &[&str] = &[
         "model", "messages", "messages.0.role", "messages.#", "metadata.user_id", "metadata.a.b.1", "request.contents", "request",
         "key", "n", "t", "z", "a", "b.c", "d", "missing", "metadata.missing", "k\\u0065y", "mess*", "@this", "#", "",
+        "session_id", "messages.1", "messages.3", "metadata",
     ];
 
     #[test]
     fn lazy_lookups_match_a_full_parse() {
-        for doc in DOCS {
-            let lazy = Doc::new(doc.as_bytes());
-            let full = cpa_json::parse(doc.as_bytes());
+        let docs = DOCS.iter().map(|d| d.as_bytes()).chain(LENIENT.iter().copied());
+        for doc in docs {
+            let lazy = Doc::new(doc);
+            let full = crate::parse(doc);
+            let shown = String::from_utf8_lossy(doc);
             for path in PATHS {
-                assert_eq!(lazy.g(path).value(), full.g(path).value(), "doc {doc:?} path {path:?}");
-                assert_eq!(lazy.g(path).exists(), full.g(path).exists(), "doc {doc:?} path {path:?}");
+                assert_eq!(lazy.g(path).value(), full.g(path).value(), "doc {shown:?} path {path:?}");
+                assert_eq!(lazy.g(path).exists(), full.g(path).exists(), "doc {shown:?} path {path:?}");
             }
+            for key in ["model", "session_id", "x", "metadata"] {
+                assert_eq!(lazy.get(key), full.as_object().and_then(|m| m.get(key)), "doc {shown:?} key {key:?}");
+                assert_eq!(lazy.sub(key).is_some_and(|d| d.exists()), full.g(key).is_object() || full.g(key).is_array() || full.g(key).exists() && !full.g(key).is_null(), "doc {shown:?} sub {key:?}");
+            }
+            let elems = lazy.elements("messages").map(|e| e.map(Cow::into_owned).collect::<Vec<_>>());
+            let want = full.g("messages").value();
+            assert_eq!(elems, want.as_array().cloned(), "doc {shown:?} elements");
         }
     }
 

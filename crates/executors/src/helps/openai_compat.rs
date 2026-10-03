@@ -4,7 +4,7 @@
 use cpa_config::{OpenAiCompatibility, OpenAiCompatibilityModel};
 use cpa_core::thinking::parse_suffix;
 use cpa_json::{J, Res, Value};
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 
 fn normalize_model_name(model: &str) -> String {
     let model = model.trim();
@@ -52,8 +52,7 @@ pub fn normalize_openai_max_tokens(payload: &[u8], use_max_completion_tokens: bo
         return payload.to_vec();
     }
     // Most requests carry neither field: answer from the top-level index without a full parse.
-    let doc = Doc::new(payload);
-    if doc.is_lazy() && !doc.has("max_tokens") && !doc.has("max_completion_tokens") {
+    if Doc::lazy(payload).is_some_and(|doc| !doc.has("max_tokens") && !doc.has("max_completion_tokens")) {
         return payload.to_vec();
     }
     let mut v = cpa_json::parse(payload);

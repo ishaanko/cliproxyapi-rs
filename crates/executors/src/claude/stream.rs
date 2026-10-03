@@ -113,7 +113,7 @@ impl ClaudeExecutor {
 fn observers_inert(line: &[u8]) -> bool {
     let Some(payload) = crate::helps::text::json_payload(line) else { return true };
     let (mut types, mut recognized, mut carries) = (0usize, false, false);
-    let complete = cpa_runtime::conductor::session::lazy::visit_top_level(payload, |key, raw| {
+    let complete = cpa_json::lazy::visit_top_level(payload, |key, raw| {
         match key {
             "type" => {
                 types += 1;

@@ -24,7 +24,7 @@ use crate::helps::text::{contains, json_payload, trim_space};
 /// every lookup rooted at those keys misses (stream lines are mostly such events; deciding this
 /// from the key index avoids validating and parsing the whole frame).
 fn lacks_top_level_keys(payload: &[u8], keys: &[&str]) -> bool {
-    cpa_runtime::conductor::session::lazy::Doc::lazy(payload).is_some_and(|doc| !keys.iter().any(|k| doc.has(k)))
+    cpa_json::lazy::Doc::lazy(payload).is_some_and(|doc| !keys.iter().any(|k| doc.has(k)))
 }
 
 fn first_existing(root: &Value, paths: &[&str]) -> Option<Value> {

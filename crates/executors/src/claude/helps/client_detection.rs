@@ -286,7 +286,8 @@ fn measured_helper_session_matches(headers: &HeaderMap, payload: &[u8], root: &s
     {
         return false;
     }
-    let session_id = crate::helps::parse_cache::parse(identity_raw).g("session_id").str();
+    // A fragment of the body: parsed directly so it cannot evict the body from the parse cache.
+    let session_id = cpa_json::parse(identity_raw).g("session_id").str();
     header_value(headers, CLAUDE_CODE_SESSION_HEADER) == session_id
 }
 
@@ -408,7 +409,7 @@ fn measured_helper_system_matches(payload: &[u8], root: &serde_json::Value) -> b
         return false;
     }
     for raw in &blocks {
-        let block = crate::helps::parse_cache::parse(raw.as_bytes());
+        let block = cpa_json::parse(raw.as_bytes());
         if !claude_json_object_has_keys(raw.as_bytes(), &["type", "text"]) || block.g("type").str() != "text" {
             return false;
         }

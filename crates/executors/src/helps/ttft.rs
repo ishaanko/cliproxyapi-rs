@@ -3,7 +3,7 @@
 
 use cpa_json::{J, Value};
 
-use cpa_runtime::conductor::session::lazy::Doc;
+use cpa_json::lazy::Doc;
 
 use super::text::trim_space;
 use super::usage::UsageReporter;
