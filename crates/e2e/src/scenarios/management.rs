@@ -354,6 +354,6 @@ fn misc(out: &mut Vec<Scenario>, mock_port: u16) {
             get(&format!("{V8}/oauth/auth-url")),
         ],
     ));
-    out.push(s("plugins", "plugin endpoints with plugins disabled", vec![get(&format!("{V0}/plugins")), get(&format!("{V8}/plugins")), get(&format!("{V0}/plugin-store"))]));
+    out.push(s("plugins", "plugin endpoints with plugins disabled", vec![get(&format!("{V0}/plugins")), get(&format!("{V8}/plugins")), get(&format!("{V0}/plugin-store"))]).profile(profiles::plugin_store_mock));
     out.push(s("unknown_route", "unknown management paths", vec![get(&format!("{V0}/no-such-thing")), get(&format!("{V8}/no-such-thing"))]));
 }

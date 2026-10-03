@@ -7,6 +7,7 @@
 pub mod media;
 pub mod replies;
 pub mod script;
+pub mod store;
 
 use std::collections::BTreeMap;
 use std::io;
@@ -182,6 +183,9 @@ fn to_response(r: Rendered, stall_ms: u64, chunking: Chunking) -> Response {
 }
 
 async fn handle(State(mock): State<Mock>, req: Request) -> Response {
+    if req.method() == axum::http::Method::CONNECT {
+        return store::connect(req);
+    }
     let path = req.uri().path().to_string();
     if let Some(ctl) = path.strip_prefix("/__control/") {
         return control(&mock, ctl, req).await;
