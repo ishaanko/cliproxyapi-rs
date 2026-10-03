@@ -79,6 +79,26 @@ fn auth_with_file(s: &mut ConfigSpec) {
     s.auth_files.push(("example-auth.json", r#"{"type":"example-auth-go","token":"t","email":"auth@example.test"}"#));
 }
 
+fn router_codex(s: &mut ConfigSpec) {
+    s.plugins.push(
+        PluginSpec::new("claude-web-search-router")
+            .priority(20)
+            .setting("route", json!("codex_web_search"))
+            .setting("codex_model", json!("gpt-5.5"))
+            .setting("require_web_search_only", json!(true)),
+    );
+}
+
+fn router_default_provider(s: &mut ConfigSpec) {
+    s.plugins.push(
+        PluginSpec::new("claude-web-search-router")
+            .priority(20)
+            .setting("route", json!("default_provider"))
+            .setting("default_provider", json!("claude"))
+            .setting("require_web_search_only", json!(true)),
+    );
+}
+
 fn exclusive_ready(s: &mut ConfigSpec) {
     frontend_auth_exclusive(s);
     s.ready_headers.push(("X-Example-Frontend-Auth", "exclusive"));
@@ -119,6 +139,7 @@ pub fn scenarios() -> Vec<Scenario> {
     access(&mut out);
     translation(&mut out);
     execution(&mut out);
+    router(&mut out);
     lifecycle(&mut out);
     out
 }
@@ -430,6 +451,40 @@ fn execution(out: &mut Vec<Scenario>) {
     );
     out.push(s("scheduler_deny", "a scheduler plugin that rejects every pick", vec![Req::Http(chat(Family::Claude))]).profile(scheduler_deny));
     out.push(s("usage_plugin", "a usage plugin observing a request", vec![Req::Http(chat(Family::Compat)), get(&format!("{V0}/usage-queue"))]).profile(usage_with_statistics));
+}
+
+/// A Claude Code style built-in `web_search` request.
+fn web_search_request(stream: bool) -> HttpReq {
+    HttpReq::post(
+        "/v1/messages",
+        json!({
+            "model": Family::Claude.model(),
+            "max_tokens": 1024,
+            "stream": stream,
+            "messages": [{"role": "user", "content": "Perform a web search for the query: rust async runtimes"}],
+            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 8}],
+        }),
+    )
+}
+
+fn router(out: &mut Vec<Scenario>) {
+    let s = |id: &str, desc: &str, steps: Vec<Req>| Scenario::new(format!("plugins.router.{id}"), desc, script(), steps);
+    out.push(
+        s(
+            "codex_web_search",
+            "a model router sends Claude web_search requests to the plugin executor, which runs them through the host on Codex",
+            vec![Req::Pause(REGISTER_MS), Req::Http(web_search_request(false)), Req::Http(web_search_request(true)), Req::Http(claude_messages())],
+        )
+        .profile(router_codex),
+    );
+    out.push(
+        s(
+            "default_provider",
+            "a model router pinning web_search requests to a built-in provider",
+            vec![Req::Pause(REGISTER_MS), Req::Http(web_search_request(false)), Req::Http(claude_messages())],
+        )
+        .profile(router_default_provider),
+    );
 }
 
 fn lifecycle(out: &mut Vec<Scenario>) {
