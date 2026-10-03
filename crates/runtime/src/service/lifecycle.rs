@@ -20,10 +20,14 @@ use tokio::task::JoinHandle;
 
 mod home;
 
-pub use home::{HomeHooks, force_home_runtime_config, merge_home_config};
+pub use home::{HomeHooks, HomePluginWork, HomePlugins, force_home_runtime_config, merge_home_config};
 
 use super::antigravity::{Prober, reverse_alias_map, resolve_upstream_model_id};
-use super::models::{ModelRegistration, apply_registration, openai_compat_info_from_auth, resolve_models_for_auth};
+use super::models::{
+    ModelRegistration, apply_model_prefixes, apply_oauth_model_alias_for_auth, apply_oauth_settings_for_auth, apply_excluded_models,
+    apply_registration, oauth_excluded_models, openai_compat_info_from_auth, resolve_models_for_auth_with,
+};
+use super::plugins::ServicePlugins;
 use super::sync::{AuthSync, AuthUpdate, AuthUpdateAction};
 use crate::conductor::{CooldownStateStore, FileCooldownStateStore, Manager, SharedManager};
 use crate::executor::{DynExecutor, ExecError};
@@ -118,6 +122,7 @@ pub struct ServiceBuilder {
     config_path: PathBuf,
     executors: Vec<DynExecutor>,
     executor_factory: Option<ExecutorFactory>,
+    plugins: Option<Arc<dyn ServicePlugins>>,
     manager: Option<SharedManager>,
     usage: Option<Arc<UsageTracker>>,
     port: Option<Arc<dyn ManagerPort>>,
@@ -128,6 +133,7 @@ pub struct ServiceBuilder {
     backend: Option<StoreBackend>,
     initial_config: Option<Config>,
     home_hooks: Option<Arc<dyn HomeHooks>>,
+    home_plugins: Option<Arc<dyn HomePlugins>>,
 }
 
 impl ServiceBuilder {
@@ -138,6 +144,7 @@ impl ServiceBuilder {
             config_path: config_path.into(),
             executors: Vec::new(),
             executor_factory: None,
+            plugins: None,
             manager: None,
             usage: None,
             port: None,
@@ -148,6 +155,7 @@ impl ServiceBuilder {
             backend: None,
             initial_config: None,
             home_hooks: None,
+            home_plugins: None,
         }
     }
 
@@ -166,6 +174,12 @@ impl ServiceBuilder {
     }
 
     /// Observer of the Home lifetime (log forwarding).
+    /// Attaches the plugin host's Home sync (Go: `syncHomePlugins` in the Home overlay).
+    pub fn home_plugins(mut self, plugins: Arc<dyn HomePlugins>) -> Self {
+        self.home_plugins = Some(plugins);
+        self
+    }
+
     pub fn home_hooks(mut self, hooks: Arc<dyn HomeHooks>) -> Self {
         self.home_hooks = Some(hooks);
         self
@@ -185,6 +199,12 @@ impl ServiceBuilder {
     /// Creates executors on demand for providers none of the registered executors handles.
     pub fn executor_factory(mut self, factory: ExecutorFactory) -> Self {
         self.executor_factory = Some(factory);
+        self
+    }
+
+    /// Attaches the plugin host's model hooks (Go: `WithPluginHost`).
+    pub fn plugins(mut self, plugins: Arc<dyn ServicePlugins>) -> Self {
+        self.plugins = Some(plugins);
         self
     }
 
@@ -282,6 +302,7 @@ impl ServiceBuilder {
             pending_executors: Mutex::new(self.executors),
             registered_executors: Mutex::new(registered),
             executor_factory: self.executor_factory,
+            plugins: self.plugins,
             prober: self.antigravity_probe.then(Prober::default),
             probes: Mutex::new(Vec::new()),
             watch,
@@ -291,6 +312,7 @@ impl ServiceBuilder {
             home_supervisor: Mutex::new(None),
             home_state: Mutex::new(None),
             home_hooks: self.home_hooks,
+            home_plugins: self.home_plugins,
             home_fatal: tokio::sync::Notify::new(),
         };
         Ok(Service { inner: Arc::new(inner) })
@@ -319,6 +341,7 @@ struct Inner {
     pending_executors: Mutex<Vec<DynExecutor>>,
     registered_executors: Mutex<HashSet<String>>,
     executor_factory: Option<ExecutorFactory>,
+    plugins: Option<Arc<dyn ServicePlugins>>,
     prober: Option<Prober>,
     probes: Mutex<Vec<JoinHandle<()>>>,
     watch: bool,
@@ -330,6 +353,7 @@ struct Inner {
     /// The dispatch bundle the active Home lifetime published.
     home_state: Mutex<Option<Arc<crate::conductor::HomeDispatchBundle>>>,
     home_hooks: Option<Arc<dyn HomeHooks>>,
+    home_plugins: Option<Arc<dyn HomePlugins>>,
     /// Signalled when Home lifecycle recovery failed in a way that requires restarting the process.
     home_fatal: tokio::sync::Notify,
 }
@@ -446,7 +470,7 @@ impl Service {
         if home_mode {
             // Credentials live at Home: no auth store, auth files, cooldown restore or refresh
             // loop. Config-synthesized auths arrive with the first config from Home.
-            inner.start_home();
+            inner.start_home().await;
             return Ok(());
         }
 
@@ -526,6 +550,17 @@ impl Service {
         inner.apply_updates_locked(&guard, vec![update]).await;
     }
 
+    /// Go `refreshPluginModelRegistrations`: re-registers the models of every auth (after the
+    /// plugin set or its models changed).
+    pub async fn refresh_model_registrations(&self) {
+        let inner = &self.inner;
+        let _guard = inner.apply_lock.lock().await;
+        let cfg = inner.config();
+        for auth in inner.port.list() {
+            inner.register_models(&cfg, &auth).await;
+        }
+    }
+
     /// Waits for in-flight Antigravity capability probes (Go: `WaitAntigravityProbes`).
     pub async fn wait_antigravity_probes(&self) {
         let handles = std::mem::take(&mut *self.inner.probes.lock());
@@ -546,8 +581,14 @@ impl Service {
             task.abort();
         }
         self.inner.config_watcher.lock().take();
-        self.inner.stop_home();
+        self.inner.cancel_home();
         self.inner.manager.stop_auto_refresh();
+    }
+
+    /// Stops Home mode gracefully: the supervisor drains in-flight executions, flushes pending
+    /// credential releases and closes the client. Call before [`Service::shutdown`].
+    pub async fn shutdown_home(&self) {
+        self.inner.stop_home().await;
     }
 
     /// Resolves when Home lifecycle recovery failed beyond repair (the process should exit).
@@ -714,6 +755,9 @@ impl Inner {
     }
 
     /// Go `ensureExecutorsForAuth` for providers outside the registered set: asks the factory.
+    /// A provider a plugin executor may serve is left to the plugin unless the config has a
+    /// native OpenAI-compatibility entry; a native executor is wrapped when a plugin auth
+    /// provider owns refresh.
     fn ensure_executor_for_auth(&self, auth: &Auth) {
         let Some(factory) = &self.executor_factory else { return };
         // Disabled auths never (re)bind executors.
@@ -724,7 +768,16 @@ impl Inner {
         if key.is_empty() || self.registered_executors.lock().contains(&key) {
             return;
         }
-        if let Some(executor) = factory(&key) {
+        if let Some(plugins) = &self.plugins
+            && plugins.has_executor_candidate_provider(&key)
+            && !has_native_compat_config(auth, &key, &self.config())
+        {
+            return;
+        }
+        if let Some(mut executor) = factory(&key) {
+            if let Some(plugins) = &self.plugins {
+                executor = plugins.wrap_compat_executor(&plugin_auth_lookup_keys(auth, executor.identifier()), executor);
+            }
             self.register_executor(executor);
         }
     }
@@ -935,13 +988,72 @@ impl Inner {
         if self.port.get(&auth.id).is_none_or(|c| c.disabled) {
             return;
         }
-        let registration = resolve_models_for_auth(cfg, auth);
+        if self.try_register_plugin_models(cfg, auth).await {
+            self.port.models_registered(&auth.id).await;
+            return;
+        }
+        let registration = resolve_models_for_auth_with(cfg, auth, self.plugins.as_deref());
         let registered = matches!(registration, ModelRegistration::Register { .. });
         apply_registration(self.registry, &auth.id, registration);
         if registered {
             self.probe_antigravity(cfg, auth);
         }
         self.port.models_registered(&auth.id).await;
+    }
+
+    /// Go `tryRegisterPluginModelsForAuth`: lets the plugin owning the auth's provider discover its
+    /// models. True when a plugin handled the auth (the built-in rules are skipped).
+    async fn try_register_plugin_models(&self, cfg: &Arc<Config>, auth: &Auth) -> bool {
+        let Some(plugins) = self.plugins.as_deref() else { return false };
+        let result = plugins.models_for_auth(auth).await;
+        if !result.handled {
+            return false;
+        }
+        if result.err.is_some() {
+            return true;
+        }
+        let mut provider = result.provider.trim().to_lowercase();
+        if provider.is_empty() {
+            provider = auth.provider.trim().to_lowercase();
+        }
+        let mut active = auth.clone();
+        if let Some(mut update) = result.auth {
+            update.id = auth.id.clone();
+            if update.provider.is_empty() {
+                update.provider = auth.provider.clone();
+            }
+            if update.file_name.is_empty() {
+                update.file_name = auth.file_name.clone();
+            }
+            for (k, v) in &auth.attributes {
+                update.attributes.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+            if let Ok(updated) = self.port.update(update, false).await {
+                active = updated;
+            }
+        }
+        let active_provider = active.provider.trim().to_lowercase();
+        if !active_provider.is_empty() {
+            provider = active_provider;
+        }
+        if provider.is_empty() {
+            provider = auth.provider.trim().to_lowercase();
+        }
+        let kind = active.auth_kind().to_string();
+        let mut excluded = oauth_excluded_models(cfg, &provider, &kind);
+        if let Some(val) = active.attributes.get("excluded_models").filter(|v| !v.trim().is_empty()) {
+            excluded = val.split(',').map(str::to_string).collect();
+        }
+        let models = apply_excluded_models(result.models, &excluded);
+        let models = apply_oauth_model_alias_for_auth(cfg, &provider, &kind, &active.attributes, models);
+        if models.is_empty() {
+            self.registry.unregister_client(&active.id);
+            return true;
+        }
+        let models = apply_oauth_settings_for_auth(cfg, &provider, &kind, models);
+        let models = apply_model_prefixes(models, &active.prefix, cfg.force_model_prefix);
+        apply_registration(self.registry, &active.id, super::models::finalize_registration(&provider, models));
+        true
     }
 
     /// Go `asyncProbeAntigravityCapabilities`: flags web-search models after the fact, if the
@@ -1002,3 +1114,41 @@ fn executor_key_for_auth(auth: &Auth) -> String {
     }
 }
 
+
+/// Go `hasNativeOpenAICompatExecutorConfig`.
+fn has_native_compat_config(auth: &Auth, provider_key: &str, cfg: &Config) -> bool {
+    if !auth.attr("base_url").trim().is_empty() || !auth.attr("compat_name").trim().is_empty() {
+        return true;
+    }
+    if auth.provider.trim().eq_ignore_ascii_case("openai-compatibility") {
+        return true;
+    }
+    let mut candidates: Vec<String> = Vec::new();
+    let provider_key = provider_key.trim().to_lowercase();
+    if !provider_key.is_empty() {
+        candidates.push(provider_key);
+    }
+    let key = auth.attr("provider_key");
+    if !key.trim().is_empty() {
+        candidates.push(key.trim().to_lowercase());
+    }
+    if !auth.provider.trim().is_empty() {
+        candidates.push(auth.provider.trim().to_lowercase());
+    }
+    cfg.openai_compatibility.iter().filter(|c| !c.disabled).any(|c| {
+        let name = c.name.trim().to_lowercase();
+        !name.is_empty() && candidates.contains(&name)
+    })
+}
+
+/// Go `pluginAuthProviderLookupKeys`.
+fn plugin_auth_lookup_keys(auth: &Auth, fallback: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for value in [auth.provider.as_str(), &auth.attr("provider_key"), &auth.attr("compat_name"), fallback] {
+        let value = value.trim().to_lowercase();
+        if !value.is_empty() && !keys.contains(&value) {
+            keys.push(value);
+        }
+    }
+    keys
+}

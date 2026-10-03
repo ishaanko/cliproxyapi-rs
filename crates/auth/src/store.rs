@@ -2,8 +2,7 @@
 //! (sdk/auth/filestore.go). Files are `*.json` anywhere under the auth dir; the auth id is the path
 //! relative to that dir, so an auth dir written by the Go app loads unchanged.
 //!
-//! Not ported: the plugin auth parser hook (plugins are out of scope for this crate) and the git /
-//! postgres / object stores.
+//! Not ported: the git / postgres / object stores.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,8 +13,11 @@ use parking_lot::{Mutex, RwLock};
 use serde_json::Value;
 
 use crate::credmeta::{
-    Metadata, apply_custom_headers_from_metadata, normalize_credential_metadata,
-    validate_auth_weight, validate_metadata_weight,
+    Metadata, apply_auth_priority_metadata, apply_auth_weight_metadata, apply_custom_headers_from_metadata,
+    normalize_credential_metadata, validate_auth_weight, validate_metadata_weight,
+};
+use crate::plugin_parser::{
+    PluginParseRequest, compact_plugin_auths, current_plugin_auth_parser, sync_plugin_storage_metadata,
 };
 use crate::storage::{StorageError, mkdir_all_private, write_file_in_place};
 use crate::types::{
@@ -94,15 +96,20 @@ impl FileTokenStore {
         self.base_dir.read().clone()
     }
 
-    /// Reads one auth JSON file into an `Auth` (single-auth path of `readAuthFiles`).
+    /// Reads one auth JSON file into an `Auth` (Go: `readAuthFile`, the first of `readAuthFiles`).
     /// `Ok(None)` for empty files and legacy `type: gemini` files.
     pub fn read_auth_file(&self, path: &Path, base_dir: &Path) -> Result<Option<Auth>, StoreError> {
+        Ok(self.read_auth_files(path, base_dir)?.into_iter().next())
+    }
+
+    /// Go `readAuthFiles`: a plugin-owned file may expand into several auths.
+    pub fn read_auth_files(&self, path: &Path, base_dir: &Path) -> Result<Vec<Auth>, StoreError> {
         let data = fs::read(path).map_err(|source| StoreError::Io {
             context: "read file",
             source,
         })?;
         if data.is_empty() {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let parsed: Value = serde_json::from_slice(&data)
             .map_err(|e| StoreError::Invalid(format!("unmarshal auth json: {e}")))?;
@@ -121,7 +128,7 @@ impl FileTokenStore {
             .trim()
             .to_string();
         if provider.eq_ignore_ascii_case("gemini") {
-            return Ok(None);
+            return Ok(Vec::new());
         }
         let mtime = fs::metadata(path)
             .and_then(|m| m.modified())
@@ -131,6 +138,9 @@ impl FileTokenStore {
             })?;
         let mtime: DateTime<Utc> = SystemTime::into(mtime);
 
+        if let Some(auths) = self.read_plugin_auths(path, base_dir, &provider, &data, &metadata, mtime)? {
+            return Ok(auths);
+        }
         let provider = if provider.is_empty() {
             "unknown".to_string()
         } else {
@@ -185,7 +195,58 @@ impl FileTokenStore {
         }
         auth.metadata = metadata;
         apply_custom_headers_from_metadata(&mut auth);
-        Ok(Some(auth))
+        Ok(vec![auth])
+    }
+
+    /// The plugin branch of `readAuthFiles`: `Some` when a plugin handled the file.
+    fn read_plugin_auths(
+        &self,
+        path: &Path,
+        base_dir: &Path,
+        provider: &str,
+        data: &[u8],
+        metadata: &Metadata,
+        mtime: DateTime<Utc>,
+    ) -> Result<Option<Vec<Auth>>, StoreError> {
+        let Some(parser) = current_plugin_auth_parser() else { return Ok(None) };
+        let path_str = path.to_string_lossy().into_owned();
+        let file_name = id_for(path, base_dir);
+        let req = PluginParseRequest { provider, path: &path_str, file_name: &file_name, raw_json: data };
+        let Ok(Some(auths)) = parser.parse_auths(&req) else { return Ok(None) };
+        let mut auths = compact_plugin_auths(auths);
+        let disabled = metadata.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+        let multi = auths.len() > 1;
+        for (index, auth) in auths.iter_mut().enumerate() {
+            normalize_credential_metadata(&mut auth.metadata);
+            if multi {
+                auth.mark_plugin_virtual(&path_str, index);
+            }
+            auth.created_at = Some(mtime);
+            auth.updated_at = Some(mtime);
+            auth.attributes.insert(ATTRIBUTE_PATH.into(), path_str.clone());
+            auth.attributes.insert(ATTRIBUTE_SOURCE.into(), path_str.clone());
+            auth.attributes.insert(ATTRIBUTE_SOURCE_BACKEND.into(), AUTH_SOURCE_FILE.into());
+            if disabled {
+                auth.disabled = true;
+                auth.status = Status::Disabled;
+                auth.metadata.insert("disabled".into(), Value::Bool(true));
+            }
+            if let Some(p) = metadata.get("proxy_url").and_then(Value::as_str)
+                && auth.proxy_url.is_empty()
+            {
+                auth.proxy_url = p.trim().to_string();
+            }
+            if let Some(pref) = metadata.get("prefix").and_then(Value::as_str)
+                && auth.prefix.is_empty()
+            {
+                auth.prefix = pref.trim().trim_matches('/').to_string();
+            }
+            apply_auth_weight_metadata(auth, metadata).map_err(StoreError::Invalid)?;
+            apply_auth_priority_metadata(auth, metadata);
+            sync_plugin_storage_metadata(auth);
+            apply_custom_headers_from_metadata(auth);
+        }
+        Ok(Some(auths))
     }
 
     fn resolve_auth_path(&self, auth: &Auth) -> Result<PathBuf, StoreError> {
@@ -235,8 +296,8 @@ impl Store for FileTokenStore {
         let base = PathBuf::from(&dir);
         let mut entries = Vec::new();
         walk_json_files(&base, &mut |path| {
-            if let Ok(Some(auth)) = self.read_auth_file(path, &base) {
-                entries.push(auth);
+            if let Ok(auths) = self.read_auth_files(path, &base) {
+                entries.extend(auths);
             }
         })?;
         Ok(entries)

@@ -17,6 +17,19 @@ use crate::error::HomeError;
 static CURRENT: RwLock<Option<Arc<Client>>> = RwLock::new(None);
 
 /// Sets the active Home client used by runtime integrations.
+/// Runs one Home operation to completion from synchronous code on a worker thread of a
+/// multi-thread runtime. The calling thread blocks (`block_in_place` first hands the tasks queued
+/// on it to other workers), so keep the operation short. Without a runtime, or on a
+/// current-thread one, there is nowhere to block safely and the store reads as unavailable.
+pub fn run_blocking<F: std::future::Future>(fut: F) -> Result<F::Output, HomeError> {
+    use tokio::runtime::{Handle, RuntimeFlavor};
+    let handle = Handle::try_current().map_err(|_| HomeError::other("home kv unavailable: no async runtime"))?;
+    match handle.runtime_flavor() {
+        RuntimeFlavor::MultiThread => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
+        _ => Err(HomeError::other("home kv unavailable: needs a multi-thread async runtime")),
+    }
+}
+
 pub fn set_current(client: Arc<Client>) {
     *CURRENT.write() = Some(client);
 }

@@ -26,7 +26,7 @@ use cpa_config::{Config, clean_path};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_file};
+use super::synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_files};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthUpdateAction {
@@ -180,11 +180,12 @@ impl AuthSync {
                         }
                         let key = normalize_path(&full.to_string_lossy());
                         hashes.insert(key.clone(), hash_hex(&data));
-                        match synthesize_auth_file(&self.context(), &full.to_string_lossy(), &data) {
-                            Ok(Some(auth)) => {
-                                by_path.entry(key).or_default().insert(auth.id);
+                        match synthesize_auth_files(&self.context(), &full.to_string_lossy(), &data) {
+                            Ok(auths) => {
+                                for auth in auths {
+                                    by_path.entry(key.clone()).or_default().insert(auth.id);
+                                }
                             }
-                            Ok(None) => {}
                             Err(err) => tracing::warn!("skipping auth file {name}: {err}"),
                         }
                     }
@@ -264,14 +265,14 @@ impl AuthSync {
         self.file_hashes.insert(key.clone(), hash);
         let old_ids = self.file_auths_by_path.get(&key).cloned().unwrap_or_default();
 
-        let generated = match synthesize_auth_file(&self.context(), &path.to_string_lossy(), &data) {
-            Ok(auth) => {
+        let generated: Vec<Auth> = match synthesize_auth_files(&self.context(), &path.to_string_lossy(), &data) {
+            Ok(auths) => {
                 self.last_synced = true;
-                auth.filter(|a| !a.id.trim().is_empty())
+                auths.into_iter().filter(|a| !a.id.trim().is_empty()).collect()
             }
             Err(err) => {
                 tracing::warn!("skipping auth file {name}: {err}");
-                None
+                Vec::new()
             }
         };
         let new_by_id: BTreeMap<String, Auth> = generated.into_iter().map(|a| (a.id.clone(), a)).collect();

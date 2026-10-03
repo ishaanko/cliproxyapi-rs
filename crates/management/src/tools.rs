@@ -1,11 +1,10 @@
 //! `POST /requests/api-call` (Go: `api_tools.go`), `GET /server/latest-version`
-//! (`config_basic.go`) and the plugin endpoints this build does not provide.
+//! (`config_basic.go`).
 
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use axum::extract::State;
-use axum::response::Response;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use cpa_auth::http::{ProxySetting, parse_proxy};
@@ -161,7 +160,7 @@ async fn refresh_for_call(
 
 /// `resolveTokenForAuth`: the credential's token, refreshing OAuth tokens of providers whose
 /// tokens are short-lived (antigravity, xai) or minted on demand (meta).
-async fn resolve_token(
+pub(crate) async fn resolve_token(
     st: &ManagementState,
     auth: &Auth,
     request_proxy: &str,
@@ -313,7 +312,7 @@ fn proxy_from_api_key_config(cfg: &Config, auth: &Auth) -> String {
 
 /// A client without environment proxies (Go: the cloned default transport with `Proxy = nil`),
 /// routed through `proxy` when it is a real proxy URL.
-fn build_client(proxy: &ProxySetting) -> reqwest::Client {
+pub(crate) fn build_client(proxy: &ProxySetting) -> reqwest::Client {
     // Go's default transport asks for gzip only and identifies as Go-http-client.
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
@@ -333,7 +332,7 @@ fn build_client(proxy: &ProxySetting) -> reqwest::Client {
 
 /// Request proxy, else credential proxy, config entry proxy, global proxy; the first usable one
 /// wins and `direct`/`none` pins a direct connection.
-fn select_proxy(cfg: &Config, auth: Option<&Auth>, request_proxy: &str) -> ProxySetting {
+pub(crate) fn select_proxy(cfg: &Config, auth: Option<&Auth>, request_proxy: &str) -> ProxySetting {
     if !request_proxy.is_empty() {
         return parse_proxy(request_proxy).unwrap_or(ProxySetting::Direct);
     }
@@ -563,22 +562,4 @@ pub(crate) async fn latest_version(State(st): State<ManagementState>) -> ApiResu
             "missing release version",
         )),
     }
-}
-
-// ---- plugins (not provided by this build) ----
-
-/// `GET /plugins`: the shape Go returns when no plugin is installed.
-pub(crate) async fn list_plugins(State(st): State<ManagementState>) -> ApiResult {
-    let cfg = st.cfg();
-    Ok(ok_struct(
-        &json!({"plugins_enabled": false, "plugins_dir": cfg.plugins.dir, "plugins": []}),
-    ))
-}
-
-/// Plugin install, store, quota and delete endpoints answer like a disabled feature.
-pub(crate) async fn plugins_unavailable() -> Response {
-    crate::http::json_response(
-        501,
-        &json!({"error": "plugins_not_supported", "message": "plugins are not supported by this server"}),
-    )
 }

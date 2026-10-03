@@ -159,6 +159,10 @@ async fn record(common: Common, runs: usize) -> Result<ExitCode> {
     }
     let mut unstable = 0;
     for s in &list {
+        let missing = s.missing_plugins(common.mock_port);
+        if !missing.is_empty() {
+            bail!("scenario {} needs plugin libraries that are not built ({}); run crates/e2e/plugins/build.sh", s.id, missing.join(", "));
+        }
         let mut golden = runner::run_scenario(&opts, s).await?;
         let mut error = None;
         for _ in 1..runs.max(1) {
@@ -197,7 +201,15 @@ async fn check(common: Common, strict_order: bool, report: Option<PathBuf>) -> R
         bail!("no scenarios match");
     }
     let mut outcomes: Vec<Outcome> = vec![];
+    let mut skipped = 0;
     for s in &list {
+        let missing = s.missing_plugins(common.mock_port);
+        if !missing.is_empty() {
+            println!("SKIP  {} (plugin libraries not built: {}; run crates/e2e/plugins/build.sh)", s.id, missing.join(", "));
+            skipped += 1;
+            outcomes.push(Outcome { id: s.id.clone(), desc: s.desc.clone(), failures: vec![] });
+            continue;
+        }
         let failures = match golden::load(&common.golden_dir, &s.id)? {
             None => vec!["no golden recorded".to_string()],
             Some(g) => match runner::run_scenario(&opts, s).await {
@@ -241,6 +253,13 @@ async fn check(common: Common, strict_order: bool, report: Option<PathBuf>) -> R
     let md = golden::report(&outcomes, &common.server.to_string_lossy(), &common.golden_dir, layout);
     let path = report.unwrap_or_else(|| common.golden_dir.join("report.md"));
     std::fs::write(&path, md)?;
-    println!("\n{} scenarios, {} passed, {} failed (report: {})", outcomes.len(), outcomes.len() - failed, failed, path.display());
+    println!(
+        "\n{} scenarios, {} passed ({} skipped), {} failed (report: {})",
+        outcomes.len(),
+        outcomes.len() - failed,
+        skipped,
+        failed,
+        path.display()
+    );
     Ok(if failed == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }

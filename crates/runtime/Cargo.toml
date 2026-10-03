@@ -15,6 +15,7 @@ cpa-misc = { path = "../misc" }
 cpa-discovery = { path = "../discovery" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }
+cpa-pluginapi = { path = "../pluginapi" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

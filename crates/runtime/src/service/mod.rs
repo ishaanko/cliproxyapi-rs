@@ -26,7 +26,7 @@
 //!
 //! Home mode (`lifecycle/home.rs`): the config arrives over the Home subscription.
 //!
-//! Not ported: the plugin host, the aistudio websocket gateway and runtime-only auths.
+//! Not ported: the aistudio websocket gateway and runtime-only auths.
 
 pub mod antigravity;
 pub mod discovery;
@@ -36,6 +36,7 @@ pub mod listing;
 pub mod models;
 mod persist;
 mod lifecycle;
+pub mod plugins;
 pub mod sync;
 pub mod synth;
 #[cfg(test)]
@@ -47,9 +48,10 @@ pub use listing::{
 };
 pub use models::{ModelRegistration, register_models_for_auth, resolve_models_for_auth};
 pub use persist::{StoreBackend, StorePersister};
+pub use plugins::{PluginAuthModels, ServicePlugins};
 pub use lifecycle::{
-    ExecutorFactory, HomeHooks, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,
+    ExecutorFactory, HomeHooks, HomePluginWork, HomePlugins, ManagerPort, Service, ServiceBuilder, ServiceError, force_home_runtime_config,
     merge_home_config,
 };
 pub use sync::{AuthSync, AuthUpdate, AuthUpdateAction};
-pub use synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_dir, synthesize_auth_file, synthesize_config_auths};
+pub use synth::{SynthesisContext, snapshot_core_auths, synthesize_auth_dir, synthesize_auth_file, synthesize_auth_files, synthesize_config_auths};

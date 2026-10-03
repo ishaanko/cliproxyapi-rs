@@ -88,6 +88,7 @@ fn error_reply(kind: &str, extra: Value) -> Result<Vec<u8>, HomeError> {
     Ok(serde_json::to_vec(&json!({"error": detail})).unwrap())
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum Step {
     Ok(&'static str),
@@ -502,6 +503,16 @@ async fn usage_is_recorded_for_home_dispatched_attempts() {
     let page = tracker.requests(10, None);
     assert_eq!(page.events.len(), 1);
     assert_eq!((page.events[0].record.auth_index.as_str(), page.events[0].record.failed), ("a", false));
+}
+
+// Go: `setHomeUserAPIKeyOnGinContext`: the user key Home names reaches the usage record.
+#[tokio::test]
+async fn home_user_api_key_reaches_the_usage_record() {
+    let h = Harness::new(vec![dispatch_reply("a", "m", json!({"user_api_key": "user-key"}))]);
+    let tracker = Arc::new(crate::usage::UsageTracker::new());
+    h.mgr.set_usage_tracker(Some(tracker.clone()));
+    h.run("m").await.unwrap();
+    assert_eq!(tracker.requests(10, None).events[0].record.api_key, "user-key");
 }
 
 #[tokio::test]
@@ -1186,4 +1197,52 @@ async fn redispatch_stops_when_the_release_acknowledgement_fails() {
     assert_eq!(home.models().len(), 1, "no second dispatch after a release failure");
     cancel.kill();
     let _ = task.await;
+}
+
+// Go: TestHomeSelectionClosesAttemptAndWebSocketResources.
+#[tokio::test]
+async fn selection_closes_attempt_and_websocket_resources() {
+    let h = Harness::new(vec![]);
+    let pending = h.registry.begin_dispatch().unwrap();
+    let scope = h.registry.install(&pending, Default::default()).unwrap();
+    let mut auth = Auth::default();
+    auth.id = "home-auth".into();
+    let selection = HomeDispatchSelection::new(auth, h.exec.clone(), "mock", scope).unwrap();
+    let guard = selection.attempt_context().unwrap();
+    let closes = Arc::new(AtomicUsize::new(0));
+    let c = closes.clone();
+    selection
+        .bind(Box::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }))
+        .unwrap();
+    selection.end("completed");
+    guard.release();
+    assert!(guard.cancel().is_dead(), "attempt was not canceled");
+    assert_eq!(closes.load(Ordering::SeqCst), 1);
+}
+
+// A websocket selection abandoned without an explicit end (request future dropped) must release
+// its Home slot and forget its session auth: nothing may keep the selection alive.
+#[tokio::test]
+async fn dropped_websocket_selection_releases_its_slot_and_session_auth() {
+    let h = Harness::new(vec![dispatch_reply("a", "m", accounted("a", "m"))]);
+    let mut auth = Auth::default();
+    auth.id = "a".into();
+    auth.attributes.insert("websockets".into(), "true".into());
+    let pending = h.registry.begin_dispatch().unwrap();
+    let spec = cpa_home::executionregistry::ScopeSpec {
+        credential_id: "a".into(),
+        model: "m".into(),
+        accounted: true,
+        ..Default::default()
+    };
+    let scope = h.registry.install(&pending, spec).unwrap();
+    let selection = HomeDispatchSelection::new(auth, h.exec.clone(), "mock", scope).unwrap();
+    h.mgr.bind_home_selection_runtime_auth(&ws_opts("sess-drop"), &selection).unwrap();
+    assert!(h.mgr.get_execution_session_auth_by_id("sess-drop", "a").is_some());
+    drop(selection);
+    assert!(h.mgr.get_execution_session_auth_by_id("sess-drop", "a").is_none());
+    assert_eq!(h.release_count(), 1);
 }

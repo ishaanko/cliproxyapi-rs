@@ -32,6 +32,17 @@ fn response_headers_json(headers: &http::HeaderMap) -> Value {
     json!(map)
 }
 
+/// Go's `time.Time` JSON (RFC 3339 nano): the fraction keeps only significant digits.
+fn rfc3339_nano(t: chrono::DateTime<chrono::Utc>) -> String {
+    let text = t.with_timezone(&Local).to_rfc3339_opts(SecondsFormat::Nanos, true);
+    let Some(dot) = text.find('.') else { return text };
+    let frac_end = text[dot + 1..].find(|c: char| !c.is_ascii_digit()).map_or(text.len(), |i| dot + 1 + i);
+    let digits = text[dot + 1..frac_end].trim_end_matches('0');
+    let head = &text[..dot];
+    let tail = &text[frac_end..];
+    if digits.is_empty() { format!("{head}{tail}") } else { format!("{head}.{digits}{tail}") }
+}
+
 /// The queue payload of one record, with Go's field order. Fields the tracker does not collect
 /// (cache-creation tokens, response service tier) carry their defaults.
 pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
@@ -48,7 +59,9 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     };
     let model = non_empty(&r.model, "unknown");
     let alias = non_empty(&r.alias, &model);
-    let fail = if r.failed {
+    // Go: `failed` also follows the response status (`resolveSuccess`).
+    let failed = r.failed || r.fail.status_code >= 400;
+    let fail = if failed {
         let status = if r.fail.status_code == 0 { 500 } else { r.fail.status_code };
         json!({"status_code": status, "body": r.fail.body.trim()})
     } else {
@@ -58,13 +71,7 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     let mut put = |k: &str, v: Value| {
         m.insert(k.to_string(), v);
     };
-    put(
-        "timestamp",
-        r.timestamp
-            .with_timezone(&Local)
-            .to_rfc3339_opts(SecondsFormat::AutoSi, true)
-            .into(),
-    );
+    put("timestamp", rfc3339_nano(r.timestamp).into());
     put("latency_ms", r.latency_ms.into());
     put("ttft_ms", r.ttft_ms.into());
     let x = &r.extra;
@@ -92,7 +99,7 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
             "total_tokens": t.total_tokens,
         }),
     );
-    put("failed", r.failed.into());
+    put("failed", failed.into());
     put("generate", x.generate.unwrap_or(true).into());
     put("stream", r.stream.into());
     put("fail", fail);
@@ -150,7 +157,9 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     }
     put("reasoning_effort", x.reasoning_effort.clone().unwrap_or_default().into());
     put("service_tier", x.service_tier.clone().unwrap_or_else(|| "auto".into()).into());
-    if !r.failed {
+    // The model the upstream reported; the tracker only knows the upstream model, so that stands
+    // in for it (omitted when empty, like Go's `omitempty`).
+    if !failed && !r.model.trim().is_empty() {
         put("response_model", r.model.trim().into());
     }
     serde_json::to_vec(&Value::Object(m)).unwrap_or_default()
@@ -200,5 +209,16 @@ mod tests {
         let pos = |k: &str| keys.iter().position(|x| *x == k);
         assert_eq!(pos("access_token_sha256"), pos("auth_index").map(|i| i + 1));
         assert!(pos("is_compaction") < pos("reasoning_effort") && pos("session_id") < pos("node_kind"));
+    }
+
+    // Go's RFC3339Nano drops trailing zeros of the fraction (and the dot when it is zero).
+    #[test]
+    fn timestamp_fraction_keeps_significant_digits_only() {
+        use chrono::TimeZone;
+        let at = |nanos: u32| rfc3339_nano(chrono::Utc.timestamp_opt(1_700_000_000, nanos).single().expect("valid time"));
+        let trimmed = at(120_000_000);
+        assert!(trimmed.contains(".12") && !trimmed.contains(".120"), "{trimmed}");
+        assert!(at(123_456_789).contains(".123456789"));
+        assert!(!at(0).contains('.'));
     }
 }

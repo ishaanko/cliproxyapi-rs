@@ -14,8 +14,10 @@
 //! `X-Management-Key`, bcrypt-hashed `secret-key`, `MANAGEMENT_PASSWORD`, local password, remote
 //! rules, IP ban after 5 failures). `/oauth/callback` skips the key check like in Go.
 //!
-//! Not provided: plugin management (`GET /plugins` lists none, the rest answers 501), the Redis
-//! usage queue (`/observability/usage/queue` answers 501; use `/observability/requests`), and
+//! Plugin management (list, store, install, delete, config, quota, plugin-owned routes and login
+//! URLs) goes through the `cpa-plugin` host attached with `ManagementState::with_plugin_host`.
+//!
+//! Not provided: the Redis usage queue (`/observability/usage/queue` answers 501; use `/observability/requests`), and
 //! the deprecated `/v0/management` tree except `/v0/management/oauth-callback`.
 
 mod config_v8;
@@ -30,7 +32,9 @@ mod key_lists;
 mod logs;
 mod oauth;
 mod observability;
+mod plugin_routes;
 mod plugin_store;
+mod quota_probe;
 mod plugins_v0;
 mod routing;
 mod settings_v0;
@@ -173,18 +177,15 @@ pub fn router(state: ManagementState) -> Router {
         .route("/oauth/auth-url", get(oauth::auth_url))
         .route("/oauth/status", get(oauth::status))
         .route("/oauth/session", delete(oauth::cancel_session))
-        .route("/plugins", get(tools::list_plugins))
-        .route("/plugins/{id}", delete(tools::plugins_unavailable))
-        .route("/plugins/store", get(tools::plugins_unavailable))
-        .route(
-            "/plugins/store/{id}/install",
-            post(tools::plugins_unavailable),
-        )
+        .route("/plugins", get(plugins_v0::list_plugins))
+        .route("/plugins/{id}", delete(plugins_v0::delete_v8))
+        .route("/plugins/store", get(plugins_v0::store))
+        .route("/plugins/store/{id}/install", post(plugins_v0::install_v8))
         .route(
             "/plugins/{id}/quota",
-            get(tools::plugins_unavailable)
-                .post(tools::plugins_unavailable)
-                .delete(tools::plugins_unavailable),
+            get(plugins_v0::get_quota)
+                .post(plugins_v0::fetch_quota)
+                .delete(plugins_v0::reset_quota),
         )
         // Key check first, availability gate outside it.
         .layer(middleware::from_fn_with_state(
@@ -215,6 +216,11 @@ pub fn router(state: ManagementState) -> Router {
         .nest("/v8/management", v8)
         .nest("/v0/management", v0_routes::router(state.clone()))
         .merge(callbacks)
+        // Unauthenticated, browser-navigable plugin resources (Go: `pluginResourceNoRoute`).
+        .route(
+            "/v0/resource/plugins/{*rest}",
+            axum::routing::any(plugin_routes::resource_fallback),
+        )
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(gate::cors))
         .with_state(state)

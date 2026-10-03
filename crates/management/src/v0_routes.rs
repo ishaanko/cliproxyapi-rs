@@ -8,10 +8,9 @@ use axum::routing::{delete, get, patch, post};
 use cpa_auth::Provider;
 use tower::ServiceExt;
 
-use crate::http::empty;
 use crate::state::ManagementState;
 use crate::{
-    credential_edit, credentials, gate, key_lists as k, logs, oauth, observability, plugins_v0,
+    credential_edit, credentials, gate, key_lists as k, logs, oauth, observability, plugin_routes, plugins_v0,
     routing, settings_v0 as s, tools,
 };
 
@@ -34,7 +33,7 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
             get(s::get_config_yaml).put(s::put_config_yaml),
         )
         .route("/latest-version", get(tools::latest_version))
-        .route("/plugins", get(tools::list_plugins))
+        .route("/plugins", get(plugins_v0::list_plugins))
         .route("/plugin-store", get(plugins_v0::store))
         .route("/plugin-store/{id}/install", post(plugins_v0::install))
         .route("/plugins/{id}", delete(plugins_v0::delete))
@@ -277,15 +276,16 @@ pub(crate) fn router(state: ManagementState) -> Router<ManagementState> {
     // Unrouted requests still pass the gate: unavailable is a bare 404, a bad key is 401/403,
     // and only an authenticated caller learns the (also bare, but CPA-headed) 404.
     let gate_then_404 = Router::new()
-        .fallback(|| async { empty(404) })
+        .fallback(plugin_routes::management_fallback)
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             gate::authenticate,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            state,
+            state.clone(),
             gate::availability,
-        ));
+        ))
+        .with_state(state);
     let no_route = move |req: Request| {
         let svc = gate_then_404.clone();
         async move {

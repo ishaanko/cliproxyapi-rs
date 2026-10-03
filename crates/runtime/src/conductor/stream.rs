@@ -200,6 +200,18 @@ impl Manager {
                 &exec_opts.headers,
                 &payload,
             );
+            let requested_alias = requested_model_alias(&exec_opts, route_model);
+            match super::plugin_hooks::apply_request_after_auth_interceptor(
+                executor, provider, exec_req, exec_opts, &requested_alias,
+            )
+            .await
+            {
+                Ok((r, o)) => {
+                    exec_req = r;
+                    exec_opts = o;
+                }
+                Err(e) => return Err(Fail::stop(e)),
+            }
 
             let started = Instant::now();
             let make_result = |auth: &Auth,

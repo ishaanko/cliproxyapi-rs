@@ -45,6 +45,24 @@ pub struct Cli {
     pub management_base_url: String,
     /// Flags accepted for compatibility but not implemented in this build.
     pub unsupported: Vec<String>,
+    /// Plugin-declared flags given on the command line, in order, with their raw values.
+    pub plugin_flags: Vec<(String, String)>,
+}
+
+/// A flag a plugin declared (Go: registered on `flag.CommandLine` by the plugin host).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginFlag {
+    pub name: String,
+    pub usage: String,
+    /// `bool` flags may omit their value.
+    pub is_bool: bool,
+    /// The flag's default as the host renders it.
+    pub default: String,
+}
+
+/// Names of the flags this binary owns (what `flag.Lookup` finds before plugin flags exist).
+pub fn builtin_flag_names() -> std::collections::HashSet<String> {
+    BOOL_FLAGS.iter().chain(VALUE_FLAGS).map(|n| n.to_string()).collect()
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -102,6 +120,11 @@ fn parse_bool(value: &str) -> Option<bool> {
 
 /// Parses `args` (without the program name).
 pub fn parse(args: &[String]) -> ParseOutcome {
+    parse_with(args, &[])
+}
+
+/// [`parse`] accepting the plugin-declared flags `extra` as well.
+pub fn parse_with(args: &[String], extra: &[PluginFlag]) -> ParseOutcome {
     let mut cli = Cli::default();
     let mut i = 0;
     while i < args.len() {
@@ -125,7 +148,27 @@ pub fn parse(args: &[String]) -> ParseOutcome {
         if name == "h" || name == "help" {
             return ParseOutcome::Help;
         }
-        let value = if BOOL_FLAGS.contains(&name) {
+        let plugin_flag = extra.iter().find(|f| f.name == name);
+        let value = if plugin_flag.is_some_and(|f| f.is_bool) {
+            match inline_value {
+                None => "true".to_string(),
+                Some(v) => match parse_bool(&v) {
+                    Some(_) => v,
+                    None => return ParseOutcome::Error(format!("invalid boolean value {v:?} for -{name}: parse error")),
+                },
+            }
+        } else if plugin_flag.is_some() {
+            match inline_value {
+                Some(v) => v,
+                None => {
+                    if i >= args.len() {
+                        return ParseOutcome::Error(format!("flag needs an argument: -{name}"));
+                    }
+                    i += 1;
+                    args[i - 1].clone()
+                }
+            }
+        } else if BOOL_FLAGS.contains(&name) {
             match inline_value {
                 None => "true".to_string(),
                 Some(v) => match parse_bool(&v) {
@@ -180,6 +223,7 @@ pub fn parse(args: &[String]) -> ParseOutcome {
             "discover-service-type" => cli.discover_service_type = value,
             "discover-include" => cli.discover_include.extend(cpa_discovery::scan::parse_interface_list(&[value])),
             "discover-exclude" => cli.discover_exclude.extend(cpa_discovery::scan::parse_interface_list(&[value])),
+            other if plugin_flag.is_some() => cli.plugin_flags.push((other.to_string(), value)),
             "home-jwt" => cli.home_jwt = value,
             "home-disable-cluster-discovery" => cli.home_disable_cluster_discovery = flag_on(),
             other if UNSUPPORTED.contains(&other) => {
@@ -196,6 +240,11 @@ pub fn parse(args: &[String]) -> ParseOutcome {
 
 /// Usage text (the hidden `-password` flag is not listed).
 pub fn usage(program: &str) -> String {
+    usage_with(program, &[])
+}
+
+/// [`usage`] listing the plugin-declared flags among the built-in ones, sorted by name.
+pub fn usage_with(program: &str, extra: &[PluginFlag]) -> String {
     let rows: &[(&str, &str, &str)] = &[
         ("antigravity-login", "", "Login to Antigravity using OAuth"),
         ("claude-login", "", "Login to Claude using OAuth"),
@@ -224,13 +273,27 @@ pub fn usage(program: &str) -> String {
         ("vertex-import-prefix", "string", "Prefix for Vertex model namespacing (use with -vertex-import)"),
         ("xai-login", "", "Login to xAI using OAuth"),
     ];
+    // Plugin flags are `flag.Var` values: Go shows the placeholder `value` unless they are bool.
+    let mut all: Vec<(String, String, String, String)> = rows
+        .iter()
+        .map(|(n, t, h)| (n.to_string(), t.to_string(), h.to_string(), String::new()))
+        .collect();
+    for f in extra {
+        let ty = if f.is_bool { "" } else { "value" };
+        all.push((f.name.clone(), ty.to_string(), f.usage.clone(), f.default.clone()));
+    }
+    all.sort_by(|a, b| a.0.cmp(&b.0));
     let mut out = format!("Usage of {program}\n");
-    for (name, ty, help) in rows {
+    for (name, ty, help, default) in &all {
         out.push_str(&format!("  -{name}"));
         if !ty.is_empty() {
             out.push_str(&format!(" {ty}"));
         }
-        out.push_str(&format!("\n    {help}\n"));
+        out.push_str(&format!("\n    {help}"));
+        if !matches!(default.as_str(), "" | "false" | "0") {
+            out.push_str(&format!(" (default {default})"));
+        }
+        out.push('\n');
     }
     out
 }
@@ -256,6 +319,34 @@ pub enum LoginKind {
 }
 
 impl Cli {
+    /// The built-in flags as `(name, value, set)` for plugin command-line executions (Go:
+    /// `flag.CommandLine.VisitAll`): parsed values, defaults elsewhere.
+    pub fn builtin_flag_values(&self) -> Vec<(String, String, bool)> {
+        let b = |v: bool| v.to_string();
+        let rows: Vec<(&str, String)> = vec![
+            ("config", self.config.clone()),
+            ("codex-login", b(self.codex_login)),
+            ("codex-device-login", b(self.codex_device_login)),
+            ("claude-login", b(self.claude_login)),
+            ("antigravity-login", b(self.antigravity_login)),
+            ("kimi-login", b(self.kimi_login)),
+            ("kimi-ai-login", b(self.kimi_ai_login)),
+            ("xai-login", b(self.xai_login)),
+            ("devin-login", b(self.devin_login)),
+            ("meta-login", b(self.meta_login)),
+            ("no-browser", b(self.no_browser)),
+            ("oauth-callback-port", self.oauth_callback_port.to_string()),
+            ("vertex-import", self.vertex_import.clone()),
+            ("vertex-import-prefix", self.vertex_import_prefix.clone()),
+            ("password", self.password.clone()),
+            ("local-model", b(self.local_model)),
+            ("tui", b(self.tui)),
+            ("standalone", b(self.standalone)),
+            ("management-base-url", self.management_base_url.clone()),
+        ];
+        rows.into_iter().map(|(n, v)| (n.to_string(), v, false)).collect()
+    }
+
     /// `commandMode` selection: first matching branch wins.
     pub fn command(&self) -> Option<Command> {
         if !self.vertex_import.is_empty() {

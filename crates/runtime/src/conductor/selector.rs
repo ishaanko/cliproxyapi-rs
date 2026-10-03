@@ -180,10 +180,16 @@ impl Selector {
     /// Strategy pick over one provider's top-tier candidates (sorted by id). `key` identifies
     /// the rotation (provider/model/priority).
     pub fn pick_ordered(&self, key: &str, cands: &[Cand<'_>]) -> Option<usize> {
+        self.pick_ordered_with(self.config.strategy, key, cands)
+    }
+
+    /// [`Self::pick_ordered`] with an explicit strategy (a plugin scheduler delegating to a
+    /// built-in strategy).
+    pub fn pick_ordered_with(&self, strategy: Strategy, key: &str, cands: &[Cand<'_>]) -> Option<usize> {
         if cands.is_empty() {
             return None;
         }
-        match self.config.strategy {
+        match strategy {
             Strategy::FillFirst => Some(0),
             Strategy::WeightedRoundRobin => {
                 let mut rot = self.rotation.lock();
@@ -217,11 +223,23 @@ impl Selector {
         priority: i64,
         cands: &[Cand<'_>],
     ) -> Option<usize> {
+        self.pick_mixed_with(self.config.strategy, providers, model_key, priority, cands)
+    }
+
+    /// [`Self::pick_mixed`] with an explicit strategy.
+    pub fn pick_mixed_with(
+        &self,
+        strategy: Strategy,
+        providers: &[String],
+        model_key: &str,
+        priority: i64,
+        cands: &[Cand<'_>],
+    ) -> Option<usize> {
         if cands.is_empty() {
             return None;
         }
         let cursor_key = format!("{}:{model_key}", providers.join(","));
-        match self.config.strategy {
+        match strategy {
             Strategy::FillFirst => providers
                 .iter()
                 .find_map(|p| cands.iter().position(|c| c.provider == p)),

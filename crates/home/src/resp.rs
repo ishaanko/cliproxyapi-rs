@@ -78,18 +78,59 @@ pub fn encode_command<A: AsRef<[u8]>>(args: &[A]) -> Vec<u8> {
     out
 }
 
-/// Reads a line without its `\r\n` (or bare `\n`). A line cut short by EOF is [`RespError::Eof`].
+/// Longest header line accepted (Redis caps inline requests at 64 KiB).
+const MAX_LINE_LEN: usize = 64 * 1024;
+/// Largest bulk payload accepted (Redis `proto-max-bulk-len` default).
+const MAX_BULK_LEN: usize = 512 * 1024 * 1024;
+/// Largest element count accepted for one array/map.
+const MAX_ARRAY_LEN: usize = 1024 * 1024;
+
+/// Reads a line without its `\r\n` (or bare `\n`), at most [`MAX_LINE_LEN`] bytes. A line cut
+/// short by EOF is [`RespError::Eof`]; an over-long line is [`RespError::Protocol`].
 async fn read_line<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<String, RespError> {
     let mut buf = Vec::new();
-    let n = r.read_until(b'\n', &mut buf).await?;
-    if n == 0 || buf.last() != Some(&b'\n') {
-        return Err(RespError::Eof);
+    loop {
+        let avail = r.fill_buf().await?;
+        if avail.is_empty() {
+            return Err(RespError::Eof);
+        }
+        match avail.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                buf.extend_from_slice(&avail[..=i]);
+                r.consume(i + 1);
+                break;
+            }
+            None => {
+                let n = avail.len();
+                buf.extend_from_slice(avail);
+                r.consume(n);
+            }
+        }
+        if buf.len() > MAX_LINE_LEN {
+            return Err(RespError::Protocol);
+        }
+    }
+    if buf.len() > MAX_LINE_LEN {
+        return Err(RespError::Protocol);
     }
     buf.pop();
     if buf.last() == Some(&b'\r') {
         buf.pop();
     }
     Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Parses a bulk length header; `None` for the null bulk (negative), `Protocol` over the cap.
+fn bulk_len(n: i64) -> Result<Option<usize>, RespError> {
+    if n < 0 {
+        return Ok(None);
+    }
+    usize::try_from(n).ok().filter(|&n| n <= MAX_BULK_LEN).map(Some).ok_or(RespError::Protocol)
+}
+
+/// Parses an element count header; `Protocol` over [`MAX_ARRAY_LEN`].
+fn array_len(n: i64) -> Result<usize, RespError> {
+    usize::try_from(n).ok().filter(|&n| n <= MAX_ARRAY_LEN).ok_or(RespError::Protocol)
 }
 
 async fn read_exact_body<R: AsyncBufRead + Unpin>(r: &mut R, len: usize) -> Result<Vec<u8>, RespError> {
@@ -132,10 +173,10 @@ async fn read_value_inner<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, R
             .map_err(|_| RespError::Protocol),
         b'$' | b'=' => {
             let n: i64 = read_line(r).await?.trim().parse().map_err(|_| RespError::Protocol)?;
-            if n < 0 {
+            let Some(n) = bulk_len(n)? else {
                 return Ok(Value::Nil);
-            }
-            let mut body = read_exact_body(r, n as usize).await?;
+            };
+            let mut body = read_exact_body(r, n).await?;
             if body.len() < 2 || body[body.len() - 2..] != *b"\r\n" {
                 return Err(RespError::Protocol);
             }
@@ -147,7 +188,8 @@ async fn read_value_inner<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, R
             if n < 0 {
                 return Ok(Value::Nil);
             }
-            let mut items = Vec::with_capacity((n as usize).min(1024));
+            let n = array_len(n)?;
+            let mut items = Vec::with_capacity(n.min(1024));
             for _ in 0..n {
                 items.push(Box::pin(read_value_inner(r)).await?);
             }
@@ -156,7 +198,7 @@ async fn read_value_inner<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, R
         b'%' => {
             let n: i64 = read_line(r).await?.trim().parse().map_err(|_| RespError::Protocol)?;
             let mut items = Vec::new();
-            for _ in 0..n.max(0).saturating_mul(2) {
+            for _ in 0..array_len(n.max(0))? * 2 {
                 items.push(Box::pin(read_value_inner(r)).await?);
             }
             Ok(Value::Array(items))
@@ -169,7 +211,7 @@ async fn read_value_inner<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Value, R
         b',' | b'(' => Ok(Value::Simple(read_line(r).await?)),
         b'!' => {
             let n: i64 = read_line(r).await?.trim().parse().map_err(|_| RespError::Protocol)?;
-            let mut body = read_exact_body(r, n.max(0) as usize).await?;
+            let mut body = read_exact_body(r, bulk_len(n.max(0))?.unwrap_or(0)).await?;
             body.truncate(body.len().saturating_sub(2));
             Ok(Value::Error(String::from_utf8_lossy(&body).into_owned()))
         }
@@ -198,17 +240,18 @@ pub async fn read_command<R: AsyncBufRead + Unpin>(r: &mut R) -> Result<Vec<Byte
     if count < 0 {
         return Err(RespError::Protocol);
     }
-    let mut args = Vec::with_capacity((count as usize).min(1024));
+    let count = array_len(count)?;
+    let mut args = Vec::with_capacity(count.min(1024));
     for _ in 0..count {
         let p = r.read_u8().await.map_err(|e| RespError::from_read_exact(e, false))?;
         match p {
             b'$' => {
                 let len: i64 = read_line(r).await?.parse().map_err(|_| RespError::Protocol)?;
-                if len < 0 {
+                let Some(len) = bulk_len(len)? else {
                     args.push(Bytes::new());
                     continue;
-                }
-                let mut body = read_exact_body(r, len as usize).await?;
+                };
+                let mut body = read_exact_body(r, len).await?;
                 if body[body.len() - 2..] != *b"\r\n" {
                     return Err(RespError::Protocol);
                 }

@@ -88,7 +88,7 @@ fn access_token_sha256(auth: &Auth) -> String {
 
 /// Session and request context of a record (Go: `ClientRequestMetadata` plus the reporter's
 /// trace id). The session is the request's canonical session projected to a UUID.
-fn usage_extra(result: &ExecResult) -> UsageExtra {
+fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
     let md = &result.options.metadata;
     let request_id = meta_str(md, META_REQUEST_ID);
     let trace_id = {
@@ -125,8 +125,11 @@ fn usage_extra(result: &ExecResult) -> UsageExtra {
             h.remove(http::header::TRANSFER_ENCODING);
             h
         },
+        base_url: auth.map(|a| a.attr("base_url").trim().to_string()).unwrap_or_default(),
+        auth_id: auth.map(|a| a.id.clone()).unwrap_or_default(),
         queue_source: String::new(),
         access_token_sha256: String::new(),
+        ..Default::default()
     }
 }
 /// `Response.metadata` key under which an executor may report exact token counts.
@@ -231,7 +234,7 @@ pub fn build_usage_record(
         extra: UsageExtra {
             queue_source,
             access_token_sha256: auth.map(access_token_sha256).unwrap_or_default(),
-            ..usage_extra(result)
+            ..usage_extra(result, auth)
         },
     }
 }

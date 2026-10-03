@@ -2,6 +2,8 @@
 //! them: `ReadForm` splitting (parts with a filename are files, the rest are values), canonical
 //! MIME header names, and the `multipart.Writer` output used to rebuild upstream requests.
 
+use std::collections::HashMap;
+
 use bytes::Bytes;
 use futures_util::stream;
 
@@ -9,6 +11,18 @@ use futures_util::stream;
 pub const ERR_NOT_MULTIPART: &str = "request Content-Type isn't multipart/form-data";
 /// `ErrMissingBoundary` message of `net/http`.
 pub const ERR_MISSING_BOUNDARY: &str = "no multipart boundary param in Content-Type";
+
+/// `ErrMessageTooLarge` message of `mime/multipart`.
+pub const ERR_MESSAGE_TOO_LARGE: &str = "multipart: message too large";
+/// Parts `ReadForm` accepts before giving up (Go: `multipartmaxparts` default).
+const MAX_PARTS: usize = 1000;
+/// Memory budget of `ReadForm` for non-file data: gin's `MaxMultipartMemory` (32 MiB) plus the
+/// 10 MiB `ReadForm` reserves.
+const MAX_FORM_MEMORY: i64 = (32 << 20) + (10 << 20);
+/// `net/http` `parsePostForm` read cap for urlencoded bodies.
+const MAX_URLENCODED_BYTES: usize = 10 << 20;
+const MAP_ENTRY_OVERHEAD: i64 = 200;
+const FILE_HEADER_SIZE: i64 = 100;
 
 /// One uploaded file part (`multipart.FileHeader` plus its content).
 #[derive(Debug, Clone)]
@@ -27,36 +41,55 @@ impl FilePart {
     }
 }
 
-/// `multipart.Form`: values and files per field name, in first-appearance order.
+/// `multipart.Form`: values and files per field name. Iteration follows first appearance (Go's
+/// maps have no order); lookups go through a key index.
 #[derive(Debug, Clone, Default)]
 pub struct Form {
-    pub values: Vec<(String, Vec<String>)>,
-    pub files: Vec<(String, Vec<FilePart>)>,
+    values: Vec<(String, Vec<String>)>,
+    value_index: HashMap<String, usize>,
+    files: Vec<(String, Vec<FilePart>)>,
+    file_index: HashMap<String, usize>,
+}
+
+/// Appends to the entry of `key`, creating it on first use.
+fn push_keyed<T>(entries: &mut Vec<(String, Vec<T>)>, index: &mut HashMap<String, usize>, key: &str, item: T) {
+    match index.get(key) {
+        Some(&i) => entries[i].1.push(item),
+        None => {
+            index.insert(key.to_string(), entries.len());
+            entries.push((key.to_string(), vec![item]));
+        }
+    }
 }
 
 impl Form {
     /// `c.PostForm(key)`: first value, empty when absent.
     pub fn value(&self, key: &str) -> &str {
-        self.values.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.first()).map(String::as_str).unwrap_or("")
+        let found = self.value_index.get(key).and_then(|&i| self.values[i].1.first());
+        found.map(String::as_str).unwrap_or("")
     }
 
     /// `form.File[key]`.
     pub fn file(&self, key: &str) -> &[FilePart] {
-        self.files.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_slice()).unwrap_or(&[])
+        self.file_index.get(key).map(|&i| self.files[i].1.as_slice()).unwrap_or(&[])
     }
 
-    fn push_value(&mut self, key: &str, value: String) {
-        match self.values.iter_mut().find(|(k, _)| k == key) {
-            Some((_, v)) => v.push(value),
-            None => self.values.push((key.to_string(), vec![value])),
-        }
+    /// `form.Value` entries in first-appearance order.
+    pub fn values(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.values.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
     }
 
-    fn push_file(&mut self, key: &str, file: FilePart) {
-        match self.files.iter_mut().find(|(k, _)| k == key) {
-            Some((_, v)) => v.push(file),
-            None => self.files.push((key.to_string(), vec![file])),
-        }
+    /// `form.File` entries in first-appearance order.
+    pub fn files(&self) -> impl Iterator<Item = (&str, &[FilePart])> {
+        self.files.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
+    }
+
+    pub fn push_value(&mut self, key: &str, value: String) {
+        push_keyed(&mut self.values, &mut self.value_index, key, value);
+    }
+
+    pub fn push_file(&mut self, key: &str, file: FilePart) {
+        push_keyed(&mut self.files, &mut self.file_index, key, file);
     }
 }
 
@@ -95,39 +128,86 @@ fn boundary(content_type: &str) -> Result<String, &'static str> {
 }
 
 /// `Request.ParseMultipartForm`: the error text is what gin reports in `Invalid request: ...`.
+/// Like `ReadForm`, more than 1000 parts or more non-file data than the memory budget allows
+/// fails with `multipart: message too large`.
 pub async fn parse_multipart(content_type: &str, body: Bytes) -> Result<Form, String> {
     let boundary = boundary(content_type).map_err(str::to_string)?;
     let mut mp = multer::Multipart::new(stream::once(async move { Ok::<_, std::io::Error>(body) }), boundary);
     let mut form = Form::default();
+    let mut parts_left = MAX_PARTS;
+    let mut budget = MAX_FORM_MEMORY;
     loop {
-        let field = match mp.next_field().await {
+        let mut field = match mp.next_field().await {
             Ok(Some(field)) => field,
             Ok(None) => break,
             Err(_) => return Err("multipart: NextPart: EOF".to_string()),
         };
+        if parts_left == 0 {
+            return Err(ERR_MESSAGE_TOO_LARGE.to_string());
+        }
+        parts_left -= 1;
         let name = field.name().unwrap_or("").to_string();
         if name.is_empty() {
             continue;
         }
-        let filename = field.file_name().unwrap_or("").to_string();
+        let filename = go_base(field.file_name().unwrap_or(""));
+        budget -= name.len() as i64 + MAP_ENTRY_OVERHEAD;
         let headers: Vec<(String, String)> = field
             .headers()
             .iter()
             .filter_map(|(k, v)| Some((canonical_header_name(k.as_str()), v.to_str().ok()?.to_string())))
             .collect();
-        let data = field.bytes().await.map_err(|_| "multipart: NextPart: EOF".to_string())?;
+        if !filename.is_empty() {
+            budget -= mime_header_size(&headers) + MAP_ENTRY_OVERHEAD + FILE_HEADER_SIZE;
+        }
+        if budget < 0 {
+            return Err(ERR_MESSAGE_TOO_LARGE.to_string());
+        }
+        let mut data = Vec::new();
+        while let Some(chunk) = field.chunk().await.map_err(|_| "multipart: NextPart: EOF".to_string())? {
+            data.extend_from_slice(&chunk);
+            // Only non-file values count against the in-memory budget (files spill to disk in Go).
+            if filename.is_empty() {
+                budget -= chunk.len() as i64;
+                if budget < 0 {
+                    return Err(ERR_MESSAGE_TOO_LARGE.to_string());
+                }
+            }
+        }
         if filename.is_empty() {
             form.push_value(&name, String::from_utf8_lossy(&data).into_owned());
         } else {
-            form.push_file(&name, FilePart { filename, headers, data });
+            form.push_file(&name, FilePart { filename, headers, data: Bytes::from(data) });
         }
     }
     Ok(form)
 }
 
-/// `application/x-www-form-urlencoded` body as form values (Go: `ParseForm`).
+/// `mimeHeaderSize` of `mime/multipart`.
+fn mime_header_size(headers: &[(String, String)]) -> i64 {
+    400 + headers.iter().map(|(k, v)| (k.len() + v.len()) as i64 + MAP_ENTRY_OVERHEAD).sum::<i64>()
+}
+
+/// `filepath.Base` as `Part.FileName` applies it (an empty name stays empty): last path element,
+/// `/` for a name of only slashes.
+fn go_base(path: &str) -> String {
+    if path.is_empty() {
+        return String::new();
+    }
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return "/".to_string();
+    }
+    trimmed.rsplit('/').next().unwrap_or(trimmed).to_string()
+}
+
+/// `application/x-www-form-urlencoded` body as form values (Go: `ParseForm`). A body over 10 MiB
+/// fails with `http: POST too large`, which gin ignores, so the values read as empty.
 pub fn parse_urlencoded(body: &[u8]) -> Form {
     let mut form = Form::default();
+    if body.len() > MAX_URLENCODED_BYTES {
+        return form;
+    }
     for (k, v) in url::form_urlencoded::parse(body) {
         form.push_value(&k, v.into_owned());
     }
@@ -227,6 +307,36 @@ mod tests {
         assert_eq!(parse_multipart("", Bytes::new()).await.unwrap_err(), ERR_NOT_MULTIPART);
         assert_eq!(parse_multipart("application/json", Bytes::new()).await.unwrap_err(), ERR_NOT_MULTIPART);
         assert_eq!(parse_multipart("multipart/form-data", Bytes::new()).await.unwrap_err(), ERR_MISSING_BOUNDARY);
+    }
+
+    fn part(name: &str, value: &str) -> String {
+        format!("--b\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+    }
+
+    #[tokio::test]
+    async fn caps_parts_at_one_thousand_like_readform() {
+        let ok: String = (0..1000).map(|i| part(&format!("f{i}"), "v")).collect::<String>() + "--b--\r\n";
+        let form = parse_multipart("multipart/form-data; boundary=b", Bytes::from(ok)).await.unwrap();
+        assert_eq!(form.value("f999"), "v");
+        let too_many: String = (0..1001).map(|i| part(&format!("f{i}"), "v")).collect::<String>() + "--b--\r\n";
+        assert_eq!(parse_multipart("multipart/form-data; boundary=b", Bytes::from(too_many)).await.unwrap_err(), ERR_MESSAGE_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn repeated_keys_keep_order_and_filenames_are_base_names() {
+        let body = part("k", "1") + &part("k", "2") + "--b\r\nContent-Disposition: form-data; name=\"image\"; filename=\"../dir/a.png\"\r\n\r\nX\r\n--b--\r\n";
+        let form = parse_multipart("multipart/form-data; boundary=b", Bytes::from(body)).await.unwrap();
+        assert_eq!(form.values().collect::<Vec<_>>(), [("k", &["1".to_string(), "2".to_string()][..])]);
+        assert_eq!(form.value("k"), "1");
+        assert_eq!(form.file("image")[0].filename, "a.png");
+    }
+
+    #[test]
+    fn urlencoded_over_ten_mib_reads_as_empty() {
+        assert_eq!(parse_urlencoded(b"a=1&a=2&b=%20x").value("b"), " x");
+        let mut big = b"a=".to_vec();
+        big.resize(MAX_URLENCODED_BYTES + 1, b'x');
+        assert_eq!(parse_urlencoded(&big).value("a"), "");
     }
 
     #[test]
