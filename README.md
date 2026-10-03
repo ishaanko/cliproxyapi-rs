@@ -19,7 +19,7 @@ cargo build --release
 Verified against the Go implementation:
 
 - **Translators:** 5,684 / 5,684 golden cases, captured from the Go test suite and replayed through the Go code (`cargo run --release -p cpa-conformance`).
-- **End to end:** 669 / 669 HTTP and websocket scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `cargo run --release -p cpa-e2e -- check --server $PWD/target/release/cliproxy`).
+- **End to end:** 753 / 753 HTTP, websocket and realtime scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `cargo run --release -p cpa-e2e -- check --server $PWD/target/release/cliproxy`).
 
 Not ported: realtime/WebRTC endpoints, plugins, the Home control plane, the Redis queue, the TUI, and TLS fingerprinting.
 
