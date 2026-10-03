@@ -3,6 +3,8 @@
 
 use cpa_json::{J, Value};
 
+use cpa_runtime::conductor::session::lazy::Doc;
+
 use super::text::trim_space;
 use super::usage::UsageReporter;
 
@@ -100,8 +102,8 @@ pub fn is_responses_token_event(payload: &[u8]) -> bool {
             return false;
         }
     }
-    let v = cpa_json::parse(payload);
-    let has = |path: &str| non_empty(&v, path);
+    let v = Doc::new(payload);
+    let has = |path: &str| !v.g(path).str().is_empty();
     match v.g("type").str().as_str() {
         "response.reasoning_summary_text.delta"
         | "response.reasoning.delta"
@@ -133,7 +135,7 @@ pub fn is_responses_token_event(payload: &[u8]) -> bool {
                 .g("item.content")
                 .array()
                 .iter()
-                .any(|c| non_empty(&c.value(), "text") || non_empty(&c.value(), "refusal")),
+                .any(|c| !c.g("text").str().is_empty() || !c.g("refusal").str().is_empty()),
             _ => false,
         },
         "response.completed" | "response.done" | "response.incomplete" | "response.failed" | "error" => true,
