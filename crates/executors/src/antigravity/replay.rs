@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use cpa_core::cache::{
-    AntigravityReasoningReplaySnapshot, delete_antigravity_reasoning_replay_items_if_unchanged,
+    AntigravityReasoningReplaySnapshot, KvError, delete_antigravity_reasoning_replay_items_if_unchanged,
     get_antigravity_reasoning_replay_items_with_snapshot_required,
 };
 use cpa_core::signature::{GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR, validate_gemini_function_call_pairing};
@@ -1412,6 +1412,12 @@ fn apply_reasoning_replay_cache(
         get_antigravity_reasoning_replay_items_with_snapshot_required(&scope.model_name, &scope.session_key);
     scope.snapshot = snapshot;
     let reserved_before = count_claude_tool_provenance_ids(payload);
+    // Replay state is an optimization: a failed read degrades to "no replay this turn" instead of
+    // failing the request (an untyped executor error would mark every candidate credential bad).
+    let items = items.unwrap_or_else(|err| {
+        log_reasoning_replay_degraded(&scope, "read", &err);
+        None
+    });
     let items = match items {
         Some(items) if !items.is_empty() => items,
         found => {
@@ -1477,7 +1483,12 @@ pub(crate) fn prepare_gemini_reasoning_replay_payload(
     if let Err(err_pairing) = validate_gemini_function_call_pairing(&updated) {
         let original_valid = validate_gemini_function_call_pairing(&payload).is_ok();
         if replay_applied && original_valid && scope.valid() {
-            delete_antigravity_reasoning_replay_items_if_unchanged(&scope.model_name, &scope.session_key, &scope.snapshot);
+            // Invalidation is best-effort cleanup; its failure must not replace the pairing diagnosis.
+            if let Err(err) =
+                delete_antigravity_reasoning_replay_items_if_unchanged(&scope.model_name, &scope.session_key, &scope.snapshot)
+            {
+                log_reasoning_replay_degraded(&scope, "invalidate", &err);
+            }
             tracing::warn!(
                 "antigravity executor: reasoning replay broke Gemini function call pairing ({err_pairing}); degrading to original payload"
             );
@@ -1499,5 +1510,22 @@ pub(crate) fn clear_reasoning_replay_on_invalid_signature(scope: &ReplayScope, s
     if !String::from_utf8_lossy(body).to_lowercase().contains("signature") {
         return;
     }
-    delete_antigravity_reasoning_replay_items_if_unchanged(&scope.model_name, &scope.session_key, &scope.snapshot);
+    // Report the upstream failure rather than the cleanup failure.
+    if let Err(err) =
+        delete_antigravity_reasoning_replay_items_if_unchanged(&scope.model_name, &scope.session_key, &scope.snapshot)
+    {
+        log_reasoning_replay_degraded(scope, "invalidate", &err);
+    }
+}
+
+/// Reports that a replay-state operation failed and the request continued without it. A Home that
+/// predates compare-and-swap fails every call and the Home client already warns once about it, so
+/// that case logs at debug level.
+pub(crate) fn log_reasoning_replay_degraded(scope: &ReplayScope, stage: &str, err: &KvError) {
+    let key = replay_log_key(&scope.session_key);
+    if err.is_compare_and_swap_unsupported() {
+        tracing::debug!("antigravity executor: reasoning replay {stage} unavailable on this Home (session={key}): {err}");
+        return;
+    }
+    tracing::warn!("antigravity executor: reasoning replay {stage} failed; continuing without replay (session={key}): {err}");
 }

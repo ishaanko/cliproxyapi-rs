@@ -18,7 +18,7 @@ use url::Url;
 
 use super::helps::device_profile::{
     apply_claude_default_device_profile_headers, apply_claude_device_profile_headers, apply_claude_legacy_device_headers,
-    claude_device_profile_stabilization_enabled, resolve_claude_device_profile_required,
+    claude_device_profile_stabilization_enabled, resolve_claude_device_profile_required_blocking,
 };
 use super::helps::diagnostics::{
     claude_payload_has_1h_ttl, claude_subagent_requests_1h, is_claude_probe_or_helper_request, is_claude_subagent_request,
@@ -829,7 +829,10 @@ pub fn apply_claude_headers_with_native_profile(
     let stabilize_device_profile = claude_device_profile_stabilization_enabled(Some(cfg));
     let mut device_profile = None;
     if stabilize_device_profile && confirmed {
-        device_profile = Some(resolve_claude_device_profile_required(Some(auth), api_key, incoming_headers, Some(cfg)));
+        device_profile = Some(
+            resolve_claude_device_profile_required_blocking(Some(auth), api_key, incoming_headers, Some(cfg))
+                .map_err(|e| crate::helps::home_kv::exec_error(&e))?,
+        );
     }
 
     let incoming_betas = header_values_joined(incoming_headers, "anthropic-beta");
@@ -997,7 +1000,8 @@ pub fn apply_claude_headers_with_native_profile(
     if !session_id.is_empty() {
         set_header(headers, "X-Claude-Code-Session-Id", &session_id);
     } else {
-        session_id = crate::helps::id_cache::cached_session_id(api_key);
+        session_id = crate::helps::id_cache::cached_session_id_required_blocking(api_key)
+            .map_err(|e| crate::helps::home_kv::exec_error(&e))?;
         identity_header(headers, confirmed, incoming_headers, "X-Claude-Code-Session-Id", &session_id);
     }
     // Native subagent and environment headers pass through when present.

@@ -27,6 +27,9 @@ pub struct Cli {
     pub vertex_import_prefix: String,
     pub password: String,
     pub local_model: bool,
+    /// `-home-jwt`: Home control plane JWT (config and credentials come from Home).
+    pub home_jwt: String,
+    pub home_disable_cluster_discovery: bool,
     /// `-tui`: start the terminal management UI instead of the server.
     pub tui: bool,
     /// `-standalone`: with `-tui`, run an embedded server in-process.
@@ -81,8 +84,6 @@ const VALUE_FLAGS: &[&str] = &[
 
 /// Flags that exist in Go but have no counterpart here.
 const UNSUPPORTED: &[&str] = &[
-    "home-jwt",
-    "home-disable-cluster-discovery",
     "discover",
     "discover-json",
     "discover-timeout",
@@ -170,6 +171,8 @@ pub fn parse(args: &[String]) -> ParseOutcome {
             "vertex-import" => cli.vertex_import = value,
             "vertex-import-prefix" => cli.vertex_import_prefix = value,
             "password" => cli.password = value,
+            "home-jwt" => cli.home_jwt = value,
+            "home-disable-cluster-discovery" => cli.home_disable_cluster_discovery = flag_on(),
             other if UNSUPPORTED.contains(&other) => {
                 let enabled = !BOOL_FLAGS.contains(&other) || flag_on();
                 if enabled {
@@ -191,6 +194,8 @@ pub fn usage(program: &str) -> String {
         ("codex-login", "", "Login to Codex using OAuth"),
         ("config", "string", "Configure File Path"),
         ("devin-login", "", "Login to Devin using OAuth"),
+        ("home-disable-cluster-discovery", "", "Disable Home CLUSTER NODES discovery and keep using the configured -home-jwt address"),
+        ("home-jwt", "string", "Home control plane JWT for mTLS certificate bootstrap and connection"),
         ("kimi-ai-login", "", "Login to Kimi.ai using OAuth"),
         ("kimi-login", "", "Login to Kimi (.com) using OAuth"),
         ("local-model", "", "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching"),
@@ -456,8 +461,15 @@ mod tests {
 
     #[test]
     fn unsupported_flags_are_recorded() {
-        let c = run("-tui -standalone=false -home-jwt tok");
-        assert_eq!(c.unsupported, vec!["home-jwt"]);
+        let c = run("-tui -standalone=false -discover tok");
+        assert_eq!(c.unsupported, vec!["discover"]);
         assert!(c.tui && !c.standalone);
+    }
+
+    #[test]
+    fn home_flags_are_parsed() {
+        let c = run("-home-jwt tok -home-disable-cluster-discovery");
+        assert_eq!((c.home_jwt.as_str(), c.home_disable_cluster_discovery), ("tok", true));
+        assert!(c.unsupported.is_empty());
     }
 }

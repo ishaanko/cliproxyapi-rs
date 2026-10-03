@@ -174,6 +174,7 @@ fn step_summary(step: &Step) -> Value {
             json!({"method": r.method, "path": r.path, "auth": format!("{:?}", r.auth), "headers": r.headers, "body": body})
         }
         Step::Ws(r) => json!({"method": "WS", "path": r.path, "auth": format!("{:?}", r.auth), "headers": r.headers, "messages": r.messages}),
+        Step::Resp(r) => json!({"method": "RESP", "acts": format!("{:?}", r.acts)}),
         Step::Pause(ms) => json!({"pause_ms": ms}),
     }
 }

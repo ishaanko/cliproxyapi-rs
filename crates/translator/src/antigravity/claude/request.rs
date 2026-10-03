@@ -50,7 +50,7 @@ fn resolve_cache_mode_signature(model: &str, thinking_text: &str, raw_signature:
         return resolve_provider_compatible_signature(target, raw_signature, SignatureBlockKind::Unknown);
     }
     if !thinking_text.is_empty() {
-        let cached = cache::get_cached_signature_required(model, thinking_text);
+        let cached = cache::get_cached_signature(model, thinking_text);
         if !cached.is_empty() {
             if target == SignatureProvider::Claude {
                 return signature::compatible_antigravity_claude_thinking_signature(&cached).unwrap_or_default();

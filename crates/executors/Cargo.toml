@@ -21,6 +21,7 @@ cpa-auth = { path = "../auth", default-features = false }
 cpa-tlsfp = { path = "../tlsfp", optional = true }
 cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 async-trait = "0.1"
 serde.workspace = true
 serde_json.workspace = true

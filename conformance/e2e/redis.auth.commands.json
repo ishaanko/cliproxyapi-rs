@@ -1,0 +1,100 @@
+{
+  "id": "redis.auth.commands",
+  "desc": "NOAUTH gate, AUTH argument handling and unknown commands",
+  "steps": [
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"PING\"]), Cmd([\"LPOP\", \"usage\"]), Cmd([\"AUTH\"]), Cmd([\"AUTH\", \"user\", \"wrong-key\"]), Cmd([\"AUTH\", \"wrong-key\"]), Raw(\"*0\\r\\n\"), Cmd([\"AUTH\", \"default\", \"e2e-mgmt-secret\"]), Cmd([\"FLUSHALL\"]), Cmd([\"PING\"])]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "PING"
+              ],
+              "reply": {
+                "error": "NOAUTH Authentication required."
+              }
+            },
+            {
+              "sent": [
+                "LPOP",
+                "usage"
+              ],
+              "reply": {
+                "error": "NOAUTH Authentication required."
+              }
+            },
+            {
+              "sent": [
+                "AUTH"
+              ],
+              "reply": {
+                "error": "ERR wrong number of arguments for 'auth' command"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "user",
+                "wrong-key"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "wrong-key"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": {
+                "raw": "*0\r\n"
+              },
+              "reply": {
+                "error": "ERR empty command"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "default",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "error": "ERR IP banned due to too many failed attempts. Try again in <duration>"
+              }
+            },
+            {
+              "sent": [
+                "FLUSHALL"
+              ],
+              "reply": {
+                "error": "ERR IP banned due to too many failed attempts. Try again in <duration>"
+              }
+            },
+            {
+              "sent": [
+                "PING"
+              ],
+              "reply": {
+                "error": "ERR IP banned due to too many failed attempts. Try again in <duration>"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

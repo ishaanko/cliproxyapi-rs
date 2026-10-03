@@ -1,12 +1,14 @@
 //! End to end behavior of the fingerprinted clients against a local BoringSSL server: wire header
 //! order, response decoding, session resumption, HTTP/2 settings, and proxy tunnels.
 
+mod common;
+
 use std::io::Write as _;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cpa_tlsfp::clienthello::ClientHello;
+use common::clienthello::ClientHello;
 use cpa_tlsfp::{ClientConfig, FingerprintClient};
 use hyper::service::service_fn;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -280,6 +282,49 @@ async fn claude_oauth_uses_inspect_order_for_profile_gets() {
     let names: Vec<&str> = raw.split("\r\n").skip(1).take_while(|l| !l.is_empty()).map(|l| l.split(':').next().unwrap()).collect();
     assert_eq!(names, ["Accept", "Content-Type", "Authorization", "User-Agent", "Accept-Encoding", "Host"]);
     assert!(server.seen.lock().alpn[0].is_none(), "the OAuth profile sends no ALPN");
+}
+
+/// ClaudeAuth builds a new client per operation; those clients must still resume one another's
+/// TLS sessions (the whole connector is shared per proxy, not just the session cache).
+#[tokio::test]
+async fn claude_oauth_resumes_across_separately_built_clients() {
+    let server = start_server(Behavior::H1Close, &[]).await;
+    let url = format!("https://localhost:{}/v1/oauth/token", server.port);
+    for _ in 0..2 {
+        let client = FingerprintClient::claude_oauth(config(&server, "")).unwrap();
+        let resp = client.execute(post(&url, &[("content-type", "application/json")], "{}")).await.unwrap();
+        assert_eq!(resp.status(), 200);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    let seen = server.seen.lock();
+    assert_eq!(seen.hellos.len(), 2);
+    assert!(seen.hellos[0].extension(41).is_none());
+    assert_eq!(seen.hellos[1].extensions.last().map(|e| e.0), Some(41), "second client resumes");
+}
+
+/// Go keeps the caller's `Connection: Keep-Alive` in the sorted block and appends its own
+/// `Connection: close` after `Accept-Encoding`.
+#[tokio::test]
+async fn chrome_h1_places_connection_headers_like_go() {
+    let server = start_server(Behavior::H1Close, &[b"http/1.1"]).await;
+    let client = FingerprintClient::chrome(config(&server, "")).unwrap();
+    let url = format!("https://localhost:{}/backend-api/codex/responses", server.port);
+    let headers = [
+        ("content-type", "application/json"),
+        ("originator", "codex_cli_rs"),
+        ("session_id", "s"),
+        ("connection", "Keep-Alive"),
+        ("accept", "text/event-stream"),
+        ("user-agent", "ua"),
+    ];
+    client.execute(post(&url, &headers, "{}")).await.unwrap().text().await.unwrap();
+    let raw = String::from_utf8(server.seen.lock().raw[0].clone()).unwrap();
+    let lines: Vec<&str> = raw.split("\r\n").skip(1).take_while(|l| !l.is_empty()).collect();
+    assert_eq!(
+        lines[1..],
+        ["User-Agent: ua", "Content-Length: 2", "Accept: text/event-stream", "Connection: Keep-Alive", "Content-Type: application/json", "Originator: codex_cli_rs", "Session_id: s", "Accept-Encoding: gzip", "Connection: close"]
+    );
+    assert!(lines[0].starts_with("Host: localhost:"));
 }
 
 #[tokio::test]

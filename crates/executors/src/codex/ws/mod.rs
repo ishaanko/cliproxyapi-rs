@@ -224,14 +224,17 @@ impl CodexExecutor {
             let frame = cpa_json::parse(&payload);
             if let Some(ws_err) = parse_error_frame(&frame, plan.model_level_cooling) {
                 call.invalidate("upstream_error", true);
-                clear_replay_on_error_frame(&prepared.replay_scope, &frame);
+                if let Err(replay_err) = clear_replay_on_error_frame(&prepared.replay_scope, &frame) {
+                    plan.log_error("replay_clear_error", &replay_err.message);
+                    return Err(replay_err);
+                }
                 plan.log_error("upstream_error", &ws_err.message);
                 return Err(ws_err);
             }
             if let Some((stream_err, terminal_body)) = terminal_failure_err(&frame, plan.model_level_cooling) {
                 call.unlock();
                 call.invalidate("terminal_failure", true);
-                clear_replay_on_invalid_signature(&prepared.replay_scope, stream_err.status, &terminal_body);
+                clear_replay_on_invalid_signature(&prepared.replay_scope, stream_err.status, &terminal_body)?;
                 return Err(stream_err);
             }
             let payload = normalize_completion(&payload);
@@ -391,6 +394,11 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool
             Err(failure) => return Err(dial_failure_error(plan, failure)),
         }
     };
+    if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &conn) {
+        drop(guard);
+        close_after_bind_failure(&sess, &conn);
+        return Err(ExecError::new(0, message));
+    }
     if let Some(headers) = &handshake {
         plan.log_handshake(headers);
     }
@@ -448,6 +456,10 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool
                 return Err(ExecError::new(0, failure.error));
             }
         };
+        if let Err(message) = sess.bind_execution_lifecycle(opts.lifecycle.as_ref(), &retry_conn) {
+            close_after_bind_failure(&sess, &retry_conn);
+            return Err(ExecError::new(0, message));
+        }
         call.rebind(retry_conn);
         plan.log_request();
         if let Some(headers) = &retry_handshake {
@@ -466,6 +478,11 @@ pub(super) async fn connect_and_send(opts: &Options, plan: &WsPlan, stream: bool
         sess.set_multi_agent_v2_optimized(&call.conn, plan.prepared.optimize_multi_agent_v2 && !plan.prepared.multi_agent_v2_conflict);
     }
     Ok(call)
+}
+
+/// Drops a connection whose lifecycle bind failed (Go: `closeWebsocketAfterBindFailure`).
+fn close_after_bind_failure(sess: &Arc<Session>, conn: &Arc<WsConn>) {
+    sess.invalidate(conn, "lifecycle_bind_failed", None, false);
 }
 
 /// `downstream_websocket` flag of a request.

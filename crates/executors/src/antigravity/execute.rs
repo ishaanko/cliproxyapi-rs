@@ -71,7 +71,7 @@ impl AntigravityExecutor {
             return self.execute_compaction(auth, req, opts).await;
         }
         let base_model = base_model_of(&req.model);
-        self.check_short_cooldown(&cfg, auth, &base_model, &opts)?;
+        self.check_short_cooldown(&cfg, auth, &base_model, &opts).await?;
 
         let mode = if aggregates_stream(&base_model) { Mode::AggregatedStream } else { Mode::NonStream };
         let p = self.prepare(cfg, auth, &mut req, &opts, mode).await?;
@@ -94,7 +94,7 @@ impl AntigravityExecutor {
         p.log.chunk(&body);
         p.reporter.mark_first_response_byte();
         if !(200..300).contains(&status) {
-            return Err(self.handle_upstream_error(p, status, &body));
+            return Err(self.handle_upstream_error(p, status, &body).await);
         }
         if p.use_credits {
             clear_credits_failure_state(&p.auth);
@@ -112,7 +112,7 @@ impl AntigravityExecutor {
         if !(200..300).contains(&status) {
             let body = p.log.tap_err(resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e)))?;
             p.log.chunk(&body);
-            return Err(self.handle_upstream_error(p, status, &body));
+            return Err(self.handle_upstream_error(p, status, &body).await);
         }
         if p.use_credits {
             clear_credits_failure_state(&p.auth);

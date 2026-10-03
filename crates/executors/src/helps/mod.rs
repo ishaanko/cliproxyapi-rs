@@ -17,8 +17,12 @@
 //!   [`cloak_obfuscate`] (sensitive words), [`gemini_content_turns`], [`session`] (Claude Code
 //!   scope, prompt cache ids).
 //!
+//! - Home control plane: [`home_refresh`] (credential refresh through Home, the first step of every
+//!   executor `refresh`) and [`home_kv`] (blocking bridge to the async Home KV client, and the
+//!   `cpa_core` cache backend).
+//!
 //! Helpers used by a single provider (claude_* identity, signing and cloaking, codex_*,
-//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*, home_refresh,
+//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*,
 //! plugin_executor_usage) stay in the provider modules.
 
 pub mod apply_patch;
@@ -30,6 +34,8 @@ pub mod content_type;
 pub mod gemini_content_turns;
 pub mod gemini_log;
 pub mod http_request;
+pub mod home_kv;
+pub mod home_refresh;
 pub mod id_cache;
 pub mod json_retry;
 pub mod logging;

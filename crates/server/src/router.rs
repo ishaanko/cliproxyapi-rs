@@ -11,7 +11,7 @@ use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 
 use crate::handlers::{alpha_search, claude, gemini, images, openai, responses, videos};
-use crate::middleware::{access_log, api_key_auth, cors, recover_panic, safe_mode, trace_header};
+use crate::middleware::{access_log, api_key_auth, cors, home_heartbeat, recover_panic, safe_mode, trace_header};
 use crate::reply::Reply;
 use crate::req::ReqInfo;
 use crate::state::AppState;
@@ -31,7 +31,8 @@ pub fn build_router_with_management(state: AppState, management: Router) -> Rout
     apply_global_layers(proxy_routes(&state).merge(management), &state)
 }
 
-/// Go middleware order: logger, recovery, request logging, CORS, safe mode (outermost first).
+/// Go middleware order: logger, recovery, request logging, CORS, Home heartbeat gate, safe mode
+/// (outermost first).
 ///
 /// The stack wraps the whole router service (not each route), so `OPTIONS` short-circuits before
 /// routing and unmatched requests are still logged and CORS-decorated.
@@ -43,6 +44,7 @@ pub fn apply_global_layers(router: Router, state: &AppState) -> Router {
         .layer(from_fn_with_state(state.clone(), crate::reqlog::request_log))
         .layer(from_fn(trace_header))
         .layer(from_fn(cors))
+        .layer(from_fn_with_state(state.clone(), home_heartbeat))
         .layer(from_fn_with_state(state.clone(), safe_mode))
         .layer(from_fn(head_not_found))
         .layer(DefaultBodyLimit::disable())

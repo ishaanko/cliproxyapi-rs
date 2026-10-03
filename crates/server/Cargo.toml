@@ -25,6 +25,7 @@ cpa-core = { path = "../core" }
 cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }

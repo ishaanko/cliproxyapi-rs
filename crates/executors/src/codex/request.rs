@@ -287,7 +287,7 @@ pub fn prepare(cfg: &Config, auth: &Auth, req: &Request, opts: &Options, mode: M
     let (body, replay_scope) = if mode == Mode::Compact {
         (body, ReplayScope::default())
     } else {
-        apply_replay_cache(from, req, opts, body)
+        apply_replay_cache(from, req, opts, body)?
     };
     Ok(Prepared {
         from,

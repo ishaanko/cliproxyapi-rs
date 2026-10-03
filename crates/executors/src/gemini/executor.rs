@@ -21,6 +21,7 @@ use super::common::{
     set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
 };
 use crate::helps::http_request;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::interactions;
 use crate::ConfigRx;
@@ -206,6 +207,9 @@ impl Executor for GeminiExecutor {
     }
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        if let Some(result) = refresh_auth_via_home(&self.config(), auth).await {
+            return result;
+        }
         Ok(auth.clone())
     }
 

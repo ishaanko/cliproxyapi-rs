@@ -34,6 +34,33 @@ use crate::executor::{DynExecutor, ExecError, Options, Request, StreamResult};
 
 type Chunk = Result<Bytes, ExecError>;
 
+/// Home-dispatched attempt context: results go to Home instead of local auth state and the
+/// attempt can be cancelled when its selection ends.
+pub(crate) struct HomeStreamCtx {
+    pub cancel: std::sync::Arc<cpa_home::conn::Kill>,
+}
+
+/// Starts the upstream stream, abandoning it when a Home attempt is cancelled.
+async fn start_stream(
+    executor: &DynExecutor,
+    auth: &Auth,
+    req: Request,
+    opts: Options,
+    home: Option<&HomeStreamCtx>,
+) -> Result<StreamResult, ExecError> {
+    let Some(home) = home else {
+        return executor.execute_stream(auth, req, opts).await;
+    };
+    tokio::select! {
+        _ = home.cancel.wait() => {
+            let mut e = ExecError::new(0, "context canceled");
+            e.upstream_attempted = false;
+            Err(e)
+        }
+        r = executor.execute_stream(auth, req, opts) => r,
+    }
+}
+
 /// Reads chunks until the first non-empty payload. `Ok((buffered, closed))`: `closed` means the
 /// channel ended before any payload; `Err` is a bootstrap failure.
 async fn read_stream_bootstrap(
@@ -64,6 +91,15 @@ fn bootstrap_fail(err: ExecError, headers: &http::HeaderMap) -> Fail {
 }
 
 impl Manager {
+    /// Records an attempt's outcome: locally for normal dispatch, to Home for ephemeral ones.
+    fn record_attempt(&self, ephemeral: bool, auth: &Auth, result: ExecResult, facts: UsageFacts) {
+        if ephemeral {
+            self.report_home_result(result, Some(auth), Some(facts));
+        } else {
+            self.mark_result_inner(result, Some(facts));
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn attempt_stream(
         &self,
@@ -91,6 +127,7 @@ impl Manager {
                 &models,
                 pooled,
                 alias_result,
+                None,
             )
             .await;
         match res {
@@ -132,7 +169,9 @@ impl Manager {
         exec_models: &[String],
         pooled: bool,
         alias_result: &AliasResult,
+        home: Option<&HomeStreamCtx>,
     ) -> Result<StreamResult, Fail> {
+        let ephemeral = home.is_some();
         let cfg = self.cfg();
         let mut last_err: Option<ExecError> = None;
         let mut upstream_err: Option<Fail> = None;
@@ -188,23 +227,22 @@ impl Manager {
                 ..Default::default()
             };
 
-            let mut res = executor
-                .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
-                .await;
+            let mut res = start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await;
             if let Err(err) = &res {
                 if err.upstream_attempted {
                     upstream_err = Some(err.clone().into());
                 }
-                if let Some(refreshed) = self
-                    .try_refresh_after_unauthorized(&auth, err, did_refresh)
-                    .await
-                {
+                // Home-dispatched credentials are never refreshed locally.
+                let refreshed = if ephemeral {
+                    None
+                } else {
+                    self.try_refresh_after_unauthorized(&auth, err, did_refresh).await
+                };
+                if let Some(refreshed) = refreshed {
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
-                    res = executor
-                        .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
-                        .await;
+                    res = start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await;
                     if let Err(e2) = &res
                         && e2.upstream_attempted
                     {
@@ -213,6 +251,7 @@ impl Manager {
                 }
             }
             if let Err(err) = &res
+                && !ephemeral
                 && super::exec::claude_cancelled(&auth, err)
             {
                 return Err(err.clone().into());
@@ -225,7 +264,7 @@ impl Manager {
                     let action = rules::match_action(&auth, &err, &cfg);
                     rules::apply_action_to_result(action, &mut result);
                     let credential_scope = result.credential_scope;
-                    self.mark_result_inner(result, Some(facts(started, Default::default())));
+                    self.record_attempt(ephemeral, &auth, result, facts(started, Default::default()));
                     if action.is_some() {
                         if rules::is_stop(action) {
                             return Err(Fail::stop(err));
@@ -254,18 +293,17 @@ impl Manager {
                 upstream_err = Some(bootstrap_fail(e.clone(), &stream.headers));
             }
             if let Err(boot_err) = &boot {
-                if let Some(refreshed) = self
-                    .try_refresh_after_unauthorized(&auth, boot_err, did_refresh)
-                    .await
-                {
+                let refreshed = if ephemeral {
+                    None
+                } else {
+                    self.try_refresh_after_unauthorized(&auth, boot_err, did_refresh).await
+                };
+                if let Some(refreshed) = refreshed {
                     drop(std::mem::replace(&mut stream.chunks, mpsc::channel(1).1));
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
-                    match executor
-                        .execute_stream(&auth, exec_req.clone(), exec_opts.clone())
-                        .await
-                    {
+                    match start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await {
                         Err(retry_err) => {
                             if retry_err.upstream_attempted {
                                 upstream_err = Some(retry_err.clone().into());
@@ -286,6 +324,7 @@ impl Manager {
                 }
             }
             if let Err(e) = &boot
+                && !ephemeral
                 && super::exec::claude_cancelled(&auth, e)
             {
                 return Err(e.clone().into());
@@ -299,7 +338,7 @@ impl Manager {
                     rules::apply_action_to_result(action, &mut result);
                     let credential_scope = result.credential_scope;
                     let record = |m: &Manager, result: ExecResult| {
-                        m.mark_result_inner(result, Some(facts(started, Default::default())))
+                        m.record_attempt(ephemeral, &auth, result, facts(started, Default::default()))
                     };
                     if action.is_some() {
                         record(self, result);
@@ -344,7 +383,7 @@ impl Manager {
                 upstream_err = Some(current.clone());
                 let mut result = make_result(&auth, &empty, false, &exec_opts);
                 result.retry_after = None;
-                self.mark_result_inner(result, Some(facts(started, Default::default())));
+                self.record_attempt(ephemeral, &auth, result, facts(started, Default::default()));
                 if idx + 1 < exec_models.len() {
                     last_err = Some(empty);
                     continue;
@@ -367,7 +406,8 @@ impl Manager {
                 started,
                 response_headers: stream.headers.clone(),
                 cfg: cfg.clone(),
-                claude_oauth: is_claude_oauth(&auth),
+                claude_oauth: !ephemeral && is_claude_oauth(&auth),
+                home_auth: ephemeral.then(|| auth.clone()),
             };
             return Ok(wrap_stream(
                 wrap,
@@ -402,6 +442,8 @@ struct WrapCtx {
     cfg: std::sync::Arc<cpa_config::Config>,
     /// Claude OAuth credentials record no success for a stream the client abandoned.
     claude_oauth: bool,
+    /// Home-dispatched attempt: the credential snapshot results are reported with.
+    home_auth: Option<Auth>,
 }
 
 /// Forwards the bootstrapped stream, then records one result.
@@ -428,6 +470,7 @@ fn wrap_stream(
             response_headers,
             cfg,
             claude_oauth,
+            home_auth,
         } = ctx;
         let mut rewriter = (alias.force_mapping && !alias.original_alias.trim().is_empty())
             .then(|| StreamRewriter::new(alias.original_alias.trim()));
@@ -440,7 +483,7 @@ fn wrap_stream(
 
         let record_failure =
             |manager: &Manager, err: &ExecError, usage: &StreamUsage, ttft: Option<Duration>| {
-                let auth = manager.get(&auth_id);
+                let auth = home_auth.clone().or_else(|| manager.get(&auth_id));
                 let mut result = ExecResult {
                     auth_id: auth_id.clone(),
                     provider: provider.clone(),
@@ -470,7 +513,10 @@ fn wrap_stream(
                     upstream_model: upstream_model.clone(),
                     requested_model: requested_model.clone(),
                 };
-                manager.mark_result_inner(result, Some(facts));
+                match &home_auth {
+                    Some(a) => manager.report_home_result(result, Some(a), Some(facts)),
+                    None => manager.mark_result_inner(result, Some(facts)),
+                }
             };
 
         loop {
@@ -565,7 +611,10 @@ fn wrap_stream(
                 upstream_model,
                 requested_model,
             };
-            manager.mark_result_inner(result, Some(facts));
+            match &home_auth {
+                Some(a) => manager.report_home_result(result, Some(a), Some(facts)),
+                None => manager.mark_result_inner(result, Some(facts)),
+            }
         }
     });
     StreamResult::new(headers, rx)

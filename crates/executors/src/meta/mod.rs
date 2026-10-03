@@ -28,6 +28,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::helps::http_request;
 use crate::ConfigRx;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::apply_patch::{
     gateway_error, patch_failure, apply_patch_translation_error, record_apply_patch_stream_failure,
 };
@@ -185,6 +186,9 @@ impl MetaExecutor {
     /// Mints an API key from the DCA token, or returns the auth unchanged when it already has a
     /// key (Go: Refresh).
     async fn refresh_auth(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        if let Some(result) = refresh_auth_via_home(&self.config(), auth).await {
+            return result;
+        }
         let dca_token = extract_dca_token(auth);
         if dca_token.is_empty() {
             if !meta_creds(Some(auth)).1.is_empty() {

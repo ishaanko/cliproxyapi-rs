@@ -16,8 +16,9 @@ use cpa_config::Config;
 use cpa_runtime::executor::ExecError;
 use http::HeaderMap;
 
+use crate::claude::helps::upstream::is_anthropic_upstream_url;
 use crate::helps::proxy::effective_proxy_url;
-use crate::helps::status::error_chain_text;
+use crate::helps::status::{error_chain_text, go_transport_text};
 
 /// Failure of a request sent through [`UtlsClient`].
 #[derive(Debug)]
@@ -30,11 +31,11 @@ pub enum UtlsError {
 
 impl UtlsError {
     /// Status-less executor error for this failure, with the cause text the conductor classifies
-    /// transient transport failures by.
+    /// transient transport failures by (a cut-off body reads `unexpected EOF` on both paths).
     pub fn exec_error(&self) -> ExecError {
         match self {
             UtlsError::Reqwest(e) => crate::helps::status::transport_error(e),
-            UtlsError::Fingerprint(text) => ExecError::new(0, text.clone()),
+            UtlsError::Fingerprint(text) => ExecError::new(0, go_transport_text(text.clone())),
         }
     }
 }
@@ -58,17 +59,8 @@ enum Route {
     Standard,
 }
 
-/// `helps.IsAnthropicUpstreamURL`: https, no userinfo, host api.anthropic.com, port 443.
-pub fn is_anthropic_upstream_url(url: &url::Url) -> bool {
-    url.username().is_empty()
-        && url.password().is_none()
-        && url.scheme().eq_ignore_ascii_case("https")
-        && url.host_str().is_some_and(|h| h.eq_ignore_ascii_case("api.anthropic.com"))
-        && url.port().is_none_or(|p| p == 443)
-}
-
 fn route(url: &url::Url) -> Route {
-    if is_anthropic_upstream_url(url) {
+    if is_anthropic_upstream_url(Some(url)) {
         Route::Anthropic
     } else if url.scheme() == "https" && url.host_str().is_some_and(|h| h.eq_ignore_ascii_case("chatgpt.com")) {
         Route::Chrome

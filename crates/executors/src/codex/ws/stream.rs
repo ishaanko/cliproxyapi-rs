@@ -188,7 +188,10 @@ impl CodexExecutor {
                     Step::ErrorFrame { err, frame } => {
                         call.invalidate_with("upstream_error", &err, true);
                         call.unlock();
-                        clear_replay_on_error_frame(&stream.plan.prepared.replay_scope, &frame);
+                        if let Err(replay_err) = clear_replay_on_error_frame(&stream.plan.prepared.replay_scope, &frame) {
+                            stream.plan.log_error("replay_clear_error", &replay_err.message);
+                            return Err(replay_err);
+                        }
                         stream.plan.log_error("upstream_error", &err.message);
                         if time_reached {
                             bootstrap_terminal_err = Some(err);
@@ -203,7 +206,10 @@ impl CodexExecutor {
                         }
                         call.unlock();
                         call.invalidate_with("terminal_failure", &err, !failover);
-                        clear_replay_on_invalid_signature(&stream.plan.prepared.replay_scope, err.status, &body);
+                        if let Err(replay_err) = clear_replay_on_invalid_signature(&stream.plan.prepared.replay_scope, err.status, &body) {
+                            stream.plan.log_error("replay_clear_error", &replay_err.message);
+                            return Err(replay_err);
+                        }
                         stream.plan.log_error("upstream_error", &err.message);
                         if failover {
                             call.set_close_reason("bootstrap_overload");
@@ -294,8 +300,16 @@ impl WsStream {
                 Step::ErrorFrame { err, frame } => {
                     call.set_close_reason("upstream_error");
                     call.invalidate_with("upstream_error", &err, true);
-                    clear_replay_on_error_frame(&self.plan.prepared.replay_scope, &frame);
-                    self.plan.log_error("upstream_error", &err.message);
+                    let err = match clear_replay_on_error_frame(&self.plan.prepared.replay_scope, &frame) {
+                        Err(replay_err) => {
+                            self.plan.log_error("replay_clear_error", &replay_err.message);
+                            replay_err
+                        }
+                        Ok(()) => {
+                            self.plan.log_error("upstream_error", &err.message);
+                            err
+                        }
+                    };
                     let _ = tx.send(Err(err)).await;
                     return;
                 }
@@ -303,8 +317,16 @@ impl WsStream {
                     call.set_close_reason("upstream_error");
                     call.unlock();
                     call.invalidate_with("terminal_failure", &err, true);
-                    clear_replay_on_invalid_signature(&self.plan.prepared.replay_scope, err.status, &body);
-                    self.plan.log_error("upstream_error", &err.message);
+                    let err = match clear_replay_on_invalid_signature(&self.plan.prepared.replay_scope, err.status, &body) {
+                        Err(replay_err) => {
+                            self.plan.log_error("replay_clear_error", &replay_err.message);
+                            replay_err
+                        }
+                        Ok(()) => {
+                            self.plan.log_error("upstream_error", &err.message);
+                            err
+                        }
+                    };
                     let _ = tx.send(Err(err)).await;
                     return;
                 }

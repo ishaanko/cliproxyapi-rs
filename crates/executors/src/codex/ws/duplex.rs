@@ -716,14 +716,25 @@ async fn read_loop(
         // event. Only the first rejection can enter conductor bootstrap retry; later failures
         // stay on this socket.
         let mut terminal_err: Option<ExecError> = None;
+        let mut replay_err: Option<ExecError> = None;
         if let Some(ws_err) = parse_error_frame(&frame, model_level_cooling) {
-            clear_replay_on_error_frame(&event_settings.replay_scope, &frame);
-            plan.log_error("upstream_error", &ws_err.message);
+            replay_err = clear_replay_on_error_frame(&event_settings.replay_scope, &frame).err();
+            if replay_err.is_none() {
+                plan.log_error("upstream_error", &ws_err.message);
+            }
             terminal_err = Some(ws_err);
         } else if let Some((stream_err, body)) = terminal_failure_err(&frame, model_level_cooling) {
-            clear_replay_on_invalid_signature(&event_settings.replay_scope, stream_err.status, &body);
-            plan.log_error("upstream_error", &stream_err.message);
+            replay_err = clear_replay_on_invalid_signature(&event_settings.replay_scope, stream_err.status, &body).err();
+            if replay_err.is_none() {
+                plan.log_error("upstream_error", &stream_err.message);
+            }
             terminal_err = Some(stream_err);
+        }
+        if let Some(err) = replay_err {
+            // A failed replay cleanup replaces the upstream error and ends the stream.
+            plan.log_error("replay_clear_error", &err.message);
+            let _ = send(Err(err)).await;
+            return;
         }
         if let Some(err) = terminal_err
             && first_response

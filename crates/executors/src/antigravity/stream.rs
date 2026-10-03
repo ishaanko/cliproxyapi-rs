@@ -46,7 +46,7 @@ impl AntigravityExecutor {
         let cfg = self.cfg();
         let base_model = base_model_of(&req.model);
         // The stream translators read `alt` as empty: SSE output.
-        self.check_short_cooldown(&cfg, auth, &base_model, &opts)?;
+        self.check_short_cooldown(&cfg, auth, &base_model, &opts).await?;
 
         let p = self.prepare(cfg, auth, &mut req, &opts, Mode::Stream).await?;
         match self.start_stream(p, req, opts).await {
@@ -81,7 +81,7 @@ impl AntigravityExecutor {
                 }
             };
             p.log.chunk(&body);
-            let err = self.handle_upstream_error(&p, status, &body);
+            let err = self.handle_upstream_error(&p, status, &body).await;
             return Err((p, err));
         }
         if p.use_credits {

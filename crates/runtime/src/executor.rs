@@ -96,6 +96,8 @@ pub struct Options {
     /// Live account-state check of a bound websocket connection: may reject further frames but
     /// never selects another credential (Go: `WithWebsocketAuthCheck`).
     pub ws_auth_check: Option<WebsocketAuthCheck>,
+    /// Home-dispatched attempts: the selection owning the attempt's resources.
+    pub lifecycle: Option<Arc<dyn ExecutionLifecycle>>,
 }
 
 /// A frame from the downstream websocket reader; an error terminates the connection (Go:
@@ -167,6 +169,7 @@ impl Options {
             api_log: Default::default(),
             ws_input: None,
             ws_auth_check: None,
+            lifecycle: None,
         }
     }
 
@@ -244,6 +247,37 @@ pub struct ExecError {
     /// Text of the underlying upstream error a conductor-generated error wraps (Go
     /// `WithCause`); used to render "last upstream error" details in the HTTP layer.
     pub cause_text: Option<String>,
+    /// Home control plane marker (retry timing semantics of Home-dispatched requests).
+    pub home: Option<HomeErrKind>,
+}
+
+/// Home-specific error classes (Go: `HomeConcurrencyBusyError`, `homeDispatchRetryAfterError`,
+/// `homeRetryRoundExhaustedError`). The error's `retry_after` carries the hint of each class.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HomeErrKind {
+    /// Home refused admission because the credential's concurrency limit is reached.
+    ConcurrencyBusy,
+    /// Home answered `model_cooldown`; `request_retry` is Home's remote retry limit.
+    DispatchRetryAfter { request_retry: Option<i64> },
+    /// The credential round is exhausted. `retry_after` of the error is the round timing;
+    /// `cause_retry_after` is the wrapped cause's own hint, kept when the cause is unwrapped.
+    RetryRoundExhausted {
+        retry_now: bool,
+        /// The earliest hint was negative or otherwise unusable: do not retry.
+        retry_after_invalid: bool,
+        cause_retry_after: Option<Duration>,
+    },
+}
+
+/// Resources owned by one execution attempt (Go: `ExecutionLifecycle`): executors bind session
+/// teardown to it and may retain it past the request (websocket sessions).
+pub trait ExecutionLifecycle: Send + Sync + std::fmt::Debug {
+    /// Registers a closer run when the lifecycle ends.
+    fn bind(&self, close: Box<dyn FnOnce() -> Result<(), String> + Send>) -> Result<(), String>;
+    /// Keeps the lifecycle alive past the request (the executor owns a session now).
+    fn retain(&self);
+    /// Ends the lifecycle, closing every bound resource. Must not be called from a closer.
+    fn end(&self, reason: &str);
 }
 
 impl ExecError {
@@ -262,6 +296,7 @@ impl ExecError {
             auth_code: None,
             upstream_attempted: true,
             cause_text: None,
+            home: None,
         }
     }
 

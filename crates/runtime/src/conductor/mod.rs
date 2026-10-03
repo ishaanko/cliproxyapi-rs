@@ -13,8 +13,9 @@
 //!   request-scoped rules (pure, unit-tested without executors).
 //! - `selector`, `session`: strategies and session affinity; `models`: aliases, prefixes, pools.
 //!
-//! Not ported (Go-only features): the Home control plane, plugin schedulers/interceptors, the
-//! redis usage queue, the scheduler's incremental index (selection recomputes per request),
+//! Home mode (`home*.rs`): dispatch through the Home control plane instead of local selection.
+//!
+//! Not ported (Go-only features): plugin schedulers/interceptors, the scheduler's incremental index (selection recomputes per request),
 //! per-auth `RoundTripper`s (executors resolve `Auth::proxy_url` themselves), downstream-websocket
 //! transport preference and the LCP prefix matcher.
 
@@ -40,6 +41,14 @@ pub mod errors;
 pub mod events;
 mod exec;
 mod http_request;
+pub mod home;
+mod home_concurrency;
+mod home_dispatch;
+mod home_exec;
+mod home_model_info;
+pub mod home_publisher;
+mod home_selection;
+mod home_session_alias;
 mod lifecycle;
 pub mod merge;
 pub mod models;
@@ -54,6 +63,8 @@ pub mod selector;
 pub mod session;
 mod stream;
 #[cfg(test)]
+mod home_tests;
+#[cfg(test)]
 mod tests;
 pub mod usage;
 pub mod util;
@@ -63,10 +74,16 @@ pub use cooldown::{CooldownView, CoolingPolicy, ExecResult};
 pub use cooldown_state::{CooldownStateRecord, CooldownStateStore, FileCooldownStateStore};
 pub use credits::{
     ANTIGRAVITY_CREDITS_METADATA_KEY, AntigravityCreditsHint, antigravity_credits_hint,
-    has_known_antigravity_credits_hint, set_antigravity_credits_hint,
+    antigravity_credits_hint_async, get_antigravity_credits_hint_required,
+    has_known_antigravity_credits_hint, has_known_antigravity_credits_hint_async,
+    set_antigravity_credits_hint, set_antigravity_credits_hint_async,
 };
 pub use errors::{enrich_auth_selection_error, safe_response_headers};
 pub use events::{ErrorEventSink, Hook, ResultPolicy};
+pub use home::{EXCLUDED_AUTH_IDS_METADATA_KEY, HomeAuthDispatcher, HomeDispatchBundle};
+pub use home_concurrency::{home_concurrency_busy_error, home_safe_response_headers};
+pub use home_model_info::RESOLVED_HOME_MODEL_OPTIONS;
+pub use home_selection::HomeDispatchSelection;
 pub use lifecycle::UpdateOptions;
 pub use models::{ResolvedModelInfo, codex_api_key_model_is_compat, resolved_model_info};
 pub use refresh::ForceRefreshResult;
@@ -131,6 +148,7 @@ pub struct Core {
     pub(crate) persist_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<(u64, u64)>>>>,
     pub(crate) refresh_state: Mutex<refresh::RefreshState>,
     pub(crate) selector_config: Mutex<SelectorConfig>,
+    pub(crate) home: home::HomeState,
 }
 
 impl Default for Manager {
@@ -177,6 +195,7 @@ impl Manager {
             persist_locks: Mutex::new(HashMap::new()),
             refresh_state: Mutex::new(refresh::RefreshState::default()),
             selector_config: Mutex::new(selector_config),
+            home: home::HomeState::default(),
         };
         Manager {
             core: Arc::new(core),
@@ -203,7 +222,14 @@ impl Manager {
             cfg.max_retry_credentials,
         );
         self.set_oauth_model_alias(&cfg.oauth_model_alias);
+        let previous = self.cfg();
+        if home_session_alias::home_alias_ttl_changed(&previous, &cfg) {
+            self.home.aliases.lock().clear();
+        }
         *self.config.write() = cfg.clone();
+        if !cfg.home.enabled {
+            self.clear_home_runtime_auths();
+        }
         self.apply_selector_config(&cfg);
         if self.clear_disabled_cooldown_states() {
             self.persist_cooldown_states_detached();
@@ -355,6 +381,7 @@ impl Manager {
         if session_id.is_empty() {
             return;
         }
+        self.close_home_execution_session(&session_id);
         let executors: Vec<DynExecutor> = self.state.read().executors.values().cloned().collect();
         for e in executors {
             e.close_execution_session(&session_id).await;

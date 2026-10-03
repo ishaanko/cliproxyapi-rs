@@ -141,7 +141,10 @@ impl CodexExecutor {
             opts.api_log.record_api_response_error(cfg, &read_err);
             return ExecError::new(0, read_err);
         }
-        clear_replay_on_invalid_signature(scope, status, &data);
+        // A failed replay cleanup replaces the upstream error (Go returns the cleanup error).
+        if let Err(replay_err) = clear_replay_on_invalid_signature(scope, status, &data) {
+            return replay_err;
+        }
         opts.api_log.append_api_response_chunk(cfg, &data);
         tracing::debug!(
             "request error, error status: {status}, error message: {}",
@@ -178,7 +181,7 @@ impl CodexExecutor {
                 saw_output_delta = true;
             }
             if let Some((err, terminal_body)) = terminal_failure_err(&event, modelc) {
-                clear_replay_on_invalid_signature(&prepared.replay_scope, err.status, &terminal_body);
+                clear_replay_on_invalid_signature(&prepared.replay_scope, err.status, &terminal_body)?;
                 return Err(err);
             }
             if event_type == "response.output_item.done" {
@@ -300,7 +303,7 @@ impl CodexExecutor {
                 };
                 match stream.step(&line) {
                     Step::Failure { err, body } => {
-                        stream.clear_replay(&err, &body);
+                        stream.clear_replay(&err, &body)?;
                         if is_overload_bootstrap_failure(&body) {
                             let time_reached = !bootstrap_timeout.is_zero() && bootstrap_start.elapsed() >= bootstrap_timeout;
                             if !time_reached {
@@ -433,8 +436,8 @@ impl HttpStream {
         }
     }
 
-    fn clear_replay(&self, err: &ExecError, body: &[u8]) {
-        clear_replay_on_invalid_signature(&self.prepared.replay_scope, err.status, body);
+    fn clear_replay(&self, err: &ExecError, body: &[u8]) -> Result<(), ExecError> {
+        clear_replay_on_invalid_signature(&self.prepared.replay_scope, err.status, body)
     }
 
     fn usage_value(&self) -> Option<Value> {
@@ -526,7 +529,7 @@ impl HttpStream {
             };
             match self.step(&line) {
                 Step::Failure { err, body } => {
-                    self.clear_replay(&err, &body);
+                    let err = self.clear_replay(&err, &body).err().unwrap_or(err);
                     let _ = tx.send(Err(err)).await;
                     return;
                 }

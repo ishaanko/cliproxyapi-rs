@@ -74,7 +74,7 @@ impl AntigravityExecutor {
             && let Some(expiry) = auth.expiration_time()
             && expiry > Utc::now() + chrono::Duration::from_std(REQUEST_TOKEN_SAFETY_WINDOW).unwrap_or_default()
         {
-            self.maybe_refresh_credits_hint(cfg, auth, &access_token);
+            self.maybe_refresh_credits_hint(cfg, auth, &access_token).await;
             return Ok((access_token, None));
         }
         let updated = self.refresh_token(cfg, auth.clone()).await?;

@@ -176,7 +176,14 @@ pub(super) fn prepare_request(mut req: Request, opts: &Options) -> (Request, Rep
     if !scope.valid() {
         return (req, scope);
     }
-    let (content, snapshot) = get_kimi_thinking_replay_with_snapshot_required(&scope.model_family, &scope.session_key);
+    let (content, snapshot) =
+        match get_kimi_thinking_replay_with_snapshot_required(&scope.model_family, &scope.session_key) {
+            Ok(read) => read,
+            Err(err) => {
+                tracing::warn!("kimi thinking replay cache read failed: {err}");
+                return (req, scope);
+            }
+        };
     scope.snapshot = snapshot;
     scope.cache_ready = true;
     let Some(content) = content else {
@@ -207,7 +214,11 @@ fn cache_content(scope: &ReplayScope, content: &[u8]) {
         return;
     }
     if content_is_replayable(content) {
-        replace_kimi_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot, content);
+        if let Err(err) =
+            replace_kimi_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot, content)
+        {
+            tracing::warn!("kimi thinking replay cache replace failed: {err}");
+        }
         return;
     }
     clear_content(scope);
@@ -218,7 +229,9 @@ pub(super) fn clear_content(scope: &ReplayScope) {
     if !scope.valid() || !scope.cache_ready {
         return;
     }
-    delete_kimi_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot);
+    if let Err(err) = delete_kimi_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot) {
+        tracing::warn!("kimi thinking replay cache delete failed: {err}");
+    }
 }
 
 /// Only upstream request rejections (400/422) invalidate a replay (Go:
