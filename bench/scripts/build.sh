@@ -8,7 +8,9 @@ mkdir -p "$OUT"
 "$ROOT/bench/scripts/build-go.sh"
 
 cd "$ROOT"
-cargo build --release -p cpa-server -p cpa-bench
+# Separate invocations: building together would unify cargo features into the measured server.
+cargo build --release -p cpa-server
+cargo build --release -p cpa-bench
 cp target/release/cliproxy "$OUT/cliproxy"
 cp target/release/cpa-bench "$OUT/cpa-bench"
 # Go is built with -s -w, so also compare against a stripped Rust binary.
