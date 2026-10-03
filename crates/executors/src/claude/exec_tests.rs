@@ -321,3 +321,25 @@ async fn empty_upstream_stream_is_a_502() {
     assert_eq!(err.status, 502);
     assert!(err.message.contains("empty stream response"), "{}", err.message);
 }
+
+async fn prepared(url: &str, auth: &Auth) -> reqwest::Request {
+    let mut req = reqwest::Request::new(reqwest::Method::POST, url.parse().unwrap());
+    req.headers_mut().insert("authorization", "stale".parse().unwrap());
+    executor().prepare_request(&mut req, auth).await.unwrap();
+    req
+}
+
+/// Go PrepareRequest: `x-api-key` only for API-key credentials on the first-party origin,
+/// bearer elsewhere, custom attribute headers last.
+#[tokio::test]
+async fn prepare_request_picks_header_by_origin_and_credential() {
+    let mut key = api_key_auth("http://unused");
+    key.attributes.insert("header:X-Team".into(), "blue".into());
+    let first_party = prepared("https://api.anthropic.com/v1/messages", &key).await;
+    assert_eq!(first_party.headers()["x-api-key"], "sk-ant-api-test");
+    assert!(!first_party.headers().contains_key("authorization"));
+    assert_eq!(first_party.headers()["x-team"], "blue");
+    let third_party = prepared("https://proxy.example/v1/messages", &key).await;
+    assert_eq!(third_party.headers()["authorization"], "Bearer sk-ant-api-test");
+    assert!(!third_party.headers().contains_key("x-api-key"));
+}

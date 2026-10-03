@@ -21,6 +21,7 @@ use super::common::{
     pre_send, read_body, set_header, set_model, thinking_error, translate_request, upstream_error,
     usage_metadata,
 };
+use crate::helps::http_request;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::vertex_payload::strip_vertex_openai_responses_tool_call_ids;
 use super::vertex_token;
@@ -411,6 +412,37 @@ impl Executor for GeminiVertexExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: GeminiVertexExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        match resolve_creds(auth)? {
+            Creds::ApiKey { key, .. } => {
+                http_request::set_header(req, "x-goog-api-key", &key);
+                http_request::del_header(req, "Authorization");
+            }
+            Creds::ServiceAccount { service_account, .. } => {
+                let cfg = self.cfg.borrow().clone();
+                let token_client = new_proxy_aware_http_client("", Some(&cfg), Some(auth), None);
+                let token = vertex_token::access_token(&token_client, &service_account)
+                    .await
+                    .map_err(|e| ExecError::new(0, e))?;
+                if token.trim().is_empty() {
+                    return Err(ExecError::new(401, "missing access token"));
+                }
+                http_request::set_header(req, "Authorization", &format!("Bearer {token}"));
+                http_request::del_header(req, "x-goog-api-key");
+            }
+        }
+        Ok(())
+    }
+
+    /// Go: GeminiVertexExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let cfg = self.cfg.borrow().clone();
+        let client = new_proxy_aware_http_client("", Some(&cfg), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }
 

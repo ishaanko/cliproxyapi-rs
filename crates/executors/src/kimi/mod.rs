@@ -33,6 +33,7 @@ use cpa_translator::{Ctx, Format, Param};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::helps::http_request;
 use crate::helps::apply_patch::{
     gateway_error, patch_failure, apply_patch_original_request, apply_patch_requested,
     finalize_apply_patch_stream, initialize_apply_patch_stream, record_apply_patch_stream_failure,
@@ -811,6 +812,23 @@ impl Executor for KimiExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: KimiExecutor.PrepareRequest (a blank token leaves `Authorization` as is).
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let token = kimi_creds(auth);
+        if !token.trim().is_empty() {
+            http_request::set_header(req, "Authorization", &format!("Bearer {token}"));
+        }
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: KimiExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }
 

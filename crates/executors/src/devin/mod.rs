@@ -531,6 +531,26 @@ impl Executor for DevinExecutor {
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
     }
+
+    /// Go: DevinExecutor.PrepareRequest. The Connect-RPC headers replace the request's own;
+    /// an existing `Sentry-Trace` is kept.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let prepared = prepare_headers(Some(auth), req.url().path(), None, None);
+        for (name, value) in &prepared {
+            if name.as_str() == "sentry-trace" && req.headers().contains_key(name) {
+                continue;
+            }
+            req.headers_mut().insert(name.clone(), value.clone());
+        }
+        Ok(())
+    }
+
+    /// Go: DevinExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        Executor::prepare_request(self, &mut req, auth).await?;
+        let client = self.http_client("", auth, None);
+        crate::helps::http_request::execute(&client, req).await
+    }
 }
 
 impl DevinExecutor {

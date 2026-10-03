@@ -13,6 +13,7 @@ use cpa_config::Config;
 use cpa_core::thinking::parse_suffix;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::oauth_scope::config_for_api_key;
@@ -153,5 +154,33 @@ impl Executor for ClaudeExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: ClaudeExecutor.PrepareRequest. The `x-api-key` header is used only for API-key
+    /// credentials on the first-party Anthropic origin; everything else is a bearer token.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (api_key, _) = request::claude_creds(auth);
+        let use_api_key = auth.auth_kind() == cpa_auth::types::AUTH_KIND_API_KEY
+            || auth.attributes.get("api_key").is_some_and(|k| !k.trim().is_empty());
+        let anthropic_base = helps::upstream::is_anthropic_upstream_url(Some(req.url()));
+        if api_key.trim().is_empty() {
+            http_request::del_header(req, "Authorization");
+            http_request::del_header(req, "x-api-key");
+        } else if anthropic_base && use_api_key {
+            http_request::del_header(req, "Authorization");
+            http_request::set_header(req, "x-api-key", &api_key);
+        } else {
+            http_request::del_header(req, "x-api-key");
+            http_request::set_header(req, "Authorization", &format!("Bearer {api_key}"));
+        }
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: ClaudeExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }

@@ -27,6 +27,7 @@ use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, 
 use http::{HeaderMap, Method};
 
 use crate::ConfigRx;
+use crate::helps::http_request;
 use crate::helps::logging::UpstreamRequestLog;
 use crate::helps::oauth_scope::config_for_api_key;
 use crate::helps::proxy::{effective_proxy_url, new_proxy_aware_http_client};
@@ -185,5 +186,20 @@ impl Executor for XaiExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: XAIExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (token, _) = request::creds(Some(auth));
+        http_request::set_bearer_or_clear(req, &token);
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: XAIExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }

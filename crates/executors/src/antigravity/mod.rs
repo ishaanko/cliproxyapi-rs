@@ -20,6 +20,7 @@ use cpa_config::Config;
 use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request, Response, StreamResult};
 use std::sync::Arc;
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 
 mod auth;
@@ -107,5 +108,29 @@ impl Executor for AntigravityExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: AntigravityExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (token, _) = self.ensure_access_token(&self.cfg(), auth).await?;
+        if token.trim().is_empty() {
+            return Err(ExecError::new(401, "missing access token"));
+        }
+        http_request::set_header(req, "Authorization", &format!("Bearer {token}"));
+        Ok(())
+    }
+
+    /// Go: AntigravityExecutor.HttpRequest. A header whitelist: everything is stripped except
+    /// `Content-Type`, then the Antigravity user agent and the bearer token are set.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        let content_type = req.headers().get(http::header::CONTENT_TYPE).cloned();
+        req.headers_mut().clear();
+        if let Some(ct) = content_type.filter(|v| !v.is_empty()) {
+            req.headers_mut().insert(http::header::CONTENT_TYPE, ct);
+        }
+        http_request::set_header(&mut req, "User-Agent", &request::resolve_user_agent(auth));
+        self.prepare_request(&mut req, auth).await?;
+        let client = self.client(&self.cfg(), auth, "");
+        http_request::execute(&client, req).await
     }
 }

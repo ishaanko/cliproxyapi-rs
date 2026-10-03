@@ -26,6 +26,7 @@ use cpa_translator::{Ctx, Format, Param};
 use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::apply_patch::{
     gateway_error, patch_failure, apply_patch_translation_error, record_apply_patch_stream_failure,
@@ -670,6 +671,24 @@ impl Executor for MetaExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: MetaExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (_, token) = meta_creds(Some(auth));
+        http_request::set_bearer_or_clear(req, &token);
+        http_request::set_header(req, "User-Agent", USER_AGENT);
+        http_request::set_header(req, "X-Client-Id", "tbh:tui");
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: MetaExecutor.HttpRequest (mints the API key from a DCA token first).
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        let enriched = self.ensure_auth(auth).await?;
+        self.prepare_request(&mut req, &enriched).await?;
+        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(&enriched), None);
+        http_request::execute(&client, req).await
     }
 }
 

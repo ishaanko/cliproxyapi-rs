@@ -30,6 +30,7 @@ use futures_util::StreamExt;
 use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderValue};
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::apply_patch::{
     APPLY_PATCH_UPSTREAM_ERROR_MESSAGE, apply_patch_original_request, apply_patch_translation_error,
@@ -674,5 +675,22 @@ impl Executor for OpenAiCompatExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: OpenAICompatExecutor.PrepareRequest (a blank key leaves `Authorization` as is).
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (_, api_key) = Self::resolve_credentials(auth);
+        if !api_key.trim().is_empty() {
+            http_request::set_header(req, "Authorization", &format!("Bearer {api_key}"));
+        }
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: OpenAICompatExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }

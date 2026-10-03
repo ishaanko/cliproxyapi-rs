@@ -21,6 +21,7 @@ use super::common::{
     compact_unsupported, fix_gemini_image_aspect_ratio, is_count_tokens_action, original_payload, thinking_error,
     translate_request, upstream_error, usage_metadata,
 };
+use crate::helps::http_request;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::wsrelay::{
     self, HttpRequest, MESSAGE_TYPE_HTTP_RESP, MESSAGE_TYPE_STREAM_CHUNK, MESSAGE_TYPE_STREAM_END,
@@ -316,6 +317,39 @@ impl Executor for AiStudioExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: AIStudioExecutor.PrepareRequest (custom headers only).
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: AIStudioExecutor.HttpRequest: the request travels through the websocket relay and the
+    /// page's response is rebuilt as an HTTP response.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        if auth.id.is_empty() {
+            return Err(ExecError::new(0, "aistudio executor: missing auth"));
+        }
+        self.prepare_request(&mut req, auth).await?;
+        let mut headers: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        for (name, value) in req.headers() {
+            headers
+                .entry(wsrelay::canonical_header_key(name.as_str()))
+                .or_default()
+                .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
+        }
+        let ws_req = HttpRequest {
+            method: req.method().to_string(),
+            url: req.url().to_string(),
+            headers,
+            body: req.body().and_then(|b| b.as_bytes()).map(<[u8]>::to_vec).unwrap_or_default(),
+        };
+        let resp = self.relay.non_stream(&auth.id, &ws_req).await.map_err(relay_error)?;
+        let mut out = http::Response::new(reqwest::Body::from(resp.body));
+        *out.status_mut() = http::StatusCode::from_u16(resp.status).map_err(|e| ExecError::new(0, e.to_string()))?;
+        *out.headers_mut() = resp.headers;
+        Ok(reqwest::Response::from(out))
     }
 }
 

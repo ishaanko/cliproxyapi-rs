@@ -20,6 +20,7 @@ use super::common::{
     is_count_tokens_action, json_headers, observed_lines, original_payload, post_json, read_body, set_header,
     set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
 };
+use crate::helps::http_request;
 use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensure_trailing_user_content_value};
 use super::interactions;
 use crate::ConfigRx;
@@ -263,6 +264,26 @@ impl Executor for GeminiExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: GeminiExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let api_key = gemini_api_key(auth);
+        if !api_key.is_empty() {
+            http_request::set_header(req, "x-goog-api-key", &api_key);
+        } else {
+            http_request::del_header(req, "x-goog-api-key");
+        }
+        http_request::del_header(req, "Authorization");
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: GeminiExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }
 

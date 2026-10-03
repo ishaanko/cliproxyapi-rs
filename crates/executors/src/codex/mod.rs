@@ -35,6 +35,7 @@ use cpa_config::Config;
 use cpa_runtime::executor::{DynExecutor, ErrorCode, ExecError, Executor, Metadata, Options, Request, Response, StreamResult, meta};
 use serde_json::Value;
 
+use crate::helps::http_request;
 use crate::ConfigRx;
 use crate::helps::oauth_scope::config_for_api_key;
 
@@ -135,6 +136,21 @@ impl Executor for CodexExecutor {
 
     fn supports_apply_patch(&self, _model: &str) -> bool {
         true
+    }
+
+    /// Go: CodexExecutor.PrepareRequest.
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        let (api_key, _) = creds::codex_creds(auth);
+        http_request::set_bearer_or_clear(req, &api_key);
+        http_request::apply_attr_headers(req, auth);
+        Ok(())
+    }
+
+    /// Go: CodexExecutor.HttpRequest.
+    async fn http_request(&self, auth: &Auth, mut req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.prepare_request(&mut req, auth).await?;
+        let client = crate::helps::proxy::new_proxy_aware_http_client("", Some(&self.config()), Some(auth), None);
+        http_request::execute(&client, req).await
     }
 }
 

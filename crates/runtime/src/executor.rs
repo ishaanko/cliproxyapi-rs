@@ -305,7 +305,7 @@ pub trait Executor: Send + Sync {
 
     /// Injects the provider's credentials into an arbitrary request (Go: `RequestPreparer.
     /// PrepareRequest`). The default reports "not supported".
-    fn prepare_request(&self, _req: &mut reqwest::Request, _auth: &Auth) -> Result<(), ExecError> {
+    async fn prepare_request(&self, _req: &mut reqwest::Request, _auth: &Auth) -> Result<(), ExecError> {
         Err(not_supported("executor does not support http request preparation"))
     }
 

@@ -29,12 +29,12 @@ impl Manager {
     }
 
     /// `PrepareHttpRequest`: injects provider credentials into `req`.
-    pub fn prepare_http_request(&self, auth: &Auth, req: &mut reqwest::Request) -> Result<(), ExecError> {
-        self.http_executor(auth)?.prepare_request(req, auth)
+    pub async fn prepare_http_request(&self, auth: &Auth, req: &mut reqwest::Request) -> Result<(), ExecError> {
+        self.http_executor(auth)?.prepare_request(req, auth).await
     }
 
     /// `NewHttpRequest`: builds a request and injects provider credentials into it.
-    pub fn new_http_request(
+    pub async fn new_http_request(
         &self,
         auth: &Auth,
         method: &str,
@@ -54,7 +54,7 @@ impl Manager {
         if let Some(b) = body {
             *req.body_mut() = Some(reqwest::Body::from(b));
         }
-        self.prepare_http_request(auth, &mut req)?;
+        self.prepare_http_request(auth, &mut req).await?;
         Ok(req)
     }
 
