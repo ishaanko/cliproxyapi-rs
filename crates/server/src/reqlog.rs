@@ -8,6 +8,7 @@
 //! ([`cpa_runtime::apilog::ApiLog`], handed over through `Options.api_log`); the handler-level
 //! response text (`API_RESPONSE`) and `API ERROR RESPONSE` entries are recorded here.
 
+use std::borrow::Cow;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -520,24 +521,25 @@ fn is_responses_websocket_upgrade(req: &Request) -> bool {
 }
 
 /// `decodeCapturedRequestBodyForLog`: zstd bodies are decoded for the log only.
-fn decode_body_for_log(raw: &[u8], encoding: &str) -> Vec<u8> {
+/// Borrows `raw` when nothing is decoded.
+fn decode_body_for_log<'a>(raw: &'a [u8], encoding: &str) -> Cow<'a, [u8]> {
     let encoding = encoding.trim();
     if raw.is_empty() || encoding.is_empty() || encoding.eq_ignore_ascii_case("identity") {
-        return raw.to_vec();
+        return Cow::Borrowed(raw);
     }
-    let mut body = raw.to_vec();
+    let mut body = Cow::Borrowed(raw);
     for part in encoding.split(',').rev() {
         match part.trim().to_ascii_lowercase().as_str() {
             "" | "identity" => {}
             "zstd" => {
                 use std::io::Read;
                 let Ok(decoder) = zstd::stream::read::Decoder::new(&body[..]) else {
-                    return raw.to_vec();
+                    return Cow::Borrowed(raw);
                 };
                 let mut decoded = Vec::new();
                 let mut limited = decoder.take(MAX_DECODED_BODY as u64 + 1);
                 if limited.read_to_end(&mut decoded).is_err() {
-                    return raw.to_vec();
+                    return Cow::Borrowed(raw);
                 }
                 if decoded.len() > MAX_DECODED_BODY {
                     decoded.truncate(MAX_DECODED_BODY);
@@ -545,11 +547,11 @@ fn decode_body_for_log(raw: &[u8], encoding: &str) -> Vec<u8> {
                         decoded.push(b'\n');
                     }
                     decoded.extend_from_slice(b"[DECOMPRESSED REQUEST BODY TRUNCATED]");
-                    return decoded;
+                    return Cow::Owned(decoded);
                 }
-                body = decoded;
+                body = Cow::Owned(decoded);
             }
-            _ => return raw.to_vec(),
+            _ => return Cow::Borrowed(raw),
         }
     }
     body
@@ -643,7 +645,7 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
     } else {
         (Request::from_parts(parts, body), bytes::Bytes::new())
     };
-    let mut info = RequestInfo {
+    let info = RequestInfo {
         url,
         method,
         headers: info_headers,
@@ -662,12 +664,18 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
+    // A decode done here for streaming detection is kept for the log instead of decoding again.
+    let mut predecoded: Option<Vec<u8>> = None;
     let streaming = if ct.contains("text/event-stream") {
         true
     } else if ct.trim().is_empty() {
         let b = decode_body_for_log(&raw_body, &encoding);
         let has = |needle: &[u8]| b.windows(needle.len()).any(|w| w == needle);
-        !b.is_empty() && (has(br#""stream": true"#) || has(br#""stream":true"#))
+        let streaming = !b.is_empty() && (has(br#""stream": true"#) || has(br#""stream":true"#));
+        if let Cow::Owned(decoded) = b {
+            predecoded = Some(decoded);
+        }
+        streaming
     } else {
         false
     };
@@ -705,24 +713,39 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
             if !enabled && !ws_upgrade && !api_log.has_actionable_error(status) {
                 return;
             }
-            info.body = decode_body_for_log(&raw_body, &encoding);
             let (response_body, first_chunk) = {
                 let mut c = captured.lock();
                 (std::mem::take(&mut c.body), c.first_chunk)
             };
-            let exchange = Exchange { info, status, response_headers, response_body, streaming, first_chunk };
+            let mut exchange = Exchange { info, status, response_headers, response_body, streaming, first_chunk };
+            // The request body is decoded (zstd, up to 32 MB) on the blocking pool, not on the
+            // runtime worker that finished the response.
+            let decode_request_body = move |exchange: &mut Exchange| {
+                exchange.info.body = predecoded.unwrap_or_else(|| decode_body_for_log(&raw_body, &encoding).into_owned());
+            };
             let task = async move {
                 if ws_upgrade && status == 101 {
                     api_log.ws_done.notified().await;
                 }
                 if to_home {
                     if !skip_home {
-                        forward_to_home(&exchange, &api_log, ws_upgrade).await;
+                        let decoded = tokio::task::spawn_blocking(move || {
+                            decode_request_body(&mut exchange);
+                            exchange
+                        })
+                        .await;
+                        if let Ok(exchange) = decoded {
+                            forward_to_home(&exchange, &api_log, ws_upgrade).await;
+                        }
                     }
                     return;
                 }
-                // Rendering and the file write are blocking fs work.
-                let _ = tokio::task::spawn_blocking(move || finalize(&logger, exchange, &api_log, enabled, ws_upgrade)).await;
+                // Decoding, rendering and the file write are blocking work.
+                let _ = tokio::task::spawn_blocking(move || {
+                    decode_request_body(&mut exchange);
+                    finalize(&logger, exchange, &api_log, enabled, ws_upgrade)
+                })
+                .await;
             };
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
@@ -863,7 +886,7 @@ mod tests {
     #[test]
     fn zstd_request_bodies_are_decoded_for_the_log() {
         let compressed = zstd::stream::encode_all(&b"{\"a\":1}"[..], 1).unwrap();
-        assert_eq!(decode_body_for_log(&compressed, "zstd"), b"{\"a\":1}");
-        assert_eq!(decode_body_for_log(b"raw", "gzip"), b"raw");
+        assert_eq!(&decode_body_for_log(&compressed, "zstd")[..], b"{\"a\":1}");
+        assert_eq!(&decode_body_for_log(b"raw", "gzip")[..], b"raw");
     }
 }
