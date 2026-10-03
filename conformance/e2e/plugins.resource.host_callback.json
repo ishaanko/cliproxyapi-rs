@@ -1,0 +1,30 @@
+{
+  "id": "plugins.resource.host_callback",
+  "desc": "plugin resource that calls the host logger",
+  "steps": [
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/resource/plugins/host-callback/status",
+        "auth": "None",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": {
+          "type": "text",
+          "value": "<!doctype html><title>Host Callback</title><main>Host Callback resource</main>"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

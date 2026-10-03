@@ -19,7 +19,8 @@ use cpa_server::logging::{self, LogControl};
 use cpa_server::redis_protocol::RedisProtocol;
 use cpa_server::reqlog::RequestLogger;
 use cpa_management::ManagementState;
-use cpa_server::{AppState, BuildInfo, KeepAlive, build_router_with_management, safemode, serve};
+use cpa_plugin::adapters::service::ServiceHooks;
+use cpa_server::{AppState, BuildInfo, KeepAlive, ServerModelExecutor, build_router_with_management, safemode, serve};
 
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -52,18 +53,44 @@ async fn run() -> i32 {
     }
     let log = logging::init();
 
-    let cli = match cli::parse(&args) {
+    // Plugins are loaded from the config on disk first so the flags they declare parse like
+    // built-in ones (Go: `pluginHost.ApplyConfig` + `RegisterCommandLineFlags` before `flag.Parse`).
+    let plugin_host = cpa_plugin::Host::new();
+    let mut plugin_flags: Vec<cli::PluginFlag> = Vec::new();
+    if !json_discover && !args.iter().any(|a| matches!(a.trim_start_matches('-'), "discover" | "discover-json")) {
+        let bootstrap = load_plugin_bootstrap_config(&plugin_bootstrap_config_path(&args));
+        plugin_host.apply_config(&cpa_plugin::CallCtx::background(), Some(Arc::new(bootstrap))).await;
+        let declared = plugin_host.register_command_line_flags(&cpa_plugin::CallCtx::background(), &cli::builtin_flag_names()).await;
+        plugin_flags = declared
+            .into_iter()
+            .map(|d| cli::PluginFlag {
+                is_bool: d.kind == "bool",
+                default: plugin_host.command_line_flag_default(&d.name),
+                name: d.name,
+                usage: d.usage,
+            })
+            .collect();
+    }
+
+    let cli = match cli::parse_with(&args, &plugin_flags) {
         ParseOutcome::Run(c) => *c,
         ParseOutcome::Help => {
-            eprint!("{}", cli::usage(&program));
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
             return 0;
         }
         ParseOutcome::Error(msg) => {
             eprintln!("{msg}");
-            eprint!("{}", cli::usage(&program));
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
             return 2;
         }
     };
+    for (name, value) in &cli.plugin_flags {
+        if let Err(e) = plugin_host.set_command_line_flag(name, value) {
+            eprintln!("invalid value {value:?} for flag -{name}: {e}");
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
+            return 2;
+        }
+    }
     if let Some(flag) = cli.unsupported.first() {
         eprintln!("flag -{flag} is not supported by this build");
         return 2;
@@ -97,9 +124,14 @@ async fn run() -> i32 {
         std::path::PathBuf::from(&cli.config)
     };
     let home_mode = !cli.home_jwt.trim().is_empty();
+    let mut home_boot = None;
     let mut cfg = if home_mode {
-        match boot_home(&cli).await {
-            Ok(c) => c,
+        match boot_home(&cli, &plugin_host).await {
+            Ok(boot) => {
+                let cfg = boot.cfg.clone();
+                home_boot = Some(boot);
+                cfg
+            }
             Err(()) => return 0,
         }
     } else {
@@ -149,6 +181,23 @@ async fn run() -> i32 {
         return 0;
     }
 
+    plugin_host.apply_config(&cpa_plugin::CallCtx::background(), Some(Arc::new(cfg.clone()))).await;
+    if let Some(boot) = home_boot.take()
+        && !finish_home_boot(boot, &plugin_host).await
+    {
+        return 0;
+    }
+    if plugin_host.has_triggered_command_line_flags() {
+        let builtin = cli.builtin_flag_values();
+        let (code, handled) = plugin_host
+            .execute_command_line(&cpa_plugin::CallCtx::background(), &program, &args, &config_path.to_string_lossy(), &builtin)
+            .await;
+        if handled {
+            plugin_host.shutdown_all(&cpa_plugin::CallCtx::background()).await;
+            return code;
+        }
+    }
+
     if let Some(command) = cli.command() {
         return match command {
             Command::VertexImport => {
@@ -164,7 +213,7 @@ async fn run() -> i32 {
     }
     if cli.tui {
         return if cli.standalone {
-            run_standalone_tui(cfg, config_path, &cli, build, log).await
+            run_standalone_tui(cfg, config_path, &cli, build, log, plugin_host).await
         } else {
             // Pure management client: the proxy server must already be running.
             let base_url = resolve_management_base_url(&cli.management_base_url, &cfg);
@@ -179,7 +228,7 @@ async fn run() -> i32 {
         keep_alive: !cli.password.is_empty(),
         handle_signals: true,
     };
-    serve_proxy(cfg, config_path, build, log, local, None).await
+    serve_proxy(cfg, config_path, build, log, local, None, plugin_host).await
 }
 
 /// `resolveManagementBaseURL`: flag, then `remote-management.base-url`, then localhost.
@@ -204,6 +253,7 @@ async fn run_standalone_tui(
     cli: &cli::Cli,
     build: BuildInfo,
     log: Arc<LogControl>,
+    plugin_host: Arc<cpa_plugin::Host>,
 ) -> i32 {
     let hook = cpa_tui::LogHook::new(2000);
     let tap_hook = hook.clone();
@@ -232,7 +282,7 @@ async fn run_standalone_tui(
     // cancel); the TUI handles them and then stops the server.
     let local = LocalManagement { password: password.clone(), keep_alive: false, handle_signals: false };
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx)));
+    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx), plugin_host));
 
     let client = cpa_tui::Client::new(port, &password);
     let mut ready = false;
@@ -323,10 +373,20 @@ impl StdioRedirect {
     fn restore(self) {}
 }
 
-/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, report the
-/// (empty) plugin status and hand the parsed config to the service. `Err` means the process
-/// should exit after the error was logged.
-async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
+/// What the Home boot hands to the rest of the start: the config plus the bootstrap client and
+/// plugin report that are finished once the plugins are loaded.
+struct HomeBoot {
+    cfg: Config,
+    client: Arc<cpa_home::Client>,
+    node_id: String,
+    report: cpa_pluginstore::homeplugins::SyncReport,
+    report_ready: bool,
+}
+
+/// Go: the `-home-jwt` branch of `main`: enroll for mTLS, fetch the config from Home, install the
+/// plugins Home assigns, report the result and hand the parsed config to the service. `Err`
+/// means the process should exit after the error was logged.
+async fn boot_home(cli: &cli::Cli, plugin_host: &Arc<cpa_plugin::Host>) -> Result<HomeBoot, ()> {
     let timeout = Duration::from_secs(30);
     let mut home_cfg = match tokio::time::timeout(timeout, cpa_home::certificate::config_from_jwt(&cli.home_jwt)).await {
         Ok(Ok(c)) => c,
@@ -342,7 +402,7 @@ async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
     if cli.home_disable_cluster_discovery {
         home_cfg.disable_cluster_discovery = true;
     }
-    let client = cpa_home::Client::new(home_cfg.clone());
+    let client = Arc::new(cpa_home::Client::new(home_cfg.clone()));
     let raw = match tokio::time::timeout(timeout, client.get_config()).await {
         Ok(Ok(raw)) => raw,
         Ok(Err(e)) => {
@@ -367,18 +427,45 @@ async fn boot_home(cli: &cli::Cli) -> Result<Config, ()> {
     parsed.home = home_cfg.clone();
     parsed.port = cpa_config::normalize_home_port(parsed.port);
     parsed.usage_statistics_enabled = true;
+    // The sync keeps `plugins.store-auth`; the running config must not.
+    let sync_cfg = parsed.clone();
+    parsed.plugins.store_auth.clear();
     cpa_runtime::service::force_home_runtime_config(&mut parsed);
-    // No plugin host in this build: report that nothing needed installing, twice like Go (after
-    // the sync and after the load step).
-    for what in ["sync", "load"] {
-        let report = cpa_home::plugin_status::completed_sync_report(cpa_home::plugin_status::Platform::current(), None);
-        if let Err(e) = cpa_home::plugin_status::report_plugin_status(&client, &home_cfg.node_id, report).await {
-            tracing::warn!("failed to report home plugin {what} status: {e}");
+    let sync = cpa_server::plugin_home::startup_sync(&client, &sync_cfg, plugin_host).await;
+    if let Some(e) = &sync.error {
+        tracing::error!("failed to sync plugins from home: {e}");
+    }
+    if sync.ready
+        && let Err(e) = cpa_server::plugin_home::push_status(&client, &home_cfg.node_id, sync.report.clone()).await
+    {
+        tracing::warn!("failed to report home plugin sync status: {e}");
+    }
+    if sync.error.is_some() {
+        client.close();
+        return Err(());
+    }
+    Ok(HomeBoot { cfg: parsed, client, node_id: home_cfg.node_id, report: sync.report, report_ready: sync.ready })
+}
+
+/// Go: after `pluginHost.ApplyConfig(cfg)` in Home mode: record which synced plugins loaded, report
+/// that and release the bootstrap client. `false` means the start must stop.
+async fn finish_home_boot(boot: HomeBoot, plugin_host: &Arc<cpa_plugin::Host>) -> bool {
+    let mut report = boot.report;
+    let mut ok = true;
+    if boot.report_ready {
+        let inspector = cpa_server::plugin_home::HostRuntime(plugin_host.clone());
+        let load_error = cpa_pluginstore::homeplugins::mark_load_results(&mut report, Some(&inspector));
+        if let Err(e) = cpa_server::plugin_home::push_status(&boot.client, &boot.node_id, report).await {
+            tracing::warn!("failed to report home plugin load status: {e}");
+        }
+        if let Some(e) = load_error {
+            tracing::error!("failed to load home plugins: {e}");
+            ok = false;
         }
     }
     // The bootstrap client is not owned by the service; release its connection.
-    client.close();
-    Ok(parsed)
+    boot.client.close();
+    ok
 }
 
 /// Starts the app-log forwarder with the Home lifetime (Go: `startHomeLogForwarder`).
@@ -391,6 +478,10 @@ impl cpa_runtime::service::HomeHooks for ServerHomeHooks {
 
     fn deactivate(&self, client: &Arc<cpa_home::Client>) {
         self.0.deactivate(client);
+    }
+
+    fn stop(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(self.0.stop())
     }
 }
 
@@ -411,6 +502,7 @@ async fn serve_proxy(
     log: Arc<LogControl>,
     local: LocalManagement,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
+    plugin_host: Arc<cpa_plugin::Host>,
 ) -> i32 {
     let safe_mode = !cfg.home.enabled && safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
@@ -428,12 +520,15 @@ async fn serve_proxy(
     cpa_home::queue::set_usage_statistics_enabled(cfg.usage_statistics_enabled);
     cpa_home::queue::set_retention_seconds(cfg.redis_usage_queue_retention_seconds);
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
+    let plugin_hooks = Arc::new(ServiceHooks(plugin_host.clone()));
     let mut builder = ServiceBuilder::new(&config_path)
         .dotenv_dir(None)
         .usage(usage.clone())
-        .executor_factory(compat_factory);
+        .executor_factory(compat_factory)
+        .plugins(plugin_hooks);
     if cfg.home.enabled {
         builder = builder
+            .home_plugins(cpa_server::plugin_home::ServerHomePlugins::new(plugin_host.clone()))
             .initial_config(cfg.clone())
             .home_hooks(Arc::new(ServerHomeHooks(cpa_server::home_app_log::HomeAppLogForwarder::start(0))));
     }
@@ -446,6 +541,11 @@ async fn serve_proxy(
     };
     // Per-entry openai-compatibility executors are built on demand and need the live config.
     compat_slot.set(service.subscribe_config());
+    // Plugins are loaded before the service starts so plugin auth files parse and plugin
+    // models register on the first pass (Go: `pluginHost.ApplyConfig` in cmd/server).
+    plugin_host.set_auth_manager(Some(service.manager()));
+    plugin_host.sync_runtime_config(&service.config(), &service.manager(), &usage).await;
+    refresh_plugin_routes(&plugin_host).await;
     if let Err(e) = service.start().await {
         tracing::error!("failed to build proxy service: {e}");
         return 0;
@@ -456,6 +556,8 @@ async fn serve_proxy(
     }
     aistudio::install_relay_hooks(&service);
     aistudio::watch_ws_auth(config_rx.clone());
+    plugin_host.sync_model_runtime(&service.manager(), service.registry()).await;
+    service.refresh_model_registrations().await;
     let manager = service.manager();
     manager.set_error_event_sink(Some(Arc::new(|payload: Vec<u8>| cpa_home::queue::enqueue_error(&payload))));
     let store = service.store();
@@ -464,6 +566,8 @@ async fn serve_proxy(
     let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
     state.build = build.clone();
     state.example_api_key_safe_mode = safe_mode;
+    state.plugins = Some(plugin_host.clone());
+    plugin_host.set_model_executor(Some(ServerModelExecutor::new(state.clone())));
     if !cfg.commercial_mode {
         state.request_logger = Some(Arc::new(RequestLogger::new(config_rx.clone(), config_path.parent().map(|p| p.to_path_buf()))));
     }
@@ -491,6 +595,7 @@ async fn serve_proxy(
         commit: build.commit.clone(),
         build_date: build.build_date.clone(),
     })
+    .with_plugin_host(plugin_host.clone())
     .with_reload_hook(Arc::new(move || {
         let service = reload_service.clone();
         Box::pin(async move {
@@ -501,6 +606,20 @@ async fn serve_proxy(
         management = management.with_local_password(local.password.clone());
     }
 
+    // Plugin runtime follows config reloads (Go: `applyConfigRuntime`).
+    {
+        let mut rx = config_rx.clone();
+        let (host, service, usage) = (plugin_host.clone(), service.clone(), service.usage());
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let next = rx.borrow().clone();
+                host.sync_runtime_config(&next, &service.manager(), &usage).await;
+                refresh_plugin_routes(&host).await;
+                host.sync_model_runtime(&service.manager(), service.registry()).await;
+                service.refresh_model_registrations().await;
+            }
+        });
+    }
     // The usage queue runs while management is available (or Home owns usage) and follows
     // config reloads like Go's `managementRoutesEnabled` bookkeeping.
     let has_secret = !cfg.remote_management.secret_key.is_empty() || management.has_env_secret() || management.has_local_password();
@@ -590,8 +709,66 @@ async fn serve_proxy(
             }
         } => {}
     }
+    service.shutdown_home().await;
     service.shutdown();
+    plugin_host.set_model_executor(None);
+    plugin_host.shutdown_runtime(&service.manager(), service.registry()).await;
     0
+}
+
+/// Go `pluginBootstrapConfigPath`: the config file named by `-config` (else the default).
+fn plugin_bootstrap_config_path(args: &[String]) -> std::path::PathBuf {
+    let default = || std::env::current_dir().map(|d| d.join("config.yaml")).unwrap_or_else(|_| "config.yaml".into());
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--" => return default(),
+            "-config" | "--config" => return args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(default),
+            _ => {}
+        }
+        if let Some(v) = arg.strip_prefix("-config=").or_else(|| arg.strip_prefix("--config=")) {
+            return v.into();
+        }
+        i += 1;
+    }
+    default()
+}
+
+/// Go `loadPluginBootstrapConfig`: the config file, or an empty config when it is missing or
+/// invalid.
+fn load_plugin_bootstrap_config(path: &std::path::Path) -> Config {
+    let empty = || {
+        let mut cfg = Config::default();
+        cfg.normalize_plugins_config();
+        cfg
+    };
+    match std::fs::read(path) {
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("failed to read plugin bootstrap config: {e}");
+            }
+            empty()
+        }
+        Ok(raw) if raw.iter().all(u8::is_ascii_whitespace) => empty(),
+        Ok(raw) => match cpa_config::parse_config_bytes(&raw) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::warn!("failed to parse plugin bootstrap config: {e}");
+                empty()
+            }
+        },
+    }
+}
+
+/// Go `RefreshPluginManagementRoutes`: plugin routes may not shadow built-in management routes.
+async fn refresh_plugin_routes(host: &Arc<cpa_plugin::Host>) {
+    let reserved: std::collections::HashSet<String> = cpa_management::GIN_ROUTES
+        .iter()
+        .filter(|(_, path)| path.starts_with("/v0/management/") || *path == "/v0/management")
+        .map(|(method, path)| format!("{} {path}", method.to_uppercase()))
+        .collect();
+    host.register_management_routes(&cpa_plugin::CallCtx::background(), &reserved).await;
 }
 
 async fn shutdown_signal() {

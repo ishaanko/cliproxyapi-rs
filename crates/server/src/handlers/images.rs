@@ -25,7 +25,7 @@ use cpa_core::registry::{OPENAI_IMAGE_MODEL_TYPE, lookup_model_info};
 use cpa_json::{J, Kind};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{Instant, interval_at};
+use tokio::time::{Instant, Interval, interval_at};
 
 use super::{bad_request_message, invalid_request, ok_reply, read_request_body};
 use crate::error::{ErrorMessage, build_error_response_body};
@@ -339,7 +339,7 @@ fn build_compat_images_multipart_request(form: &Form, image_model: &str, stream:
     if stream {
         w.write_field("stream", "true");
     }
-    for (key, values) in &form.values {
+    for (key, values) in form.values() {
         if key == "model" || key == "stream" {
             continue;
         }
@@ -347,7 +347,7 @@ fn build_compat_images_multipart_request(form: &Form, image_model: &str, stream:
             w.write_field(key, value);
         }
     }
-    for (key, files) in &form.files {
+    for (key, files) in form.files() {
         for file in files {
             w.write_file(key, file);
         }
@@ -473,7 +473,6 @@ enum Head {
 struct Sink {
     head: Option<oneshot::Sender<Head>>,
     tx: mpsc::Sender<Bytes>,
-    started: bool,
     keepalive: Duration,
     passthrough: bool,
 }
@@ -489,6 +488,16 @@ fn error_event(err: &ErrorMessage) -> Vec<u8> {
     out
 }
 
+/// Next keep-alive tick; never resolves without a ticker.
+async fn next_tick(ticker: &mut Option<Interval>) {
+    match ticker {
+        Some(t) => {
+            t.tick().await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
 impl Sink {
     /// Commits the SSE head (headers from `setImagesSSEHeaders`, then upstream headers where
     /// unset); a no-op once committed.
@@ -501,6 +510,11 @@ impl Sink {
             }
             let _ = head.send(Head::Sse(headers));
         }
+    }
+
+    /// Keep-alive interval, `None` when keep-alives are disabled.
+    fn ticker(&self) -> Option<Interval> {
+        (!self.keepalive.is_zero()).then(|| interval_at(Instant::now() + self.keepalive, self.keepalive))
     }
 
     async fn write(&mut self, bytes: impl Into<Bytes>) -> bool {
@@ -518,14 +532,13 @@ impl Sink {
     /// Waits for `fut` while emitting keep-alive comments; `None` when the client left.
     async fn wait<T>(&mut self, fut: impl Future<Output = T>) -> Option<T> {
         let mut fut = std::pin::pin!(fut);
-        let mut ticker = (!self.keepalive.is_zero()).then(|| interval_at(Instant::now() + self.keepalive, self.keepalive));
+        let mut ticker = self.ticker();
         loop {
             tokio::select! {
                 out = &mut fut => return Some(out),
                 () = self.closed() => return None,
-                _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
+                () = next_tick(&mut ticker) => {
                     self.commit(None);
-                    self.started = true;
                     if !self.write(Bytes::from_static(b": keep-alive\n\n")).await {
                         return None;
                     }
@@ -555,7 +568,7 @@ where
 {
     let (head_tx, head_rx) = oneshot::channel();
     let (tx, rx) = mpsc::channel(16);
-    tokio::spawn(task(Sink { head: Some(head_tx), tx, started: false, keepalive, passthrough }));
+    tokio::spawn(task(Sink { head: Some(head_tx), tx, keepalive, passthrough }));
     match head_rx.await {
         Ok(Head::Reply(reply)) => reply.into_response(),
         Ok(Head::Sse(headers)) => streaming_response(200, headers, rx),
@@ -578,8 +591,7 @@ async fn forward_raw(mut sink: Sink, mut stream: crate::exec::ExecStream, empty_
             if !sink.write(chunk).await {
                 return;
             }
-            let ka = sink.keepalive;
-            let mut ticker = (!ka.is_zero()).then(|| interval_at(Instant::now() + ka, ka));
+            let mut ticker = sink.ticker();
             loop {
                 tokio::select! {
                     () = sink.closed() => return,
@@ -595,7 +607,7 @@ async fn forward_raw(mut sink: Sink, mut stream: crate::exec::ExecStream, empty_
                         }
                         None => return,
                     },
-                    _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
+                    () = next_tick(&mut ticker) => {
                         if !sink.write(Bytes::from_static(b": keep-alive\n\n")).await {
                             return;
                         }
@@ -916,12 +928,12 @@ mod tests {
     #[test]
     fn multipart_rebuild_keeps_file_content_type() {
         let mut form = Form::default();
-        form.values.push(("model".into(), vec!["old".into()]));
-        form.values.push(("prompt".into(), vec!["p".into()]));
-        form.files.push((
-            "image".into(),
-            vec![multipart::FilePart { filename: "a.png".into(), headers: vec![("Content-Type".into(), "image/png".into())], data: Bytes::from_static(b"IMG") }],
-        ));
+        form.push_value("model", "old".into());
+        form.push_value("prompt", "p".into());
+        form.push_file(
+            "image",
+            multipart::FilePart { filename: "a.png".into(), headers: vec![("Content-Type".into(), "image/png".into())], data: Bytes::from_static(b"IMG") },
+        );
         let (body, content_type) = build_compat_images_multipart_request(&form, "gpt-image-2", true);
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(content_type.starts_with("multipart/form-data; boundary="));
@@ -943,6 +955,17 @@ mod tests {
         assert_eq!(String::from_utf8(out).unwrap(), r#"{"created":1,"data":[{"url":"data:image/webp;base64,AAA"}]}"#);
         assert_eq!(build_images_api_response_from_xai(br#"{"data":[]}"#, "url").unwrap_err(), "upstream did not return image output");
         assert_eq!(build_images_api_response_from_xai(b"nope", "url").unwrap_err(), "upstream returned invalid image response JSON");
+    }
+
+    /// Go `TestWriteImagesStreamErrorEventSanitizesPayload`.
+    #[test]
+    fn stream_error_event_is_sanitized_and_bounded() {
+        let raw = format!(r#"{{"error":{{"code":"upstream_failed","message":"token=image-secret"}},"debug":"{}"}}"#, "x".repeat(8192));
+        let body = String::from_utf8(error_event(&ErrorMessage::new(502, raw))).unwrap();
+        assert!(body.starts_with("event: error\ndata: "));
+        assert!(!body.contains("image-secret"), "{body}");
+        assert!(body.len() <= 4096, "len {}", body.len());
+        assert!(body.contains("[REDACTED]"), "{body}");
     }
 
     #[test]

@@ -5,14 +5,17 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use cpa_config::HomeTlsConfig;
 use parking_lot::Mutex;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::sync::Notify;
+use tokio::sync::OwnedSemaphorePermit;
+use tokio_util::sync::CancellationToken;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::rustls::client::danger::{HandshakeSignatureValid, ServerCertVerifier};
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
@@ -24,32 +27,28 @@ use crate::resp::{self, RespError, Value};
 trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Io for T {}
 
-/// Forced-close switch of one connection: lets another task abort a blocked read.
+/// Forced-close switch of one connection: lets another task abort a blocked read. A thin
+/// wrapper over a [`CancellationToken`].
 #[derive(Default)]
-pub struct Kill {
-    dead: AtomicBool,
-    notify: Notify,
-}
+pub struct Kill(CancellationToken);
 
 impl Kill {
+    /// A switch that also dies when `self` does (a lifetime nested in a supervisor).
+    pub fn child(&self) -> Kill {
+        Kill(self.0.child_token())
+    }
+
     pub fn kill(&self) {
-        self.dead.store(true, Ordering::SeqCst);
-        self.notify.notify_waiters();
+        self.0.cancel();
     }
 
     pub fn is_dead(&self) -> bool {
-        self.dead.load(Ordering::SeqCst)
+        self.0.is_cancelled()
     }
 
     /// Resolves once [`Kill::kill`] was called.
     pub async fn wait(&self) {
-        loop {
-            let notified = self.notify.notified();
-            if self.is_dead() {
-                return;
-            }
-            notified.await;
-        }
+        self.0.cancelled().await;
     }
 }
 
@@ -124,6 +123,8 @@ pub struct Conn {
     /// A transport error happened: the connection must not be reused.
     pub broken: bool,
     pub opts: Arc<ConnOpts>,
+    /// Pool slot held while the connection is checked out.
+    pub(crate) permit: Option<OwnedSemaphorePermit>,
 }
 
 impl Drop for Conn {
@@ -171,7 +172,20 @@ impl Conn {
             }
             None => None,
         };
-        Ok(Conn { io: BufReader::new(io), kill, tracked, broken: false, opts })
+        Ok(Conn { io: BufReader::new(io), kill, tracked, broken: false, opts, permit: None })
+    }
+
+    /// go-redis `isHealthyConn`: an idle connection must have nothing to read. Pending is
+    /// healthy; EOF, buffered bytes or an error mean the peer closed it or sent unsolicited data.
+    pub fn is_healthy(&mut self) -> bool {
+        if self.broken || self.kill.is_dead() {
+            return false;
+        }
+        if !self.io.buffer().is_empty() {
+            return false;
+        }
+        let mut cx = Context::from_waker(Waker::noop());
+        matches!(Pin::new(&mut self.io).poll_fill_buf(&mut cx), Poll::Pending)
     }
 
     pub fn kill_switch(&self) -> Arc<Kill> {

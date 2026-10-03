@@ -40,6 +40,8 @@ pub enum TokenStorage {
     Kimi(KimiTokenStorage),
     Vertex(VertexCredentialStorage),
     Meta(MetaTokenStorage),
+    /// `pluginTokenStorage`: provider-owned JSON handed over by a plugin auth provider.
+    Plugin(PluginTokenStorage),
     /// `EmptyStorage`: persists nothing.
     Empty,
 }
@@ -56,6 +58,7 @@ impl TokenStorage {
             TokenStorage::Kimi(s) => write_encoded(path, &s.render(metadata)?, Layout::Pretty),
             TokenStorage::Vertex(s) => write_encoded(path, &s.render(metadata)?, Layout::Pretty),
             TokenStorage::Meta(s) => s.save(path, metadata),
+            TokenStorage::Plugin(s) => s.save(path, metadata),
         }
     }
 
@@ -68,6 +71,7 @@ impl TokenStorage {
             TokenStorage::Kimi(s) => s.effective_type(),
             TokenStorage::Vertex(_) => "vertex",
             TokenStorage::Meta(_) => "meta",
+            TokenStorage::Plugin(s) => s.provider.as_str(),
             TokenStorage::Empty => "empty",
         }
     }
@@ -458,6 +462,106 @@ impl MetaTokenStorage {
             let mut f = opts.open(&tmp)?;
             f.write_all(text.as_bytes())?;
             f.sync_all()?;
+            fs::rename(&tmp, path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result.map_err(io_err)
+    }
+}
+
+// ---- Plugin ----
+
+/// Storage of a plugin-provided auth (Go: `pluginTokenStorage`): the plugin's raw JSON merged
+/// with the auth metadata and stamped with the provider `type`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PluginTokenStorage {
+    pub provider: String,
+    pub raw_json: Vec<u8>,
+    /// Metadata the storage was created with (used to notice a dropped `priority`).
+    pub meta: Metadata,
+}
+
+impl PluginTokenStorage {
+    /// `RawJSON()`: the storage payload merged with its own metadata.
+    pub fn raw_json_payload(&self) -> Option<Vec<u8>> {
+        self.merged(&self.meta, &self.raw_json).ok()
+    }
+
+    /// `mergedStorageJSON`: raw JSON, then metadata keys, then `type`, normalized and compact.
+    fn merged(&self, metadata: &Metadata, raw: &[u8]) -> Result<Vec<u8>, StorageError> {
+        let mut out = Metadata::new();
+        if !raw.iter().all(u8::is_ascii_whitespace) {
+            match serde_json::from_slice::<Value>(raw) {
+                Ok(Value::Object(m)) => out = m,
+                Ok(Value::Null) => {}
+                Ok(_) | Err(_) => {
+                    return Err(StorageError::Invalid(
+                        "decode plugin token storage: invalid JSON object".into(),
+                    ));
+                }
+            }
+        }
+        for (k, v) in metadata {
+            out.insert(k.clone(), v.clone());
+        }
+        let provider = self.provider.trim().to_lowercase();
+        if !provider.is_empty() {
+            out.insert("type".into(), Value::String(provider));
+        }
+        crate::credmeta::normalize_credential_metadata(&mut out);
+        if out.is_empty() {
+            return Err(StorageError::Invalid(
+                "plugin token storage payload is empty".into(),
+            ));
+        }
+        Ok(crate::util::marshal_compact(&Value::Object(out))?.into_bytes())
+    }
+
+    /// `SetMetadata` + `SaveTokenToFile`: skips the write when the file already holds the same
+    /// JSON, otherwise writes through a temp file and rename.
+    fn save(&self, path: &Path, metadata: &Metadata) -> Result<(), StorageError> {
+        let mut raw = self.raw_json.clone();
+        if self.meta.contains_key("priority")
+            && !metadata.contains_key("priority")
+            && let Ok(Value::Object(mut m)) = serde_json::from_slice::<Value>(&raw)
+        {
+            m.shift_remove("priority");
+            if let Ok(cleaned) = serde_json::to_vec(&Value::Object(m)) {
+                raw = cleaned;
+            }
+        }
+        let payload = self.merged(metadata, &raw)?;
+        if let Ok(current) = fs::read(path)
+            && let (Ok(a), Ok(b)) = (
+                serde_json::from_slice::<Value>(&current),
+                serde_json::from_slice::<Value>(&payload),
+            )
+            && a == b
+        {
+            return Ok(());
+        }
+        let io_err = |source| StorageError::Io {
+            path: path.display().to_string(),
+            source,
+        };
+        let dir = path
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        mkdir_all_private(dir).map_err(io_err)?;
+        let tmp = dir.join(format!(".plugin-auth-{}.tmp", crate::util::random_hex(8)));
+        let result = (|| {
+            let mut opts = fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                opts.mode(0o600);
+            }
+            let mut f = opts.open(&tmp)?;
+            f.write_all(&payload)?;
             fs::rename(&tmp, path)
         })();
         if result.is_err() {

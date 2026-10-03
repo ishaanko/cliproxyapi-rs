@@ -13,6 +13,7 @@ cpa-translator = { path = "../translator" }
 cpa-config = { path = "../config" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }
+cpa-pluginapi = { path = "../pluginapi" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

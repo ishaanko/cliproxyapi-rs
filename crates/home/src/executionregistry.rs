@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::{Duration, SystemTime};
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use tokio::sync::Notify;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -148,11 +148,56 @@ struct ScopeInner {
     spec: ScopeSpec,
     /// Guarded by the registry lock for the accepting/active check in `bind`.
     active: AtomicBool,
-    close_fn: Mutex<Option<CloseFn>>,
-    /// Held while the bound resource closes, so concurrent closers wait for the first.
-    closed: Mutex<bool>,
+    /// The bound resource and, once its close started, the completion other closers wait on.
+    close: Mutex<CloseState>,
     /// `Some(ticket)` once ended; held during the end procedure so callers wait for it.
     ended: Mutex<Option<Option<ReleaseTicket>>>,
+}
+
+#[derive(Default)]
+struct CloseState {
+    close_fn: Option<CloseFn>,
+    done: Option<Arc<CloseDone>>,
+}
+
+/// Blocking completion latch of one resource close.
+#[derive(Default)]
+struct CloseDone {
+    finished: Mutex<bool>,
+    cv: Condvar,
+}
+
+impl CloseDone {
+    fn finish(&self) {
+        *self.finished.lock() = true;
+        self.cv.notify_all();
+    }
+
+    fn wait(&self) {
+        let mut finished = self.finished.lock();
+        while !*finished {
+            self.cv.wait(&mut finished);
+        }
+    }
+}
+
+/// Completes the latch even if the closer panics, so waiters never hang.
+struct FinishOnDrop(Arc<CloseDone>);
+
+impl Drop for FinishOnDrop {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
+}
+
+/// Outcome of trying to start the resource close.
+enum Claim {
+    /// No resource was ever bound.
+    Nothing,
+    /// Another caller already runs (or ran) the close.
+    Running(Arc<CloseDone>),
+    /// This caller owns the close and must run it.
+    Run(CloseFn, Arc<CloseDone>),
 }
 
 /// Owns the resource of one installed execution.
@@ -245,8 +290,7 @@ impl Registry {
             reg: self.inner.clone(),
             spec,
             active: AtomicBool::new(true),
-            close_fn: Mutex::new(None),
-            closed: Mutex::new(false),
+            close: Mutex::new(CloseState::default()),
             ended: Mutex::new(None),
         });
         l.scopes.insert(inner.id, inner.clone());
@@ -283,7 +327,7 @@ impl Registry {
         }
         let scopes: Vec<Arc<ScopeInner>> = inner.locked.lock().scopes.values().cloned().collect();
         for scope in scopes {
-            scope.close_resource();
+            scope.close_resource_in_background();
         }
         let wait = async {
             loop {
@@ -309,7 +353,7 @@ impl Registry {
         self.inner.state.store(STATE_CLOSED, Ordering::SeqCst);
         let scopes: Vec<Arc<ScopeInner>> = self.inner.locked.lock().scopes.values().cloned().collect();
         for scope in scopes {
-            scope.close_resource();
+            scope.close_resource_and_wait();
         }
         Ok(())
     }
@@ -394,19 +438,41 @@ impl Drop for PendingDispatch {
 }
 
 impl ScopeInner {
-    /// Runs the bound resource close once; concurrent callers wait for it.
-    fn close_resource(&self) {
-        let mut closed = self.closed.lock();
-        if *closed {
-            return;
+    /// Takes ownership of the bound resource's close, never running it (callers run it without
+    /// any registry or scope lock held).
+    fn claim_close(&self) -> Claim {
+        let mut st = self.close.lock();
+        if let Some(done) = &st.done {
+            return Claim::Running(done.clone());
         }
-        let f = self.close_fn.lock().take();
-        if let Some(f) = f
-            && let Err(e) = f()
-        {
+        let Some(f) = st.close_fn.take() else { return Claim::Nothing };
+        let done = Arc::new(CloseDone::default());
+        st.done = Some(done.clone());
+        Claim::Run(f, done)
+    }
+
+    /// Runs a claimed close and completes its latch.
+    fn run_close(f: CloseFn, done: Arc<CloseDone>) {
+        let _finish = FinishOnDrop(done);
+        if let Err(e) = f() {
             tracing::warn!("Home execution resource close failed: {e}");
         }
-        *closed = true;
+    }
+
+    /// Closes the bound resource (inline, off-lock) and waits for any concurrent close of it.
+    fn close_resource_and_wait(&self) {
+        match self.claim_close() {
+            Claim::Nothing => {}
+            Claim::Running(done) => done.wait(),
+            Claim::Run(f, done) => Self::run_close(f, done),
+        }
+    }
+
+    /// Starts the close on its own thread so a slow closer cannot stall a drain past its deadline.
+    fn close_resource_in_background(&self) {
+        if let Claim::Run(f, done) = self.claim_close() {
+            std::thread::spawn(move || Self::run_close(f, done));
+        }
     }
 }
 
@@ -421,13 +487,11 @@ impl Scope {
         if self.inner.reg.state() != STATE_ACCEPTING || !self.inner.active.load(Ordering::SeqCst) {
             return Err(RegistryError::NotAccepting);
         }
-        // Lock order matches `close_resource`: `closed`, then `close_fn`.
-        let closed = self.inner.closed.lock();
-        let mut slot = self.inner.close_fn.lock();
-        if slot.is_some() || *closed {
+        let mut st = self.inner.close.lock();
+        if st.close_fn.is_some() || st.done.is_some() {
             return Err(RegistryError::ResourceAlreadyBound);
         }
-        *slot = Some(close);
+        st.close_fn = Some(close);
         Ok(())
     }
 
@@ -448,7 +512,7 @@ impl Scope {
             let _l = inner.reg.locked.lock();
             inner.active.store(false, Ordering::SeqCst);
         }
-        inner.close_resource();
+        inner.close_resource_and_wait();
 
         let (sink, group, sequence) = {
             let mut l = inner.reg.locked.lock();

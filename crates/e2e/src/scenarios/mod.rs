@@ -8,6 +8,7 @@ mod interactions;
 mod management;
 mod errors;
 mod matrix;
+mod plugins;
 mod media;
 mod profiles;
 mod reqlog;
@@ -35,6 +36,7 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(reqlog::scenarios());
     v.extend(realtime::scenarios());
     v.extend(management::scenarios(mock_port));
+    v.extend(plugins::scenarios());
     v.extend(redisqueue::scenarios());
     v.extend(media::scenarios());
     v

@@ -28,7 +28,7 @@
 //!
 //! Known gaps vs the Go app: no TLS ClientHello fingerprinting (Claude uses a uTLS Firefox profile
 //! in Go; here plain rustls, see [`http`]), no `compress` (LZW) content-encoding on Claude OAuth
-//! responses, no plugin auth parsers, and no git / postgres / object-store token stores.
+//! responses, and no git / postgres / object-store token stores.
 
 use std::sync::RwLock;
 
@@ -53,6 +53,7 @@ pub mod manager;
 pub mod meta;
 pub mod oauth;
 pub mod pkce;
+pub mod plugin_parser;
 mod redact;
 pub mod refresh;
 pub mod retry;

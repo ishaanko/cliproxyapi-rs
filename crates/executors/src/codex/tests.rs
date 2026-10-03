@@ -842,3 +842,73 @@ async fn duplex_unattributable_automatic_response_is_a_request_scoped_failure() 
     assert!(err.message.contains("automatic successor has no retained parent settings"), "{}", err.message);
     assert!(err.is_request_scoped());
 }
+
+// ---------------------------------------------------------------- direct OpenAI images
+
+fn image_options(stream: bool) -> Options {
+    let mut opts = Options::new(Format::OpenAI);
+    opts.stream = stream;
+    opts.metadata.insert(crate::openai_compat::META_HANDLER_TYPE.into(), json!("openai-image"));
+    opts.metadata.insert("request_path".into(), json!("/v1/images/generations"));
+    opts
+}
+
+/// Go `TestCodexExecutorDirectOpenAIImageGenerationUsesImagesEndpoint`: the request goes to
+/// `/images/generations` with the Codex headers, and the usage object of the answer is reported.
+#[tokio::test]
+async fn direct_image_generation_uses_images_endpoint_and_reports_usage() {
+    let upstream = r#"{"created":1713833628,"data":[{"b64_json":"AA=="}],"usage":{"total_tokens":100,"input_tokens":50,"output_tokens":50}}"#;
+    let (url, recorded) = http_server(move |_| HttpReply { status: 200, body: upstream.to_string() }).await;
+    let (exec, _keep) = executor(Config::default());
+    let req = Request {
+        model: "codex/gpt-image-1.5".into(),
+        payload: Bytes::from_static(br#"{"model":"codex/gpt-image-1.5","prompt":"A cute baby sea otter","n":1,"extra":{"preserve":true},"stream":false}"#),
+        format: Format::OpenAI,
+        metadata: Default::default(),
+    };
+    let mut opts = image_options(false);
+    opts.headers.insert("version", "0.135.0".parse().unwrap());
+    opts.headers.insert("x-client-request-id", "client-request-1".parse().unwrap());
+    let resp = exec.execute(&api_key_auth(&url, false), req, opts).await.unwrap();
+
+    assert_eq!(&resp.payload[..], upstream.as_bytes());
+    assert_eq!(resp.metadata["usage"], json!({"input_tokens": 50, "output_tokens": 50, "reasoning_tokens": 0, "cached_tokens": 0, "total_tokens": 100}));
+    let seen = recorded.lock();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0].headers["authorization"], "Bearer test");
+    assert_eq!(seen[0].headers["accept"], "application/json");
+    assert_eq!(seen[0].headers["version"], "0.135.0");
+    assert_eq!(seen[0].headers["x-client-request-id"], "client-request-1");
+    let body: Value = serde_json::from_slice(&seen[0].body).unwrap();
+    assert_eq!(body["model"], "gpt-image-1.5");
+    assert_eq!(body["extra"]["preserve"], true);
+    assert!(body.get("stream").is_none());
+}
+
+/// Go `TestCodexExecutorDirectOpenAIImageGenerationStreamsImagesEndpoint` plus the usage the
+/// stream task reports from the `image_generation.completed` event.
+#[tokio::test]
+async fn direct_image_stream_relays_events_and_reports_usage() {
+    let body = "event: image_generation.partial_image\ndata: {\"type\":\"image_generation.partial_image\",\"b64_json\":\"AA==\",\"partial_image_index\":0}\n\n\
+event: image_generation.completed\ndata: {\"type\":\"image_generation.completed\",\"b64_json\":\"BB==\",\"usage\":{\"total_tokens\":10,\"input_tokens\":4,\"output_tokens\":6}}\n\n";
+    let (url, recorded) = http_server(move |_| HttpReply { status: 200, body: body.to_string() }).await;
+    let (exec, _keep) = executor(Config::default());
+    let req = Request {
+        model: "gpt-image-2".into(),
+        payload: Bytes::from_static(br#"{"model":"gpt-image-2","prompt":"A cute baby sea otter","partial_images":2}"#),
+        format: Format::OpenAI,
+        metadata: Default::default(),
+    };
+    let mut result = exec.execute_stream(&api_key_auth(&url, false), req, image_options(true)).await.unwrap();
+    let usage = result.usage.take().expect("usage channel");
+    let (out, err) = drain(result).await;
+    assert!(err.is_none());
+    assert!(out.contains("event: image_generation.partial_image") && out.contains("event: image_generation.completed"), "{out}");
+    let usage = usage.await.expect("usage reported");
+    assert_eq!(usage, json!({"input_tokens": 4, "output_tokens": 6, "reasoning_tokens": 0, "cached_tokens": 0, "total_tokens": 10}));
+    let seen = recorded.lock();
+    assert_eq!(seen[0].headers["accept"], "text/event-stream");
+    let sent: Value = serde_json::from_slice(&seen[0].body).unwrap();
+    assert_eq!(sent["stream"], true);
+    assert_eq!(sent["partial_images"], 2);
+}

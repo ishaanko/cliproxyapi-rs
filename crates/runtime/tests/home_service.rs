@@ -144,6 +144,23 @@ async fn home_service_applies_config_dispatches_and_reports() {
     cpa_home::queue::set_enabled(false);
 }
 
+// Go: Service.Shutdown cancels the supervisor and waits: the registry drains and pending releases
+// are flushed to Home before the client closes.
+#[tokio::test]
+async fn graceful_shutdown_flushes_releases_and_detaches_the_lifetime() {
+    let _serial = SERIAL.lock().await;
+    let mock = MockHome::start(mock_home(HOME_CONFIG)).await;
+    let service = start(&mock, Arc::new(AtomicUsize::new(0))).await;
+    let manager = service.manager();
+    wait_for("dispatch bundle", || manager.home_dispatch_bundle().is_some()).await;
+    let request = Request { model: "m".into(), payload: Bytes::from_static(b"{}"), format: Format::OpenAI, metadata: Default::default() };
+    manager.execute(&["mock".to_string()], request, Options::new(Format::OpenAI)).await.unwrap();
+    service.shutdown_home().await;
+    assert!(mock.count("lpush", Some("concurrency-release")) >= 1, "release was not flushed before shutdown");
+    assert!(manager.home_dispatch_bundle().is_none() && cpa_home::kv::current().is_none());
+    service.shutdown();
+}
+
 #[tokio::test]
 async fn heartbeat_loss_replaces_the_subscriber_lifetime() {
     let _serial = SERIAL.lock().await;

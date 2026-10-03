@@ -119,6 +119,8 @@ pub struct ManagementState {
     pub(crate) local_password: Option<String>,
     pub(crate) build: BuildInfo,
     pub(crate) reload: Option<ReloadHook>,
+    /// The plugin host behind the plugin, quota and plugin-owned management routes.
+    pub(crate) plugins: Option<Arc<cpa_plugin::Host>>,
     pub(crate) shared: Arc<Shared>,
 }
 
@@ -159,6 +161,7 @@ impl ManagementState {
             local_password: None,
             build: BuildInfo::default(),
             reload: None,
+            plugins: None,
             shared: Arc::new(Shared::default()),
         }
     }
@@ -185,6 +188,12 @@ impl ManagementState {
 
     pub fn with_build_info(mut self, build: BuildInfo) -> Self {
         self.build = build;
+        self
+    }
+
+    /// Attaches the plugin host (Go: `SetPluginHost`).
+    pub fn with_plugin_host(mut self, host: Arc<cpa_plugin::Host>) -> Self {
+        self.plugins = Some(host);
         self
     }
 

@@ -3,8 +3,9 @@
 //! derives, so management indexes, config indexes and routing hashes stay stable across ports.
 //!
 //! - [`synthesize_config_auths`]: one auth per key entry (`ConfigSynthesizer`).
-//! - [`synthesize_auth_file`] / [`synthesize_auth_dir`]: one auth per credential file
-//!   (`FileSynthesizer`; the plugin auth parser hook is not ported).
+//! - [`synthesize_auth_files`] / [`synthesize_auth_dir`]: the auths of a credential file
+//!   (`FileSynthesizer`, including the plugin auth parser); [`synthesize_auth_file`] is the
+//!   built-in single-auth mapping.
 //! - [`snapshot_core_auths`]: config auths followed by file auths (`snapshotCoreAuths`).
 
 use std::collections::{BTreeMap, HashMap};
@@ -16,6 +17,7 @@ use cpa_auth::credmeta::{
     Metadata, apply_auth_priority_metadata, apply_auth_weight_metadata, apply_custom_headers_from_metadata,
     normalize_credential_metadata, validate_metadata_weight,
 };
+use cpa_auth::plugin_parser::{PluginParseRequest, compact_plugin_auths, current_plugin_auth_parser, sync_plugin_storage_metadata};
 use cpa_auth::jwt::{DEFAULT_PLAN_TYPE, parse_codex_id_token};
 use cpa_auth::kimi::{normalize_kimi_domain, resolve_kimi_api_base_url, resolve_kimi_domain_from_auth};
 use cpa_auth::{Auth, Status};
@@ -715,6 +717,80 @@ pub fn synthesize_auth_file(
     Ok(Some(auth))
 }
 
+/// Go `synthesizeFileAuths`: [`synthesize_auth_file`] preceded by the plugin auth parser, which may
+/// claim the file and expand it into several auths.
+pub fn synthesize_auth_files(ctx: &SynthesisContext<'_>, full_path: &str, data: &[u8]) -> Result<Vec<Auth>, SynthError> {
+    if let Some(parser) = current_plugin_auth_parser()
+        && !data.is_empty()
+        && let Ok(Value::Object(mut metadata)) = serde_json::from_slice::<Value>(data)
+    {
+        let base_name = Path::new(full_path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        normalize_credential_metadata(&mut metadata);
+        validate_metadata_weight(&metadata).map_err(|e| SynthError::Weight(format!("invalid weight in {base_name}: {e}")))?;
+        let mut provider = metadata.get("type").and_then(Value::as_str).unwrap_or("").trim().to_lowercase();
+        if provider == "gemini" {
+            provider = "gemini-cli".into();
+        }
+        let req = PluginParseRequest { provider: &provider, path: full_path, file_name: &base_name, raw_json: data };
+        if let Ok(Some(auths)) = parser.parse_auths(&req) {
+            return synthesize_plugin_auths(ctx, full_path, &base_name, &metadata, compact_plugin_auths(auths));
+        }
+    }
+    synthesize_auth_file(ctx, full_path, data).map(|a| a.into_iter().collect())
+}
+
+/// The plugin branch of Go's `synthesizeFileAuths`.
+fn synthesize_plugin_auths(
+    ctx: &SynthesisContext<'_>,
+    full_path: &str,
+    base_name: &str,
+    metadata: &Metadata,
+    mut auths: Vec<Auth>,
+) -> Result<Vec<Auth>, SynthError> {
+    let per_account_excluded = extract_excluded_models(metadata);
+    let per_account_aliases = extract_oauth_model_aliases(metadata);
+    let disabled = metadata.get("disabled").and_then(Value::as_bool).unwrap_or(false);
+    let multi = auths.len() > 1;
+    for (index, auth) in auths.iter_mut().enumerate() {
+        normalize_credential_metadata(&mut auth.metadata);
+        if multi {
+            auth.mark_plugin_virtual(full_path, index);
+        }
+        auth.created_at = Some(ctx.now);
+        auth.updated_at = Some(ctx.now);
+        auth.attributes.insert("path".into(), full_path.to_string());
+        auth.attributes.insert("source".into(), full_path.to_string());
+        auth.attributes.insert("source_backend".into(), "file".into());
+        if disabled {
+            auth.disabled = true;
+            auth.status = Status::Disabled;
+            auth.metadata.insert("disabled".into(), Value::Bool(true));
+        }
+        if let Some(p) = metadata.get("proxy_url").and_then(Value::as_str)
+            && auth.proxy_url.is_empty()
+        {
+            auth.proxy_url = p.trim().to_string();
+        }
+        if let Some(pref) = metadata.get("prefix").and_then(Value::as_str)
+            && auth.prefix.is_empty()
+        {
+            auth.prefix = pref.trim().trim_matches('/').to_string();
+        }
+        apply_auth_weight_metadata(auth, metadata)
+            .map_err(|e| SynthError::Weight(format!("invalid plugin auth weight in {base_name}: {e}")))?;
+        apply_auth_priority_metadata(auth, metadata);
+        sync_plugin_storage_metadata(auth);
+        set_oauth_model_aliases_attribute(auth, per_account_aliases.clone());
+        apply_auth_excluded_models_meta(auth, ctx.config, &per_account_excluded, "oauth");
+        apply_custom_headers_from_metadata(auth);
+        let profile = fingerprint_profile_from_metadata(metadata);
+        if !profile.is_empty() {
+            auth.attributes.insert("fingerprint_profile".into(), profile);
+        }
+    }
+    Ok(auths)
+}
+
 /// Go `FileSynthesizer.Synthesize`: every direct `*.json` file of `ctx.auth_dir` in name order
 /// (as `os.ReadDir`). Unreadable, empty or invalid files are skipped; a missing directory yields
 /// nothing.
@@ -739,9 +815,8 @@ pub fn synthesize_auth_dir(ctx: &SynthesisContext<'_>) -> Vec<Auth> {
         if data.is_empty() {
             continue;
         }
-        match synthesize_auth_file(ctx, &full.to_string_lossy(), &data) {
-            Ok(Some(auth)) => out.push(auth),
-            Ok(None) => {}
+        match synthesize_auth_files(ctx, &full.to_string_lossy(), &data) {
+            Ok(auths) => out.extend(auths),
             Err(err) => tracing::warn!("skipping auth file {name}: {err}"),
         }
     }

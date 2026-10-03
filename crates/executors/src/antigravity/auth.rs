@@ -10,6 +10,7 @@ use cpa_runtime::executor::ExecError;
 use serde_json::Value;
 
 use super::AntigravityExecutor;
+use crate::helps::home_refresh::refresh_auth_via_home;
 
 /// A token is reused only when it stays valid for at least this long.
 pub(crate) const REQUEST_TOKEN_SAFETY_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -76,6 +77,16 @@ impl AntigravityExecutor {
         {
             self.maybe_refresh_credits_hint(cfg, auth, &access_token).await;
             return Ok((access_token, None));
+        }
+        // With Home enabled the credential is refreshed there, never locally.
+        if let Some(result) = refresh_auth_via_home(cfg, auth).await {
+            let refreshed = result?;
+            let token = meta_string(&refreshed, "access_token");
+            if token.trim().is_empty() {
+                return Err(ExecError::new(401, "missing access token"));
+            }
+            self.maybe_refresh_credits_hint(cfg, &refreshed, &token).await;
+            return Ok((token, Some(refreshed)));
         }
         let updated = self.refresh_token(cfg, auth.clone()).await?;
         Ok((meta_string(&updated, "access_token"), Some(updated)))

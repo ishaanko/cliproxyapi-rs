@@ -47,7 +47,13 @@ async fn patch_status_inner(st: ManagementState, body: Bytes) -> ApiResult {
         return Err(ApiError::new(404, ERR_NOT_FOUND));
     };
     if target.is_plugin_virtual() {
-        return Err(ApiError::new(409, ERR_PLUGIN_VIRTUAL));
+        // Status changes are allowed only for the source file name, like delete; the expanded
+        // virtual auths cannot be modified on their own.
+        if !crate::credentials::is_plugin_virtual_source_delete(name, &target) {
+            return Err(ApiError::new(409, ERR_PLUGIN_VIRTUAL));
+        }
+        patch_plugin_virtual_source_status(&st, &target, disabled).await?;
+        return Ok(ok_json(&json!({"status": "ok", "disabled": disabled})));
     }
 
     if target.is_config_api_key() {
@@ -77,6 +83,77 @@ async fn patch_status_inner(st: ManagementState, body: Bytes) -> ApiResult {
         .await
         .map_err(|e| ApiError::new(500, format!("failed to update auth: {e}")))?;
     Ok(ok_json(&json!({"status": "ok", "disabled": disabled})))
+}
+
+/// `patchPluginVirtualSourceStatus`: toggles `disabled` on the source file of a plugin multi-auth
+/// group and on every runtime auth expanded from it.
+async fn patch_plugin_virtual_source_status(st: &ManagementState, target: &Auth, disabled: bool) -> ApiResult<()> {
+    let mut source = target.attr(cpa_auth::types::ATTRIBUTE_VIRTUAL_SOURCE).trim().to_string();
+    if source.is_empty() {
+        source = target.attr(cpa_auth::types::ATTRIBUTE_PATH).trim().to_string();
+    }
+    if source.is_empty() {
+        return Err(ApiError::new(409, ERR_PLUGIN_VIRTUAL));
+    }
+    let path = source.clone();
+    let written = blocking(move || Ok(set_source_auth_file_disabled(&path, disabled))).await?;
+    if let Err(e) = written {
+        return Err(match e {
+            SourceError::NotFound => ApiError::new(404, ERR_NOT_FOUND),
+            SourceError::Other(m) => ApiError::new(500, m),
+        });
+    }
+    for mut auth in st.registry.list() {
+        let same = |attr: &str| crate::credentials::same_path(&auth.attr(attr), &source);
+        if !same(cpa_auth::types::ATTRIBUTE_PATH) && !same(cpa_auth::types::ATTRIBUTE_VIRTUAL_SOURCE) {
+            continue;
+        }
+        let id = auth.id.clone();
+        apply_disabled_state(&mut auth, disabled);
+        st.registry.update(auth).await.map_err(|e| ApiError::new(500, format!("failed to update auth {id}: {e}")))?;
+    }
+    Ok(())
+}
+
+enum SourceError {
+    NotFound,
+    Other(String),
+}
+
+/// `setSourceAuthFileDisabled`.
+fn set_source_auth_file_disabled(path: &str, disabled: bool) -> Result<(), SourceError> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err(SourceError::Other("source auth path is empty".into()));
+    }
+    let data = std::fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound { SourceError::NotFound } else { SourceError::Other(format!("failed to update source auth file: {e}")) }
+    })?;
+    let mut metadata: Map<String, Value> = Map::new();
+    if !data.iter().all(u8::is_ascii_whitespace) {
+        match serde_json::from_slice::<Value>(&data) {
+            Ok(Value::Object(m)) => metadata = m,
+            Ok(Value::Null) => {}
+            Ok(_) | Err(_) => return Err(SourceError::Other("failed to update source auth file: invalid auth file".into())),
+        }
+    }
+    credmeta::normalize_credential_metadata(&mut metadata);
+    metadata.insert("disabled".into(), Value::Bool(disabled));
+    let raw = cpa_auth::util::marshal_compact(&Value::Object(metadata)).map_err(|e| SourceError::Other(format!("marshal auth file: {e}")))?;
+    write_private(path, raw.as_bytes()).map_err(|e| SourceError::Other(format!("failed to update source auth file: {e}")))
+}
+
+/// `os.WriteFile(path, data, 0o600)`.
+fn write_private(path: &str, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(data)
 }
 
 fn apply_disabled_state(auth: &mut Auth, disabled: bool) {

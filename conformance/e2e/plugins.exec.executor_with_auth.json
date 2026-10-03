@@ -1,0 +1,88 @@
+{
+  "id": "plugins.exec.executor_with_auth",
+  "desc": "a plugin executor serving a request with a plugin credential",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "plugin-example-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-ddb50d4c1c421ed9-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "plugin-example",
+            "object": "chat.completion"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "plugin-example-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-ddb50d4c1c421ed9-<uuid:2>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "data": "plugin-example"
+            },
+            {
+              "data": "[DONE]"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

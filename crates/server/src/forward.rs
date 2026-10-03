@@ -12,7 +12,7 @@ use tokio::time::{Instant, interval_at};
 
 use crate::error::{ErrorMessage, claude_error_body, error_body, retry_after_seconds};
 use crate::exec::ExecStream;
-use crate::headers::replace_headers;
+use crate::headers::{filter_upstream_headers, replace_headers};
 use crate::reply::{JSON, Reply, set_sse_headers, streaming_response};
 
 /// Dialect-specific writers for `ForwardStream` (Go: `StreamForwardOptions`). Every `write_*`
@@ -199,8 +199,27 @@ fn error_headers(msg: &ErrorMessage, passthrough: bool) -> HeaderMap {
     headers
 }
 
+/// `writeDirectErrorResponse`: the plugin's own body, with its headers minus hop-by-hop and
+/// CPA-reserved ones; JSON content type when none was given.
+pub fn direct_error_reply(status: u16, direct: &crate::error::DirectResponse) -> Reply {
+    let mut headers = HeaderMap::new();
+    for (name, value) in &filter_upstream_headers(&direct.headers) {
+        if crate::headers::is_cpa_reserved_response_header(name.as_str()) {
+            continue;
+        }
+        headers.append(name.clone(), value.clone());
+    }
+    if !headers.contains_key(header::CONTENT_TYPE) {
+        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(JSON));
+    }
+    Reply { status, headers, body: direct.body.clone() }
+}
+
 /// `BaseAPIHandler.WriteErrorResponse`: OpenAI-shaped error reply.
 pub fn openai_error_reply(msg: &ErrorMessage, passthrough: bool) -> Reply {
+    if let Some(direct) = &msg.direct {
+        return direct_error_reply(msg.status_or_500(), direct);
+    }
     let mut headers = error_headers(msg, passthrough);
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(JSON));
     Reply {
@@ -212,6 +231,9 @@ pub fn openai_error_reply(msg: &ErrorMessage, passthrough: bool) -> Reply {
 
 /// `ClaudeCodeAPIHandler.WriteErrorResponse`: Anthropic-shaped error reply.
 pub fn claude_error_reply(msg: &ErrorMessage, passthrough: bool) -> Reply {
+    if let Some(direct) = &msg.direct {
+        return direct_error_reply(msg.status_or_500(), direct);
+    }
     let mut headers = error_headers(msg, passthrough);
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(JSON));
     Reply {

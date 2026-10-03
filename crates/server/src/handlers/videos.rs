@@ -29,7 +29,7 @@ use crate::error::ErrorMessage;
 use crate::exec::{ExecArgs, ExecOk, Pipeline};
 use crate::forward::{openai_error_reply, with_nonstream_keepalive};
 use crate::multipart;
-use crate::reply::Reply;
+use crate::reply::{Reply, streaming_response};
 use crate::req::ReqInfo;
 use crate::state::AppState;
 
@@ -66,7 +66,7 @@ pub struct VideoAuthBindingStore {
     entries: RwLock<HashMap<String, VideoAuthBinding>>,
 }
 
-static VIDEO_AUTH_BINDINGS: LazyLock<VideoAuthBindingStore> = LazyLock::new(VideoAuthBindingStore::default);
+pub static VIDEO_AUTH_BINDINGS: LazyLock<VideoAuthBindingStore> = LazyLock::new(VideoAuthBindingStore::default);
 
 impl VideoAuthBindingStore {
     /// `setWithModel`: blank ids are ignored, a non-positive `ttl` means the default.
@@ -746,10 +746,10 @@ pub async fn videos_retrieve(State(st): State<AppState>, info: ReqInfo, Path(vid
     .await
 }
 
-/// `GET /openai/v1/videos/:video_id/content` (`VideosContent`): retrieves the finished video's
-/// URL, then downloads it through the credential's proxy and relays status, content headers
-/// and body. With non-stream keep-alive enabled the body is buffered so the keep-alive
-/// newlines can precede it; otherwise it is streamed.
+/// `GET /openai/v1/videos/:video_id/content` (`VideosContent`): polls the video for its
+/// download URL, then fetches it through the credential's proxy and streams status, content
+/// headers and body to the client. Only the poll runs under the non-stream keep-alive (Go calls
+/// `stopKeepAlive` right after it); the download streams without buffering.
 pub async fn videos_content(State(st): State<AppState>, info: ReqInfo, Path(video_id): Path<String>) -> Response {
     let video_id = video_id.trim().to_string();
     if video_id.is_empty() {
@@ -763,31 +763,80 @@ pub async fn videos_content(State(st): State<AppState>, info: ReqInfo, Path(vide
     let exec = VideoExec::new(&st, &info);
     let interval = exec.pipeline.settings.nonstream_keepalive;
     let passthrough = exec.pipeline.settings.passthrough_headers;
-    if interval.is_zero() {
-        return match fetch_content(&st, exec, &video_id, passthrough).await {
+    let mut poll = Box::pin(poll_content_url(exec, video_id.clone(), passthrough));
+    let mut ticker = (!interval.is_zero()).then(|| tokio::time::interval_at(tokio::time::Instant::now() + interval, interval));
+    // A poll that finishes within the keep-alive interval answers normally.
+    let polled = tokio::select! {
+        polled = &mut poll => Some(polled),
+        () = next_tick(&mut ticker) => None,
+    };
+    if let Some(polled) = polled {
+        return match polled {
             Err(reply) => reply.into_response(),
-            Ok(resp) => stream_content(resp),
+            Ok(url) => match download(&st, &video_id, &url, passthrough).await {
+                Err(reply) => reply.into_response(),
+                Ok(resp) => stream_content(resp),
+            },
         };
     }
-    with_nonstream_keepalive(interval, async move {
-        match fetch_content(&st, exec, &video_id, passthrough).await {
-            Err(reply) => reply,
-            Ok(resp) => buffer_content(resp, passthrough).await,
+    // Keep-alive fired: 200 and newlines are on the wire, so the download status and headers
+    // can no longer be changed and only its body (or the error body) follows, like Go.
+    let (tx, rx) = tokio::sync::mpsc::channel::<Bytes>(8);
+    let _ = tx.try_send(Bytes::from_static(b"
+"));
+    tokio::spawn(async move {
+        let polled = loop {
+            tokio::select! {
+                polled = &mut poll => break polled,
+                () = next_tick(&mut ticker) => {
+                    if tx.send(Bytes::from_static(b"
+")).await.is_err() {
+                        return;
+                    }
+                }
+                () = tx.closed() => return,
+            }
+        };
+        let resp = match polled {
+            Ok(url) => download(&st, &video_id, &url, passthrough).await,
+            Err(reply) => Err(reply),
+        };
+        match resp {
+            Err(reply) => {
+                let _ = tx.send(reply.body).await;
+            }
+            Ok(mut resp) => {
+                while let Ok(Some(chunk)) = resp.chunk().await {
+                    if tx.send(chunk).await.is_err() {
+                        return;
+                    }
+                }
+            }
         }
-    })
-    .await
+    });
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    streaming_response(200, headers, rx)
 }
 
-/// Retrieves the video and opens the download: the successful upstream response, or the
-/// error reply to send.
-async fn fetch_content(st: &AppState, exec: VideoExec, video_id: &str, passthrough: bool) -> Result<reqwest::Response, Reply> {
-    let execution_model = model_with_video_auth_binding(video_id, DEFAULT_XAI_VIDEOS_MODEL);
+/// Next keep-alive tick; never resolves without a ticker.
+async fn next_tick(ticker: &mut Option<tokio::time::Interval>) {
+    match ticker {
+        Some(t) => {
+            t.tick().await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Polls the video and extracts its download URL, or the error reply to send; binds the
+/// credential that answered.
+async fn poll_content_url(exec: VideoExec, video_id: String, passthrough: bool) -> Result<String, Reply> {
+    let execution_model = model_with_video_auth_binding(&video_id, DEFAULT_XAI_VIDEOS_MODEL);
     let payload = Bytes::from(cpa_json::to_vec(&json!({"request_id": video_id})));
-    let ok = exec.run(&execution_model, payload, Some(video_id)).await.map_err(|err| openai_error_reply(&err, passthrough))?;
-    exec.bind(video_id, &execution_model);
-    let content_url = xai_video_content_url_from_payload(&cpa_json::parse(&ok.body))
-        .map_err(|text| openai_error_reply(&ErrorMessage::new(502, text), passthrough))?;
-    download(st, video_id, &content_url, passthrough).await
+    let ok = exec.run(&execution_model, payload, Some(&video_id)).await.map_err(|err| openai_error_reply(&err, passthrough))?;
+    exec.bind(&video_id, &execution_model);
+    xai_video_content_url_from_payload(&cpa_json::parse(&ok.body)).map_err(|text| openai_error_reply(&ErrorMessage::new(502, text), passthrough))
 }
 
 /// `writeVideoContentFromURL` request half: GET through the bound credential's proxy.
@@ -838,15 +887,6 @@ fn stream_content(resp: reqwest::Response) -> Response {
     *response.status_mut() = status;
     *response.headers_mut() = headers;
     response
-}
-
-async fn buffer_content(resp: reqwest::Response, passthrough: bool) -> Reply {
-    let mut reply = Reply::new(resp.status().as_u16());
-    reply.headers = content_headers(&resp);
-    match resp.bytes().await {
-        Ok(body) => reply.with_body(body),
-        Err(err) => openai_error_reply(&ErrorMessage::new(502, err.to_string()), passthrough),
-    }
 }
 
 #[cfg(test)]

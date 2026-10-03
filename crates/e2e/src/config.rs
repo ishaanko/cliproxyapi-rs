@@ -63,6 +63,31 @@ pub struct CompatProvider {
     pub headers: Vec<(String, String)>,
 }
 
+/// One dynamic plugin enabled for the scenario: `id` is the library file stem under the plugin
+/// build directory (`<id>.so`), `settings` land in `plugins.configs.<id>` next to `enabled`.
+#[derive(Clone, Debug)]
+pub struct PluginSpec {
+    pub id: &'static str,
+    pub priority: i64,
+    pub settings: Vec<(&'static str, Value)>,
+}
+
+impl PluginSpec {
+    pub fn new(id: &'static str) -> Self {
+        PluginSpec { id, priority: 0, settings: vec![] }
+    }
+
+    pub fn priority(mut self, priority: i64) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    pub fn setting(mut self, key: &'static str, value: Value) -> Self {
+        self.settings.push((key, value));
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ConfigSpec {
     pub client_keys: Vec<String>,
@@ -86,6 +111,13 @@ pub struct ConfigSpec {
     pub codex: Vec<KeyEntry>,
     pub gemini: Vec<KeyEntry>,
     pub compat: Vec<CompatProvider>,
+    /// Plugins to load; the libraries are copied into the scenario's `plugins/` directory.
+    pub plugins: Vec<PluginSpec>,
+    /// Extra headers on the readiness probe (an exclusive frontend auth plugin replaces the
+    /// client key check).
+    pub ready_headers: Vec<(&'static str, &'static str)>,
+    /// Credential files written into the auth dir before the server starts.
+    pub auth_files: Vec<(&'static str, &'static str)>,
     /// xAI keys (none by default: they would add models to every listing).
     pub xai: Vec<KeyEntry>,
     /// `multimedia` settings (`disable-image-generation`, `gpt-image-2-base-model`,
@@ -123,6 +155,9 @@ impl ConfigSpec {
             claude: keys("anthropic", "claude"),
             codex: keys("codex", "codex"),
             gemini: keys("gemini", "gemini"),
+            plugins: vec![],
+            ready_headers: vec![],
+            auth_files: vec![],
             compat: vec![CompatProvider {
                 name: "mockcompat".into(),
                 base_url: base("compat"),
@@ -260,9 +295,31 @@ impl ConfigSpec {
             Layout::Legacy => self.legacy(server_port, auth_dir),
             Layout::V8 => self.v8(server_port, auth_dir),
         };
+        let mut value = value;
+        if !self.plugins.is_empty()
+            && let Value::Object(root) = &mut value
+        {
+            root.insert("plugins".into(), self.plugins_value(auth_dir));
+        }
         let mut out = String::new();
         emit(&value, 0, &mut out);
         out
+    }
+
+    /// The `plugins:` section; the library directory sits next to the auth dir.
+    fn plugins_value(&self, auth_dir: &Path) -> Value {
+        let dir = auth_dir.parent().unwrap_or(auth_dir).join("plugins");
+        let mut configs = Map::new();
+        for p in &self.plugins {
+            let mut item = Map::new();
+            item.insert("enabled".into(), json!(true));
+            item.insert("priority".into(), json!(p.priority));
+            for (k, v) in &p.settings {
+                item.insert((*k).into(), v.clone());
+            }
+            configs.insert(p.id.into(), Value::Object(item));
+        }
+        json!({"enabled": true, "dir": dir.to_string_lossy(), "configs": configs})
     }
 
     fn management(&self) -> Value {

@@ -101,7 +101,11 @@ impl Executor for AntigravityExecutor {
     }
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
-        self.refresh_token(&self.cfg(), auth.clone()).await
+        let cfg = self.cfg();
+        if let Some(result) = crate::helps::home_refresh::refresh_auth_via_home(&cfg, auth).await {
+            return result;
+        }
+        self.refresh_token(&cfg, auth.clone()).await
     }
 
     async fn count_tokens(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {

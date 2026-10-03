@@ -6,6 +6,9 @@
 //!
 //! Model-router plugins and Home dispatch of the Go handler are not ported.
 
+use std::collections::BTreeMap;
+
+use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, header};
 use axum::response::Response;
@@ -14,10 +17,11 @@ use cpa_auth::types::AUTH_KIND_API_KEY;
 use cpa_core::format::Format;
 use cpa_core::util::go_json_string;
 use cpa_executors::helps::logging::UpstreamRequestLog;
-use cpa_json::J;
 use cpa_runtime::conductor::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1;
 use cpa_runtime::executor::Options;
-use serde_json::{Map, Value};
+use http_body_util::BodyExt;
+use serde_json::Value;
+use serde_json::value::RawValue;
 
 use crate::reply::Reply;
 use crate::req::ReqInfo;
@@ -33,29 +37,104 @@ fn error_reply(status: u16, message: &str) -> Reply {
     Reply::json(status, format!(r#"{{"error":{}}}"#, go_json_string(message)).into_bytes())
 }
 
-/// `json.Marshal` of raw JSON text: Go's compaction escapes `<`, `>` and `&` (and U+2028/9).
-fn escape_html(raw: &str) -> String {
-    raw.replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026").replace('\u{2028}', "\\u2028").replace('\u{2029}', "\\u2029")
+/// `json.Marshal` of a `json.RawMessage`: `compact` with HTML escaping. Whitespace outside
+/// strings is dropped and `<`, `>`, `&`, U+2028 and U+2029 inside strings are `\u`-escaped;
+/// everything else (number spelling, string escapes) is kept as written.
+fn compact_raw(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut in_string = false;
+    let mut escaped = false;
+    for c in raw.chars() {
+        if !in_string {
+            match c {
+                ' ' | '\t' | '\r' | '\n' => {}
+                '"' => {
+                    in_string = true;
+                    out.push(c);
+                }
+                _ => out.push(c),
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+            out.push(c);
+            continue;
+        }
+        match c {
+            '\\' => {
+                escaped = true;
+                out.push(c);
+            }
+            '"' => {
+                in_string = false;
+                out.push(c);
+            }
+            '<' => out.push_str("\\u003c"),
+            '>' => out.push_str("\\u003e"),
+            '&' => out.push_str("\\u0026"),
+            '\u{2028}' => out.push_str("\\u2028"),
+            '\u{2029}' => out.push_str("\\u2029"),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// Re-encodes a top-level JSON object the way Go does for `map[string]json.RawMessage`: keys
-/// sorted, values kept as they were.
-fn marshal_raw_map(map: &Map<String, Value>) -> String {
-    let mut keys: Vec<&String> = map.keys().collect();
-    keys.sort();
-    let fields: Vec<String> = keys.iter().map(|k| format!("{}:{}", go_json_string(k), escape_html(&map[*k].to_string()))).collect();
+/// sorted, values kept as they were written (compacted).
+fn marshal_raw_map(map: &BTreeMap<String, &str>) -> String {
+    let fields: Vec<String> = map.iter().map(|(k, v)| format!("{}:{}", go_json_string(k), compact_raw(v))).collect();
     format!("{{{}}}", fields.join(","))
+}
+
+/// `json.Unmarshal(body, &map[string]json.RawMessage)`; `None` when it fails or yields a nil map
+/// (`null`).
+fn raw_object(body: &[u8]) -> Option<BTreeMap<String, &str>> {
+    let map = serde_json::from_slice::<BTreeMap<String, &RawValue>>(body).ok()?;
+    Some(map.into_iter().map(|(k, v)| (k, v.get())).collect())
+}
+
+/// `json.Unmarshal` into `struct{ID, Model string}`: keys match case-insensitively, a value that
+/// is not a string (or `null`) leaves the field alone, and invalid JSON leaves both empty.
+fn routing_fields(body: &[u8]) -> (String, String) {
+    let Ok(Value::Object(obj)) = serde_json::from_slice::<Value>(body) else {
+        return (String::new(), String::new());
+    };
+    let (mut id, mut model) = (String::new(), String::new());
+    for (key, value) in &obj {
+        let Some(text) = value.as_str() else { continue };
+        if key.eq_ignore_ascii_case("id") {
+            id = text.to_string();
+        } else if key.eq_ignore_ascii_case("model") {
+            model = text.to_string();
+        }
+    }
+    (id, model)
+}
+
+/// `io.ReadAll(io.LimitReader(body, limit))`: stops pulling frames once `limit` bytes are in.
+async fn read_limited_body(mut body: Body, limit: usize) -> Result<Vec<u8>, axum::Error> {
+    let mut out = Vec::new();
+    while out.len() < limit {
+        let Some(frame) = body.frame().await else { break };
+        if let Ok(chunk) = frame?.into_data() {
+            let take = chunk.len().min(limit - out.len());
+            out.extend_from_slice(&chunk[..take]);
+        }
+    }
+    Ok(out)
 }
 
 /// `sanitizeCodexAlphaSearchBody`: drops `prompt_cache_key` and `prompt_cache_retention`; the
 /// body is untouched when neither is present or it is not a JSON object.
 fn sanitize_body(body: &[u8]) -> Vec<u8> {
-    let Ok(Value::Object(mut payload)) = serde_json::from_slice::<Value>(body) else {
+    let Some(mut payload) = raw_object(body) else {
         return body.to_vec();
     };
     let mut removed = false;
     for field in ["prompt_cache_key", "prompt_cache_retention"] {
-        removed |= payload.shift_remove(field).is_some();
+        removed |= payload.remove(field).is_some();
     }
     if !removed {
         return body.to_vec();
@@ -69,16 +148,17 @@ fn rewrite_model(body: &[u8], upstream_model: &str) -> Vec<u8> {
     if upstream_model.is_empty() {
         return body.to_vec();
     }
-    let Ok(Value::Object(mut payload)) = serde_json::from_slice::<Value>(body) else {
+    let Some(mut payload) = raw_object(body) else {
         return body.to_vec();
     };
     let Some(current) = payload.get("model") else {
         return body.to_vec();
     };
-    if current.as_str() == Some(upstream_model) {
+    let model_json = go_json_string(upstream_model);
+    if *current == model_json {
         return body.to_vec();
     }
-    payload.insert("model".into(), Value::String(upstream_model.to_string()));
+    payload.insert("model".to_string(), &model_json);
     marshal_raw_map(&payload).into_bytes()
 }
 
@@ -88,11 +168,12 @@ fn trimmed_header(headers: &HeaderMap, name: &str) -> String {
 }
 
 /// `codexAlphaSearch`.
-pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> Response {
-    let body = if body.len() > MAX_REQUEST_BYTES { body.slice(..MAX_REQUEST_BYTES) } else { body };
-    let routing = cpa_json::parse(&body);
-    let routing_id = routing.g("id").str();
-    let routing_model = routing.g("model").str();
+pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Body) -> Response {
+    let body = match read_limited_body(body, MAX_REQUEST_BYTES).await {
+        Ok(body) => Bytes::from(body),
+        Err(_) => return error_reply(400, "Failed to read search request").into_response(),
+    };
+    let (routing_id, routing_model) = routing_fields(&body);
     let upstream_body = sanitize_body(&body);
 
     let mut selection_headers = info.headers.clone();
@@ -153,8 +234,8 @@ pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Bytes
             request_body = rewrite_model(&request_body, &upstream_model);
         }
     }
-    // The Codex executor injects its credential and custom headers (`NewHttpRequest`), the
-    // upstream call goes through its HTTP client (`HttpRequest`).
+    // `NewHttpRequest` injects the Codex executor's credential and custom headers, `HttpRequest`
+    // sends through its (Chrome-fingerprinted) client; both are logged like the executor calls.
     let cfg = st.cfg();
     let upstream_log = info.api_log.exec_handle();
     let body_for_log = request_body.clone();
@@ -180,7 +261,7 @@ pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Bytes
             auth_value,
         },
     );
-    let resp = match st.manager.http_request(&selected, request).await {
+    let mut resp = match st.manager.http_request(&selected, request).await {
         Ok(resp) => resp,
         Err(err) => {
             upstream_log.record_api_response_error(&cfg, &err.message);
@@ -191,17 +272,25 @@ pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Bytes
     let status = resp.status().as_u16();
     upstream_log.record_api_response_metadata(&cfg, status, resp.headers());
     let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
-    let upstream = match resp.bytes().await {
-        Ok(b) => b,
-        Err(err) => {
-            upstream_log.record_api_response_error(&cfg, &err.to_string());
-            info.api_log.record_error(502, &err.to_string());
-            return error_reply(502, "Failed to read Codex search response").into_response();
+    // `io.ReadAll(io.LimitReader(resp.Body, 32<<20))`.
+    let mut upstream = Vec::new();
+    while upstream.len() < MAX_RESPONSE_BYTES {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                let take = chunk.len().min(MAX_RESPONSE_BYTES - upstream.len());
+                upstream.extend_from_slice(&chunk[..take]);
+            }
+            Ok(None) => break,
+            Err(err) => {
+                upstream_log.append_api_response_chunk(&cfg, &upstream);
+                upstream_log.record_api_response_error(&cfg, &err.to_string());
+                info.api_log.record_error(502, &err.to_string());
+                return error_reply(502, "Failed to read Codex search response").into_response();
+            }
         }
-    };
-    let upstream = if upstream.len() > MAX_RESPONSE_BYTES { upstream.slice(..MAX_RESPONSE_BYTES) } else { upstream };
+    }
     upstream_log.append_api_response_chunk(&cfg, &upstream);
-    let mut reply = Reply::new(status).with_body(upstream);
+    let mut reply = Reply::new(status).with_body(Bytes::from(upstream));
     if let Some(ct) = content_type.filter(|v| !v.is_empty()) {
         reply.headers.insert(header::CONTENT_TYPE, ct);
     }
@@ -229,5 +318,19 @@ mod tests {
         let missing = br#"{"q":1}"#;
         assert_eq!(rewrite_model(missing, "real"), missing);
         assert_eq!(rewrite_model(same, " "), same);
+    }
+
+    #[test]
+    fn raw_values_keep_their_spelling() {
+        let out = sanitize_body(br#"{"prompt_cache_key":"k","n":1.50,"s":"a\/b\u00e9 &","arr": [1, 2e3]}"#);
+        assert_eq!(String::from_utf8(out).unwrap(), r#"{"arr":[1,2e3],"n":1.50,"s":"a\/b\u00e9 \u0026"}"#);
+        assert_eq!(sanitize_body(b"null"), b"null");
+    }
+
+    #[test]
+    fn routing_fields_follow_json_unmarshal() {
+        assert_eq!(routing_fields(br#"{"ID":"s1","model":"m"}"#), ("s1".to_string(), "m".to_string()));
+        assert_eq!(routing_fields(br#"{"id":5,"model":"m"}"#), (String::new(), "m".to_string()));
+        assert_eq!(routing_fields(b"{bad"), (String::new(), String::new()));
     }
 }
