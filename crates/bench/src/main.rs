@@ -16,7 +16,7 @@ use clap::Parser;
 #[command(about = "Benchmark the Go and Rust servers under identical configs")]
 enum Cmd {
     /// Run the full benchmark and write raw samples to JSON.
-    Run(run::RunArgs),
+    Run(Box<run::RunArgs>),
     /// Turn raw samples into the markdown tables.
     Report {
         #[arg(long, default_value = "bench/results/raw.json")]
@@ -34,7 +34,7 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cmd::parse() {
-        Cmd::Run(a) => run::run(a).await,
+        Cmd::Run(a) => run::run(*a).await,
         Cmd::Report { input, out } => report::report(&input, &out),
         Cmd::Mock { port } => mock::serve(port).await,
     }

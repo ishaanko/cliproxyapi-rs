@@ -27,17 +27,19 @@ bench/scripts/run.sh --runs 2 --conc 1,64 --only chat-compat   # quick subset
 |---|---|
 | Throughput and latency | 5 scenarios x concurrency 1, 16, 64, 256. p50/p90/p99 are exact percentiles of per-request latency. |
 | Streaming overhead | Mock waits 20 ms, then sends 40 text deltas 5 ms apart. Every delta contains its send time (`@@<unix micros>`), which survives translation, so the client computes the age of each chunk on arrival. Reported: time to first byte, time to first token, chunk age p50/p99, as added time over the same request sent directly to the mock. Concurrency 1 and 16. |
-| Resources | Startup: spawn until `/v1/models` returns the model list. Idle RSS: 3 s after healthy. Steady RSS: read at the end of each measured window. Peak RSS: kernel high-water mark (`VmHWM`), reset via `/proc/<pid>/clear_refs` at the start of each window. CPU: user+system time from `/proc/<pid>/stat` over the window divided by completed requests. Binary size: file size (the Go build is stripped by `-s -w`, so the Rust binary is also reported stripped). |
+| Resources | Startup: spawn until `/v1/models` returns the model list (probed every 2 ms with a 10 ms timeout per probe). Idle RSS: 3 s after healthy. Steady RSS: read at the end of each measured window. Peak RSS: kernel high-water mark (`VmHWM`), reset via `/proc/<pid>/clear_refs` at the start of each window. CPU: user+system time from `/proc/<pid>/stat` over the window divided by completed requests. Binary size: file size (the Go build is stripped by `-s -w`, so the Rust binary is also reported stripped). |
 | Large requests | ~2 MB agentic conversation (24 tool definitions, about 100 tool-call round trips with 8 to 32 KB tool results), non-stream. Chat to Claude and Claude to Gemini. Concurrency 1 and 8. |
 
 Scenarios: OpenAI chat non-stream to the compat upstream (passthrough); OpenAI chat SSE to a Claude upstream (translation); OpenAI Responses SSE to a Codex upstream; Claude messages non-stream to a Gemini upstream (translation); `GET /v1/models`.
 
 ## Runs and statistics
 
-Each run starts a fresh server, runs every cell, and stops it. There are 5 runs; the order of Go and Rust alternates between runs so drift hits both. The tables show the median over runs and ±(half of the min-max range) as a percentage of the median. Ratios are computed from medians, always Rust / Go.
+Each run starts a fresh server, runs every cell, and stops it. There are 7 runs (`--runs`); the order of Go and Rust alternates between runs so drift hits both. The tables show the median over runs and ±(half of the min-max range) as a percentage of the median. Ratios are computed from medians, always Rust / Go. The throughput table also lists the best (highest) run per server and the ratio of bests: interference from other processes on a shared host only ever slows a run down, so the best run approximates an undisturbed one.
 
 ## Caveats
 
+- The checked-in results come from one session on a busy shared machine (1-minute load average 3 to 22 sampled at run starts, 16 logical CPUs, other agents compiling). Medians moved by tens of percent between sessions; treat ratios inside roughly 0.8x to 1.25x as a tie. `CPU ms per 1k requests` is far less sensitive to load than req/s.
+- The Go server answered about 0.1% of requests at concurrency 16 on `chat-compat-json` with HTTP 500 in several runs (the Rust server did not). Those requests are counted as errors and excluded from the latency and throughput figures. Set `CPA_BENCH_DEBUG=1` to print non-200 statuses. The cause was not investigated.
 - Runs on a shared WSL2 machine; other processes add noise even with pinning. `results.md` lists the load average at the start of each run, and the spread column shows the effect.
 - Zero-latency loopback upstream exaggerates proxy overhead compared with real use.
 - Concurrency 256 can hit the Go server's upstream connection handling (default `net/http` transport idle pool), which is part of what is being measured.

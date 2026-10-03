@@ -160,7 +160,10 @@ async fn worker(t: Arc<Target>, sh: Arc<Shared>, timing: bool) -> WorkerOut {
                 out.ttft_us.append(&mut sample.ttft_us);
                 out.chunk_us.append(&mut sample.chunk_us);
             }
-            _ => {
+            other => {
+                if std::env::var_os("CPA_BENCH_DEBUG").is_some() {
+                    eprintln!("request error: {other:?}");
+                }
                 out.errors += 1;
                 sender = None;
             }
