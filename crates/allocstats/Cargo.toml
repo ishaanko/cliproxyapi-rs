@@ -1,0 +1,11 @@
+[package]
+name = "cpa-allocstats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Counting global-allocator wrapper for benchmarks. Wraps whichever allocator the binary picks
+# and exposes the totals over a unix socket (see `serve_from_env`). Only linked by cpa-server
+# when its `alloc-stats` feature is on, so shipped builds are unaffected.
+[dependencies]
