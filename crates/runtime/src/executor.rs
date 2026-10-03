@@ -302,6 +302,26 @@ pub trait Executor: Send + Sync {
     fn supports_apply_patch(&self, _model: &str) -> bool {
         false
     }
+
+    /// Injects the provider's credentials into an arbitrary request (Go: `RequestPreparer.
+    /// PrepareRequest`). The default reports "not supported".
+    fn prepare_request(&self, _req: &mut reqwest::Request, _auth: &Auth) -> Result<(), ExecError> {
+        Err(not_supported("executor does not support http request preparation"))
+    }
+
+    /// Prepares and sends an arbitrary request with the provider's credentials and HTTP client
+    /// (Go: `ProviderExecutor.HttpRequest`). The default reports "not supported".
+    async fn http_request(&self, _auth: &Auth, _req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        Err(not_supported("executor does not support http requests"))
+    }
+}
+
+/// Conductor-level `not_supported` error (Go: `&Error{Code: "not_supported"}`).
+pub fn not_supported(message: &str) -> ExecError {
+    let mut e = ExecError::new(501, message);
+    e.auth_code = Some("not_supported".into());
+    e.upstream_attempted = false;
+    e
 }
 
 pub type DynExecutor = Arc<dyn Executor>;

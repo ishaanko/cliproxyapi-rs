@@ -39,6 +39,7 @@ mod credits;
 pub mod errors;
 pub mod events;
 mod exec;
+mod http_request;
 mod lifecycle;
 pub mod merge;
 pub mod models;
