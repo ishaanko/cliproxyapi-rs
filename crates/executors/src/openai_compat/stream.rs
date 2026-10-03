@@ -48,8 +48,43 @@ fn is_error_event(event: &str) -> bool {
 }
 
 /// Go: openAICompatStreamDataError. `Some(err)` when `payload` carries an upstream error.
+#[cfg(test)]
 pub fn stream_data_error(payload: &[u8], event: &str) -> Option<ExecError> {
     if payload.is_empty() || !cpa_json::valid(payload) {
+        return None;
+    }
+    stream_data_error_valid(payload, event)
+}
+
+/// True when a well-formed top-level object visibly cannot be an upstream error payload: no
+/// non-null `error`, no `response` (which may hold `response.error`), not both `code` and
+/// `message`, and a `type` that is not an error type. Anything unusual answers false so the full
+/// check decides.
+fn clearly_not_error(payload: &[u8]) -> bool {
+    let (mut code, mut message, mut bail) = (false, false, false);
+    let complete = cpa_json::lazy::visit_top_level(payload, |key, raw| {
+        match key {
+            "error" if raw != b"null" => bail = true,
+            "response" => bail = true,
+            "code" => code = true,
+            "message" => message = true,
+            "type" => {
+                if let Some(inner) = raw.strip_prefix(b"\"").and_then(|r| r.strip_suffix(b"\""))
+                    && (inner.contains(&92u8) || ["error", "response.error", "response.failed"].iter().any(|t| inner.eq_ignore_ascii_case(t.as_bytes())))
+                {
+                    bail = true;
+                }
+            }
+            _ => {}
+        }
+        !bail
+    });
+    complete && !bail && !(code && message)
+}
+
+/// [`stream_data_error`] for a payload already known to be valid JSON.
+pub fn stream_data_error_valid(payload: &[u8], event: &str) -> Option<ExecError> {
+    if !is_error_event(event) && clearly_not_error(payload) {
         return None;
     }
     let v = cpa_json::parse(payload);
@@ -93,7 +128,7 @@ struct ChatStream {
     failed: bool,
     aborted: bool,
     event: String,
-    frame: Vec<Vec<u8>>,
+    frame: Vec<Bytes>,
 }
 
 impl ChatStream {
@@ -126,20 +161,27 @@ impl ChatStream {
     /// Handles one complete SSE frame; true ends the stream loop.
     async fn process_frame(&mut self) -> bool {
         let event = std::mem::take(&mut self.event);
-        let data_lines = std::mem::take(&mut self.frame);
-        if data_lines.is_empty() {
+        if self.frame.is_empty() {
             if is_error_event(&event) {
                 self.publish_error(status_err(502, "upstream error event ended without data"), false).await;
                 return true;
             }
             return false;
         }
-        if data_lines.len() > 1 && data_lines.iter().any(|d| trim_space(d) == b"[DONE]") {
+        if self.frame.len() > 1 && self.frame.iter().any(|d| trim_space(d) == b"[DONE]") {
+            self.frame.clear();
             self.publish_error(status_err(502, "upstream stream ended with incomplete data before [DONE]"), false).await;
             return true;
         }
-        let payload = trim_space(&data_lines.join(&b'\n')).to_vec();
-        let is_done = payload == b"[DONE]";
+        let payload: Bytes = if self.frame.len() == 1 {
+            // A single data line was trimmed when it was collected.
+            self.frame.pop().unwrap_or_default()
+        } else {
+            let joined = self.frame.join(&b'\n');
+            self.frame.clear();
+            Bytes::copy_from_slice(trim_space(&joined))
+        };
+        let is_done = payload.as_ref() == b"[DONE]";
         if is_done && is_error_event(&event) {
             self.publish_error(status_err(502, "upstream error event ended before [DONE]"), false).await;
             return true;
@@ -148,11 +190,12 @@ impl ChatStream {
             self.publish_error(status_err(502, "upstream stream ended with incomplete SSE data frame"), false).await;
             return true;
         }
-        if !is_done && let Some(err) = stream_data_error(&payload, &event) {
+        if !is_done && let Some(err) = stream_data_error_valid(&payload, &event) {
             self.publish_error(err, true).await;
             return true;
         }
-        let mut line = b"data: ".to_vec();
+        let mut line = Vec::with_capacity(payload.len() + 6);
+        line.extend_from_slice(b"data: ");
         line.extend_from_slice(&payload);
         let chunks = self.translate(&line);
         record_apply_patch_stream_failure(&self.param, &self.p.reporter, &gateway_error());
@@ -194,7 +237,7 @@ impl ChatStream {
                 continue;
             }
             if let Some(rest) = trimmed.strip_prefix(b"data:") {
-                self.frame.push(trim_space(rest).to_vec());
+                self.frame.push(line.slice_ref(trim_space(rest)));
                 continue;
             }
             if let Some(rest) = trimmed.strip_prefix(b"event:") {
@@ -337,5 +380,32 @@ mod tests {
         assert_eq!(err(r#"{"error":null,"choices":[]}"#, ""), None);
         assert_eq!(err(r#"{"a":1}"#, "error"), Some(502));
         assert_eq!(err(r#"{"status":200,"error":{"status":503}}"#, ""), Some(503));
+    }
+
+    // The no-parse prefilter must never hide an error the full check finds.
+    #[test]
+    fn prefilter_agrees_with_full_check() {
+        let full = |p: &str| {
+            let v = cpa_json::parse(p.as_bytes());
+            let has_error = ["error", "response.error"].iter().any(|k| v.g(k).exists() && !v.g(k).is_null());
+            let t = v.g("type").str();
+            has_error
+                || (v.g("code").exists() && v.g("message").exists())
+                || ["error", "response.error", "response.failed"].iter().any(|e| t.eq_ignore_ascii_case(e))
+        };
+        for p in [
+            r#"{"id":"c","choices":[{"delta":{"content":"hi"}}],"model":"m"}"#,
+            r#"{"error":null,"choices":[]}"#,
+            r#"{"error":{"message":"x"}}"#,
+            r#"{"type":"response.failed","response":{"error":{"status":400}}}"#,
+            r#"{"type":"ERROR"}"#,
+            r#"{"type":"err\u006fr"}"#,
+            r#"{"code":1,"message":"m"}"#,
+            r#"{"code":1}"#,
+            r#"{"response":{"id":"r"}}"#,
+            r#"{"error":null,"error":{"a":1}}"#,
+        ] {
+            assert!(!clearly_not_error(p.as_bytes()) || !full(p), "{p}");
+        }
     }
 }

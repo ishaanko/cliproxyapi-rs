@@ -87,6 +87,8 @@ struct Inner {
     sink: Option<Arc<dyn UsageSink>>,
     /// A terminal event already reported the served model; later frames skip parsing.
     response_model_final: AtomicBool,
+    /// The provider takes the generic response-model extraction (see `generic_model_fast`).
+    generic_model: bool,
     published: AtomicBool,
     state: Mutex<State>,
 }
@@ -233,6 +235,7 @@ impl UsageReporter {
             requested_at_utc: Utc::now(),
             sink,
             response_model_final: AtomicBool::new(false),
+            generic_model: crate::helps::response_model::is_generic_provider(provider),
             published: AtomicBool::new(false),
             state: Mutex::new(State {
                 stream: opts.is_some_and(|o| o.stream),
@@ -298,8 +301,28 @@ impl UsageReporter {
         if self.is_response_model_final() {
             return;
         }
+        // Common chat chunk: decided without a parse or an allocation.
+        if self.inner.generic_model
+            && let Some(data) = crate::helps::text::json_payload(payload)
+            && let Some((served, terminal)) = crate::helps::response_model::generic_model_fast(data)
+        {
+            self.apply_response_model_ref(served, terminal);
+            return;
+        }
         let (served, terminal) = extract_response_model_event(payload, &self.inner.provider);
         self.apply_response_model(served, terminal);
+    }
+
+    fn apply_response_model_ref(&self, served: &str, terminal: bool) {
+        if !served.is_empty() {
+            let mut state = self.inner.state.lock();
+            if state.response_model != served {
+                state.response_model = served.to_string();
+            }
+        }
+        if terminal {
+            self.inner.response_model_final.store(true, Ordering::Release);
+        }
     }
 
     /// [`Self::observe_response_model`] for a frame indexed by the caller (`payload` is the raw
