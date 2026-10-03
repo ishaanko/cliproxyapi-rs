@@ -136,6 +136,29 @@ fn codex_stream(n: usize) -> Vec<Vec<u8>> {
     lines(&refs)
 }
 
+fn gemini_stream(n: usize) -> Vec<Vec<u8>> {
+    let chunk = |text: &str, tail: &str, usage: &str| {
+        format!("data: {{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"text\":\"{text}\"}}]}}{tail},\"index\":0}}],{usage}\"modelVersion\":\"gemini-2.5-flash\",\"responseId\":\"benchresp01\"}}\n")
+    };
+    let mut ev: Vec<String> = (0..n).map(|_| chunk("@@0001700000000000 token ", "", "")).collect();
+    ev.push(chunk("", ",\"finishReason\":\"STOP\"", "\"usageMetadata\":{\"promptTokenCount\":11,\"candidatesTokenCount\":7,\"totalTokenCount\":18},"));
+    let refs: Vec<&str> = ev.iter().map(String::as_str).collect();
+    lines(&refs)
+}
+
+fn compat_stream(n: usize) -> Vec<Vec<u8>> {
+    let chunk = |delta: &str, finish: &str| {
+        format!("data: {{\"id\":\"chatcmpl-bench\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"mock-gpt-4o\",\"choices\":[{{\"index\":0,\"delta\":{delta},\"finish_reason\":{finish}}}]}}\n")
+    };
+    let mut ev = vec![chunk("{\"role\":\"assistant\",\"content\":\"\"}", "null")];
+    ev.extend((0..n).map(|_| chunk("{\"content\":\"@@0001700000000000 token \"}", "null")));
+    ev.push(chunk("{}", "\"stop\""));
+    ev.push("data: {\"id\":\"chatcmpl-bench\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"mock-gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}}\n".to_string());
+    ev.push("data: [DONE]\n".to_string());
+    let refs: Vec<&str> = ev.iter().map(String::as_str).collect();
+    lines(&refs)
+}
+
 const GEMINI_JSON: &str = r#"{"candidates":[{"content":{"role":"model","parts":[{"text":"Hello from the benchmark mock"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":11,"candidatesTokenCount":7,"totalTokenCount":18},"modelVersion":"gemini-2.5-flash","responseId":"benchresp01"}"#;
 
 /// Starts SIGPROF sampling when built with `--features prof` and `PROF=1`; the returned closure
@@ -232,6 +255,33 @@ fn main() {
         for l in &xs {
             black_box(translate_stream(&ctx, Format::Codex, Format::OpenAIResponse, "gpt-5.5", &resp_codex, &translated_codex, l, &mut p));
         }
+    });
+    let chat_body = get("chat-compat-json");
+    let gs = gemini_stream(200);
+    bench("stream gemini->chat (200)", &filter, 200, || {
+        let mut p = Param::default();
+        for l in &gs {
+            black_box(translate_stream(&ctx, Format::Gemini, Format::OpenAI, "gemini-2.5-flash", &chat_body, &chat_body, l, &mut p));
+        }
+    });
+    bench("stream gemini->gemini (200)", &filter, 200, || {
+        let mut p = Param::default();
+        for l in &gs {
+            black_box(translate_stream(&ctx, Format::Gemini, Format::Gemini, "gemini-2.5-flash", &gemini_native, &gemini_native, l, &mut p));
+        }
+    });
+    let cps = compat_stream(200);
+    bench("stream openai->openai (200)", &filter, 200, || {
+        let mut p = Param::default();
+        for l in &cps {
+            black_box(translate_stream(&ctx, Format::OpenAI, Format::OpenAI, "mock", &chat_body, &chat_body, l, &mut p));
+        }
+    });
+    bench("req openai->openai small", &filter, 3000, || {
+        black_box(translate_request(Format::OpenAI, Format::OpenAI, "mock", &chat_body, true));
+    });
+    bench("req chat->gemini small", &filter, 3000, || {
+        black_box(translate_request(Format::OpenAI, Format::Gemini, "gemini-2.5-flash", &chat_body, true));
     });
     let translated_gem = translate_request(Format::Claude, Format::Gemini, "gemini-2.5-flash", &claude_gemini, false);
     bench("resp gemini->claude nonstream", &filter, 5000, || {

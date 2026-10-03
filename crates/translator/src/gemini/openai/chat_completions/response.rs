@@ -10,6 +10,10 @@ use cpa_json::{json, Res, Value, J};
 
 use crate::registry::{Ctx, Param};
 
+mod fast;
+#[cfg(test)]
+mod fast_tests;
+
 /// Per-stream conversion state.
 struct ChatParams {
     unix_timestamp: i64,
@@ -104,6 +108,12 @@ pub fn convert_gemini_response_to_openai(
         return vec![];
     }
 
+    fast::convert(p, raw).unwrap_or_else(|| convert_general(p, raw))
+}
+
+/// The general conversion of one chunk through `Value`s; the reference for every shape the fast
+/// path declines.
+fn convert_general(p: &mut ChatParams, raw: &[u8]) -> Vec<Vec<u8>> {
     // Base template, cloned per candidate to support multiple candidates.
     let mut base_template = cpa_json::parse_str(
         r#"{"id":"","object":"chat.completion.chunk","created":12345,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":null},"finish_reason":null,"native_finish_reason":null}]}"#,
