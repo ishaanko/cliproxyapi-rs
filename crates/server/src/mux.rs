@@ -120,6 +120,9 @@ pub fn start(listener: TcpListener, tls: Option<TlsAcceptor>, redis: Option<Arc<
                     continue;
                 }
             };
+            // Go's net/http sets TCP_NODELAY on accepted sockets; without it small SSE writes
+            // stall behind Nagle and the client's delayed ACK.
+            let _ = tcp.set_nodelay(true);
             // One task per connection so slow or idle clients cannot block the accept loop.
             let (tls, tx, redis) = (tls.clone(), tx.clone(), redis.clone());
             tokio::spawn(route_connection(tcp, peer, tls, tx, redis));

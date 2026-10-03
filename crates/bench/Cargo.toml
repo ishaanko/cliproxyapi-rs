@@ -1,0 +1,25 @@
+[package]
+name = "cpa-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+# Performance benchmark: fast mock upstream, closed-loop load generator and an orchestrator that
+# runs the Go reference and the Rust server under identical configs and reports the comparison.
+[[bin]]
+name = "cpa-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes.workspace = true
+clap = { version = "4", features = ["derive"] }
+hyper = { version = "1", features = ["http1", "client", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+futures-util = "0.3"
+memchr = "2"
