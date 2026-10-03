@@ -26,6 +26,7 @@ pub mod claude_input_tokens;
 pub mod cloak_obfuscate;
 pub mod codex_tool_integers;
 pub mod gemini_content_turns;
+pub mod gemini_log;
 pub mod id_cache;
 pub mod json_retry;
 pub mod logging;

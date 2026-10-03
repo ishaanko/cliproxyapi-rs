@@ -178,11 +178,11 @@ pub(crate) fn set_model(v: &mut Value, model: &str) {
 
 // ---------------------------------------------------------------- headers and HTTP
 
-/// `Content-Type: application/json` plus Go's default user agent.
+/// `Content-Type: application/json`. Like Go's `req.Header`, no user agent is present here;
+/// [`post_json`] adds Go's default one on the wire, so the logged headers match Go.
 pub(crate) fn json_headers() -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(http::header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(http::header::USER_AGENT, HeaderValue::from_static(GO_DEFAULT_UA));
     headers
 }
 
@@ -209,13 +209,17 @@ fn transport_failure(err: &reqwest::Error) -> ExecError {
     crate::helps::status::transport_error(err)
 }
 
-/// Sends a JSON POST; transport failures carry no status.
+/// Sends a JSON POST (Go's default user agent unless the headers carry one); transport failures
+/// carry no status.
 pub(crate) async fn post_json(
     client: &reqwest::Client,
     url: &str,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     body: Vec<u8>,
 ) -> Result<reqwest::Response, ExecError> {
+    if !headers.contains_key(http::header::USER_AGENT) {
+        headers.insert(http::header::USER_AGENT, HeaderValue::from_static(GO_DEFAULT_UA));
+    }
     client.post(url).headers(headers).body(body).send().await.map_err(|e| transport_failure(&e))
 }
 

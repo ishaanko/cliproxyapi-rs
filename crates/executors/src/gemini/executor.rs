@@ -24,6 +24,7 @@ use crate::helps::gemini_content_turns::{ensure_leading_user_content_value, ensu
 use super::interactions;
 use crate::ConfigRx;
 use crate::helps::apply_patch::{apply_patch_original_request, apply_patch_translation_error, gateway_error};
+use crate::helps::gemini_log::UpstreamLog;
 use crate::helps::payload::{PayloadRequest, apply_payload_config, payload_request_path, payload_requested_model};
 use crate::helps::proxy::new_proxy_aware_http_client;
 use crate::helps::responses_usage::ensure_responses_usage_details;
@@ -242,11 +243,15 @@ impl Executor for GeminiExecutor {
 
         let url = format!("{}/{GL_API_VERSION}/models/{base_model}:countTokens", resolve_base_url(auth));
         let headers = request_headers(auth, &opts, session_id.as_deref())?;
+        let log = UpstreamLog::new(&opts, &cfg);
+        log.request(auth, self.identifier, &url, &headers, &translated);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(&cfg), Some(auth), None);
-        let resp = post_json(&client, &url, headers, translated).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, translated).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = read_body(resp).await?;
+        log.metadata(status, &resp_headers);
+        let data = log.tap_err(read_body(resp).await)?;
+        log.chunk(&data);
         if !(200..300).contains(&status) {
             return Err(upstream_error(status, &data));
         }
@@ -265,7 +270,7 @@ impl GeminiExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn execute_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: &Request,
         opts: &Options,
@@ -284,15 +289,21 @@ impl GeminiExecutor {
         reporter.set_translated_reasoning_effort(&built.body, Format::Gemini.as_str());
 
         let headers = request_headers(auth, opts, session_id)?;
+        let log = UpstreamLog::new(opts, cfg);
+        log.request(auth, self.identifier, &url, &headers, &built.body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &url, headers, built.body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, built.body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &error_body(resp).await));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
-        let data = read_body(resp).await?;
+        let data = log.tap_err(read_body(resp).await)?;
+        log.chunk(&data);
         reporter.mark_first_response_byte();
         reporter.observe_response_model(&data);
         let mut param = Param::default();
@@ -320,7 +331,7 @@ impl GeminiExecutor {
     #[allow(clippy::too_many_arguments)]
     async fn stream_inner(
         &self,
-        cfg: &Config,
+        cfg: &Arc<Config>,
         auth: &Auth,
         req: Request,
         opts: Options,
@@ -339,13 +350,18 @@ impl GeminiExecutor {
         reporter.set_translated_reasoning_effort(&built.body, Format::Gemini.as_str());
 
         let headers = request_headers(auth, &opts, session_id)?;
+        let log = UpstreamLog::new(&opts, cfg);
+        log.request(auth, self.identifier, &url, &headers, &built.body);
         let client = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(auth), None);
         reporter.start_response_ttft();
-        let resp = post_json(&client, &url, headers, built.body.clone()).await?;
+        let resp = log.tap_err(post_json(&client, &url, headers, built.body.clone()).await)?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
+        log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            return Err(upstream_error(status, &error_body(resp).await));
+            let body = error_body(resp).await;
+            log.chunk(&body);
+            return Err(upstream_error(status, &body));
         }
 
         let (mut pump, rx, usage_rx) = StreamPump::new(PumpSetup {
@@ -375,6 +391,7 @@ impl GeminiExecutor {
                         break;
                     }
                 };
+                log.chunk(&line);
                 reporter.observe_response_model(&line);
                 let filtered = filter_sse_usage_metadata(&line);
                 let Some(payload) = json_payload(&filtered) else { continue };
@@ -392,6 +409,7 @@ impl GeminiExecutor {
                 return;
             }
             if let Some(err) = scan_err {
+                log.error(&err.to_string());
                 pump.fail(err.into()).await;
             }
             pump.finish();
