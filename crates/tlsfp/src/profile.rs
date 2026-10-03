@@ -121,7 +121,10 @@ impl CertificateCompressor for BrotliCerts {
 }
 
 /// System roots (Go: the default `RootCAs`; honors `SSL_CERT_FILE`/`SSL_CERT_DIR`). Parsed once.
-static ROOT_STORE: LazyLock<Result<X509Store, String>> = LazyLock::new(|| {
+static ROOT_STORE: LazyLock<Result<X509Store, String>> = LazyLock::new(|| build_store(&[]));
+
+/// System roots plus `extra` DER certificates.
+fn build_store(extra: &[Vec<u8>]) -> Result<X509Store, String> {
     let mut builder = X509StoreBuilder::new().map_err(|e| e.to_string())?;
     let mut added = 0usize;
     for der in rustls_native_certs::load_native_certs().certs {
@@ -134,8 +137,26 @@ static ROOT_STORE: LazyLock<Result<X509Store, String>> = LazyLock::new(|| {
     if added == 0 {
         tracing::warn!("tlsfp: no system root certificates found");
     }
+    for der in extra {
+        let cert = X509::from_der(der).map_err(|e| e.to_string())?;
+        builder.add_cert(cert).map_err(|e| e.to_string())?;
+    }
     Ok(builder.build())
-});
+}
+
+/// Installs the system root store (shared and parsed once unless `extra` roots are requested).
+pub(crate) fn install_roots(b: &mut rama_boring::ssl::SslContextBuilder, extra: &[Vec<u8>]) -> Result<(), TlsError> {
+    let err = |e: &str| TlsError::Setup(format!("tlsfp: root store: {e}"));
+    if extra.is_empty() {
+        match &*ROOT_STORE {
+            Ok(store) => b.set_cert_store_ref(store),
+            Err(e) => return Err(err(e)),
+        }
+    } else {
+        b.set_cert_store(build_store(extra).map_err(|e| err(&e))?);
+    }
+    Ok(())
+}
 
 /// Bounded LRU of resumable sessions keyed by server name (Go: `tls.NewLRUClientSessionCache`).
 pub struct SessionCache {
@@ -197,12 +218,9 @@ fn setup<T, E: std::fmt::Display>(what: &str, r: Result<T, E>) -> Result<T, TlsE
 impl TlsConnector {
     /// Builds the context for `profile`. `sessions` enables TLS session resumption (the Claude
     /// profiles; the Chrome profile keeps no cache, like Go).
-    pub fn new(profile: Profile, sessions: Option<Arc<SessionCache>>) -> Result<Self, TlsError> {
+    pub fn new(profile: Profile, sessions: Option<Arc<SessionCache>>, extra_roots: &[Vec<u8>]) -> Result<Self, TlsError> {
         let mut b = setup("new context", SslConnector::no_default_verify_builder(SslMethod::tls_client()))?;
-        match &*ROOT_STORE {
-            Ok(store) => b.set_cert_store_ref(store),
-            Err(e) => return Err(TlsError::Setup(format!("tlsfp: root store: {e}"))),
-        }
+        install_roots(&mut b, extra_roots)?;
         b.set_verify(SslVerifyMode::PEER);
         setup("min version", b.set_min_proto_version(Some(SslVersion::TLS1_2)))?;
         setup("max version", b.set_max_proto_version(Some(SslVersion::TLS1_3)))?;

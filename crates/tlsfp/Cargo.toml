@@ -30,8 +30,9 @@ hyper = { version = "1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "tokio", "http1", "http2"] }
 futures-util = "0.3"
 tokio-util = { version = "0.7", features = ["io"] }
-async-compression = { version = "0.4", features = ["tokio", "gzip", "deflate", "brotli", "zstd"] }
+async-compression = { version = "0.4", features = ["tokio", "gzip", "zlib", "brotli", "zstd"] }
 tokio-socks = "0.5"
+tower-service = "0.3"
 url = "2"
 brotli = "9"
 rustls-native-certs = "0.8"

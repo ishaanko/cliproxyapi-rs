@@ -75,7 +75,7 @@ fn masked(hello: &ClientHello) -> Vec<(u16, Vec<u8>)> {
 
 async fn assert_deterministic_match(profile: Profile, host: &str, golden: &str) {
     let go = fixture(golden);
-    let connector = TlsConnector::new(profile, Some(SessionCache::new(8))).unwrap();
+    let connector = TlsConnector::new(profile, Some(SessionCache::new(8)), &[]).unwrap();
     let raw = capture(&connector, host).await;
     let rust = ClientHello::parse(&raw).unwrap();
     assert_eq!(rust.ciphers, go.ciphers, "ciphers");
@@ -101,7 +101,7 @@ async fn claude_oauth_matches_go() {
 #[tokio::test]
 async fn chrome_matches_go() {
     let go = fixture("go_chrome_chatgpt");
-    let connector = TlsConnector::new(Profile::Chrome, None).unwrap();
+    let connector = TlsConnector::new(Profile::Chrome, None, &[]).unwrap();
     let rust = ClientHello::parse(&capture(&connector, "chatgpt.com").await).unwrap();
     let norm = |h: &ClientHello| -> Vec<u16> { h.ciphers.iter().map(|c| if is_grease(*c) { 0x0a0a } else { *c }).collect() };
     assert_eq!(norm(&rust), norm(&go), "ciphers");
