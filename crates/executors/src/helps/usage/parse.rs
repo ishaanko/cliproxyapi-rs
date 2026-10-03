@@ -20,6 +20,13 @@ use super::accounting::{
 use crate::helps::response_model::{extract_claude_response_model_event, extract_generic_response_model_event};
 use crate::helps::text::{contains, json_payload, trim_space};
 
+/// True when `payload` is a well-formed JSON object with none of `keys` at its top level, so
+/// every lookup rooted at those keys misses (stream lines are mostly such events; deciding this
+/// from the key index avoids validating and parsing the whole frame).
+fn lacks_top_level_keys(payload: &[u8], keys: &[&str]) -> bool {
+    cpa_runtime::conductor::session::lazy::Doc::lazy(payload).is_some_and(|doc| !keys.iter().any(|k| doc.has(k)))
+}
+
 fn first_existing(root: &Value, paths: &[&str]) -> Option<Value> {
     paths.iter().find_map(|p| root.g(p).into_value())
 }
@@ -232,6 +239,9 @@ pub fn parse_claude_usage(data: &[u8]) -> Detail {
 /// Usage from a Claude stream line (`usage` or `message.usage`).
 pub fn parse_claude_stream_usage(line: &[u8]) -> Option<Detail> {
     let payload = json_payload(line)?;
+    if lacks_top_level_keys(payload, &["usage", "message"]) {
+        return None;
+    }
     if !cpa_json::valid(payload) {
         return None;
     }
@@ -419,6 +429,9 @@ pub fn parse_gemini_usage(data: &[u8]) -> Detail {
 /// One Gemini stream line; `None` without non-zero usage metadata.
 pub fn parse_gemini_stream_usage(line: &[u8]) -> Option<Detail> {
     let payload = json_payload(line)?;
+    if lacks_top_level_keys(payload, &["usageMetadata", "usage_metadata"]) {
+        return None;
+    }
     if !cpa_json::valid(payload) {
         return None;
     }
@@ -439,6 +452,9 @@ pub fn parse_antigravity_usage(data: &[u8]) -> Detail {
 /// One Antigravity stream line; `None` when it has no usage metadata node.
 pub fn parse_antigravity_stream_usage(line: &[u8]) -> Option<Detail> {
     let payload = json_payload(line)?;
+    if lacks_top_level_keys(payload, &["response", "usageMetadata", "usage_metadata"]) {
+        return None;
+    }
     if !cpa_json::valid(payload) {
         return None;
     }
@@ -640,16 +656,17 @@ pub fn filter_sse_usage_metadata(payload: &[u8]) -> Vec<u8> {
             continue;
         };
         let raw_json = trim_space(&line[data_idx + 5..]);
-        let trace_id = cpa_json::parse(raw_json).g("traceId").str();
-        if is_stop_chunk_without_usage(raw_json) && !trace_id.is_empty() {
+        let chunk = Chunk::new(raw_json);
+        let trace_id = chunk.value.g("traceId").str();
+        if chunk.is_stop_without_usage() && !trace_id.is_empty() {
             remember_stop_without_usage(&trace_id);
             continue;
         }
-        if !trace_id.is_empty() && has_usage_metadata(raw_json) && take_stop_without_usage(&trace_id) {
+        if !trace_id.is_empty() && chunk.has_usage_metadata() && take_stop_without_usage(&trace_id) {
             // Go drops the remembered entry and skips the line without altering it.
             continue;
         }
-        let (cleaned, changed) = strip_usage_metadata_from_json(raw_json);
+        let (cleaned, changed) = chunk.into_stripped(raw_json);
         if !changed {
             continue;
         }
@@ -675,6 +692,53 @@ pub fn filter_sse_usage_metadata(payload: &[u8]) -> Vec<u8> {
 
 fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// One SSE chunk parsed once for the filter's several questions (the JSON text, whether it is
+/// valid JSON, and the value tree).
+struct Chunk {
+    value: Value,
+    valid: bool,
+}
+
+impl Chunk {
+    fn new(raw_json: &[u8]) -> Self {
+        let json = trim_space(raw_json);
+        Chunk { valid: !json.is_empty() && cpa_json::valid(json), value: cpa_json::parse(raw_json) }
+    }
+
+    fn has_usage_metadata(&self) -> bool {
+        self.valid && (exists(&self.value, "usageMetadata") || exists(&self.value, "response.usageMetadata"))
+    }
+
+    fn is_terminal(&self) -> bool {
+        let finish = first_existing(&self.value, &["candidates.0.finishReason", "response.candidates.0.finishReason"]);
+        finish.is_some_and(|f| !res_str(&f).trim().is_empty())
+    }
+
+    fn is_stop_without_usage(&self) -> bool {
+        self.valid && self.is_terminal() && !self.has_usage_metadata()
+    }
+
+    /// [`strip_usage_metadata_from_json`] on the already parsed chunk.
+    fn into_stripped(mut self, raw_json: &[u8]) -> (Vec<u8>, bool) {
+        if !self.valid || self.is_terminal() || !self.has_usage_metadata() {
+            return (raw_json.to_vec(), false);
+        }
+        let v = &mut self.value;
+        let mut changed = false;
+        if let Some(usage) = v.g("usageMetadata").into_value() {
+            cpa_json::set(v, "cpaUsageMetadata", usage);
+            cpa_json::delete(v, "usageMetadata");
+            changed = true;
+        }
+        if let Some(usage) = v.g("response.usageMetadata").into_value() {
+            cpa_json::set(v, "response.cpaUsageMetadata", usage);
+            cpa_json::delete(v, "response.usageMetadata");
+            changed = true;
+        }
+        (cpa_json::to_vec(v), changed)
+    }
 }
 
 /// Renames `usageMetadata` to `cpaUsageMetadata` (also under `response.`) unless the chunk is
@@ -704,26 +768,6 @@ pub fn strip_usage_metadata_from_json(raw_json: &[u8]) -> (Vec<u8>, bool) {
         changed = true;
     }
     (cpa_json::to_vec(&v), changed)
-}
-
-fn has_usage_metadata(json_bytes: &[u8]) -> bool {
-    if json_bytes.is_empty() || !cpa_json::valid(json_bytes) {
-        return false;
-    }
-    let v = cpa_json::parse(json_bytes);
-    exists(&v, "usageMetadata") || exists(&v, "response.usageMetadata")
-}
-
-fn is_stop_chunk_without_usage(json_bytes: &[u8]) -> bool {
-    if json_bytes.is_empty() || !cpa_json::valid(json_bytes) {
-        return false;
-    }
-    let v = cpa_json::parse(json_bytes);
-    let finish = first_existing(&v, &["candidates.0.finishReason", "response.candidates.0.finishReason"]);
-    match finish {
-        Some(f) if !res_str(&f).trim().is_empty() => !has_usage_metadata(json_bytes),
-        _ => false,
-    }
 }
 
 #[cfg(test)]

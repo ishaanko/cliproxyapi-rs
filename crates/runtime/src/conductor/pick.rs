@@ -24,9 +24,12 @@ use super::cooldown::{BlockReason, has_unauthorized_auth_failure, is_auth_blocke
 use super::errors::{
     AuthErrorExt, auth_not_found, auth_unavailable, model_cooldown_error, terminal_auth_error,
 };
-use super::models::{canonical_scheduling_provider, executor_key_from_auth};
+use super::models::{
+    canonical_scheduling_provider, eligible_executor_index, executor_key_from_auth,
+    has_oauth_alias_channel,
+};
 use super::selector::{AffinityPick, Cand, Strategy};
-use super::util::{canonical_model_key, parse_suffix};
+use super::util::{canonical_model_key, canonical_model_key_ref, parse_suffix};
 use super::{Manager, executor_locked, meta_trimmed};
 use crate::executor::{DynExecutor, ExecError, Metadata, meta};
 
@@ -101,7 +104,7 @@ fn credential_policy_allows(policy: &str, auth: &Auth) -> bool {
 
 /// Integer `priority` attribute (larger wins); invalid or absent is 0.
 pub fn auth_priority(auth: &Auth) -> i64 {
-    auth.attr("priority").parse::<i64>().unwrap_or(0)
+    auth.attr_ref("priority").parse::<i64>().unwrap_or(0)
 }
 
 /// Selection weight: `weight` attribute, else metadata, else 1; invalid values count as 0.
@@ -242,12 +245,27 @@ impl Manager {
     /// Registry model support (Go: authSupportsRouteModel): the client registered the route model
     /// or its alias-resolved selection key.
     pub(crate) fn auth_supports_route_model(&self, auth: &Auth, route_model: &str) -> bool {
-        let route_key = canonical_model_key(route_model);
+        self.auth_supports_route_key(auth, route_model, canonical_model_key_ref(route_model))
+    }
+
+    /// [`Self::auth_supports_route_model`] with the route's canonical key already computed.
+    pub(crate) fn auth_supports_route_key(
+        &self,
+        auth: &Auth,
+        route_model: &str,
+        route_key: &str,
+    ) -> bool {
         if route_key.is_empty() {
             return true;
         }
-        if self.registry.client_supports_model(&auth.id, &route_key) {
+        if self.registry.client_supports_model(&auth.id, route_key) {
             return true;
+        }
+        if !has_oauth_alias_channel(auth) {
+            let selection_key = canonical_model_key_ref(self.selection_model_ref(auth, route_model));
+            return !selection_key.is_empty()
+                && selection_key != route_key
+                && self.registry.client_supports_model(&auth.id, selection_key);
         }
         let selection_key = self.selection_model_key_for_auth(auth, route_model);
         !selection_key.is_empty()
@@ -407,7 +425,9 @@ impl Manager {
                 base.trim().to_string()
             }
         };
-        let mut cands: Vec<(&Auth, String)> = Vec::new();
+        let route_key = canonical_model_key_ref(route_model);
+        // (credential, index into `eligible`, whether OAuth aliases apply to it)
+        let mut cands: Vec<(&Auth, usize, bool)> = Vec::new();
         for a in st.auths.values() {
             if a.disabled {
                 continue;
@@ -418,20 +438,19 @@ impl Manager {
             if !eligibility.allows(a) {
                 continue;
             }
-            let key = canonical_scheduling_provider(&executor_key_from_auth(a));
-            if key.is_empty() || !eligible.contains(&key) {
+            let Some(key) = eligible_executor_index(a, &eligible) else {
                 continue;
-            }
+            };
             if tried.contains(&a.id) {
                 continue;
             }
-            if !model_key.is_empty() && !self.auth_supports_route_model(a, route_model) {
+            if !model_key.is_empty() && !self.auth_supports_route_key(a, route_model, route_key) {
                 continue;
             }
             if strategy == Strategy::WeightedRoundRobin && auth_weight(a) <= 0 {
                 continue;
             }
-            cands.push((a, key));
+            cands.push((a, key, has_oauth_alias_channel(a)));
         }
         if cands.is_empty() {
             return Err(auth_not_found("no auth available"));
@@ -441,14 +460,17 @@ impl Manager {
         let mut by_priority: BTreeMap<i64, Vec<(&Auth, &str)>> = BTreeMap::new();
         let (mut cooldown_count, mut unauthorized_count) = (0usize, 0usize);
         let mut earliest: Option<DateTime<Utc>> = None;
-        for (c, key) in &cands {
-            let check_model = self.selection_model_for_auth(c, route_model);
-            let b = is_auth_blocked_for_model(c, &check_model, now);
+        for (c, key, aliased) in &cands {
+            let b = if *aliased {
+                is_auth_blocked_for_model(c, &self.selection_model_for_auth(c, route_model), now)
+            } else {
+                is_auth_blocked_for_model(c, self.selection_model_ref(c, route_model), now)
+            };
             if !b.blocked {
                 by_priority
                     .entry(auth_priority(c))
                     .or_default()
-                    .push((c, key.as_str()));
+                    .push((c, eligible[*key].as_str()));
                 continue;
             }
             if b.reason == BlockReason::Cooldown {
@@ -466,7 +488,7 @@ impl Manager {
             }
         }
         if by_priority.is_empty() {
-            let refs: Vec<&Auth> = cands.iter().map(|(a, _)| *a).collect();
+            let refs: Vec<&Auth> = cands.iter().map(|(a, _, _)| *a).collect();
             let sel = |a: &Auth| self.selection_model_for_auth(a, route_model);
             let last_err = latest_candidate_error_for_model(&refs, &sel);
             let provider_for_error = if affinity.is_none() && eligible.len() == 1 {
@@ -495,7 +517,7 @@ impl Manager {
         let best_priority = *by_priority.keys().next_back().unwrap_or(&0);
         let mut top: Vec<(&Auth, &str)> =
             by_priority.get(&best_priority).cloned().unwrap_or_default();
-        top.sort_by(|a, b| a.0.id.cmp(&b.0.id));
+        top.sort_unstable_by(|a, b| a.0.id.cmp(&b.0.id));
 
         if let Mode::Collect { across, out } = &mut mode {
             // Candidates offered to a plugin scheduler: the best tier, or every tier on request.

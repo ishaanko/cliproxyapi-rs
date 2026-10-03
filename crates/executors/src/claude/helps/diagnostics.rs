@@ -265,7 +265,7 @@ pub fn is_claude_new_prompt_turn(body: &[u8]) -> bool {
     if is_claude_probe_or_helper_request(body) {
         return false;
     }
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let messages = root.g("messages");
     if !messages.is_array() {
         return true;
@@ -396,7 +396,7 @@ fn is_claude_title_helper_request(root: &serde_json::Value) -> bool {
 /// Go: `IsClaudeProbeOrHelperRequest`: a `max_tokens: 1` probe or an automated title helper,
 /// which native Claude Code sends without `cc_prompt_id` or `cc_prev_req`.
 pub fn is_claude_probe_or_helper_request(body: &[u8]) -> bool {
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     is_claude_probe_request(&root) || is_claude_title_helper_request(&root)
 }
 
@@ -408,7 +408,7 @@ pub fn is_claude_subagent_request(headers: &HeaderMap, body: &[u8]) -> bool {
     {
         return true;
     }
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     if root.g("metadata.user_id.parent_session_id").exists() {
         return true;
     }
@@ -431,10 +431,10 @@ pub fn is_claude_subagent_request(headers: &HeaderMap, body: &[u8]) -> bool {
 /// Go: `ClaudePayloadHas1hTTL`: any tool, system or message content block with
 /// `cache_control.ttl == "1h"`.
 pub fn claude_payload_has_1h_ttl(payload: &[u8]) -> bool {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return false;
     }
-    let root = cpa_json::parse(payload);
+    let root = crate::helps::parse_cache::parse(payload);
     let has_1h = |item: &cpa_json::Res<'_>| {
         let cc = item.g("cache_control");
         cc.is_object() && cc.g("ttl").str() == "1h"
@@ -498,7 +498,7 @@ fn strip_billing_tags_text(billing_text: &str) -> String {
 
 /// Go: `StripClaudeBillingTags`: removes `cc_prev_req` and `cc_prompt_id` from the billing header.
 pub fn strip_claude_billing_tags(body: &[u8]) -> Vec<u8> {
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let Some(billing_text) = billing_text_of_first_system_block(&root) else { return body.to_vec() };
     let cleaned = strip_billing_tags_text(&billing_text);
     if cleaned == billing_text {
@@ -510,7 +510,7 @@ pub fn strip_claude_billing_tags(body: &[u8]) -> Vec<u8> {
 /// Go: `InjectClaudeBillingTags`: re-appends `cc_prev_req` / `cc_prompt_id` (when non-empty) to
 /// the billing header of the first system block.
 pub fn inject_claude_billing_tags(body: &[u8], prev_req: &str, prompt_id: &str) -> Vec<u8> {
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let Some(billing_text) = billing_text_of_first_system_block(&root) else { return body.to_vec() };
     let mut cleaned = strip_billing_tags_text(&billing_text).trim().to_string();
     if !cleaned.ends_with(';') {
@@ -528,7 +528,7 @@ pub fn inject_claude_billing_tags(body: &[u8], prev_req: &str, prompt_id: &str) 
 /// Go: `ExtractClaudeBillingTags`: valid `(cc_prev_req, cc_prompt_id)` already present in the
 /// billing header text ("" for each that is absent or malformed).
 pub fn extract_claude_billing_tags(body: &[u8]) -> (String, String) {
-    let root = cpa_json::parse(body);
+    let root = crate::helps::parse_cache::parse(body);
     let system = root.g("system");
     let billing_text = if system.is_array() && !system.array().is_empty() {
         system.g("0.text").str()

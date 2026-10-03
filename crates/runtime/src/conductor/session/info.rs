@@ -3,10 +3,13 @@
 //! Resolves which client session a request belongs to from headers, the request body and
 //! execution metadata, in the documented priority order. The LCP prefix matcher is not ported.
 
+use std::cell::OnceCell;
+
 use cpa_json::{J, Res, Value};
 use http::HeaderMap;
 use sha2::{Digest, Sha256};
 
+use super::lazy::Doc;
 use crate::executor::{Metadata, meta};
 
 /// Request session description used for affinity and upstream reporting.
@@ -76,26 +79,28 @@ fn cand(r: Res<'_>) -> String {
 }
 
 /// Request body roots: the top-level object and the nested `request` object (Gemini CLI style).
-struct Roots {
-    root: Value,
-    exists: bool,
-    nested: Option<Value>,
+/// Members are parsed only when a lookup reaches them (see [`Doc`]).
+pub(super) struct Roots<'a> {
+    pub(super) root: Doc<'a>,
+    pub(super) exists: bool,
+    pub(super) nested: Option<Doc<'a>>,
+    claude: OnceCell<(String, String, String)>,
 }
 
-impl Roots {
-    fn new(payload: &[u8]) -> Self {
+impl<'a> Roots<'a> {
+    pub(super) fn new(payload: &'a [u8]) -> Self {
         if payload.is_empty() {
             return Roots {
-                root: Value::Null,
+                root: Doc::owned(Value::Null),
                 exists: false,
                 nested: None,
+                claude: OnceCell::new(),
             };
         }
-        let root = cpa_json::parse(payload);
-        let exists = !root.is_null();
-        let req = root.g("request");
-        let nested = if req.exists() && !root.g("contents").exists() {
-            req.into_value()
+        let root = Doc::new(payload);
+        let exists = root.exists();
+        let nested = if root.has("request") && !root.has("contents") {
+            root.sub("request")
         } else {
             None
         };
@@ -103,11 +108,17 @@ impl Roots {
             root,
             exists,
             nested,
+            claude: OnceCell::new(),
         }
     }
 
+    /// [`claude_metadata_identities`] of this body, computed once.
+    pub(super) fn claude_ids(&self) -> &(String, String, String) {
+        self.claude.get_or_init(|| claude_metadata_identities(self))
+    }
+
     /// Candidate id at `path` in the root, falling back to the nested request object.
-    fn pick(&self, path: &str) -> String {
+    pub(super) fn pick(&self, path: &str) -> String {
         let v = cand(self.root.g(path));
         if !v.is_empty() {
             return v;
@@ -223,17 +234,16 @@ const BODY_FORK_PATHS: &[&str] = &[
 
 /// Claude Code `metadata.user_id`: JSON object or legacy `..._session_<uuid>` string. Returns
 /// `(session_id, parent_session_id, agent_id)`.
-pub fn claude_metadata_identities(payload: &[u8]) -> (String, String, String) {
-    if payload.is_empty() {
+fn claude_metadata_identities(r: &Roots<'_>) -> (String, String, String) {
+    if !r.exists {
         return Default::default();
     }
-    let root = cpa_json::parse(payload);
+    let root = &r.root;
     let mut user_id = root.g("metadata.user_id").str().trim().to_string();
-    if user_id.is_empty() {
-        let req = root.g("request");
-        if req.exists() && !root.g("contents").exists() {
-            user_id = req.g("metadata.user_id").str().trim().to_string();
-        }
+    if user_id.is_empty()
+        && let Some(n) = &r.nested
+    {
+        user_id = n.g("metadata.user_id").str().trim().to_string();
     }
     if user_id.is_empty() {
         return Default::default();
@@ -287,7 +297,7 @@ fn legacy_claude_session(user_id: &str) -> Option<&str> {
     }
 }
 
-fn claude_agent_id(headers: &HeaderMap, r: &Roots, payload: &[u8]) -> String {
+fn claude_agent_id(headers: &HeaderMap, r: &Roots<'_>) -> String {
     let mut agent = header_value(headers, "X-Claude-Code-Agent-Id");
     if agent.is_empty() && r.exists {
         agent = cand(r.root.g("metadata.agent_id"));
@@ -304,12 +314,12 @@ fn claude_agent_id(headers: &HeaderMap, r: &Roots, payload: &[u8]) -> String {
         }
     }
     if agent.is_empty() {
-        agent = claude_metadata_identities(payload).2;
+        agent = r.claude_ids().2.clone();
     }
     agent
 }
 
-fn claude_parent_agent_id(headers: &HeaderMap, r: &Roots) -> String {
+fn claude_parent_agent_id(headers: &HeaderMap, r: &Roots<'_>) -> String {
     let mut p = header_value(headers, "X-Claude-Code-Parent-Agent-Id");
     if p.is_empty() && r.exists {
         p = cand(r.root.g("metadata.parent_agent_id"));
@@ -328,7 +338,7 @@ fn claude_parent_agent_id(headers: &HeaderMap, r: &Roots) -> String {
     p
 }
 
-fn is_body_fork_candidate(r: &Roots) -> bool {
+fn is_body_fork_candidate(r: &Roots<'_>) -> bool {
     r.exists && !r.pick_first(BODY_FORK_PATHS).is_empty()
 }
 
@@ -402,7 +412,7 @@ pub fn extract_session_info(
     if r.exists {
         parent_candidate = r.pick_first(PARENT_PATHS);
         if parent_candidate.is_empty() {
-            parent_candidate = claude_metadata_identities(payload).1;
+            parent_candidate = r.claude_ids().1.clone();
         }
     }
 
@@ -410,7 +420,7 @@ pub fn extract_session_info(
     let sid = header_value(headers, "X-Claude-Code-Session-Id");
     if !sid.is_empty() {
         info.client_type = "claude".into();
-        let agent_id = claude_agent_id(headers, &r, payload);
+        let agent_id = claude_agent_id(headers, &r);
         let parent_agent = claude_parent_agent_id(headers, &r);
         if !agent_id.is_empty() && agent_id != "main" {
             info.agent_name = agent_id.clone();
@@ -434,7 +444,7 @@ pub fn extract_session_info(
 
     // 2. Claude Code metadata.user_id in the payload (outranks generic headers).
     if !payload.is_empty() {
-        let (sid, parent_sid, agent_id) = claude_metadata_identities(payload);
+        let (sid, parent_sid, agent_id) = r.claude_ids().clone();
         if !sid.is_empty() {
             info.client_type = "claude".into();
             let mut agent_id = agent_id;

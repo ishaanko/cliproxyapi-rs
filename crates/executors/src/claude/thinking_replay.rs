@@ -298,7 +298,7 @@ fn session_key_from_payload(payload: &[u8]) -> String {
     if payload.is_empty() {
         return String::new();
     }
-    let root = cpa_json::parse(payload);
+    let root = crate::helps::parse_cache::parse(payload);
     let trimmed = |path: &str| root.g(path).str().trim().to_string();
     let prompt_cache_key = trimmed("prompt_cache_key");
     if !prompt_cache_key.is_empty() {
@@ -535,7 +535,7 @@ impl ThinkingReplayStreamAccumulator {
                 self.abandon();
                 continue;
             }
-            let root = cpa_json::parse(payload);
+            let root = crate::helps::parse_cache::parse(payload);
             match root.g("type").str().as_str() {
                 "message_start" => self.observed = true,
                 "content_block_start" => {
@@ -613,7 +613,7 @@ impl ThinkingReplayStreamAccumulator {
             Field::Signature => (&mut block.signature, &mut block.signature_initialized, "signature"),
         };
         if !*initialized {
-            let initial = cpa_json::parse(&block.raw).g(path).str();
+            let initial = crate::helps::parse_cache::parse(&block.raw).g(path).str();
             if !reserve(&mut self.bytes_used, &mut self.abandoned, initial.len()) {
                 return;
             }

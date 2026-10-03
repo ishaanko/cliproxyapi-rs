@@ -11,6 +11,8 @@
 pub mod cache;
 pub mod identity;
 pub mod info;
+/// Lazily parsed JSON objects (also used by executor payload prechecks).
+pub mod lazy;
 
 pub use cache::SessionCache;
 pub use identity::{

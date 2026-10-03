@@ -33,7 +33,7 @@ pub fn is_claude_token_event(payload: &[u8]) -> bool {
         }
     }
 
-    let v = cpa_json::parse(payload);
+    let v = crate::helps::parse_cache::parse(payload);
     match v.g("type").str().as_str() {
         // Substantive streaming block deltas.
         "content_block_delta" => ["delta.text", "delta.thinking", "delta.partial_json", "delta.signature"].iter().any(|p| non_empty(&v, p)),

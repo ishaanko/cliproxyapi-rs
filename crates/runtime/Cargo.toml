@@ -16,6 +16,7 @@ cpa-discovery = { path = "../discovery" }
 cpa-auth = { path = "../auth", default-features = false }
 cpa-home = { path = "../home" }
 cpa-pluginapi = { path = "../pluginapi" }
+memchr = "2"
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
@@ -24,7 +25,6 @@ tokio.workspace = true
 bytes.workspace = true
 tracing.workspace = true
 parking_lot.workspace = true
-memchr = "2"
 chrono.workspace = true
 async-trait = "0.1"
 http = "1"

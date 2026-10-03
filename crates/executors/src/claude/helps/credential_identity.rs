@@ -74,7 +74,7 @@ pub fn claude_request_has_execution_metadata(metadata_sets: &[&Metadata]) -> boo
 /// Go: `withoutClaudeMetadataUserID`; the payload is returned untouched when there is nothing to
 /// delete or it is not valid JSON.
 fn without_claude_metadata_user_id(payload: &[u8]) -> Vec<u8> {
-    if payload.is_empty() || !cpa_json::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return payload.to_vec();
     }
     let mut root = cpa_json::parse(payload);

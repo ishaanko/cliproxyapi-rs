@@ -10,7 +10,8 @@ use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use cpa_core::thinking::parse_suffix;
-use cpa_json::{J, Value};
+use cpa_json::Value;
+use cpa_runtime::conductor::session::lazy::Doc;
 use parking_lot::Mutex;
 
 use super::text::json_payload;
@@ -41,7 +42,7 @@ pub fn extract_response_model_event(payload: &[u8], provider: &str) -> (String, 
 }
 
 /// Trimmed string at `path` when it is a JSON string within the length bound.
-fn bounded_model(v: &Value, path: &str) -> Option<String> {
+fn bounded_model(v: &Doc<'_>, path: &str) -> Option<String> {
     match v.g(path).v() {
         Some(Value::String(s)) => {
             let s = s.trim();
@@ -51,19 +52,19 @@ fn bounded_model(v: &Value, path: &str) -> Option<String> {
     }
 }
 
-fn is_string_at(v: &Value, path: &str) -> bool {
+fn is_string_at(v: &Doc<'_>, path: &str) -> bool {
     matches!(v.g(path).v(), Some(Value::String(_)))
 }
 
 /// Response model of an Anthropic message stream or non-stream message.
 pub fn extract_claude_response_model_event(data: &[u8]) -> (String, bool) {
-    let v = cpa_json::parse(data);
+    let v = Doc::new(data);
     match v.g("type").str().as_str() {
         "message_start" => (bounded_model(&v, "message.model").unwrap_or_default(), false),
         "message_stop" => (String::new(), true),
         "message" => (bounded_model(&v, "model").unwrap_or_default(), true),
         _ => {
-            if v.is_null() {
+            if !v.exists() {
                 return (String::new(), false);
             }
             // The first string-typed location wins even when it is too long.
@@ -81,8 +82,8 @@ pub fn extract_claude_response_model_event(data: &[u8]) -> (String, bool) {
 
 /// Response model of a Gemini / Vertex / AI Studio / interactions frame.
 pub fn extract_gemini_response_model_event(data: &[u8]) -> (String, bool) {
-    let v = cpa_json::parse(data);
-    if v.is_null() {
+    let v = Doc::new(data);
+    if !v.exists() {
         return (String::new(), false);
     }
     let path = ["response.modelVersion", "modelVersion", "interaction.model", "model"]
@@ -106,8 +107,8 @@ pub fn extract_gemini_response_model_event(data: &[u8]) -> (String, bool) {
 
 /// Response model of standard chat / responses / interactions / Gemini-shaped JSON.
 pub fn extract_generic_response_model_event(data: &[u8]) -> (String, bool) {
-    let v = cpa_json::parse(data);
-    if v.is_null() {
+    let v = Doc::new(data);
+    if !v.exists() {
         return (String::new(), false);
     }
     let event_type_of = |key: &str| v.g(key).str();
@@ -178,13 +179,13 @@ pub fn extract_codex_response_model_event(payload: &[u8]) -> (String, bool) {
     let Some(data) = json_payload(payload) else {
         return (String::new(), false);
     };
-    let v = cpa_json::parse(data);
+    let v = Doc::new(data);
     let (carries_model, terminal) = match v.g("type").str().trim() {
         "response.created" | "response.in_progress" => (true, false),
         "response.completed" | "response.incomplete" | "response.done" => (true, true),
         _ => (false, false),
     };
-    if !carries_model || v.is_null() {
+    if !carries_model || !v.exists() {
         return (String::new(), false);
     }
     // Upstream-controlled: reject non-string and oversized names.

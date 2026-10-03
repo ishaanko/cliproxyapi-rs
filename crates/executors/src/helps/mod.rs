@@ -41,6 +41,7 @@ pub mod json_retry;
 pub mod logging;
 pub mod oauth_scope;
 pub mod openai_compat;
+pub mod parse_cache;
 pub mod openai_responses_signature;
 pub mod payload;
 pub mod proxy;
