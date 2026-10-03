@@ -28,6 +28,8 @@ pub mod middleware;
 pub mod models;
 mod plugin_exec;
 mod plugin_flow;
+mod plugin_model;
+pub use plugin_model::ServerModelExecutor;
 pub mod realtime;
 pub mod reply;
 pub mod req;

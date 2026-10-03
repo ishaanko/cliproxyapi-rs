@@ -12,9 +12,11 @@ use cpa_config::Config;
 use cpa_core::registry::{ModelInfo, ModelRegistry};
 use cpa_pluginapi::api::AuthParseRequest;
 use cpa_runtime::conductor::SharedManager;
+use cpa_runtime::executor::DynExecutor;
 use cpa_runtime::service::{PluginAuthModels, ServicePlugins};
 use cpa_runtime::usage::UsageTracker;
 
+use crate::adapters::refresh_compat::PluginRefreshCompatExecutor;
 use crate::adapters::translation::TranslatorHooks;
 use crate::ctx::CallCtx;
 use crate::host::Host;
@@ -31,6 +33,18 @@ impl ServicePlugins for ServiceHooks {
     async fn models_for_auth(&self, auth: &Auth) -> PluginAuthModels {
         let r = self.0.models_for_auth(&CallCtx::background(), auth).await;
         PluginAuthModels { provider: r.provider, models: r.models, auth: r.auth, handled: r.handled, err: r.err }
+    }
+
+    fn has_executor_candidate_provider(&self, provider: &str) -> bool {
+        self.0.has_executor_candidate_provider(provider)
+    }
+
+    fn wrap_compat_executor(&self, lookup_keys: &[String], executor: DynExecutor) -> DynExecutor {
+        if lookup_keys.iter().any(|k| self.0.has_auth_provider(k)) {
+            PluginRefreshCompatExecutor::new(executor, Some(self.0.clone()))
+        } else {
+            executor
+        }
     }
 }
 

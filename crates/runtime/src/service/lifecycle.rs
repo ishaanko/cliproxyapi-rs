@@ -614,6 +614,9 @@ impl Inner {
     }
 
     /// Go `ensureExecutorsForAuth` for providers outside the registered set: asks the factory.
+    /// A provider a plugin executor may serve is left to the plugin unless the config has a
+    /// native OpenAI-compatibility entry; a native executor is wrapped when a plugin auth
+    /// provider owns refresh.
     fn ensure_executor_for_auth(&self, auth: &Auth) {
         let Some(factory) = &self.executor_factory else { return };
         // Disabled auths never (re)bind executors.
@@ -624,7 +627,16 @@ impl Inner {
         if key.is_empty() || self.registered_executors.lock().contains(&key) {
             return;
         }
-        if let Some(executor) = factory(&key) {
+        if let Some(plugins) = &self.plugins
+            && plugins.has_executor_candidate_provider(&key)
+            && !has_native_compat_config(auth, &key, &self.config())
+        {
+            return;
+        }
+        if let Some(mut executor) = factory(&key) {
+            if let Some(plugins) = &self.plugins {
+                executor = plugins.wrap_compat_executor(&plugin_auth_lookup_keys(auth, executor.identifier()), executor);
+            }
             self.register_executor(executor);
         }
     }
@@ -932,3 +944,41 @@ fn executor_key_for_auth(auth: &Auth) -> String {
     }
 }
 
+
+/// Go `hasNativeOpenAICompatExecutorConfig`.
+fn has_native_compat_config(auth: &Auth, provider_key: &str, cfg: &Config) -> bool {
+    if !auth.attr("base_url").trim().is_empty() || !auth.attr("compat_name").trim().is_empty() {
+        return true;
+    }
+    if auth.provider.trim().eq_ignore_ascii_case("openai-compatibility") {
+        return true;
+    }
+    let mut candidates: Vec<String> = Vec::new();
+    let provider_key = provider_key.trim().to_lowercase();
+    if !provider_key.is_empty() {
+        candidates.push(provider_key);
+    }
+    let key = auth.attr("provider_key");
+    if !key.trim().is_empty() {
+        candidates.push(key.trim().to_lowercase());
+    }
+    if !auth.provider.trim().is_empty() {
+        candidates.push(auth.provider.trim().to_lowercase());
+    }
+    cfg.openai_compatibility.iter().filter(|c| !c.disabled).any(|c| {
+        let name = c.name.trim().to_lowercase();
+        !name.is_empty() && candidates.iter().any(|cand| *cand == name)
+    })
+}
+
+/// Go `pluginAuthProviderLookupKeys`.
+fn plugin_auth_lookup_keys(auth: &Auth, fallback: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    for value in [auth.provider.as_str(), &auth.attr("provider_key"), &auth.attr("compat_name"), fallback] {
+        let value = value.trim().to_lowercase();
+        if !value.is_empty() && !keys.contains(&value) {
+            keys.push(value);
+        }
+    }
+    keys
+}

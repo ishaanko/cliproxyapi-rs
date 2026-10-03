@@ -16,7 +16,8 @@ use cpa_server::cli::{self, Command, ParseOutcome};
 use cpa_server::logging::{self, LogControl};
 use cpa_server::reqlog::RequestLogger;
 use cpa_management::ManagementState;
-use cpa_server::{AppState, BuildInfo, KeepAlive, build_router_with_management, safemode, serve};
+use cpa_plugin::adapters::service::ServiceHooks;
+use cpa_server::{AppState, BuildInfo, KeepAlive, ServerModelExecutor, build_router_with_management, safemode, serve};
 
 fn build_info() -> BuildInfo {
     BuildInfo {
@@ -320,6 +321,7 @@ async fn serve_proxy(
     local: LocalManagement,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
 ) -> i32 {
+    let plugin_host = cpa_plugin::Host::new();
     let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
@@ -332,10 +334,12 @@ async fn serve_proxy(
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
     let (compat_factory, compat_slot) = cpa_executors::openai_compat::lazy_factory();
+    let plugin_hooks = Arc::new(ServiceHooks(plugin_host.clone()));
     let service = match ServiceBuilder::new(&config_path)
         .dotenv_dir(None)
         .usage(usage.clone())
         .executor_factory(compat_factory)
+        .plugins(plugin_hooks)
         .build()
     {
         Ok(s) => Arc::new(s),
@@ -346,6 +350,10 @@ async fn serve_proxy(
     };
     // Per-entry openai-compatibility executors are built on demand and need the live config.
     compat_slot.set(service.subscribe_config());
+    // Plugins are loaded before the service starts so plugin auth files parse and plugin
+    // models register on the first pass (Go: `pluginHost.ApplyConfig` in cmd/server).
+    plugin_host.set_auth_manager(Some(service.manager()));
+    plugin_host.sync_runtime_config(&service.config(), &service.manager(), &usage).await;
     if let Err(e) = service.start().await {
         tracing::error!("failed to build proxy service: {e}");
         return 0;
@@ -354,6 +362,8 @@ async fn serve_proxy(
     for executor in cpa_executors::all_executors(config_rx.clone()) {
         service.register_executor(executor);
     }
+    plugin_host.sync_model_runtime(&service.manager(), service.registry()).await;
+    service.refresh_model_registrations().await;
     let manager = service.manager();
     let store = service.store();
     let sessions = Arc::new(OAuthSessions::default());
@@ -361,6 +371,8 @@ async fn serve_proxy(
     let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
     state.build = build.clone();
     state.example_api_key_safe_mode = safe_mode;
+    state.plugins = Some(plugin_host.clone());
+    plugin_host.set_model_executor(Some(ServerModelExecutor::new(state.clone())));
     if !cfg.commercial_mode {
         state.request_logger = Some(Arc::new(RequestLogger::new(config_rx.clone(), config_path.parent().map(|p| p.to_path_buf()))));
     }
@@ -396,6 +408,20 @@ async fn serve_proxy(
     }));
     if !local.password.is_empty() {
         management = management.with_local_password(local.password.clone());
+    }
+
+    // Plugin runtime follows config reloads (Go: `applyConfigRuntime`).
+    {
+        let mut rx = config_rx.clone();
+        let (host, service, usage) = (plugin_host.clone(), service.clone(), service.usage());
+        tokio::spawn(async move {
+            while rx.changed().await.is_ok() {
+                let next = rx.borrow().clone();
+                host.sync_runtime_config(&next, &service.manager(), &usage).await;
+                host.sync_model_runtime(&service.manager(), service.registry()).await;
+                service.refresh_model_registrations().await;
+            }
+        });
     }
 
     // Log level / destination follow config reloads.
@@ -458,6 +484,8 @@ async fn serve_proxy(
         } => {}
     }
     service.shutdown();
+    plugin_host.set_model_executor(None);
+    plugin_host.shutdown_runtime(&service.manager(), service.registry()).await;
     0
 }
 

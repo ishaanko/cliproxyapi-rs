@@ -8,6 +8,8 @@ use async_trait::async_trait;
 use cpa_auth::Auth;
 use cpa_core::registry::ModelInfo;
 
+use crate::executor::DynExecutor;
+
 /// Go `pluginhost.AuthModelResult`.
 #[derive(Default)]
 pub struct PluginAuthModels {
@@ -25,6 +27,11 @@ pub trait ServicePlugins: Send + Sync {
     fn models_for_provider(&self, provider: &str) -> Vec<ModelInfo>;
     /// Per-auth model discovery by the plugin owning the auth's provider (Go: `ModelsForAuth`).
     async fn models_for_auth(&self, auth: &Auth) -> PluginAuthModels;
+    /// A plugin executor may serve `provider` (Go: `HasExecutorCandidateProvider`).
+    fn has_executor_candidate_provider(&self, provider: &str) -> bool;
+    /// Wraps a native compat executor so credential refresh goes to the plugin auth provider
+    /// serving one of `lookup_keys` (Go: `wrapOpenAICompatIfPluginAuth`).
+    fn wrap_compat_executor(&self, lookup_keys: &[String], executor: DynExecutor) -> DynExecutor;
 }
 
 /// Go `appendPluginModels`: `models` followed by plugin models of `provider` whose ids are new.

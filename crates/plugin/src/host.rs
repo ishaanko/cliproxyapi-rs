@@ -455,33 +455,42 @@ impl Host {
                     continue;
                 }
                 let Some(new_lp) = loaded else { continue };
-                {
+                // 0 = committed, 1 = another load superseded this one, 2 = canceled.
+                let verdict = {
                     let mut st = self.state.lock();
                     let still_ours = st.loading.get(&file.id).is_some_and(|r| Arc::ptr_eq(r, &request));
                     if !still_ours {
-                        drop(st);
+                        1
+                    } else if ctx.is_canceled() {
+                        2
+                    } else {
+                        st.loading.remove(&file.id);
+                        if let Some(old) = &replaced {
+                            hot_reload = Some((file.id.clone(), file.version.clone(), file.path.clone(), old.version(), old.path.clone()));
+                            st.retired.entry(old.id.clone()).or_default().push(old.clone());
+                            st.fused.remove(&file.id);
+                            Self::remove_runtime_state(&mut st, &file.id);
+                        }
+                        st.loaded.insert(file.id.clone(), new_lp.clone());
+                        0
+                    }
+                };
+                match verdict {
+                    1 => {
                         self.discard_loaded(&new_lp);
                         if let Some(old) = &replaced {
                             self.rollback_replacement(old, &item).await;
                         }
                         return;
                     }
-                    if ctx.is_canceled() {
-                        drop(st);
+                    2 => {
                         self.cleanup_load(&file.id, &request, Some(new_lp)).await;
                         if let Some(old) = &replaced {
                             self.rollback_replacement(old, &item).await;
                         }
                         return;
                     }
-                    st.loading.remove(&file.id);
-                    if let Some(old) = &replaced {
-                        hot_reload = Some((file.id.clone(), file.version.clone(), file.path.clone(), old.version(), old.path.clone()));
-                        st.retired.entry(old.id.clone()).or_default().push(old.clone());
-                        st.fused.remove(&file.id);
-                        Self::remove_runtime_state(&mut st, &file.id);
-                    }
-                    st.loaded.insert(file.id.clone(), new_lp.clone());
+                    _ => {}
                 }
                 loaded_now = true;
                 registered_now = load_info.is_some();
