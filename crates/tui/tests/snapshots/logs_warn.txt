@@ -1,0 +1,30 @@
+   Dashboard    Config    Auth Files    API Keys    OAuth    Logs
+ 📋 Logs  ● AUTO-SCROLL  Filter: WARN+  Lines: 4
+
+ [a] Auto-scroll • [c] Clear • [1] All [2] info+ [3] warn+ [4] error • [↑↓] Scroll
+────────────────────────────────────────────────────────────────────────────────────────────────────
+[2026-10-02 10:00:02] [--------] [warn ] [a.rs:3] slow
+[2026-10-02 10:00:03] [--------] [error] [a.rs:4] failed
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  CLIProxyAPI Management TUI                       Tab/Shift+Tab: switch • L: lang • q/Ctrl+C: quit

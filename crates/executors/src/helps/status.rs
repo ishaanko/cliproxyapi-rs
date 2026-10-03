@@ -83,9 +83,46 @@ pub fn openai_compat_status_error(status: u16, headers: &HeaderMap, body: &[u8])
     err
 }
 
+/// A transport error and its sources joined with `: `, the way Go renders `net/http` and `io`
+/// errors (`dial tcp ...: connection refused`). The conductor classifies status-less failures
+/// by message text (Go: `isTransientTransportMessage`), so the cause must be present. The request
+/// URL reqwest appends to its top-level text is dropped to keep it out of client-visible errors.
+pub fn error_chain_text(err: &(dyn std::error::Error + 'static)) -> String {
+    let top = err.to_string();
+    let mut text = top.split(" for url").next().unwrap_or(&top).to_string();
+    let mut source = err.source();
+    while let Some(s) = source {
+        let part = s.to_string();
+        if !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        source = s.source();
+    }
+    text
+}
+
+/// Go-style message of a failed request or body read: [`error_chain_text`], except that a body
+/// cut short reads `unexpected EOF` (what Go surfaces and the conductor retries on).
+pub fn transport_message(err: &reqwest::Error) -> String {
+    let text = error_chain_text(err);
+    const INCOMPLETE: [&str; 5] = [
+        "unexpected eof",
+        "unexpected end of file",
+        "connection closed before message completed",
+        "end of file before message length reached",
+        "incomplete message",
+    ];
+    let lower = text.to_lowercase();
+    if INCOMPLETE.iter().any(|needle| lower.contains(needle)) {
+        return "unexpected EOF".to_string();
+    }
+    text
+}
+
 /// A transport failure before or while reading a response (Go returns the raw `error`): no status.
 pub fn transport_error(err: &reqwest::Error) -> ExecError {
-    ExecError::new(0, crate::openai_compat::errors::transport_message(err))
+    ExecError::new(0, transport_message(err))
 }
 
 impl From<ScanError> for ExecError {

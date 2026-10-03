@@ -5,6 +5,7 @@
 //! per (model family, session) in `cpa_core::cache` and restored into a later request whose
 //! assistant turn matches. Failed replays (400/422) clear the cache entry.
 
+use crate::helps::session::{claude_code_execution_scope, header_value_case_insensitive};
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
@@ -24,9 +25,6 @@ use tokio::sync::mpsc;
 use super::normalize::normalize_kimi_upstream_model;
 use crate::helps::usage::META_CLIENT_API_KEY;
 
-const CLAUDE_CODE_SESSION_HEADER: &str = "X-Claude-Code-Session-Id";
-const CLAUDE_CODE_AGENT_HEADER: &str = "X-Claude-Code-Agent-Id";
-const CLAUDE_CODE_MAIN_AGENT_ID: &str = "main";
 
 /// Cache key, snapshot and state of one replay-eligible request.
 #[derive(Clone, Default)]
@@ -55,56 +53,6 @@ pub(super) fn model_family(model: &str) -> String {
 }
 
 // ---------------------------------------------------------------- session key
-
-/// First non-blank value of `name` (case-insensitive), trimmed (Go: headerValueCaseInsensitive).
-fn header_value(headers: &HeaderMap, name: &str) -> String {
-    headers
-        .get_all(name)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .map(str::trim)
-        .find(|v| !v.is_empty())
-        .unwrap_or("")
-        .to_string()
-}
-
-/// Session id out of a Claude Code `metadata.user_id` (`..._session_<id>` suffix or JSON).
-fn claude_code_session_from_payload(payload: &[u8]) -> String {
-    if payload.is_empty() {
-        return String::new();
-    }
-    let user_id = cpa_json::parse(payload).g("metadata.user_id").str();
-    if user_id.is_empty() {
-        return String::new();
-    }
-    if let Some(pos) = user_id.rfind("_session_") {
-        let id = &user_id[pos + "_session_".len()..];
-        if !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-') {
-            return id.to_string();
-        }
-    }
-    if user_id.starts_with('{') {
-        return cpa_json::parse_str(&user_id).g("session_id").str().trim().to_string();
-    }
-    String::new()
-}
-
-/// `claude:<session>:agent:<agent>` for Claude Code traffic, "" otherwise (Go:
-/// ClaudeCodeExecutionScope).
-fn claude_code_execution_scope(payload: &[u8], headers: &HeaderMap) -> String {
-    let mut session = header_value(headers, CLAUDE_CODE_SESSION_HEADER);
-    if session.is_empty() {
-        session = claude_code_session_from_payload(payload);
-    }
-    if session.is_empty() {
-        return String::new();
-    }
-    let mut agent = header_value(headers, CLAUDE_CODE_AGENT_HEADER);
-    if agent.is_empty() {
-        agent = CLAUDE_CODE_MAIN_AGENT_ID.to_string();
-    }
-    format!("claude:{session}:agent:{agent}")
-}
 
 fn replay_key_from_turn_metadata(turn_metadata: &str) -> String {
     let v = cpa_json::parse_str(turn_metadata);
@@ -140,24 +88,24 @@ fn replay_key_from_payload(payload: &[u8]) -> String {
 }
 
 fn replay_key_from_headers(headers: &HeaderMap) -> String {
-    let turn = header_value(headers, "X-Codex-Turn-Metadata");
+    let turn = header_value_case_insensitive(headers, "X-Codex-Turn-Metadata");
     if !turn.is_empty() {
         let key = replay_key_from_turn_metadata(&turn);
         if !key.is_empty() {
             return key;
         }
     }
-    let window = header_value(headers, "X-Codex-Window-Id");
+    let window = header_value_case_insensitive(headers, "X-Codex-Window-Id");
     if !window.is_empty() {
         return format!("window:{window}");
     }
     for name in ["Session_id", "session_id", "Session-Id"] {
-        let value = header_value(headers, name);
+        let value = header_value_case_insensitive(headers, name);
         if !value.is_empty() {
             return format!("session-id:{value}");
         }
     }
-    let conversation = header_value(headers, "Conversation_id");
+    let conversation = header_value_case_insensitive(headers, "Conversation_id");
     if !conversation.is_empty() {
         return format!("conversation_id:{conversation}");
     }
@@ -176,7 +124,7 @@ fn session_key_from_request(req: &Request, opts: &Options) -> String {
 }
 
 fn replay_session_key(req: &Request, opts: &Options) -> String {
-    let scope = claude_code_execution_scope(&req.payload, &opts.headers);
+    let scope = claude_code_execution_scope(&req.payload, &opts.headers).unwrap_or_default();
     if !scope.is_empty() {
         return scope;
     }

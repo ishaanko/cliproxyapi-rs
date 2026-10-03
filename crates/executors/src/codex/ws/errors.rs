@@ -30,10 +30,11 @@ pub fn parse_error_frame(frame: &Value, model_level_cooling: bool) -> Option<Exe
     if status <= 0 {
         return None;
     }
-    let status = u16::try_from(status).ok()?;
     let out = build_error_payload(frame, status);
     let out_bytes = cpa_json::to_vec(&out);
     let usage_limit = is_usage_limit_error(&out_bytes);
+    // ExecError carries a u16; an out-of-range frame status is still an error (clamped).
+    let status = u16::try_from(status).unwrap_or(u16::MAX);
     let mut err = status_error(status, String::from_utf8_lossy(&out_bytes).into_owned());
     err.credential_scoped = usage_limit && !model_level_cooling;
     if let Some(retry) = parse_retry_after(status, &out_bytes, std::time::SystemTime::now()) {
@@ -51,14 +52,13 @@ pub fn clear_replay_on_error_frame(scope: &ReplayScope, frame: &Value) {
     if status <= 0 {
         return;
     }
-    let Ok(status) = u16::try_from(status) else { return };
     let payload = cpa_json::to_vec(&build_error_payload(frame, status));
-    clear_replay_on_invalid_signature(scope, status, &payload);
+    clear_replay_on_invalid_signature(scope, u16::try_from(status).unwrap_or(u16::MAX), &payload);
 }
 
-fn build_error_payload(frame: &Value, status: u16) -> Value {
+fn build_error_payload(frame: &Value, status: i64) -> Value {
     let mut out = cpa_json::parse_str("{}");
-    cpa_json::set(&mut out, "status", i64::from(status));
+    cpa_json::set(&mut out, "status", status);
     let body = frame.g("body");
     if body.exists() {
         cpa_json::set(&mut out, "body", body.value());
@@ -74,7 +74,7 @@ fn build_error_payload(frame: &Value, status: u16) -> Value {
         return out;
     }
     cpa_json::set(&mut out, "error.type", "server_error");
-    cpa_json::set(&mut out, "error.message", status_text(status));
+    cpa_json::set(&mut out, "error.message", u16::try_from(status).map_or("", status_text));
     out
 }
 
@@ -179,6 +179,13 @@ mod tests {
         assert!(parse_error_frame(&frame(r#"{"type":"error","error":{"message":"x"}}"#), false).is_none());
         let err = parse_error_frame(&frame(r#"{"type":"error","status_code":502}"#), false).unwrap();
         assert_eq!(err.message, r#"{"status":502,"error":{"type":"server_error","message":"Bad Gateway"}}"#);
+    }
+
+    #[test]
+    fn out_of_range_status_is_still_an_error() {
+        let err = parse_error_frame(&frame(r#"{"type":"error","status":70000}"#), false).unwrap();
+        assert_eq!(err.status, u16::MAX);
+        assert!(err.message.contains(r#""status":70000"#));
     }
 
     #[test]
