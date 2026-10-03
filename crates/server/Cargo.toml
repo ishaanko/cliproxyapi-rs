@@ -95,7 +95,7 @@ pprof = { version = "0.15", optional = true, default-features = false }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", target_pointer_width = "64"))'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

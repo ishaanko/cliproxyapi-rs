@@ -9,16 +9,16 @@
 //!
 //! Lookups compare the full bytes, so a hit is exact. Caching is only active between
 //! [`scope`] and the drop of its guard (one synchronous request preparation on one thread); the
-//! entries are released with the guard, so nothing outlives a request.
+//! entry is released with the guard, so nothing outlives a request.
 //!
 //! Only the newest pair is kept: every stage replaces the body it reads, and measurements showed
 //! older pairs (the original and pre-cloaking copies) are not looked up again, while each costs a
 //! body copy plus its tree for the whole preparation (~25% of the live heap of a 2 MB request).
-//! A [`scope`] also stops `cpa_json`'s own memo from storing trees for the same bodies.
+//! A [`scope`] also caps `cpa_json`'s own memo at one tree, so the same bodies are not held twice.
 //!
 //! Memory is bounded: an entry costs its bytes plus the estimated heap of its tree
 //! ([`cpa_json::tree_cost`]), a thread keeps at most [`MAX_THREAD_BYTES`] and all threads together
-//! [`GLOBAL_BUDGET`]; past either, the oldest entries are evicted or the new one is not kept (its
+//! [`GLOBAL_BUDGET`]; past either, the new entry is not kept (its
 //! callers then parse as before, with `cpa_json`'s own memo still catching large repeats). Bodies
 //! below [`TRACK_LEN`] are not costed (three of them are far below any budget).
 //! Large bodies stay cached here rather than deferring to that memo, which hands out deep clones:
@@ -30,9 +30,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use cpa_json::Value;
-
-/// Entries kept per thread: the working body.
-const CAPACITY: usize = 1;
 
 /// Heap one thread's entries may hold, and the same across all threads (so many large requests in
 /// flight cannot multiply it; `cpa_json`'s memo has the same shape of limits).
@@ -88,8 +85,8 @@ impl Drop for Charge {
 #[derive(Default)]
 struct Cache {
     depth: usize,
-    /// Most recently used first.
-    entries: Vec<Entry>,
+    /// The newest body only (see the module docs).
+    entry: Option<Entry>,
 }
 
 thread_local! {
@@ -99,13 +96,13 @@ thread_local! {
 /// Keeps the memo active on this thread until dropped. `!Send`, so holding it across an `.await`
 /// (where the task may resume on another thread) fails to compile.
 #[must_use = "the memo is released when the guard is dropped"]
-pub struct Scope(PhantomData<*const ()>, cpa_json::NoTrees);
+pub struct Scope(PhantomData<*const ()>, cpa_json::TreeCap);
 
 /// Enables the memo for the current thread (nestable). Call from synchronous request
 /// preparation only: the memo is per thread and must not be held across an `.await`.
 pub fn scope() -> Scope {
     CACHE.with(|c| c.borrow_mut().depth += 1);
-    Scope(PhantomData, cpa_json::suspend_trees())
+    Scope(PhantomData, cpa_json::cap_trees())
 }
 
 impl Drop for Scope {
@@ -114,7 +111,7 @@ impl Drop for Scope {
             let mut c = c.borrow_mut();
             c.depth = c.depth.saturating_sub(1);
             if c.depth == 0 {
-                c.entries.clear();
+                c.entry = None;
             }
         });
     }
@@ -132,16 +129,18 @@ fn take_entry(bytes: &[u8]) -> Option<Entry> {
         if c.depth == 0 {
             return None;
         }
-        let pos = c.entries.iter().position(|e| e.bytes == bytes)?;
-        let mut entry = c.entries.remove(pos);
+        if c.entry.as_ref()?.bytes != bytes {
+            return None;
+        }
+        let mut entry = c.entry.take()?;
         // Dropping the old claim refunds it; `put_entry` charges again.
         entry.charge = Charge(0);
         Some(entry)
     })
 }
 
-/// Stores `entry` as most recently used, evicting the oldest entries to stay within the budgets;
-/// an entry that cannot fit is dropped.
+/// Stores `entry` as the cached body (replacing the previous one); an entry that does not fit the
+/// budgets is dropped.
 fn put_entry(mut entry: Entry) {
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
@@ -149,16 +148,14 @@ fn put_entry(mut entry: Entry) {
         if c.depth == 0 || cost > MAX_THREAD_BYTES {
             return;
         }
-        c.entries.truncate(CAPACITY - 1);
-        while c.entries.iter().map(|e| e.cost()).sum::<usize>() + cost > MAX_THREAD_BYTES {
-            c.entries.pop();
-        }
+        // Dropping the previous entry refunds its claim on the global budget.
+        c.entry = None;
         if IN_USE.fetch_add(cost, Ordering::Relaxed) + cost > GLOBAL_BUDGET {
             IN_USE.fetch_sub(cost, Ordering::Relaxed);
             return;
         }
         entry.charge = Charge(cost);
-        c.entries.insert(0, entry);
+        c.entry = Some(entry);
     });
 }
 
@@ -255,9 +252,9 @@ mod tests {
             let _scope = scope();
             parse(b"{\"a\":1}");
         }
-        CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
+        CACHE.with(|c| assert!(c.borrow().entry.is_none()));
         parse(b"{\"a\":1}");
-        CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
+        CACHE.with(|c| assert!(c.borrow().entry.is_none()));
     }
 
     #[test]
@@ -266,13 +263,13 @@ mod tests {
         {
             let _scope = scope();
             parse(&body);
-            let cost = CACHE.with(|c| c.borrow().entries.iter().map(Entry::cost).sum::<usize>());
+            let cost = CACHE.with(|c| c.borrow().entry.iter().map(Entry::cost).sum::<usize>());
             assert!(cost > body.len());
             assert!(IN_USE.load(Ordering::Relaxed) >= cost);
             // A hit does not double-charge: the cost stays that of one entry.
             parse(&body);
-            assert_eq!(CACHE.with(|c| c.borrow().entries.iter().map(|e| e.charge.0).sum::<usize>()), cost);
+            assert_eq!(CACHE.with(|c| c.borrow().entry.iter().map(|e| e.charge.0).sum::<usize>()), cost);
         }
-        CACHE.with(|c| assert!(c.borrow().entries.is_empty()));
+        CACHE.with(|c| assert!(c.borrow().entry.is_none()));
     }
 }

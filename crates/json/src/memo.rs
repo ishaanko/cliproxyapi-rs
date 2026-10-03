@@ -130,32 +130,32 @@ tokio::task_local! {
 }
 
 thread_local! {
-    /// Nesting depth of [`suspend_trees`] guards on this thread.
-    static NO_TREES: Cell<usize> = const { Cell::new(0) };
+    /// Nesting depth of [`cap_trees`] guards on this thread.
+    static TREE_CAPS: Cell<usize> = const { Cell::new(0) };
 }
 
-/// Trees kept per scope while a [`NoTrees`] guard is alive on the thread.
-const SUSPENDED_TREES: usize = 1;
+/// Trees kept per scope while a [`TreeCap`] guard is alive on the thread.
+const CAPPED_TREES: usize = 1;
 
 /// Trees the memo of the current thread may hold now.
 fn max_trees() -> usize {
-    if NO_TREES.with(Cell::get) == 0 { MAX_TREES } else { SUSPENDED_TREES }
+    if TREE_CAPS.with(Cell::get) == 0 { MAX_TREES } else { CAPPED_TREES }
 }
 
 /// While alive, the memo keeps at most one tree on this thread (digests and validity verdicts are
 /// unaffected). For synchronous sections that keep their own parse cache: more trees would only
 /// add copies to the resident set. `!Send`, so it cannot be held across an `.await`.
 #[must_use = "the full tree budget returns when the guard is dropped"]
-pub struct NoTrees(PhantomData<*const ()>);
+pub struct TreeCap(PhantomData<*const ()>);
 
-pub fn suspend_trees() -> NoTrees {
-    NO_TREES.with(|d| d.set(d.get() + 1));
-    NoTrees(PhantomData)
+pub fn cap_trees() -> TreeCap {
+    TREE_CAPS.with(|d| d.set(d.get() + 1));
+    TreeCap(PhantomData)
 }
 
-impl Drop for NoTrees {
+impl Drop for TreeCap {
     fn drop(&mut self) {
-        NO_TREES.with(|d| d.set(d.get().saturating_sub(1)));
+        TREE_CAPS.with(|d| d.set(d.get().saturating_sub(1)));
     }
 }
 

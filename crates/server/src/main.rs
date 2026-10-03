@@ -36,18 +36,19 @@ mod pgo_dump;
 // `-DMI_DEFAULT_ARENA_EAGER_COMMIT=0`; the runtime option `MIMALLOC_ARENA_EAGER_COMMIT` still
 // overrides it.
 //
-// On Linux, blocks above 8 KiB (request bodies, their copies, long tree strings) are served by
-// `bigheap`, which recycles them across threads and returns idle ones to the OS within ~100 ms.
-// Under load that keeps the resident set near the live heap instead of ~2x it with mimalloc alone.
-#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+// On 64-bit Linux, blocks above 8 KiB (request bodies, their copies, long tree strings) are served
+// by `bigheap`, which recycles them across threads and returns idle ones to the OS within a few
+// hundred ms. Under load that keeps the resident set near the live heap instead of ~2x it with
+// mimalloc alone. `bigheap::init()` runs first thing in `main`.
+#[cfg(all(feature = "mimalloc", all(target_os = "linux", target_pointer_width = "64")))]
 mod bigheap;
-#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+#[cfg(all(feature = "mimalloc", all(target_os = "linux", target_pointer_width = "64")))]
 type Alloc = bigheap::Tiered<mimalloc::MiMalloc>;
-#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+#[cfg(all(feature = "mimalloc", all(target_os = "linux", target_pointer_width = "64")))]
 const ALLOC: Alloc = bigheap::Tiered(mimalloc::MiMalloc);
-#[cfg(all(feature = "mimalloc", not(target_os = "linux")))]
+#[cfg(all(feature = "mimalloc", not(all(target_os = "linux", target_pointer_width = "64"))))]
 type Alloc = mimalloc::MiMalloc;
-#[cfg(all(feature = "mimalloc", not(target_os = "linux")))]
+#[cfg(all(feature = "mimalloc", not(all(target_os = "linux", target_pointer_width = "64"))))]
 const ALLOC: Alloc = mimalloc::MiMalloc;
 
 #[cfg(all(feature = "mimalloc", not(feature = "alloc-stats")))]
@@ -119,6 +120,8 @@ fn event_interval() -> u32 {
 }
 
 fn main() {
+    #[cfg(all(feature = "mimalloc", all(target_os = "linux", target_pointer_width = "64")))]
+    bigheap::init();
     #[cfg(feature = "alloc-stats")]
     cpa_allocstats::serve_from_env();
     #[cfg(feature = "pprof")]

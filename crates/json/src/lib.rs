@@ -26,7 +26,7 @@ mod fast;
 pub mod lazy;
 mod memo;
 
-pub use memo::{NoTrees, scope, scope_sync, suspend_trees, tree_cost};
+pub use memo::{TreeCap, cap_trees, scope, scope_sync, tree_cost};
 
 pub use serde_json::{json, Map, Number, Value};
 
