@@ -873,6 +873,7 @@ dependencies = [
  "cpa-executors",
  "cpa-json",
  "cpa-management",
+ "cpa-managementasset",
  "cpa-runtime",
  "cpa-translator",
  "flate2",

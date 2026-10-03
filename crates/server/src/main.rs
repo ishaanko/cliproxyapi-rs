@@ -153,6 +153,14 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         );
     }
 
+    // Control panel asset: snapshot the config, then start the periodic updater (Go: SetCurrentConfig
+    // + StartAutoUpdater right before the service starts). A UI embedded in the binary replaces
+    // the downloaded panel, so there is nothing to update then.
+    cpa_managementasset::set_current_config(Some(Arc::new(cfg.clone())));
+    if cpa_server::ui::index().is_none() {
+        cpa_managementasset::start_auto_updater(tokio_util::sync::CancellationToken::new(), &config_path.to_string_lossy());
+    }
+
     // The service owns config reload, the credential manager, the auth store and model
     // registration; executors are registered through its builder by the executor layer.
     let usage = Arc::new(UsageTracker::default());
@@ -176,6 +184,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
         return 0;
     }
     let config_rx = service.subscribe_config();
+    cpa_managementasset::follow_config(config_rx.clone());
     for executor in cpa_executors::all_executors(config_rx.clone()) {
         service.register_executor(executor);
     }
@@ -186,6 +195,7 @@ async fn serve_proxy(cfg: Config, config_path: std::path::PathBuf, cli: &cli::Cl
     let mut state = AppState::new(config_rx.clone(), manager.clone(), store.clone(), sessions.clone(), usage.clone());
     state.build = build.clone();
     state.example_api_key_safe_mode = safe_mode;
+    state.config_file_path = config_path.to_string_lossy().into_owned();
     if !cfg.commercial_mode {
         state.request_logger = Some(Arc::new(RequestLogger::new(config_rx.clone(), config_path.parent().map(|p| p.to_path_buf()))));
     }

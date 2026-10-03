@@ -54,6 +54,8 @@ pub struct AppState {
     /// Releases per-session executor resources when a client websocket ends
     /// (`AuthManager.CloseExecutionSession`); the service wiring plugs in the executors' hook.
     pub close_execution_session: Arc<dyn Fn(&str) + Send + Sync>,
+    /// Path of the config file; the control panel asset lives next to it (`configFilePath`).
+    pub config_file_path: String,
 }
 
 impl AppState {
@@ -75,6 +77,7 @@ impl AppState {
             keep_alive: None,
             request_logger: None,
             close_execution_session: Arc::new(|_| {}),
+            config_file_path: String::new(),
         }
     }
 
