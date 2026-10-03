@@ -18,22 +18,27 @@ use cpa_runtime::service::resolve_claude_model_id_prefix;
 use crate::req::ReqInfo;
 use crate::state::AppState;
 
-/// `rewriteClaudeDDModelInBody`: decodes cloaked `claude-fable-5-dd-<reversed>` model ids.
-pub fn rewrite_claude_dd_model_in_body(raw: Bytes) -> Bytes {
+#[cfg(test)]
+fn rewrite_claude_dd_model_in_body(raw: Bytes) -> Bytes {
+    rewrite_claude_dd_model_with_root(raw).0
+}
+
+/// `rewriteClaudeDDModelInBody`: decodes cloaked `claude-fable-5-dd-<reversed>` model ids. Also
+/// returns the parsed (rewritten) body, so the handler does not parse a large request twice.
+fn rewrite_claude_dd_model_with_root(raw: Bytes) -> (Bytes, Value) {
     let mut root = cpa_json::parse(&raw);
     let model = root.g("model").str();
     let resolved = resolve_claude_model_id_prefix(&model);
     if resolved == model {
-        return raw;
+        return (raw, root);
     }
     cpa_json::set(&mut root, "model", resolved);
-    Bytes::from(cpa_json::to_vec(&root))
+    (Bytes::from(cpa_json::to_vec(&root)), root)
 }
 
 /// `POST /v1/messages`.
 pub async fn messages(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> Response {
-    let raw = rewrite_claude_dd_model_in_body(body);
-    let root = cpa_json::parse(&raw);
+    let (raw, root) = rewrite_claude_dd_model_with_root(body);
     // Streaming unless `stream` is absent or the JSON literal false.
     let stream = !matches!(root.g("stream").v(), None | Some(Value::Bool(false)));
     let model = root.g("model").str();
@@ -46,8 +51,8 @@ pub async fn messages(State(st): State<AppState>, info: ReqInfo, body: Bytes) ->
 
 /// `POST /v1/messages/count_tokens`.
 pub async fn count_tokens(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> Response {
-    let raw = rewrite_claude_dd_model_in_body(body);
-    let model = cpa_json::parse(&raw).g("model").str();
+    let (raw, root) = rewrite_claude_dd_model_with_root(body);
+    let model = root.g("model").str();
     let alt = info.alt();
     let pipeline = Pipeline::new(&st, &info);
     let passthrough = pipeline.settings.passthrough_headers;

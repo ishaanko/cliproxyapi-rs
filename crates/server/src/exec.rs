@@ -21,7 +21,7 @@ use crate::headers::filter_upstream_headers;
 use crate::req::ReqInfo;
 use crate::sse_validate::SseJsonValidator;
 use crate::state::{AppState, HandlerSettings};
-use crate::thinking::{extract_reasoning_effort, parse_suffix};
+use crate::thinking::{extract_reasoning_effort, parse_if_valid, parse_suffix};
 
 /// Result of a stream execution: filtered upstream headers plus the chunk channel. An `Err`
 /// item is terminal; a closed channel is a clean end.
@@ -238,12 +238,14 @@ impl Pipeline {
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::AUTH_SELECTION_MODEL.into(), json!(sel));
         }
-        let effort = extract_reasoning_effort(&a.body, a.handler_type.unwrap_or(a.entry.as_str()), normalized_model);
+        // One parse of the body serves the effort, service tier and generate flag.
+        let body_root = parse_if_valid(&a.body);
+        let effort = extract_reasoning_effort(body_root.as_ref(), a.handler_type.unwrap_or(a.entry.as_str()), normalized_model);
         if !effort.is_empty() {
             md.insert(meta::REASONING_EFFORT.into(), json!(effort));
         }
-        md.insert(meta::SERVICE_TIER.into(), json!(service_tier(&a.body)));
-        md.insert(meta::GENERATE.into(), json!(generate_flag(&a.body)));
+        md.insert(meta::SERVICE_TIER.into(), json!(service_tier(body_root.as_ref())));
+        md.insert(meta::GENERATE.into(), json!(generate_flag(body_root.as_ref())));
         md
     }
 
@@ -667,10 +669,9 @@ pub fn caller_scope(value: &str) -> String {
 }
 
 /// `setServiceTierMetadata`: `service_tier` (trimmed, default `auto`).
-fn service_tier(body: &[u8]) -> String {
-    if cpa_json::valid(body) {
-        let root = cpa_json::parse(body);
-        let node = cpa_json::J::g(&root, "service_tier");
+fn service_tier(root: Option<&serde_json::Value>) -> String {
+    if let Some(root) = root {
+        let node = cpa_json::J::g(root, "service_tier");
         if node.exists() {
             let value = node.str();
             let value = value.trim();
@@ -683,12 +684,11 @@ fn service_tier(body: &[u8]) -> String {
 }
 
 /// `setGenerateMetadata`: only an explicit boolean `false` disables generation.
-fn generate_flag(body: &[u8]) -> bool {
-    if !cpa_json::valid(body) {
+fn generate_flag(root: Option<&serde_json::Value>) -> bool {
+    let Some(root) = root else {
         return true;
-    }
-    let root = cpa_json::parse(body);
-    let node = cpa_json::J::g(&root, "generate");
+    };
+    let node = cpa_json::J::g(root, "generate");
     !(node.exists() && node.is_bool() && !node.bool())
 }
 
@@ -731,11 +731,13 @@ mod tests {
 
     #[test]
     fn metadata_defaults() {
-        assert_eq!(service_tier(br#"{"service_tier":" flex "}"#), "flex");
-        assert_eq!(service_tier(b"{}"), "auto");
-        assert!(generate_flag(b"{}"));
-        assert!(generate_flag(br#"{"generate":"no"}"#));
-        assert!(!generate_flag(br#"{"generate":false}"#));
+        let root = |b: &[u8]| parse_if_valid(b);
+        assert_eq!(service_tier(root(br#"{"service_tier":" flex "}"#).as_ref()), "flex");
+        assert_eq!(service_tier(root(b"{}").as_ref()), "auto");
+        assert_eq!(service_tier(root(b"{").as_ref()), "auto");
+        assert!(generate_flag(root(b"{}").as_ref()));
+        assert!(generate_flag(root(br#"{"generate":"no"}"#).as_ref()));
+        assert!(!generate_flag(root(br#"{"generate":false}"#).as_ref()));
         assert_eq!(caller_scope(" "), "");
         assert_eq!(caller_scope("k").len(), 64);
     }

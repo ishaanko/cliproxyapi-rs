@@ -16,8 +16,13 @@ path = "src/main.rs"
 [features]
 # TLS fingerprints for api.anthropic.com, chatgpt.com and the Claude OAuth plane (BoringSSL; needs
 # cmake, a C++ compiler and libclang). Disable with `--no-default-features` for plain rustls.
-default = ["tls-fingerprint"]
+default = ["tls-fingerprint", "mimalloc"]
 tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
+# Global allocator (see main.rs); `--no-default-features` builds use the system allocator.
+mimalloc = ["dep:mimalloc"]
+# In-process sampling profiler for performance work: with CPA_PPROF_SECS and CPA_PPROF_OUT set, the
+# server writes folded stacks (flamegraph input) after that many seconds. Not part of release builds.
+pprof = ["dep:pprof"]
 
 [dependencies]
 cpa-json.workspace = true
@@ -75,6 +80,9 @@ async-trait = "0.1"
 multer = "3"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 base64 = "0.22"
+
+mimalloc = { version = "0.1", optional = true }
+pprof = { version = "0.15", optional = true, default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio"] }

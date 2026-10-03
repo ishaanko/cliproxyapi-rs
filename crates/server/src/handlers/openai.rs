@@ -37,7 +37,7 @@ pub async fn chat_completions(State(st): State<AppState>, info: ReqInfo, body: B
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
-    let root = cpa_json::parse(&raw);
+    let mut root = cpa_json::parse(&raw);
     let mut stream = matches!(root.g("stream").v(), Some(Value::Bool(true)));
     if should_treat_as_responses_format(&root) {
         let model = root.g("model").str();
@@ -48,9 +48,10 @@ pub async fn chat_completions(State(st): State<AppState>, info: ReqInfo, body: B
             &raw,
             stream,
         ));
-        stream = cpa_json::parse(&raw).g("stream").bool();
+        root = cpa_json::parse(&raw);
+        stream = root.g("stream").bool();
     }
-    let model = cpa_json::parse(&raw).g("model").str();
+    let model = root.g("model").str();
     let alt = info.alt();
     if stream {
         stream_chat(&st, &info, Format::OpenAI, &model, raw, &alt, ChatHooks).await

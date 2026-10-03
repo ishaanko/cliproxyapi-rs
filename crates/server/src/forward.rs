@@ -44,6 +44,9 @@ pub trait StreamHooks: Send {
     }
 }
 
+/// Stop coalescing queued chunks into one write once this many bytes are pending.
+const BATCH_LIMIT: usize = 32 * 1024;
+
 async fn flush(tx: &mpsc::Sender<Bytes>, buf: &mut Vec<u8>) -> bool {
     if buf.is_empty() {
         return true;
@@ -64,30 +67,49 @@ pub async fn forward_stream<H: StreamHooks>(
     loop {
         tokio::select! {
             _ = tx.closed() => return None,
-            item = rx.recv() => match item {
-                Some(Ok(chunk)) => {
-                    hooks.write_chunk(&mut buf, &chunk);
-                    if !flush(&tx, &mut buf).await {
-                        return None;
+            item = rx.recv() => {
+                // Items that are already queued are written into the same flush (no added
+                // latency, fewer wakeups and write syscalls); order and terminal handling are
+                // those of one flush per item.
+                let mut item = item;
+                loop {
+                    match item {
+                        Some(Ok(chunk)) => {
+                            hooks.write_chunk(&mut buf, &chunk);
+                            if let Some(err) = hooks.chunk_error() {
+                                if !flush(&tx, &mut buf).await {
+                                    return None;
+                                }
+                                return Some(hooks.normalize_terminal_error(err));
+                            }
+                        }
+                        Some(Err(err)) => {
+                            let err = hooks.normalize_terminal_error(err);
+                            hooks.write_terminal_error(&mut buf, &err);
+                            let _ = flush(&tx, &mut buf).await;
+                            return Some(err);
+                        }
+                        None => {
+                            if let Some(err) = hooks.close_error(&mut buf) {
+                                hooks.write_terminal_error(&mut buf, &err);
+                                let _ = flush(&tx, &mut buf).await;
+                                return Some(err);
+                            }
+                            hooks.write_done(&mut buf);
+                            let _ = flush(&tx, &mut buf).await;
+                            return None;
+                        }
                     }
-                    if let Some(err) = hooks.chunk_error() {
-                        return Some(hooks.normalize_terminal_error(err));
+                    if buf.len() >= BATCH_LIMIT {
+                        break;
                     }
+                    item = match rx.try_recv() {
+                        Ok(next) => Some(next),
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                        Err(mpsc::error::TryRecvError::Disconnected) => None,
+                    };
                 }
-                Some(Err(err)) => {
-                    let err = hooks.normalize_terminal_error(err);
-                    hooks.write_terminal_error(&mut buf, &err);
-                    let _ = flush(&tx, &mut buf).await;
-                    return Some(err);
-                }
-                None => {
-                    if let Some(err) = hooks.close_error(&mut buf) {
-                        hooks.write_terminal_error(&mut buf, &err);
-                        let _ = flush(&tx, &mut buf).await;
-                        return Some(err);
-                    }
-                    hooks.write_done(&mut buf);
-                    let _ = flush(&tx, &mut buf).await;
+                if !flush(&tx, &mut buf).await {
                     return None;
                 }
             },
