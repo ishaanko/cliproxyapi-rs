@@ -1,0 +1,23 @@
+[package]
+name = "cpa-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Terminal management UI (Go: internal/tui, bubbletea/lipgloss). A pure management-API client;
+# `cliproxy --tui` attaches it to a remote server, `--standalone` to an in-process one.
+[lib]
+name = "cpa_tui"
+
+[dependencies]
+serde_json.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true
+ratatui = "0.30"
+unicode-width = "0.2"
+arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { workspace = true, features = ["test-util"] }
