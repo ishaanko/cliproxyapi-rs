@@ -276,4 +276,46 @@ mod tests {
         assert_eq!(out["last_id"], "claude-z");
         assert_eq!(out["has_more"], false);
     }
+
+    #[test]
+    fn claude_list_edge_cases_from_go_tests() {
+        let model = |id: &str, name: &str| {
+            let mut m = Map::new();
+            m.insert("id".into(), json!(id));
+            m.insert("display_name".into(), json!(name));
+            m
+        };
+        // Cloaking disabled keeps ids; the extra fields of an entry survive the rewrite.
+        let out = build_claude_models_response(vec![model("gpt-4o", "GPT-4o")], true);
+        assert_eq!(out["data"][0]["id"], "gpt-4o");
+        assert_eq!((&out["first_id"], &out["last_id"]), (&json!("gpt-4o"), &json!("gpt-4o")));
+        let mut with_tokens = model("claude-z", "Zebra");
+        with_tokens.insert("max_tokens".into(), json!(64000));
+        assert_eq!(build_claude_models_response(vec![with_tokens], false)["data"][0]["max_tokens"], 64000);
+        // Empty input yields empty ids.
+        let out = build_claude_models_response(Vec::new(), false);
+        assert_eq!(out["data"], json!([]));
+        assert_eq!((&out["first_id"], &out["last_id"]), (&json!(""), &json!("")));
+    }
+
+    #[test]
+    fn claude_id_prefix_cases_from_go_tests() {
+        for (id, want) in [
+            ("my-claude-custom", "claude-fable-5-dd-motsuc-edualc-ym"),
+            ("gemini-2.5-pro", "claude-fable-5-dd-orp-5.2-inimeg"),
+        ] {
+            assert_eq!(ensure_claude_model_id_prefix(id), want);
+        }
+        for (id, want) in [
+            ("", ""),
+            ("claude-sonnet-4-6", "claude-sonnet-4-6"),
+            ("gpt-4o", "gpt-4o"),
+            ("claude-fable-5-dd-o4-tpg", "gpt-4o"),
+            ("claude-fable-5-dd-orp-5.2-inimeg", "gemini-2.5-pro"),
+        ] {
+            assert_eq!(resolve_claude_model_id_prefix(id), want, "{id}");
+        }
+        let round_trip = ensure_claude_model_id_prefix("custom-model-x");
+        assert_eq!(resolve_claude_model_id_prefix(&round_trip), "custom-model-x");
+    }
 }
