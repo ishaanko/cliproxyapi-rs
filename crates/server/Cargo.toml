@@ -23,6 +23,8 @@ cpa-translator = { path = "../translator" }
 cpa-management = { path = "../management" }
 cpa-tui = { path = "../tui" }
 cpa-executors = { path = "../executors" }
+cpa-plugin = { path = "../plugin" }
+cpa-pluginapi = { path = "../pluginapi" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

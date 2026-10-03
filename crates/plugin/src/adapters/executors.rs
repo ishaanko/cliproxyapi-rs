@@ -28,7 +28,7 @@ use super::models::{ModelClientRegistration, ModelRegistration, normalize_execut
 use crate::bridge::StreamItem;
 use crate::caps::Record;
 use crate::convert::{
-    headers_from_go, headers_to_go, host_config_summary, preserve_file_auth_priority, query_to_go, sorted_map,
+    headers_from_go, headers_to_go, host_config_summary, plugin_visible_metadata, preserve_file_auth_priority, query_to_go,
     storage_json_from_auth,
 };
 use crate::ctx::CallCtx;
@@ -435,7 +435,7 @@ impl ExecutorAdapter {
             original_request: opts.original_request.to_vec(),
             source_format: opts.source_format.as_str().to_string(),
             payload: req.payload.to_vec(),
-            metadata: sorted_map(&merged),
+            metadata: plugin_visible_metadata(&merged),
             storage_json: storage_json_from_auth(auth),
             auth_metadata: auth.map(|a| a.metadata.clone()).unwrap_or_default(),
             auth_attributes: auth.map(|a| a.attributes.clone()).unwrap_or_default(),

@@ -70,6 +70,18 @@ pub struct ExecArgs<'a> {
     pub required_upstream_websocket: bool,
     /// Called with the auth id of every credential pick (Go: `WithSelectedAuthIDCallback`).
     pub on_selected_auth: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    /// Plugin whose interceptors and routers are skipped: the caller of a nested host model
+    /// execution (Go: `SkipInterceptorPluginID` / `SkipRouterPluginID`).
+    pub skip_plugin_id: Option<&'a str>,
+    /// Outbound proxy override for this execution only (Go: `ProxyURL`).
+    pub proxy_url: Option<&'a str>,
+    /// Request path override reported to executors and plugins (Go: `Path`).
+    pub request_path: Option<&'a str>,
+    /// The call is a plugin host model callback (Go: `InternalSource`).
+    pub internal_source: bool,
+    /// Explicit request headers / query instead of the inbound ones (Go: `modelExecutionHeaders`).
+    pub headers: Option<HeaderMap>,
+    pub query: Option<Vec<(String, String)>>,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -88,6 +100,12 @@ impl<'a> ExecArgs<'a> {
             downstream_websocket: false,
             required_upstream_websocket: false,
             on_selected_auth: None,
+            skip_plugin_id: None,
+            proxy_url: None,
+            request_path: None,
+            internal_source: false,
+            headers: None,
+            query: None,
         }
     }
 }
@@ -180,7 +198,13 @@ impl Pipeline {
         if a.required_upstream_websocket {
             md.insert(cpa_executors::codex::META_REQUIRED_UPSTREAM_WEBSOCKET.into(), json!(true));
         }
+        if let Some(path) = a.request_path.map(str::trim).filter(|p| !p.is_empty()) {
+            md.insert(meta::REQUEST_PATH.into(), json!(path));
+        }
         md.insert(meta::REQUESTED_MODEL.into(), json!(a.model));
+        if a.internal_source {
+            md.insert("source".into(), json!("plugin_host_model_callback"));
+        }
         if let Some(sel) = a.auth_selection_model.map(str::trim).filter(|s| !s.is_empty()) {
             md.insert(meta::AUTH_SELECTION_MODEL.into(), json!(sel));
         }
@@ -193,7 +217,7 @@ impl Pipeline {
         md
     }
 
-    fn build_request(&self, a: &ExecArgs<'_>, normalized_model: &str, stream: bool, count: bool) -> (Request, Options) {
+    pub(crate) fn build_request(&self, a: &ExecArgs<'_>, normalized_model: &str, stream: bool, count: bool) -> (Request, Options) {
         let metadata = self.build_metadata(a, normalized_model);
         let req = Request {
             model: normalized_model.to_string(),
@@ -204,8 +228,17 @@ impl Pipeline {
         let mut opts = Options::new(a.entry);
         opts.stream = stream;
         opts.alt = a.alt.to_string();
-        opts.headers = self.info.headers.clone();
-        opts.query = self.info.query.clone();
+        opts.headers = match &a.headers {
+            Some(h) if !h.is_empty() => h.clone(),
+            _ => self.info.headers.clone(),
+        };
+        opts.query = match &a.query {
+            Some(q) if !q.is_empty() => q.clone(),
+            _ => self.info.query.clone(),
+        };
+        if let Some(p) = a.proxy_url.map(str::trim).filter(|p| !p.is_empty()) {
+            opts.proxy_url = p.to_string();
+        }
         opts.original_request = a.body.clone();
         if !count {
             opts.response_format = Some(a.exit.unwrap_or(a.entry));
@@ -223,7 +256,7 @@ impl Pipeline {
         (req, opts)
     }
 
-    fn providers(&self, a: &ExecArgs<'_>) -> Result<(Vec<String>, String), ErrorMessage> {
+    pub(crate) fn providers(&self, a: &ExecArgs<'_>) -> Result<(Vec<String>, String), ErrorMessage> {
         let (providers, normalized) = self.providers_for_execution(a.model, a.allow_image_model, a.forced_provider)?;
         Ok((adjust_providers_for_entry(a.entry, providers), normalized))
     }
@@ -232,6 +265,9 @@ impl Pipeline {
 
     /// `ExecuteWithAuthManager`: non-streaming execution.
     pub async fn execute(&self, a: ExecArgs<'_>) -> Result<ExecOk, ErrorMessage> {
+        if let Some(pcx) = self.plugin_cx(&a) {
+            return self.execute_plugins(&pcx, a, false).await;
+        }
         let (providers, normalized) = self.providers(&a)?;
         let (req, opts) = self.build_request(&a, &normalized, false, false);
         let resp = self
@@ -245,6 +281,9 @@ impl Pipeline {
 
     /// `ExecuteCountWithAuthManager`.
     pub async fn execute_count(&self, a: ExecArgs<'_>) -> Result<ExecOk, ErrorMessage> {
+        if let Some(pcx) = self.plugin_cx(&a) {
+            return self.execute_plugins(&pcx, a, true).await;
+        }
         let (providers, normalized) = self.providers(&a)?;
         let (req, opts) = self.build_request(&a, &normalized, false, true);
         let resp = self
@@ -268,6 +307,9 @@ impl Pipeline {
     /// `ExecuteStreamWithAuthManager`: streaming execution with the bootstrap read (retries
     /// before the first deliverable payload when `streaming.bootstrap-retries` allows).
     pub async fn execute_stream(&self, a: ExecArgs<'_>) -> ExecStream {
+        if let Some(pcx) = self.plugin_cx(&a) {
+            return self.execute_stream_plugins(&pcx, a).await;
+        }
         let (providers, normalized) = match self.providers(&a) {
             Ok(v) => v,
             Err(e) => return ExecStream::failed(e),
@@ -353,11 +395,11 @@ impl Pipeline {
 }
 
 /// `bootstrapEligible`.
-fn bootstrap_eligible(status: u16) -> bool {
+pub(crate) fn bootstrap_eligible(status: u16) -> bool {
     status == 0 || matches!(status, 401 | 402 | 403 | 408 | 429) || status >= 500
 }
 
-enum Initial {
+pub(crate) enum Initial {
     Payload(Bytes),
     /// Upstream closed without a deliverable payload.
     Closed,
@@ -388,7 +430,7 @@ async fn read_initial(stream: &mut StreamResult, validator: &mut Option<SseJsonV
 }
 
 /// Runs a payload through the Responses SSE validator; `Ok(None)` when it is still incomplete.
-fn validate_payload(validator: &mut Option<SseJsonValidator>, chunk: Bytes) -> Result<Option<Bytes>, ErrorMessage> {
+pub(crate) fn validate_payload(validator: &mut Option<SseJsonValidator>, chunk: Bytes) -> Result<Option<Bytes>, ErrorMessage> {
     let Some(v) = validator else {
         return Ok(Some(chunk));
     };
@@ -507,7 +549,7 @@ fn is_openai_image_only_model(model: &str) -> bool {
 }
 
 /// `validateImageOnlyModel`.
-fn validate_image_only_model(model: &str, allow_image: bool) -> Result<(), ErrorMessage> {
+pub(crate) fn validate_image_only_model(model: &str, allow_image: bool) -> Result<(), ErrorMessage> {
     let suffix = parse_suffix(model);
     let base = suffix.model_name.trim();
     let base = if base.is_empty() { model.trim() } else { base };

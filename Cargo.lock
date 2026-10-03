@@ -971,6 +971,8 @@ dependencies = [
  "cpa-executors",
  "cpa-json",
  "cpa-management",
+ "cpa-plugin",
+ "cpa-pluginapi",
  "cpa-runtime",
  "cpa-translator",
  "cpa-tui",

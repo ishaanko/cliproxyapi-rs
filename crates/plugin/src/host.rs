@@ -262,6 +262,13 @@ impl Host {
         self.active_records_from(&snap)
     }
 
+    /// True when at least one plugin is loaded and current; the server only enters its plugin
+    /// pipeline then.
+    pub fn has_active_plugins(&self) -> bool {
+        let snap = self.snapshot();
+        snap.records.iter().any(|r| self.record_current(r))
+    }
+
     pub fn active_records_from(&self, snap: &Snapshot) -> Vec<Arc<Record>> {
         snap.records.iter().filter(|r| self.record_current(r)).cloned().collect()
     }

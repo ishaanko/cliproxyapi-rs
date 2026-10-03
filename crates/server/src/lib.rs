@@ -26,6 +26,8 @@ pub mod headers;
 pub mod logging;
 pub mod middleware;
 pub mod models;
+mod plugin_exec;
+mod plugin_flow;
 pub mod reply;
 pub mod req;
 pub mod reqlog;

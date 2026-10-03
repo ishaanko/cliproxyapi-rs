@@ -96,14 +96,6 @@ impl Host {
         out
     }
 
-    /// `*.identifier` of one capability, asked of the plugin (Go: `callPluginIdentifier`).
-    pub(crate) fn identifier_of(&self, rec: &Record, method: &'static str) -> String {
-        if self.is_plugin_fused(&rec.id) {
-            return String::new();
-        }
-        rec.identifier(method)
-    }
-
     pub(crate) fn auth_identifier(&self, rec: &Record) -> Option<String> {
         if !rec.caps().auth_provider || self.is_plugin_fused(&rec.id) {
             return None;

@@ -129,7 +129,18 @@ pub(crate) fn scheduler_options(opts: &Options) -> SchedulerOptions {
             .or_default()
             .push(String::from_utf8_lossy(value.as_bytes()).into_owned());
     }
-    let mut keys: Vec<&String> = opts.metadata.keys().collect();
+    // Host-only request facts (client ip, api key, ...) never reach plugins.
+    const HOST_ONLY: [&str; 8] = [
+        "client_ip",
+        "resolved_client_ip",
+        "x_forwarded_for",
+        "user_agent",
+        "request_id",
+        "trace_id",
+        "client_api_key",
+        "cpa.session_affinity_ids",
+    ];
+    let mut keys: Vec<&String> = opts.metadata.keys().filter(|k| !HOST_ONLY.contains(&k.as_str())).collect();
     keys.sort();
     let mut metadata = serde_json::Map::new();
     for k in keys {

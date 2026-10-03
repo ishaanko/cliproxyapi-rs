@@ -101,9 +101,24 @@ pub fn query_from_go(q: &BTreeMap<String, Vec<String>>) -> Vec<(String, String)>
     q.iter().flat_map(|(k, vs)| vs.iter().map(move |v| (k.clone(), v.clone()))).collect()
 }
 
-/// A JSON object with keys in sorted order (Go marshals maps sorted).
-pub fn sorted_map(src: &HashMap<String, Value>) -> Map<String, Value> {
-    let mut keys: Vec<&String> = src.keys().collect();
+/// Metadata keys only this port stores in execution metadata (request facts for usage records
+/// and selector bookkeeping); plugins never saw them in the Go host, and the client API key
+/// must not reach plugins.
+const HOST_ONLY_METADATA_KEYS: [&str; 8] = [
+    "client_ip",
+    "resolved_client_ip",
+    "x_forwarded_for",
+    "user_agent",
+    "request_id",
+    "trace_id",
+    "client_api_key",
+    "cpa.session_affinity_ids",
+];
+
+/// Execution metadata as plugins see it: a JSON object with sorted keys (Go marshals maps
+/// sorted), minus the host-only facts.
+pub fn plugin_visible_metadata(src: &HashMap<String, Value>) -> Map<String, Value> {
+    let mut keys: Vec<&String> = src.keys().filter(|k| !HOST_ONLY_METADATA_KEYS.contains(&k.as_str())).collect();
     keys.sort();
     let mut out = Map::new();
     for k in keys {
