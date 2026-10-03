@@ -75,6 +75,10 @@ pub async fn forward_stream<H: StreamHooks>(
                 loop {
                     match item {
                         Some(Ok(chunk)) => {
+                            if buf.is_empty() {
+                                // One allocation per flush instead of doubling from zero.
+                                buf.reserve(chunk.len() + 32);
+                            }
                             hooks.write_chunk(&mut buf, &chunk);
                             if let Some(err) = hooks.chunk_error() {
                                 if !flush(&tx, &mut buf).await {

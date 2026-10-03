@@ -631,23 +631,23 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         .unwrap_or("")
         .to_string();
 
+    let info_headers = req.headers().clone();
+    let method = req.method().to_string();
     let (parts, body) = req.into_parts();
-    let (req, logged_body) = if capture_body {
+    // The captured request body stays raw (a refcount) until a log is actually written.
+    let (req, raw_body) = if capture_body {
         match axum::body::to_bytes(body, usize::MAX).await {
-            Ok(bytes) => {
-                let logged = decode_body_for_log(&bytes, &encoding);
-                (Request::from_parts(parts.clone(), Body::from(bytes)), logged)
-            }
+            Ok(bytes) => (Request::from_parts(parts, Body::from(bytes.clone())), bytes),
             Err(_) => return next.run(Request::from_parts(parts, Body::empty())).await,
         }
     } else {
-        (Request::from_parts(parts.clone(), body), Vec::new())
+        (Request::from_parts(parts, body), bytes::Bytes::new())
     };
-    let info = RequestInfo {
+    let mut info = RequestInfo {
         url,
-        method: parts.method.to_string(),
-        headers: parts.headers.clone(),
-        body: logged_body,
+        method,
+        headers: info_headers,
+        body: Vec::new(),
         request_id,
         timestamp: Local::now(),
     };
@@ -665,7 +665,7 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
     let streaming = if ct.contains("text/event-stream") {
         true
     } else if ct.trim().is_empty() {
-        let b = &info.body;
+        let b = decode_body_for_log(&raw_body, &encoding);
         let has = |needle: &[u8]| b.windows(needle.len()).any(|w| w == needle);
         !b.is_empty() && (has(br#""stream": true"#) || has(br#""stream":true"#))
     } else {
@@ -700,6 +700,12 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         let captured = captured.clone();
         let logger = logger.clone();
         Box::new(move || {
+            // Without request logging only actionable errors are written; skip the task spawns
+            // (and the body decode) for every other request.
+            if !enabled && !ws_upgrade && !api_log.has_actionable_error(status) {
+                return;
+            }
+            info.body = decode_body_for_log(&raw_body, &encoding);
             let (response_body, first_chunk) = {
                 let mut c = captured.lock();
                 (std::mem::take(&mut c.body), c.first_chunk)
