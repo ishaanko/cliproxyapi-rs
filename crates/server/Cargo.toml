@@ -16,8 +16,19 @@ path = "src/main.rs"
 [features]
 # TLS fingerprints for api.anthropic.com, chatgpt.com and the Claude OAuth plane (BoringSSL; needs
 # cmake, a C++ compiler and libclang). Disable with `--no-default-features` for plain rustls.
-default = ["tls-fingerprint"]
+default = ["tls-fingerprint", "mimalloc"]
 tls-fingerprint = ["cpa-auth/tls-fingerprint", "cpa-executors/tls-fingerprint"]
+# Global allocator (see main.rs); `--no-default-features` builds use the system allocator.
+mimalloc = ["dep:mimalloc"]
+# Counting global allocator + stats socket for cpa-bench (allocations per request); wraps the
+# allocator chosen above. Off by default.
+alloc-stats = ["dep:cpa-allocstats"]
+# In-process sampling profiler for performance work: with CPA_PPROF_SECS and CPA_PPROF_OUT set, the
+# server writes folded stacks (flamegraph input) after that many seconds. Not part of release builds.
+pprof = ["dep:pprof"]
+# Flushes LLVM profile counters periodically so tools/pgo.sh can train on a server that the bench
+# harness ends with SIGKILL. Only meaningful in `-Cprofile-generate` builds.
+pgo-dump = []
 
 [dependencies]
 cpa-json.workspace = true
@@ -37,6 +48,7 @@ cpa-executors = { path = "../executors", default-features = false }
 cpa-plugin = { path = "../plugin" }
 cpa-pluginapi = { path = "../pluginapi" }
 cpa-pluginstore = { path = "../pluginstore" }
+cpa-allocstats = { path = "../allocstats", optional = true }
 serde_yaml_ng = "0.10"
 cpa-live = { path = "../live" }
 serde.workspace = true
@@ -75,6 +87,10 @@ async-trait = "0.1"
 multer = "3"
 reqwest = { version = "0.12", default-features = false, features = ["stream"] }
 base64 = "0.22"
+memchr = "2"
+
+mimalloc = { version = "0.1", optional = true }
+pprof = { version = "0.15", optional = true, default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio"] }

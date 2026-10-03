@@ -17,6 +17,7 @@
 pub mod access;
 pub mod aistudio;
 pub mod body;
+pub mod bodyview;
 pub mod bodytee;
 pub mod cli;
 pub mod clientip;

@@ -31,13 +31,22 @@ fn should_treat_as_responses_format(root: &Value) -> bool {
     root.g("input").exists() || root.g("instructions").exists()
 }
 
+/// The top-level members the chat handler reads (`model`, `stream`, and whether the Responses-style
+/// members exist), without building the tree of a large conversation.
+fn request_fields(raw: &[u8]) -> Value {
+    use crate::bodyview::{Want, mini_root};
+    const KEYS: &[(&str, Want)] =
+        &[("model", Want::Value), ("stream", Want::Value), ("messages", Want::Exists), ("input", Want::Exists), ("instructions", Want::Exists)];
+    mini_root(raw, KEYS).unwrap_or_else(|| cpa_json::parse(raw))
+}
+
 /// `POST /v1/chat/completions`.
 pub async fn chat_completions(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> Response {
     let mut raw = match read_request_body(&info, body) {
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
-    let root = cpa_json::parse(&raw);
+    let mut root = request_fields(&raw);
     let mut stream = matches!(root.g("stream").v(), Some(Value::Bool(true)));
     if should_treat_as_responses_format(&root) {
         let model = root.g("model").str();
@@ -48,9 +57,10 @@ pub async fn chat_completions(State(st): State<AppState>, info: ReqInfo, body: B
             &raw,
             stream,
         ));
-        stream = cpa_json::parse(&raw).g("stream").bool();
+        root = request_fields(&raw);
+        stream = root.g("stream").bool();
     }
-    let model = cpa_json::parse(&raw).g("model").str();
+    let model = root.g("model").str();
     let alt = info.alt();
     if stream {
         stream_chat(&st, &info, Format::OpenAI, &model, raw, &alt, ChatHooks).await

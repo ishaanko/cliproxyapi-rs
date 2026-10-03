@@ -194,8 +194,8 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
     let raw_query = mask_sensitive_query(req.uri().query().unwrap_or(""));
     let method = req.method().clone();
     let remote = req.extensions().get::<ConnectInfo<SocketAddr>>().map(|c| c.0.ip());
-    let trusted = st.cfg().trusted_proxies.clone();
-    let client_ip = clientip::resolve(remote, req.headers(), &trusted);
+    let cfg = st.cfg();
+    let client_ip = clientip::resolve(remote, req.headers(), &cfg.trusted_proxies);
 
     let request_id = if is_ai_api_path(&path) {
         logging::generate_request_id()
@@ -206,7 +206,8 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
         req.extensions_mut().insert(RequestId(request_id.clone()));
     }
     let api_log = ApiLogHandle::default();
-    api_log.0.set_error_logging(st.cfg().request_log);
+    api_log.0.set_error_logging(cfg.request_log);
+    drop(cfg);
     req.extensions_mut().insert(api_log);
 
     let scope_id = request_id.clone();
