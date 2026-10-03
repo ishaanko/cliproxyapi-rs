@@ -11,6 +11,10 @@ use cpa_json::{J, Kind, Res, Value};
 
 use crate::common;
 
+mod fast;
+#[cfg(test)]
+mod fast_tests;
+
 /// Transforms an OpenAI Chat Completions request into a Claude Code API request.
 pub fn convert_openai_request_to_claude(model_name: &str, raw: &[u8], stream: bool) -> Vec<u8> {
     convert(model_name, raw, stream, false)
@@ -92,6 +96,16 @@ pub(crate) fn apply_reasoning_effort(out: &mut Value, model_name: &str, effort_r
 }
 
 fn convert(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
+    if !preserve_empty_thinking_blocks
+        && let Some(out) = fast::convert(model_name, raw, stream)
+    {
+        return out;
+    }
+    convert_general(model_name, raw, stream, preserve_empty_thinking_blocks)
+}
+
+/// The general conversion through `Value`s; the reference for every body the fast path declines.
+fn convert_general(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_blocks: bool) -> Vec<u8> {
     let user_id = common::derive_claude_user_id(raw);
 
     // Base template with the default max_tokens.
@@ -429,7 +443,7 @@ fn convert(model_name: &str, raw: &[u8], stream: bool, preserve_empty_thinking_b
         }
     }
 
-    thinking::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), raw, "openai", model_name)
+    crate::common::apply_translated_summary_to_claude(&cpa_json::to_vec(&out), raw, "openai", model_name)
 }
 
 /// Converts an OpenAI content part to a Claude block without cache_control; `None` when the part
