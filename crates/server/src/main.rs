@@ -50,18 +50,44 @@ async fn run() -> i32 {
     }
     let log = logging::init();
 
-    let cli = match cli::parse(&args) {
+    // Plugins are loaded from the config on disk first so the flags they declare parse like
+    // built-in ones (Go: `pluginHost.ApplyConfig` + `RegisterCommandLineFlags` before `flag.Parse`).
+    let plugin_host = cpa_plugin::Host::new();
+    let mut plugin_flags: Vec<cli::PluginFlag> = Vec::new();
+    if !json_discover && !args.iter().any(|a| matches!(a.trim_start_matches('-'), "discover" | "discover-json")) {
+        let bootstrap = load_plugin_bootstrap_config(&plugin_bootstrap_config_path(&args));
+        plugin_host.apply_config(&cpa_plugin::CallCtx::background(), Some(Arc::new(bootstrap))).await;
+        let declared = plugin_host.register_command_line_flags(&cpa_plugin::CallCtx::background(), &cli::builtin_flag_names()).await;
+        plugin_flags = declared
+            .into_iter()
+            .map(|d| cli::PluginFlag {
+                is_bool: d.kind == "bool",
+                default: plugin_host.command_line_flag_default(&d.name),
+                name: d.name,
+                usage: d.usage,
+            })
+            .collect();
+    }
+
+    let cli = match cli::parse_with(&args, &plugin_flags) {
         ParseOutcome::Run(c) => *c,
         ParseOutcome::Help => {
-            eprint!("{}", cli::usage(&program));
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
             return 0;
         }
         ParseOutcome::Error(msg) => {
             eprintln!("{msg}");
-            eprint!("{}", cli::usage(&program));
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
             return 2;
         }
     };
+    for (name, value) in &cli.plugin_flags {
+        if let Err(e) = plugin_host.set_command_line_flag(name, value) {
+            eprintln!("invalid value {value:?} for flag -{name}: {e}");
+            eprint!("{}", cli::usage_with(&program, &plugin_flags));
+            return 2;
+        }
+    }
     if let Some(flag) = cli.unsupported.first() {
         eprintln!("flag -{flag} is not supported by this build");
         return 2;
@@ -129,6 +155,18 @@ async fn run() -> i32 {
         return 0;
     }
 
+    plugin_host.apply_config(&cpa_plugin::CallCtx::background(), Some(Arc::new(cfg.clone()))).await;
+    if plugin_host.has_triggered_command_line_flags() {
+        let builtin = cli.builtin_flag_values();
+        let (code, handled) = plugin_host
+            .execute_command_line(&cpa_plugin::CallCtx::background(), &program, &args, &config_path.to_string_lossy(), &builtin)
+            .await;
+        if handled {
+            plugin_host.shutdown_all(&cpa_plugin::CallCtx::background()).await;
+            return code;
+        }
+    }
+
     if let Some(command) = cli.command() {
         return match command {
             Command::VertexImport => {
@@ -144,7 +182,7 @@ async fn run() -> i32 {
     }
     if cli.tui {
         return if cli.standalone {
-            run_standalone_tui(cfg, config_path, &cli, build, log).await
+            run_standalone_tui(cfg, config_path, &cli, build, log, plugin_host).await
         } else {
             // Pure management client: the proxy server must already be running.
             let base_url = resolve_management_base_url(&cli.management_base_url, &cfg);
@@ -159,7 +197,7 @@ async fn run() -> i32 {
         keep_alive: !cli.password.is_empty(),
         handle_signals: true,
     };
-    serve_proxy(cfg, config_path, build, log, local, None).await
+    serve_proxy(cfg, config_path, build, log, local, None, plugin_host).await
 }
 
 /// `resolveManagementBaseURL`: flag, then `remote-management.base-url`, then localhost.
@@ -184,6 +222,7 @@ async fn run_standalone_tui(
     cli: &cli::Cli,
     build: BuildInfo,
     log: Arc<LogControl>,
+    plugin_host: Arc<cpa_plugin::Host>,
 ) -> i32 {
     let hook = cpa_tui::LogHook::new(2000);
     let tap_hook = hook.clone();
@@ -212,7 +251,7 @@ async fn run_standalone_tui(
     // cancel); the TUI handles them and then stops the server.
     let local = LocalManagement { password: password.clone(), keep_alive: false, handle_signals: false };
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
-    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx)));
+    let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx), plugin_host));
 
     let client = cpa_tui::Client::new(port, &password);
     let mut ready = false;
@@ -320,8 +359,8 @@ async fn serve_proxy(
     log: Arc<LogControl>,
     local: LocalManagement,
     stop: Option<tokio::sync::oneshot::Receiver<()>>,
+    plugin_host: Arc<cpa_plugin::Host>,
 ) -> i32 {
-    let plugin_host = cpa_plugin::Host::new();
     let safe_mode = safemode::has_example_api_keys(&cfg.api_keys);
     if safe_mode {
         tracing::error!(
@@ -490,6 +529,51 @@ async fn serve_proxy(
     plugin_host.set_model_executor(None);
     plugin_host.shutdown_runtime(&service.manager(), service.registry()).await;
     0
+}
+
+/// Go `pluginBootstrapConfigPath`: the config file named by `-config` (else the default).
+fn plugin_bootstrap_config_path(args: &[String]) -> std::path::PathBuf {
+    let default = || std::env::current_dir().map(|d| d.join("config.yaml")).unwrap_or_else(|_| "config.yaml".into());
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            "--" => return default(),
+            "-config" | "--config" => return args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(default),
+            _ => {}
+        }
+        if let Some(v) = arg.strip_prefix("-config=").or_else(|| arg.strip_prefix("--config=")) {
+            return v.into();
+        }
+        i += 1;
+    }
+    default()
+}
+
+/// Go `loadPluginBootstrapConfig`: the config file, or an empty config when it is missing or
+/// invalid.
+fn load_plugin_bootstrap_config(path: &std::path::Path) -> Config {
+    let empty = || {
+        let mut cfg = Config::default();
+        cfg.normalize_plugins_config();
+        cfg
+    };
+    match std::fs::read(path) {
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!("failed to read plugin bootstrap config: {e}");
+            }
+            empty()
+        }
+        Ok(raw) if raw.iter().all(u8::is_ascii_whitespace) => empty(),
+        Ok(raw) => match cpa_config::parse_config_bytes(&raw) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                tracing::warn!("failed to parse plugin bootstrap config: {e}");
+                empty()
+            }
+        },
+    }
 }
 
 /// Go `RefreshPluginManagementRoutes`: plugin routes may not shadow built-in management routes.
