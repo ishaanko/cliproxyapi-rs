@@ -11,7 +11,8 @@ for p in glob.glob('crates/*/Cargo.toml'):
     out, seen, section = [], set(), None
     for l in lines:
         if l.startswith('['):
-            section = l
+            # Each [[array]] table entry is its own section; only [table] headers repeat by name.
+            section = (l, len(out)) if l.startswith('[[') else l
             out.append(l)
             continue
         key = l.split('=')[0].strip().split('.')[0] if '=' in l and not l.lstrip().startswith('#') else None
