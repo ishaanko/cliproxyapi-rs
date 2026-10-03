@@ -594,8 +594,9 @@ async fn find_install_target(
     sources: &[Source],
     id: &str,
     requested_source: &str,
-) -> Result<(Source, Plugin, Client), Response> {
-    let fail = |e: ApiError| -> Response { axum::response::IntoResponse::into_response(e) };
+) -> Result<(Source, Plugin, Client), Box<Response>> {
+    let fail = |e: ApiError| -> Box<Response> { Box::new(axum::response::IntoResponse::into_response(e)) };
+    let rate_limited = |e: &StoreError| rate_limit_response(e).map(Box::new);
     let requested_source = requested_source.trim();
     if !requested_source.is_empty() {
         let Some(source) = sources.iter().find(|s| s.id == requested_source) else {
@@ -605,7 +606,7 @@ async fn find_install_target(
         let registry = match client.fetch_registry(ctx).await {
             Ok(r) => r,
             Err(e) => {
-                return Err(rate_limit_response(&e).unwrap_or_else(|| fail(ApiError::with_message(502, "plugin_store_registry_failed", e.to_string()))));
+                return Err(rate_limited(&e).unwrap_or_else(|| fail(ApiError::with_message(502, "plugin_store_registry_failed", e.to_string()))));
             }
         };
         return match registry.plugin_by_id(id) {
@@ -619,7 +620,7 @@ async fn find_install_target(
         if plugins.is_empty()
             && let Some(first) = errors.first()
         {
-            return Err(rate_limit_response(&first.error).unwrap_or_else(|| fail(ApiError::with_message(502, "plugin_store_registry_failed", first.message.clone()))));
+            return Err(rate_limited(&first.error).unwrap_or_else(|| fail(ApiError::with_message(502, "plugin_store_registry_failed", first.message.clone()))));
         }
         return Err(fail(ApiError::with_message(404, "plugin_not_found", "plugin not found in registry")));
     }
@@ -800,7 +801,7 @@ pub(crate) async fn install(st: &ManagementState, id: &str, uri: &Uri, body: &[u
         let sources = sources_of(&snap)?;
         let (source, plugin, client) = match find_install_target(&ctx, &snap, &sources, &id, &requested_source).await {
             Ok(t) => t,
-            Err(resp) => return Ok(resp),
+            Err(resp) => return Ok(*resp),
         };
         validate_install_source(&snap.configs, &sources, &id, &source.id)?;
         let host = snap.host.clone();

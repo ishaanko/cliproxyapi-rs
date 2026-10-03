@@ -265,3 +265,119 @@ pub fn clean_path(path: &Path) -> PathBuf {
     }
     if out.as_os_str().is_empty() { PathBuf::from(".") } else { out }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn ext() -> &'static str {
+        plugin_extension(current_goos())
+    }
+
+    fn platform_dir(root: &Path) -> PathBuf {
+        let dir = root.join(current_goos()).join(current_goarch());
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &Path) {
+        fs::write(path, b"x").unwrap();
+    }
+
+    fn pf(id: &str, path: PathBuf, version: &str) -> PluginFile {
+        PluginFile { id: id.into(), path, version: version.into() }
+    }
+
+    #[test]
+    fn candidate_dirs_prefer_the_platform_directory() {
+        assert_eq!(
+            candidate_dirs(Path::new("plugins")),
+            vec![Path::new("plugins").join(current_goos()).join(current_goarch()), PathBuf::from("plugins")]
+        );
+    }
+
+    #[test]
+    fn extension_per_platform() {
+        for (goos, want) in [("linux", ".so"), ("freebsd", ".so"), ("darwin", ".dylib"), ("windows", ".dll")] {
+            assert_eq!(plugin_extension(goos), want);
+        }
+    }
+
+    #[test]
+    fn plugin_id_from_library_path() {
+        for (path, want) in [
+            ("plugins/example.so", "example"),
+            ("plugins/example.dylib", "example"),
+            ("plugins/example.dll", "example"),
+            ("plugins/example.custom", "example.custom"),
+        ] {
+            assert_eq!(plugin_id_from_path(Path::new(path)), want, "{path}");
+        }
+    }
+
+    #[test]
+    fn selection_filters_invalid_ids_and_deduplicates_by_id() {
+        let root = tempfile::tempdir().unwrap();
+        let arch = platform_dir(root.path());
+        let e = ext();
+        for path in [
+            root.path().join(format!("sample{e}")),
+            arch.join(format!("sample{e}")),
+            arch.join(format!("bad name{e}")),
+            arch.join(format!("-bad{e}")),
+            arch.join(format!("another{}", e.to_uppercase())),
+            arch.join("ignored.txt"),
+        ] {
+            touch(&path);
+        }
+        fs::create_dir(arch.join(format!("dir{e}"))).unwrap();
+
+        let (files, _) = select_plugin_files(&root.path().to_string_lossy(), &Default::default()).unwrap();
+        assert_eq!(files, vec![pf("another", arch.join(format!("another{}", e.to_uppercase())), ""), pf("sample", arch.join(format!("sample{e}")), "")]);
+    }
+
+    #[test]
+    fn platform_directory_wins_over_the_root_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let arch = platform_dir(root.path());
+        let e = ext();
+        touch(&root.path().join(format!("alpha{e}")));
+        touch(&arch.join(format!("alpha{e}")));
+        let (files, _) = select_plugin_files(&root.path().to_string_lossy(), &Default::default()).unwrap();
+        assert_eq!(files, vec![pf("alpha", arch.join(format!("alpha{e}")), "")]);
+    }
+
+    fn versioned_pair() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let arch = platform_dir(root.path());
+        let (older, newer) = (arch.join(format!("alpha-v1.0.3{}", ext())), arch.join(format!("alpha-v1.0.4{}", ext())));
+        touch(&older);
+        touch(&newer);
+        (root, older, newer)
+    }
+
+    #[test]
+    fn configured_version_beats_a_higher_version() {
+        let (root, older, _) = versioned_pair();
+        let desired = [("alpha".to_string(), "1.0.3".to_string())].into();
+        let (files, _) = select_plugin_files(&root.path().to_string_lossy(), &desired).unwrap();
+        assert_eq!(files, vec![pf("alpha", older, "1.0.3")]);
+    }
+
+    #[test]
+    fn highest_version_wins_without_a_configured_version() {
+        let (root, _, newer) = versioned_pair();
+        let (files, _) = select_plugin_files(&root.path().to_string_lossy(), &Default::default()).unwrap();
+        assert_eq!(files, vec![pf("alpha", newer, "1.0.4")]);
+    }
+
+    #[test]
+    fn plugin_is_skipped_when_its_configured_version_is_missing() {
+        let root = tempfile::tempdir().unwrap();
+        touch(&platform_dir(root.path()).join(format!("alpha-v1.0.4{}", ext())));
+        let desired = [("alpha".to_string(), "1.0.3".to_string())].into();
+        let (files, _) = select_plugin_files(&root.path().to_string_lossy(), &desired).unwrap();
+        assert!(files.is_empty());
+    }
+}

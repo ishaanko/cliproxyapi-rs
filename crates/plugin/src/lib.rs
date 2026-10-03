@@ -5,6 +5,9 @@
 //! adapters for every hook point: executors, interceptors, translators, schedulers, model
 //! routing, auth providers, quota, management routes and command-line flags.
 
+// `ExecError` is the runtime's (large) error type and flows through every executor result.
+#![allow(clippy::result_large_err)]
+
 pub use cpa_pluginapi::{abi, api, wire};
 
 pub mod adapters;

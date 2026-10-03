@@ -114,3 +114,57 @@ pub fn desired_versions(items: &BTreeMap<String, RuntimeItem>) -> std::collectio
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cpa_config::PluginInstanceConfig;
+
+    fn raw(text: &str) -> Yaml {
+        serde_yaml_ng::from_str(text).expect("valid yaml")
+    }
+
+    fn configured(id: &str, raw_yaml: &str) -> Config {
+        let mut cfg = Config::default();
+        cfg.plugins.enabled = true;
+        cfg.plugins.configs.insert(id.into(), PluginInstanceConfig { enabled: Some(true), priority: 0, raw: raw(raw_yaml) });
+        cfg
+    }
+
+    #[test]
+    fn runtime_yaml_adds_host_defaults_to_the_raw_plugin_config() {
+        let got = String::from_utf8(runtime_config_yaml(&raw("config1: true\nconfig2: value\n"), true, 3)).unwrap();
+        for want in ["config1: true", "config2: value", "enabled: true", "priority: 3"] {
+            assert!(got.contains(want), "missing {want:?} in:\n{got}");
+        }
+    }
+
+    #[test]
+    fn runtime_yaml_defaults_enabled_false() {
+        let got = String::from_utf8(runtime_config_yaml(&Yaml::Null, false, 3)).unwrap();
+        for want in ["enabled: false", "priority: 3"] {
+            assert!(got.contains(want), "missing {want:?} in:\n{got}");
+        }
+    }
+
+    #[test]
+    fn store_version_is_extracted_from_the_store_section() {
+        let cfg = configured("alpha", "store:\n  version: 1.0.3\n  release-tag: v1.0.3\n");
+        let got = runtime_config_from_config(Some(&cfg)).unwrap();
+        assert_eq!(got.items["alpha"].version, "1.0.3");
+    }
+
+    #[test]
+    fn store_version_derives_from_the_release_tag() {
+        let cfg = configured("alpha", "store:\n  release-tag: v1.0.3\n");
+        let got = runtime_config_from_config(Some(&cfg)).unwrap();
+        assert_eq!(got.items["alpha"].version, "1.0.3");
+    }
+
+    #[test]
+    fn disabled_plugins_section_yields_no_items() {
+        let mut cfg = configured("alpha", "enabled: true\n");
+        cfg.plugins.enabled = false;
+        assert!(runtime_config_from_config(Some(&cfg)).unwrap().items.is_empty());
+    }
+}

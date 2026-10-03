@@ -1037,10 +1037,10 @@ impl<'de> Deserialize<'de> for QuotaFetchResponse {
                 if let Some(Value::Array(buckets)) = gr.get("buckets") {
                     for (i, b) in buckets.iter().enumerate() {
                         let bucket = &mut group.buckets[i];
-                        if b.get("remainingFraction").is_none() {
-                            if let Some(f) = b.get("remaining_fraction").and_then(Value::as_f64) {
-                                bucket.remaining_fraction = f;
-                            }
+                        if b.get("remainingFraction").is_none()
+                            && let Some(f) = b.get("remaining_fraction").and_then(Value::as_f64)
+                        {
+                            bucket.remaining_fraction = f;
                         }
                         if bucket.reset_time.is_empty() {
                             bucket.reset_time = b.get("reset_time").and_then(Value::as_str).unwrap_or("").to_string();

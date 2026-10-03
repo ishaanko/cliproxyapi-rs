@@ -967,7 +967,7 @@ fn has_native_compat_config(auth: &Auth, provider_key: &str, cfg: &Config) -> bo
     }
     cfg.openai_compatibility.iter().filter(|c| !c.disabled).any(|c| {
         let name = c.name.trim().to_lowercase();
-        !name.is_empty() && candidates.iter().any(|cand| *cand == name)
+        !name.is_empty() && candidates.contains(&name)
     })
 }
 

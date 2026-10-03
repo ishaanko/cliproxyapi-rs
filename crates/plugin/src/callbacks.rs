@@ -478,14 +478,14 @@ impl Host {
         }
         let mut plugin_id = id.plugin_id.clone();
         let mut instance = id.instance.clone();
-        if plugin_id.is_empty() || instance.is_none() {
-            if let Some((_, cb_plugin, cb_instance)) = self.bridges.contexts.lookup(callback_id) {
-                if plugin_id.is_empty() {
-                    plugin_id = cb_plugin;
-                }
-                if instance.is_none() {
-                    instance = cb_instance;
-                }
+        if (plugin_id.is_empty() || instance.is_none())
+            && let Some((_, cb_plugin, cb_instance)) = self.bridges.contexts.lookup(callback_id)
+        {
+            if plugin_id.is_empty() {
+                plugin_id = cb_plugin;
+            }
+            if instance.is_none() {
+                instance = cb_instance;
             }
         }
         self.bridges

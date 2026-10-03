@@ -481,7 +481,7 @@ impl ExecutorAdapter {
 
     // ---- response translation ----
 
-    fn original_request<'a>(prepared: &'a Prepared) -> &'a [u8] {
+    fn original_request(prepared: &Prepared) -> &[u8] {
         if prepared.opts.original_request.is_empty() { &prepared.req.payload } else { &prepared.opts.original_request }
     }
 

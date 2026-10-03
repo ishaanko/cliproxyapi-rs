@@ -237,10 +237,11 @@ impl Host {
                 }
             } else {
                 let mut record_provider = normalize_provider_id(&self.model_provider(&rec.id));
-                if record_provider.is_empty() && rec.caps().executor {
-                    if let Some(candidate) = self.executor_provider(&rec) {
-                        record_provider = candidate;
-                    }
+                if record_provider.is_empty()
+                    && rec.caps().executor
+                    && let Some(candidate) = self.executor_provider(&rec)
+                {
+                    record_provider = candidate;
                 }
                 if record_provider != provider_key {
                     continue;

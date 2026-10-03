@@ -203,6 +203,7 @@ fn merge_request_headers(current: &HeaderMap, updates: Option<&HeaderMap>, clear
 
 /// Runs the plugin interceptor for one attempt (Go: `applyRequestAfterAuthInterceptor`); the
 /// returned error is a [`RequestTerminated`] when a plugin ended the request.
+#[allow(clippy::result_large_err)]
 pub(crate) async fn apply_request_after_auth_interceptor(
     executor: &DynExecutor,
     provider: &str,

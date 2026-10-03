@@ -22,6 +22,7 @@ impl Host {
         self.active_records().into_iter().filter(|r| !self.is_plugin_fused(&r.id) && pred(r)).collect()
     }
 
+    #[allow(clippy::too_many_arguments)] // mirrors Go's `transformRequest`
     fn transform_request(&self, rec: &Record, method: &str, from: Format, to: Format, model: &str, body: &[u8], stream: bool) -> Option<Vec<u8>> {
         if !self.usable(rec) {
             return None;

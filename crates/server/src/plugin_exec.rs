@@ -292,6 +292,7 @@ impl Pipeline {
     }
 
     /// `applyRequestInterceptorsAfterPluginExecutorRoute`.
+    #[allow(clippy::too_many_arguments)] // mirrors the Go call
     pub(crate) async fn intercept_after_plugin_route(
         &self,
         pcx: &PluginCx,
