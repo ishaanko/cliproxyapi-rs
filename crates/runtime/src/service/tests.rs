@@ -259,3 +259,65 @@ async fn rejected_config_reports_failure() {
     assert_eq!(service.config().claude_key[0].weight, None);
     service.shutdown();
 }
+
+#[derive(Default)]
+struct RecordingPersister {
+    calls: Mutex<Vec<String>>,
+}
+
+impl super::StorePersister for RecordingPersister {
+    fn persist_config(&self) -> Result<(), String> {
+        self.calls.lock().push("config".into());
+        Ok(())
+    }
+    fn persist_auth_files(&self, message: &str, _paths: &[String]) -> Result<(), String> {
+        self.calls.lock().push(message.to_string());
+        Ok(())
+    }
+}
+
+struct EmptyStore;
+
+impl Store for EmptyStore {
+    fn list(&self) -> Result<Vec<Auth>, cpa_auth::store::StoreError> {
+        Ok(Vec::new())
+    }
+    fn save(&self, _: &mut Auth, _: cpa_auth::SaveOptions) -> Result<Option<std::path::PathBuf>, cpa_auth::store::StoreError> {
+        Ok(None)
+    }
+    fn delete(&self, _: &str) -> Result<(), cpa_auth::store::StoreError> {
+        Ok(())
+    }
+}
+
+/// A remote store backend owns the auth dir (its spool) and receives every spool change.
+#[tokio::test]
+async fn store_backend_owns_auth_dir_and_receives_spool_changes() {
+    let env = Env::new("");
+    let spool = env.dir.path().join("spool-auths");
+    std::fs::create_dir_all(&spool).unwrap();
+    let persister = Arc::new(RecordingPersister::default());
+    let backend = super::StoreBackend {
+        store: Arc::new(EmptyStore),
+        persister: persister.clone(),
+        auth_dir: spool.clone(),
+        cooldown: None,
+    };
+    let service = env.builder().store_backend(backend).build().unwrap();
+    service.start().await.unwrap();
+    // The config names another auth-dir; the backend's spool wins at build time and on reload.
+    assert_eq!(std::path::Path::new(&service.config().auth_dir), spool);
+
+    std::fs::write(spool.join("claude-s.json"), r#"{"type":"claude","email":"s@x"}"#).unwrap();
+    wait_for("synced auth", || persister.calls.lock().iter().any(|c| c == "Sync auth claude-s.json")).await;
+    assert!(env.port.get("claude-s.json").is_some());
+
+    env.write_config("debug: true\n");
+    assert!(service.reload_config().await);
+    wait_for("persisted config", || persister.calls.lock().iter().any(|c| c == "config")).await;
+    assert_eq!(std::path::Path::new(&service.config().auth_dir), spool);
+
+    std::fs::remove_file(spool.join("claude-s.json")).unwrap();
+    wait_for("removed auth", || persister.calls.lock().iter().any(|c| c == "Remove auth claude-s.json")).await;
+    service.shutdown();
+}
