@@ -91,6 +91,8 @@ pub struct ConfigSpec {
     /// `multimedia` settings (`disable-image-generation`, `gpt-image-2-base-model`,
     /// `video-result-auth-cache-ttl`).
     pub multimedia: Vec<(&'static str, Value)>,
+    /// Provider-wide `codex:` settings (`response-steering`, ...), legacy layout only.
+    pub codex_settings: Vec<(&'static str, Value)>,
 }
 
 impl ConfigSpec {
@@ -134,6 +136,7 @@ impl ConfigSpec {
             }],
             xai: vec![],
             multimedia: vec![],
+            codex_settings: vec![],
         }
     }
 }
@@ -312,6 +315,9 @@ impl ConfigSpec {
         }
         for (key, value) in &self.multimedia {
             m.insert((*key).into(), value.clone());
+        }
+        if !self.codex_settings.is_empty() {
+            m.insert("codex".into(), Value::Object(self.codex_settings.iter().map(|(k, v)| ((*k).to_string(), v.clone())).collect()));
         }
         m.insert("openai-compatibility".into(), Value::Array(self.compat.iter().map(|c| compat_value(c, "api-key-entries")).collect()));
         Value::Object(m)

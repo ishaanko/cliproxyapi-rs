@@ -244,6 +244,22 @@ impl CodexExecutor {
         Ok((url, headers, body))
     }
 
+    /// Reads a whole response body into the request log (`RecordAPIResponseError` on failure,
+    /// `AppendAPIResponseChunk` on success).
+    async fn read_logged_body(&self, cfg: &cpa_config::Config, opts: &Options, resp: reqwest::Response) -> Result<bytes::Bytes, ExecError> {
+        match resp.bytes().await {
+            Ok(data) => {
+                opts.api_log.append_api_response_chunk(cfg, &data);
+                Ok(data)
+            }
+            Err(e) => {
+                let err = crate::helps::status::transport_error(&e);
+                opts.api_log.record_api_response_error(cfg, &err.message);
+                Err(err)
+            }
+        }
+    }
+
     /// `executeDirectOpenAIImage`: one JSON answer, usage read from the body.
     pub(super) async fn execute_openai_image(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
         let endpoint = direct_endpoint(&req, &opts);
@@ -252,7 +268,7 @@ impl CodexExecutor {
         let resp = self.send_http(&cfg, auth, &opts, &url, headers, body).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
+        let data = self.read_logged_body(&cfg, &opts, resp).await?;
         if !(200..300).contains(&status) {
             return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
         }
@@ -270,9 +286,10 @@ impl CodexExecutor {
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         if !(200..300).contains(&status) {
-            let data = resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e))?;
+            let data = self.read_logged_body(&cfg, &opts, resp).await?;
             return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
         }
+        let api_log = opts.api_log.clone();
         let (tx, rx) = mpsc::channel(16);
         let (usage_tx, usage_rx) = oneshot::channel::<Value>();
         tokio::spawn(async move {
@@ -284,6 +301,7 @@ impl CodexExecutor {
                 };
                 match next {
                     Ok(Some(chunk)) => {
+                        api_log.append_api_response_chunk(&cfg, &chunk);
                         for line in chunk.split(|b| *b == b'\n') {
                             usage.observe_openai_stream(line.trim_ascii());
                         }
@@ -293,7 +311,9 @@ impl CodexExecutor {
                     }
                     Ok(None) => break,
                     Err(err) => {
-                        let _ = tx.send(Err(crate::helps::status::transport_error(&err))).await;
+                        let err = crate::helps::status::transport_error(&err);
+                        api_log.record_api_response_error(&cfg, &err.message);
+                        let _ = tx.send(Err(err)).await;
                         break;
                     }
                 }

@@ -1,5 +1,7 @@
 //! Server config variations used by scenarios (applied on top of `ConfigSpec::baseline`).
 
+use serde_json::json;
+
 use crate::config::{ConfigSpec, KeyEntry, ModelCfg, ScopedRule};
 
 fn all_keys(s: &mut ConfigSpec) -> impl Iterator<Item = &mut KeyEntry> {
@@ -98,6 +100,13 @@ pub fn codex_websockets(s: &mut ConfigSpec) {
     for k in &mut s.codex {
         k.websockets = Some(true);
     }
+}
+
+/// Codex websockets with `codex.response-steering` on: the client socket has a dedicated reader
+/// and Codex turns run as duplex streams.
+pub fn codex_steering(s: &mut ConfigSpec) {
+    codex_websockets(s);
+    s.codex_settings.push(("response-steering", json!(true)));
 }
 
 /// Custom upstream headers on every key; `$X-Client-Tag` copies the client's header.

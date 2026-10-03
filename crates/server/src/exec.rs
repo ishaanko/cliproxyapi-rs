@@ -75,6 +75,10 @@ pub struct ExecArgs<'a> {
     pub handler_type: Option<&'a str>,
     /// Skip known free-tier credentials (Go: `WithDisallowFreeAuth`).
     pub disallow_free_auth: bool,
+    /// Client frames for a steering executor stream (Go: `WithWebsocketInput`).
+    pub ws_input: Option<cpa_runtime::executor::WebsocketInput>,
+    /// Live credential-state check of the bound socket (Go: `WithWebsocketAuthCheck`).
+    pub ws_auth_check: Option<cpa_runtime::executor::WebsocketAuthCheck>,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -95,6 +99,8 @@ impl<'a> ExecArgs<'a> {
             on_selected_auth: None,
             handler_type: None,
             disallow_free_auth: false,
+            ws_input: None,
+            ws_auth_check: None,
         }
     }
 
@@ -233,6 +239,8 @@ impl Pipeline {
         }
         opts.metadata = metadata;
         opts.api_log = self.info.api_log.exec_handle();
+        opts.ws_input = a.ws_input.clone();
+        opts.ws_auth_check = a.ws_auth_check.clone();
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
         let on_selected = a.on_selected_auth.clone();

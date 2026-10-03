@@ -7,6 +7,7 @@
 //! full Responses requests ([`requests`]) and each upstream SSE event is written back as one JSON
 //! text frame. Duplex steering (`codex-response-steering`) is not implemented.
 
+mod conn;
 pub mod requests;
 pub mod toolcache;
 pub mod upstream;
@@ -35,6 +36,7 @@ use crate::req::ReqInfo;
 use crate::reqlog::ApiLog;
 use crate::state::AppState;
 use crate::thinking::parse_suffix;
+use conn::{Conn, Disconnects};
 use requests::WS_REQUEST_TYPE_CREATE;
 use toolcache::{ToolCacheTurn, is_complete_tool_call};
 
@@ -453,7 +455,7 @@ fn supports_compaction_replay_for_model(manager: &Manager, model: &str) -> bool 
 // ------------------------------------------------------------------ session
 
 struct Writer<'a> {
-    socket: &'a mut WebSocket,
+    socket: &'a mut Conn,
     api_log: &'a ApiLog,
     timeline: bool,
 }
@@ -477,9 +479,19 @@ enum TurnEnd {
     Failed(ErrorMessage),
 }
 
+/// The per-turn switches of `responsesWebsocketForwardOptions` that depend on the selected
+/// credential (read at use, like Go's closures).
+struct ForwardOptions<'a> {
+    /// Keep the upstream completion output as is instead of rebuilding it from the items.
+    preserve_completion_output: &'a (dyn Fn() -> bool + Sync),
+    /// A Codex steering stream owns connection termination.
+    duplex_stream: &'a (dyn Fn() -> bool + Sync),
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn forward_turn(
-    socket: &mut WebSocket,
+    socket: &mut Conn,
+    disconnects: &mut Disconnects,
     info: &ReqInfo,
     keepalive: Duration,
     timeline: bool,
@@ -488,8 +500,10 @@ async fn forward_turn(
     session_key: &str,
     session_id: &str,
     suppress: &(dyn Fn(&ErrorMessage) -> bool + Sync),
+    options: ForwardOptions<'_>,
 ) -> TurnEnd {
     let mut completed = false;
+    let mut response_started = false;
     let mut completed_output: Vec<u8> = b"[]".to_vec();
     let mut completed_response_id = String::new();
     let mut collector = OutputCollector::default();
@@ -509,13 +523,13 @@ async fn forward_turn(
 
     loop {
         tokio::select! {
-            _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
-                if socket.send(Message::Ping(Bytes::new())).await.is_err() {
-                    return TurnEnd::Terminate("ping failed".into());
-                }
-            }
+            biased;
             item = rx.recv() => {
                 let Some(item) = item else {
+                    if (options.duplex_stream)() {
+                        // A duplex stream ends with its socket, not an individual response.
+                        return TurnEnd::Terminate("websocket: close sent".into());
+                    }
                     if !completed {
                         let err = ErrorMessage::new(408, "stream closed before response.completed");
                         api_log.record_error(err.status, &err.text);
@@ -546,12 +560,14 @@ async fn forward_turn(
                     let mut bytes = payload_bytes;
                     let event_type = payload.g("type").str();
                     if event_type == "response.created" {
+                        response_started = true;
                         completed = false;
                         collector.clear();
                         pending.clear();
                     }
                     collector.collect(&payload);
                     if is_completion_event(&event_type)
+                        && !(options.preserve_completion_output)()
                         && let Some(restored) = collector.restore_completion(&payload)
                     {
                         payload = cpa_json::parse(&restored);
@@ -564,7 +580,11 @@ async fn forward_turn(
                     record_pending_tool_calls(&mut pending, &payload);
 
                     let mut payload_err: Option<ErrorMessage> = None;
-                    if event_type == WS_EVENT_TYPE_ERROR {
+                    // In Codex duplex mode the executor owns connection termination: payload errors
+                    // after response.created are recoverable events; the stream's own error still
+                    // closes the socket.
+                    let preserve_error_event = response_started && (options.duplex_stream)();
+                    if event_type == WS_EVENT_TYPE_ERROR && !preserve_error_event {
                         let err = error_message_from_payload(&bytes);
                         api_log.record_error(err.status, &err.text);
                         payload_err = Some(err);
@@ -591,6 +611,19 @@ async fn forward_turn(
                     }
                 }
             }
+            _ = async { ticker.as_mut().expect("guarded by the branch condition").tick().await }, if ticker.is_some() => {
+                if socket.send(Message::Ping(Bytes::new())).await.is_err() {
+                    return TurnEnd::Terminate("ping failed".into());
+                }
+            }
+            (provider, text) = disconnects.fired() => {
+                if provider == "codex" && (options.duplex_stream)() {
+                    // The steering stream drains its acknowledgements and pending events in order.
+                    disconnects.disarm();
+                    continue;
+                }
+                return TurnEnd::Terminate(close_for_upstream_disconnect(socket, session_id, &text).await);
+            }
         }
     }
 }
@@ -598,7 +631,7 @@ async fn forward_turn(
 /// Upstream failure handling: `message_too_big` becomes a close frame, request-shape faults are
 /// written as one `error` frame, everything else closes the socket without a frame.
 async fn end_with_error(
-    socket: &mut WebSocket,
+    socket: &mut Conn,
     api_log: &ApiLog,
     timeline: bool,
     err: &ErrorMessage,
@@ -650,15 +683,23 @@ struct SelectionObserved {
     mode: upstream::UpstreamMode,
     observed: bool,
     pinned_attempted: bool,
+    /// Native Codex clients on Codex credentials keep the completion output untouched.
+    preserve_native_output: bool,
 }
 
-async fn session(mut socket: WebSocket, st: AppState, info: ReqInfo) {
+async fn session(socket: WebSocket, st: AppState, info: ReqInfo) {
     let session_id = uuid::Uuid::new_v4().to_string();
     let session_key = toolcache::downstream_session_key(&info.headers);
     toolcache::retain_session(&session_key);
     tracing::info!("responses websocket: client connected id={session_id} remote={}", info.client_ip);
 
-    let reason = run_session(&mut socket, &st, &info, &session_id, &session_key).await;
+    // With response steering a dedicated reader owns the socket's input (Go: duplexInput).
+    let cfg = st.cfg();
+    let steering = cfg.codex.response_steering || cfg.codex_response_steering;
+    let mut socket = if steering { Conn::duplex(socket) } else { Conn::direct(socket) };
+    let mut disconnects = upstream_disconnects(&st.manager, &session_id);
+
+    let reason = run_session(&mut socket, &mut disconnects, &st, &info, &session_id, &session_key).await;
 
     toolcache::release_session(&session_key);
     match &reason {
@@ -671,8 +712,60 @@ async fn session(mut socket: WebSocket, st: AppState, info: ReqInfo) {
     drop(socket);
 }
 
+/// Subscriptions to the upstream-disconnect notices of the Codex and xAI executors for this
+/// session (Go: `UpstreamDisconnectChan`, only for providers with a registered executor).
+fn upstream_disconnects(manager: &Manager, session_id: &str) -> Disconnects {
+    let mut receivers = Vec::new();
+    if manager.executor("codex").is_some()
+        && let Some(rx) = cpa_executors::codex::upstream_disconnect_receiver(session_id)
+    {
+        receivers.push(("codex", rx));
+    }
+    if manager.executor("xai").is_some()
+        && let Some(rx) = cpa_executors::xai::upstream_disconnect_receiver(session_id)
+    {
+        receivers.push(("xai", rx));
+    }
+    Disconnects::new(receivers)
+}
+
+/// `closeForUpstreamDisconnect`: mirror close codes 1009 and 1012 as close frames, expose only
+/// request-shape faults as an error frame, otherwise close silently (the client reconnects, which
+/// implies a full-context resend).
+async fn close_for_upstream_disconnect(socket: &mut Conn, session_id: &str, text: &str) -> String {
+    let err = disconnect_error(text);
+    if let Some(frame) = close_frame_for_upstream_error(&err) {
+        let _ = socket.send(Message::Close(Some(frame))).await;
+        return text.to_string();
+    }
+    if should_expose_upstream_error(&err) {
+        let body = build_error_payload(&err);
+        if socket.send(Message::Text(String::from_utf8_lossy(&body).into_owned().into())).await.is_ok() {
+            tracing::info!(
+                "responses websocket: downstream_out disconnect_error id={session_id} event={} payload={}",
+                cpa_json::parse(&body).g("type").str(),
+                String::from_utf8_lossy(&body)
+            );
+        }
+    }
+    text.to_string()
+}
+
+/// The upstream disconnect notice as the error the handler classifies: the replay signal and
+/// `message_too_big` bodies keep their statuses, anything else is a plain 500.
+fn disconnect_error(text: &str) -> ErrorMessage {
+    let status = if text.contains("upstream_http_replay_required") {
+        426
+    } else if cpa_json::parse_str(text).g("error.code").str() == "message_too_big" {
+        413
+    } else {
+        500
+    };
+    ErrorMessage::new(status, text)
+}
+
 /// Closes the socket with the replay-required frame (the client reconnects and resends the turn).
-async fn close_for_replay(socket: &mut WebSocket) -> Option<String> {
+async fn close_for_replay(socket: &mut Conn) -> Option<String> {
     let err = upstream::replay_required_error();
     if let Some(frame) = upstream::replay_required_close_frame(&err) {
         let _ = socket.send(Message::Close(Some(frame))).await;
@@ -682,13 +775,16 @@ async fn close_for_replay(socket: &mut WebSocket) -> Option<String> {
 
 /// The read loop; returns why the session ended (`None` for a clean client close).
 async fn run_session(
-    socket: &mut WebSocket,
+    socket: &mut Conn,
+    disconnects: &mut Disconnects,
     st: &AppState,
     info: &ReqInfo,
     session_id: &str,
     session_key: &str,
 ) -> Option<String> {
     use upstream::UpstreamMode;
+    // Whether the Codex steering stream of the current turn owns the socket (Go: codexDuplexStream).
+    let duplex_stream = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut state = SessionState {
         last_request: Vec::new(),
         last_response_output: b"[]".to_vec(),
@@ -702,7 +798,19 @@ async fn run_session(
         observed_compaction: upstream::ObservedCompaction::default(),
     };
     loop {
-        let payload: Vec<u8> = match socket.recv().await {
+        let frame = tokio::select! {
+            biased;
+            frame = socket.recv() => frame,
+            (provider, text) = disconnects.fired() => {
+                if provider == "codex" && duplex_stream.load(std::sync::atomic::Ordering::Relaxed) {
+                    // A steering stream owns the closure: it drains acknowledgements in order.
+                    disconnects.disarm();
+                    continue;
+                }
+                return Some(close_for_upstream_disconnect(socket, session_id, &text).await);
+            }
+        };
+        let payload: Vec<u8> = match frame {
             None => return None,
             Some(Err(e)) => return Some(e.to_string()),
             Some(Ok(Message::Text(t))) => t.as_str().as_bytes().to_vec(),
@@ -873,6 +981,9 @@ async fn run_session(
         }
 
         let model = cpa_json::parse(&request_json).g("model").str();
+        let native_request = cpa_core::util::is_codex_responses_lite_request(&root, &info.headers);
+        duplex_stream.store(false, std::sync::atomic::Ordering::Relaxed);
+        let steering_input = socket.input();
         let observed_selection = std::sync::Arc::new(std::sync::Mutex::new(SelectionObserved {
             last_attempted: state.pinned.current.clone(),
             ..Default::default()
@@ -881,12 +992,17 @@ async fn run_session(
             let observed_selection = observed_selection.clone();
             let manager = st.manager.clone();
             let pinned = state.pinned.current.clone();
+            let duplex_stream = duplex_stream.clone();
+            let has_input = steering_input.is_some();
+            let steering_oauth_only = pipeline.cfg.oauth_only_fields.contains("codex.response-steering");
             std::sync::Arc::new(move |auth_id: &str| {
+                duplex_stream.store(false, std::sync::atomic::Ordering::Relaxed);
+                let Ok(mut seen) = observed_selection.lock() else { return };
+                seen.preserve_native_output = false;
                 let id = auth_id.trim();
                 if id.is_empty() {
                     return;
                 }
-                let Ok(mut seen) = observed_selection.lock() else { return };
                 seen.last_attempted = id.to_string();
                 seen.observed = true;
                 seen.pinned_attempted |= !pinned.is_empty() && id == pinned;
@@ -897,6 +1013,13 @@ async fn run_session(
                     } else {
                         UpstreamMode::Http
                     };
+                    // OAuth-only steering still leaves API keys in normal mode.
+                    let steering_allowed = !steering_oauth_only || auth.auth_kind() != cpa_auth::types::AUTH_KIND_API_KEY;
+                    duplex_stream.store(
+                        has_input && steering_allowed && seen.mode == UpstreamMode::Ws && provider == "codex",
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    seen.preserve_native_output = native_request && provider == "codex";
                 }
             })
         };
@@ -907,6 +1030,13 @@ async fn run_session(
         args.downstream_websocket = true;
         args.required_upstream_websocket = native && requires_current_upstream;
         args.on_selected_auth = Some(on_selected);
+        if let Some(input) = steering_input {
+            let manager = st.manager.clone();
+            args.ws_input = Some(input);
+            args.ws_auth_check = Some(cpa_runtime::executor::WebsocketAuthCheck(std::sync::Arc::new(move |auth_id: &str| {
+                manager.get(auth_id).is_some_and(|a| !a.disabled && a.status != cpa_auth::Status::Disabled)
+            })));
+        }
         if !execution_auth_id.is_empty() {
             args.pinned_auth_id = Some(&execution_auth_id);
         }
@@ -921,8 +1051,11 @@ async fn run_session(
                 && upstream::should_replay_pinned_auth_failure(err)
         };
 
+        let preserve_output = || observed_selection.lock().map(|s| s.preserve_native_output).unwrap_or(false);
+        let is_duplex = || duplex_stream.load(std::sync::atomic::Ordering::Relaxed);
         let end = forward_turn(
             socket,
+            disconnects,
             info,
             pipeline.settings.stream_keepalive,
             timeline,
@@ -931,6 +1064,7 @@ async fn run_session(
             session_key,
             session_id,
             &replay_pinned_failure,
+            ForwardOptions { preserve_completion_output: &preserve_output, duplex_stream: &is_duplex },
         )
         .await;
         let (selected_last, selected_mode, selected_seen, pinned_attempted) = match observed_selection.lock() {

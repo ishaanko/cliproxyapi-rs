@@ -6,16 +6,14 @@
 //!
 //! Model-router plugins and Home dispatch of the Go handler are not ported.
 
-use std::collections::HashMap;
-
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, header};
 use axum::response::Response;
 use bytes::Bytes;
 use cpa_auth::types::AUTH_KIND_API_KEY;
 use cpa_core::format::Format;
-use cpa_core::util::{apply_custom_headers_from_attrs, go_json_string};
-use cpa_executors::helps::proxy::new_proxy_aware_http_client;
+use cpa_core::util::go_json_string;
+use cpa_executors::helps::logging::UpstreamRequestLog;
 use cpa_json::J;
 use cpa_runtime::conductor::CREDENTIAL_POLICY_CODEX_ALPHA_SEARCH_V1;
 use cpa_runtime::executor::Options;
@@ -155,37 +153,54 @@ pub async fn alpha_search(State(st): State<AppState>, info: ReqInfo, body: Bytes
             request_body = rewrite_model(&request_body, &upstream_model);
         }
     }
-    // `PrepareRequest` of the Codex executor: bearer credential, then custom header attributes.
-    let (api_key, _) = cpa_executors::codex::codex_creds(&selected);
-    if api_key.trim().is_empty() {
-        headers.remove(header::AUTHORIZATION);
-    } else if let Ok(value) = HeaderValue::from_str(&format!("Bearer {api_key}")) {
-        headers.insert(header::AUTHORIZATION, value);
-    }
-    let attrs: HashMap<String, String> = selected.attributes.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-    apply_custom_headers_from_attrs(&mut headers, &attrs, None, None);
-
+    // The Codex executor injects its credential and custom headers (`NewHttpRequest`), the
+    // upstream call goes through its HTTP client (`HttpRequest`).
     let cfg = st.cfg();
-    let client = new_proxy_aware_http_client("", Some(&cfg), Some(&selected), None);
-    let resp = match client.post(&url).headers(headers).body(request_body).send().await {
+    let upstream_log = info.api_log.exec_handle();
+    let body_for_log = request_body.clone();
+    let request = match st.manager.new_http_request(&selected, "POST", &url, Some(Bytes::from(request_body)), Some(&headers)).await {
+        Ok(request) => request,
+        Err(err) => {
+            upstream_log.record_api_response_error(&cfg, &err.message);
+            return error_reply(if err.status > 0 { err.status } else { 502 }, &err.message).into_response();
+        }
+    };
+    let (auth_type, auth_value) = selected.account_info();
+    upstream_log.record_api_request(
+        &cfg,
+        UpstreamRequestLog {
+            url: url.clone(),
+            method: "POST".to_string(),
+            headers: request.headers().clone(),
+            body: body_for_log,
+            provider: "codex".to_string(),
+            auth_id: selected.id.clone(),
+            auth_label: selected.label.clone(),
+            auth_type: auth_type.to_string(),
+            auth_value,
+        },
+    );
+    let resp = match st.manager.http_request(&selected, request).await {
         Ok(resp) => resp,
         Err(err) => {
-            let message = cpa_executors::helps::status::transport_error(&err).message;
-            info.api_log.record_error(502, &message);
-            return error_reply(502, &message).into_response();
+            upstream_log.record_api_response_error(&cfg, &err.message);
+            info.api_log.record_error(502, &err.message);
+            return error_reply(if err.status > 0 { err.status } else { 502 }, &err.message).into_response();
         }
     };
     let status = resp.status().as_u16();
+    upstream_log.record_api_response_metadata(&cfg, status, resp.headers());
     let content_type = resp.headers().get(header::CONTENT_TYPE).cloned();
     let upstream = match resp.bytes().await {
         Ok(b) => b,
         Err(err) => {
+            upstream_log.record_api_response_error(&cfg, &err.to_string());
             info.api_log.record_error(502, &err.to_string());
             return error_reply(502, "Failed to read Codex search response").into_response();
         }
     };
     let upstream = if upstream.len() > MAX_RESPONSE_BYTES { upstream.slice(..MAX_RESPONSE_BYTES) } else { upstream };
-    info.api_log.append_api_response(&upstream);
+    upstream_log.append_api_response_chunk(&cfg, &upstream);
     let mut reply = Reply::new(status).with_body(upstream);
     if let Some(ct) = content_type.filter(|v| !v.is_empty()) {
         reply.headers.insert(header::CONTENT_TYPE, ct);
