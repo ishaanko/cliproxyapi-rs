@@ -14,6 +14,7 @@ use std::time::Duration;
 use cpa_config::{CredentialConcurrencyConfig, HomeConfig};
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
+use tokio::sync::Semaphore;
 
 use crate::conn::{Conn, ConnOpts, Kill, Tracker, arg, new_tls_params};
 use crate::error::HomeError;
@@ -78,43 +79,81 @@ pub struct KvSetOptions {
     pub xx: bool,
 }
 
-/// Connections to one address, reused between commands (Go: go-redis's pool).
+/// Connections to one address, reused between commands (Go: go-redis's pool). At most
+/// `pool_size()` connections are checked out at once; idle ones are health-checked on reuse.
 pub struct Pool {
     opts: Arc<ConnOpts>,
     idle: Mutex<Vec<Conn>>,
     closed: AtomicBool,
     tracker: Arc<Tracker>,
+    slots: Arc<Semaphore>,
+    size: usize,
+}
+
+/// go-redis default: 10 connections per CPU.
+fn pool_size() -> usize {
+    10 * std::thread::available_parallelism().map_or(1, usize::from)
 }
 
 impl Pool {
     fn new(opts: Arc<ConnOpts>, tracker: Arc<Tracker>) -> Arc<Pool> {
-        Arc::new(Pool { opts, idle: Mutex::new(Vec::new()), closed: AtomicBool::new(false), tracker })
+        let size = pool_size();
+        Arc::new(Pool {
+            opts,
+            idle: Mutex::new(Vec::new()),
+            closed: AtomicBool::new(false),
+            tracker,
+            slots: Arc::new(Semaphore::new(size)),
+            size,
+        })
     }
 
     async fn get(&self) -> Result<Conn, HomeError> {
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(HomeError::Io("redis: client is closed".into()));
+        }
+        // go-redis PoolTimeout: read timeout plus one second.
+        let wait = self.opts.read_timeout + Duration::from_secs(1);
+        let permit = tokio::time::timeout(wait, self.slots.clone().acquire_owned())
+            .await
+            .map_err(|_| HomeError::Io("redis: connection pool timeout".into()))?
+            .map_err(|_| HomeError::Io("redis: client is closed".into()))?;
         loop {
             if self.closed.load(Ordering::SeqCst) {
                 return Err(HomeError::Io("redis: client is closed".into()));
             }
             let reused = self.idle.lock().pop();
             match reused {
-                Some(conn) if !conn.broken && !conn.kill_switch().is_dead() => return Ok(conn),
-                Some(_) => continue,
-                None => return Conn::dial(self.opts.clone(), Some(self.tracker.clone())).await,
+                Some(mut conn) => {
+                    if conn.is_healthy() {
+                        conn.permit = Some(permit);
+                        return Ok(conn);
+                    }
+                }
+                None => {
+                    let mut conn = Conn::dial(self.opts.clone(), Some(self.tracker.clone())).await?;
+                    conn.permit = Some(permit);
+                    return Ok(conn);
+                }
             }
         }
     }
 
-    fn put(&self, conn: Conn) {
+    fn put(&self, mut conn: Conn) {
+        conn.permit = None;
         if conn.broken || self.closed.load(Ordering::SeqCst) {
             return;
         }
-        self.idle.lock().push(conn);
+        let mut idle = self.idle.lock();
+        if idle.len() < self.size {
+            idle.push(conn);
+        }
     }
 
     /// Closes the pool and every connection it ever handed out that is still open.
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        self.slots.close();
         self.idle.lock().clear();
         self.tracker.kill_all();
     }
@@ -985,10 +1024,13 @@ impl Client {
         let result = conn.call(&[arg("rpop"), key]).await;
         pool.put(conn);
         match result {
-            Ok(value) => match bulk_opt(value)? {
-                None => Err(HomeError::AuthNotFound),
-                Some(raw) if raw.is_empty() => Err(HomeError::EmptyResponse),
-                Some(raw) => Ok(raw),
+            // A reply that is not a string (Array/Int) was fully consumed but is a parse failure
+            // after the request was issued: ambiguous, like go-redis's non-redis.Error.
+            Ok(value) => match bulk_opt(value) {
+                Ok(None) => Err(HomeError::AuthNotFound),
+                Ok(Some(raw)) if raw.is_empty() => Err(HomeError::EmptyResponse),
+                Ok(Some(raw)) => Ok(raw),
+                Err(e) => Err(HomeError::AmbiguousDispatch(Box::new(e))),
             },
             Err(e) if e.is_redis_reply() => Err(e),
             Err(e) => Err(HomeError::AmbiguousDispatch(Box::new(e))),

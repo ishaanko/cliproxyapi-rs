@@ -108,17 +108,10 @@ fn home_hint_key(auth_id: &str) -> String {
     format!("cpa:antigravity:credits-hint:{}", auth_id.trim())
 }
 
-/// Drives a Home KV operation from synchronous code on a multi-thread runtime worker. Without
-/// one (no runtime, current-thread runtime) it yields `None`, which callers treat as a failed
-/// Home call.
+/// Drives a Home KV operation from synchronous code; `None` when there is no multi-thread
+/// runtime to block on, which callers treat as a failed Home call.
 fn block_on_home<F: Future>(fut: F) -> Option<F::Output> {
-    let handle = tokio::runtime::Handle::try_current().ok()?;
-    match handle.runtime_flavor() {
-        tokio::runtime::RuntimeFlavor::MultiThread => {
-            Some(tokio::task::block_in_place(|| handle.block_on(fut)))
-        }
-        _ => None,
-    }
+    cpa_home::kv::run_blocking(fut).ok()
 }
 
 fn stamped(mut hint: AntigravityCreditsHint) -> AntigravityCreditsHint {

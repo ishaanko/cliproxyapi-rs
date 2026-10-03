@@ -3,9 +3,10 @@
 //!
 //! The Home client is async while the caches and request preparation are synchronous.
 //! [`run_blocking`] runs one Home operation to completion from a worker thread of the multi-thread
-//! runtime (the server's) without stalling other tasks. Where that is impossible (no runtime, a
-//! current-thread runtime) it reports the store as unavailable, which callers treat like any
-//! other Home failure. [`install`] plugs the Home client into the `cpa_core` caches.
+//! runtime (the server's); that thread blocks for the duration, with its queued tasks moved to
+//! other workers. Where that is impossible (no runtime, a current-thread runtime) it reports the
+//! store as unavailable, which callers treat like any other Home failure. [`install`] plugs the
+//! Home client into the `cpa_core` caches.
 
 use std::future::Future;
 use std::sync::Arc;
@@ -15,15 +16,10 @@ use cpa_core::cache::{KvBackend, KvError, KvResult, install_kv_backend};
 use cpa_home::KvSetOptions;
 use cpa_home::{Client, HomeError};
 use cpa_runtime::executor::ExecError;
-use tokio::runtime::{Handle, RuntimeFlavor};
 
 /// Drives `fut` to completion on the calling thread.
 pub fn run_blocking<F: Future>(fut: F) -> Result<F::Output, HomeError> {
-    let handle = Handle::try_current().map_err(|_| HomeError::other("home kv unavailable: no async runtime"))?;
-    match handle.runtime_flavor() {
-        RuntimeFlavor::MultiThread => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
-        _ => Err(HomeError::other("home kv unavailable: needs a multi-thread async runtime")),
-    }
+    cpa_home::kv::run_blocking(fut)
 }
 
 /// [`run_blocking`] for operations that themselves return `Result<_, HomeError>`.

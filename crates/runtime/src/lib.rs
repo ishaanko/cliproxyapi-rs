@@ -7,7 +7,7 @@
 //! - `usage`: usage accounting.
 
 // `ExecError` carries the upstream status, headers and body (Go: `*Error`); errors are the rare path.
-#![allow(clippy::result_large_err, clippy::large_enum_variant)]
+#![allow(clippy::result_large_err)]
 
 pub mod conductor;
 pub mod executor;

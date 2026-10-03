@@ -81,7 +81,9 @@ pub(crate) struct HomeState {
     selections: Mutex<SessionSelections>,
     /// Session-scoped runtime auths for websocket continuity: session id -> auth id -> auth.
     runtime_auths: Mutex<HashMap<String, HashMap<String, Auth>>>,
-    runtime_auth_owners: Mutex<HashMap<String, HashMap<String, HomeDispatchSelection>>>,
+    /// Owning selection id per session auth. Ids rather than selections, so the registry never
+    /// keeps an abandoned selection (and its Home slot) alive.
+    runtime_auth_owners: Mutex<HashMap<String, HashMap<String, u64>>>,
     session_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     pub aliases: Mutex<AliasCache>,
     pub publisher_config: RwLock<Option<super::home_publisher::PublisherConfig>>,
@@ -672,14 +674,16 @@ impl Manager {
         }
         self.remember_home_selection_runtime_auth(&session_id, selection);
         let manager = self.clone();
-        let (sid, aid, owner) = (session_id.clone(), auth_id.clone(), selection.clone());
+        // The closer lives inside the selection's own resources, so it captures the id and not
+        // the selection (a strong clone would be a cycle and the selection would never drop).
+        let (sid, aid, owner) = (session_id.clone(), auth_id.clone(), selection.id());
         let bound = selection.bind(Box::new(move || {
-            manager.forget_home_runtime_auth(&sid, &aid, Some(&owner));
+            manager.forget_home_runtime_auth(&sid, &aid, Some(owner));
             Ok(())
         }));
         if let Err(e) = bound {
             selection.unmark_runtime_auth_bound();
-            self.forget_home_runtime_auth(&session_id, &auth_id, Some(selection));
+            self.forget_home_runtime_auth(&session_id, &auth_id, Some(selection.id()));
             return Err(super::home_concurrency::install_error(e));
         }
         Ok(())
@@ -697,7 +701,7 @@ impl Manager {
             .lock()
             .entry(session_id.to_string())
             .or_default()
-            .insert(auth_id, selection.clone());
+            .insert(auth_id, selection.id());
     }
 
     /// Updates the stored session auths after Home refreshed the selection's credentials.
@@ -708,7 +712,7 @@ impl Manager {
         let mut auths = self.home.runtime_auths.lock();
         for (session_id, session_owners) in owners.iter() {
             for (auth_id, owner) in session_owners {
-                if owner.same(selection)
+                if *owner == selection.id()
                     && let Some(slot) = auths.get_mut(session_id)
                 {
                     slot.insert(auth_id.clone(), updated.clone());
@@ -717,14 +721,14 @@ impl Manager {
         }
     }
 
-    fn forget_home_runtime_auth(&self, session_id: &str, auth_id: &str, owner: Option<&HomeDispatchSelection>) {
+    fn forget_home_runtime_auth(&self, session_id: &str, auth_id: &str, owner: Option<u64>) {
         let (session_id, auth_id) = (session_id.trim(), auth_id.trim());
         if session_id.is_empty() || auth_id.is_empty() {
             return;
         }
         let mut owners = self.home.runtime_auth_owners.lock();
         if let Some(owner) = owner
-            && !owners.get(session_id).and_then(|m| m.get(auth_id)).is_some_and(|o| o.same(owner))
+            && !owners.get(session_id).and_then(|m| m.get(auth_id)).is_some_and(|o| *o == owner)
         {
             return;
         }

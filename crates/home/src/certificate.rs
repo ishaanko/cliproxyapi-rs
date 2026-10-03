@@ -16,7 +16,7 @@ use rsa::pkcs1::{DecodeRsaPrivateKey, EncodeRsaPrivateKey, LineEnding};
 use rsa::pkcs8::DecodePrivateKey;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 use x509_cert::builder::{Builder, RequestBuilder};
 use x509_cert::name::Name;
@@ -212,11 +212,33 @@ async fn ensure_certificate_files(claims: &HomeJwtClaims, paths: &CertificatePat
     Ok(())
 }
 
+/// First PEM block in `raw` as (label, DER), skipping leading text and ignoring anything after
+/// the block, like Go's `pem.Decode` (so chains and files with trailing text are accepted).
+fn decode_first_pem_block(raw: &[u8]) -> Option<(String, Vec<u8>)> {
+    const BEGIN: &[u8] = b"-----BEGIN ";
+    const END: &[u8] = b"-----END ";
+    let find = |hay: &[u8], needle: &[u8], from: usize| {
+        hay.get(from..)?.windows(needle.len()).position(|w| w == needle).map(|i| i + from)
+    };
+    let mut from = 0;
+    let start = loop {
+        let at = find(raw, BEGIN, from)?;
+        if at == 0 || raw[at - 1] == b'\n' {
+            break at;
+        }
+        from = at + 1;
+    };
+    let end = find(raw, END, start + BEGIN.len())?;
+    let eol = raw[end..].iter().position(|&b| b == b'\n').map_or(raw.len(), |i| end + i);
+    let (label, der_bytes) = pem_rfc7468::decode_vec(&raw[start..eol]).ok()?;
+    Some((label.to_string(), der_bytes))
+}
+
 /// SHA-256 of the first PEM block's DER, which must be a certificate (Go:
 /// `certificateFingerprintPEM`).
 fn certificate_fingerprint_pem(raw: &[u8]) -> Result<String, HomeError> {
     let invalid = || HomeError::other("home ca certificate pem is invalid");
-    let (label, der_bytes) = pem_rfc7468::decode_vec(raw).map_err(|_| invalid())?;
+    let (label, der_bytes) = decode_first_pem_block(raw).ok_or_else(invalid)?;
     if label != "CERTIFICATE" {
         return Err(invalid());
     }
@@ -237,11 +259,10 @@ pub fn verify_ca_certificate_pem(raw: &[u8], expected_fingerprint: &str) -> Resu
 }
 
 fn parse_rsa_private_key_pem(raw: &[u8]) -> Result<RsaPrivateKey, HomeError> {
-    let text = std::str::from_utf8(raw).map_err(|_| HomeError::other("client key pem is invalid"))?;
-    let (label, _) = pem_rfc7468::decode_vec(raw).map_err(|_| HomeError::other("client key pem is invalid"))?;
-    match label {
-        "RSA PRIVATE KEY" => RsaPrivateKey::from_pkcs1_pem(text).map_err(HomeError::other),
-        "PRIVATE KEY" => RsaPrivateKey::from_pkcs8_pem(text).map_err(|_| HomeError::other("client key is not rsa")),
+    let (label, der_bytes) = decode_first_pem_block(raw).ok_or_else(|| HomeError::other("client key pem is invalid"))?;
+    match label.as_str() {
+        "RSA PRIVATE KEY" => RsaPrivateKey::from_pkcs1_der(&der_bytes).map_err(HomeError::other),
+        "PRIVATE KEY" => RsaPrivateKey::from_pkcs8_der(&der_bytes).map_err(|_| HomeError::other("client key is not rsa")),
         other => Err(HomeError::Other(format!("client key pem type {other:?} is unsupported"))),
     }
 }
@@ -289,7 +310,6 @@ async fn request_client_certificate(claims: &HomeJwtClaims, csr_pem: &str) -> Re
         stream.write_all(&resp::encode_command(&args)).await?;
         let mut reader = BufReader::new(stream);
         let value = resp::read_value(&mut reader).await.map_err(|e| HomeError::Io(e.to_string()))?;
-        let _ = reader.read_u8().await;
         Ok::<_, HomeError>(value)
     };
     let value = tokio::time::timeout(CERTIFICATE_REQUEST_TIMEOUT, exchange)

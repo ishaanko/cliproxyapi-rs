@@ -34,6 +34,10 @@ pub trait HomeHooks: Send + Sync {
     fn bind(&self, client: Arc<Client>);
     /// The lifetime of `client` ended.
     fn deactivate(&self, client: &Arc<Client>);
+    /// The service is shutting down: stop background work (Go: `homeLogForwarder.Stop`).
+    fn stop(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
 }
 
 /// Plugin work riding on Home configs (Go: `homePluginFinalization`): the plugin host installs
@@ -59,10 +63,19 @@ pub(super) struct HomeSupervisor {
     handle: JoinHandle<()>,
 }
 
+/// Longest a shutdown waits for the supervisor to drain and flush before abandoning it.
+const SUPERVISOR_STOP_BOUND: Duration = Duration::from_secs(60);
+
 impl HomeSupervisor {
-    pub(super) fn stop(self) {
+    /// Cancels the supervisor and waits for it to finish: the lifetime ends, the registry
+    /// drains, pending releases flush and the client closes (Go: `supervisor.cancel(); <-done`).
+    async fn stop(self) {
         self.cancel.kill();
-        self.handle.abort();
+        let abort = self.handle.abort_handle();
+        if tokio::time::timeout(SUPERVISOR_STOP_BOUND, self.handle).await.is_err() {
+            tracing::warn!("Home supervisor did not stop in time; abandoning it");
+            abort.abort();
+        }
     }
 }
 
@@ -91,7 +104,7 @@ pub fn merge_home_config(base: &Config, mut remote: Config) -> Config {
 
 impl Inner {
     /// Starts the supervisor when the config enables Home.
-    pub(super) fn start_home(self: &Arc<Self>) {
+    pub(super) async fn start_home(self: &Arc<Self>) {
         let cfg = self.config();
         if !cfg.home.enabled {
             return;
@@ -100,14 +113,27 @@ impl Inner {
         queue::set_enabled(true);
         let cancel = Arc::new(Kill::default());
         let handle = tokio::spawn(run_supervisor(Arc::downgrade(self), cancel.clone(), cfg.home.clone()));
-        if let Some(previous) = self.home_supervisor.lock().replace(HomeSupervisor { cancel, handle }) {
-            previous.stop();
+        let previous = self.home_supervisor.lock().replace(HomeSupervisor { cancel, handle });
+        if let Some(previous) = previous {
+            previous.stop().await;
         }
     }
 
-    pub(super) fn stop_home(&self) {
+    /// Shuts Home mode down gracefully (Go: the Home half of `Service.Shutdown`).
+    pub(super) async fn stop_home(&self) {
+        let supervisor = self.home_supervisor.lock().take();
+        if let Some(supervisor) = supervisor {
+            supervisor.stop().await;
+        }
+        if let Some(hooks) = &self.home_hooks {
+            hooks.stop().await;
+        }
+    }
+
+    /// Cancels the supervisor without waiting (sync shutdown paths); it finishes on its own.
+    pub(super) fn cancel_home(&self) {
         if let Some(supervisor) = self.home_supervisor.lock().take() {
-            supervisor.stop();
+            supervisor.cancel.kill();
         }
     }
 }
@@ -170,7 +196,9 @@ async fn run_supervisor(inner: Weak<Inner>, cancel: Arc<Kill>, home_cfg: HomeCon
         let life = Arc::new(Lifetime {
             client: client.clone(),
             registry: registry.clone(),
-            cancel: Arc::new(Kill::default()),
+            // Child of the supervisor's switch: stopping the supervisor ends the lifetime and with
+            // it the config worker, the publisher and the usage forwarder.
+            cancel: Arc::new(cancel.child()),
             published: AtomicBool::new(false),
             tasks: Mutex::new(Vec::new()),
         });
@@ -323,37 +351,49 @@ async fn config_worker(
             },
         };
         let Some(service) = inner.upgrade() else { return };
-        let parsed = match cpa_config::parse_config_bytes(&raw) {
-            Ok(p) => p,
-            Err(e) => {
-                tracing::warn!("failed to stage home config; retrying: {e}");
-                continue;
+        // Stage and apply, retrying with backoff on the latest payload until it takes (Go:
+        // `runHomeConfigWorker`'s staging loop).
+        let mut raw = raw;
+        let plugin_work = loop {
+            if life.cancel.is_dead() || supervisor_cancel.is_dead() {
+                return;
+            }
+            match cpa_config::parse_config_bytes(&raw) {
+                Ok(parsed) => {
+                    let remote_store_auth = parsed.plugins.store_auth.clone();
+                    let merged = merge_home_config(&service.config(), parsed);
+                    // Home plugins are staged before the config applies and finalized after.
+                    let staged = match &service.home_plugins {
+                        Some(plugins) => {
+                            let mut sync_cfg = merged.clone();
+                            sync_cfg.plugins.store_auth = remote_store_auth;
+                            plugins.stage(&life.client, &sync_cfg, &merged).await.map(Some)
+                        }
+                        None => Ok(None),
+                    };
+                    match staged {
+                        Ok(work) => {
+                            if life.cancel.is_dead() || supervisor_cancel.is_dead() {
+                                return;
+                            }
+                            if service.apply_config(Arc::new(merged)).await.accepted {
+                                break work;
+                            }
+                            tracing::warn!("failed to apply config update from home control center; retrying");
+                        }
+                        Err(e) => tracing::warn!("failed to stage home config; retrying: {e}"),
+                    }
+                }
+                Err(e) => tracing::warn!("failed to stage home config; retrying: {e}"),
+            }
+            tokio::select! {
+                _ = life.cancel.wait() => return,
+                _ = tokio::time::sleep(PRE_ACK_RETRY_BACKOFF) => {}
+            }
+            while let Ok(latest) = rx.try_recv() {
+                raw = latest;
             }
         };
-        let base = service.config();
-        let remote_store_auth = parsed.plugins.store_auth.clone();
-        let merged = merge_home_config(&base, parsed);
-        let mut plugin_work = None;
-        if let Some(plugins) = &service.home_plugins {
-            let mut sync_cfg = merged.clone();
-            sync_cfg.plugins.store_auth = remote_store_auth;
-            match plugins.stage(&life.client, &sync_cfg, &merged).await {
-                Ok(work) => plugin_work = Some(work),
-                Err(e) => {
-                    tracing::warn!("failed to stage home config; retrying: {e}");
-                    continue;
-                }
-            }
-        }
-        let merged = Arc::new(merged);
-        if life.cancel.is_dead() || supervisor_cancel.is_dead() {
-            return;
-        }
-        let outcome = service.apply_config(merged).await;
-        if !outcome.accepted {
-            tracing::warn!("failed to apply config update from home control center");
-            continue;
-        }
         if let Some(mut work) = plugin_work {
             loop {
                 if life.cancel.is_dead() {

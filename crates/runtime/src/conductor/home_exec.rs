@@ -91,6 +91,14 @@ async fn call_unary_cancellable(
     }
 }
 
+/// Home may name the user API key of the request (Go sets it on the shared gin context); the
+/// dispatch wrote it into the pick options, so forward it to the execution options too.
+fn carry_home_user_api_key(pick_opts: &Options, opts: &mut Options) {
+    if let Some(key) = pick_opts.metadata.get(super::usage::META_CLIENT_API_KEY) {
+        opts.metadata.insert(super::usage::META_CLIENT_API_KEY.into(), key.clone());
+    }
+}
+
 impl Manager {
     /// Retry decision of Home mode (Go: the `HomeEnabled` branches of
     /// `shouldRetryAfterErrorWithAttempted`). `Err` fails fast without a retry.
@@ -233,7 +241,10 @@ impl Manager {
             pick_opts = with_home_auth_count(pick_opts, home_auth_count);
             pick_opts = with_home_excluded_auth_ids(pick_opts, &tried);
             let selection = match self.pick_home_dispatch_selection(&route_model, &mut pick_opts, "").await {
-                Ok(s) => s,
+                Ok(s) => {
+                    carry_home_user_api_key(&pick_opts, &mut opts);
+                    s
+                }
                 Err(e) => {
                     let preferred = || match &last_err {
                         Some(l) => preferred_fail(l.clone(), upstream_err.as_ref()),
@@ -592,7 +603,10 @@ impl Manager {
             pick_opts = with_home_auth_count(pick_opts, home_auth_count);
             pick_opts = with_home_excluded_auth_ids(pick_opts, &excluded);
             let selection = match self.pick_home_dispatch_selection(&route_model, &mut pick_opts, "").await {
-                Ok(s) => s,
+                Ok(s) => {
+                    carry_home_user_api_key(&pick_opts, &mut opts);
+                    s
+                }
                 Err(e) => {
                     let preferred = || match &last_err {
                         Some(l) => preferred_fail(l.clone(), upstream_err.as_ref()),

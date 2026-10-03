@@ -446,7 +446,7 @@ impl Service {
         if home_mode {
             // Credentials live at Home: no auth store, auth files, cooldown restore or refresh
             // loop. Config-synthesized auths arrive with the first config from Home.
-            inner.start_home();
+            inner.start_home().await;
             return Ok(());
         }
 
@@ -550,8 +550,14 @@ impl Service {
             task.abort();
         }
         self.inner.config_watcher.lock().take();
-        self.inner.stop_home();
+        self.inner.cancel_home();
         self.inner.manager.stop_auto_refresh();
+    }
+
+    /// Stops Home mode gracefully: the supervisor drains in-flight executions, flushes pending
+    /// credential releases and closes the client. Call before [`Service::shutdown`].
+    pub async fn shutdown_home(&self) {
+        self.inner.stop_home().await;
     }
 
     /// Resolves when Home lifecycle recovery failed beyond repair (the process should exit).

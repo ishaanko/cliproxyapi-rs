@@ -20,6 +20,8 @@ use super::cooldown::is_auth_blocked_for_model;
 use super::*;
 use crate::executor::{ErrorCode, Executor, meta};
 
+// Scripted outcomes of a test executor; `ExecError` is large by design.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 enum Step {
     Ok(&'static str),
