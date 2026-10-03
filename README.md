@@ -23,7 +23,7 @@ Development builds: the release profile is fat LTO with one codegen unit (slow t
 Verified against the Go implementation:
 
 - **Translators:** 5,684 / 5,684 golden cases, captured from the Go test suite and replayed through the Go code (`cargo run --release -p cpa-conformance`).
-- **End to end:** 1,002 / 1,002 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
+- **End to end:** 1,003 / 1,003 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
 
 ## Performance
 
