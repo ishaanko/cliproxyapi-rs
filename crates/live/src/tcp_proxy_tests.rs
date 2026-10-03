@@ -181,12 +181,9 @@ async fn prepare_rejects_unsafe_targets() {
             dialer,
         )
         .await;
-        match result {
-            Ok((_, tunnels)) => {
-                close_candidate_tunnels(&tunnels);
-                panic!("{name}: expected unsafe candidate to be rejected");
-            }
-            Err(_) => {}
+        if let Ok((_, tunnels)) = result {
+            close_candidate_tunnels(&tunnels);
+            panic!("{name}: expected unsafe candidate to be rejected");
         }
     }
 }

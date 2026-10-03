@@ -84,7 +84,7 @@ impl Manager {
         self.record_usage(&result, snapshot.as_ref(), facts.as_ref(), now);
     }
 
-    fn record_usage(
+    pub(crate) fn record_usage(
         &self,
         result: &ExecResult,
         snapshot: Option<&Auth>,
@@ -103,7 +103,7 @@ impl Manager {
         snapshot: Option<&Auth>,
         now: DateTime<Utc>,
     ) {
-        if result.success {
+        if result.success || self.home_enabled() {
             return;
         }
         let sink = self.error_sink.read().clone();

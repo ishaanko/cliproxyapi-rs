@@ -7,7 +7,10 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 use parking_lot::Mutex;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 
+use super::kv::{KvBackend, KvError, KvResult, Store, compact_raw_json, read_or_reserve, scoped_kv_key, store};
 use super::{Clock, Timestamp, elapsed, ensure_cleanup_started, new_uuid, oldest_keys, scoped_key};
 
 /// How long signed assistant content stays replayable.
@@ -32,8 +35,10 @@ struct Entry {
 
 /// Identifies the exact replay generation read for one request. Opaque outside the cache; a
 /// default snapshot (`loaded == false`) makes conditional operations behave as unconditional.
+/// In Home mode `raw` is the stored value read, the compare-and-swap guard.
 #[derive(Debug, Clone, Default)]
 pub struct KimiThinkingReplaySnapshot {
+    pub(super) raw: Vec<u8>,
     pub(super) generation: String,
     pub(super) loaded: bool,
     pub(super) found: bool,
@@ -188,6 +193,7 @@ impl KimiThinkingReplayCache {
             generation: entry.generation.clone(),
             loaded: true,
             found: true,
+            ..Default::default()
         };
         if entry.deleted {
             return (None, snapshot);
@@ -305,22 +311,120 @@ impl KimiThinkingReplayCache {
     }
 }
 
+// ---- global API: Home KV when Home mode is on, otherwise the in-process cache
+
+const KV_PREFIX: &str = "cpa:kimi:thinking-replay";
+const LABEL: &str = "kimi thinking replay";
+const MAX_SERIALIZED_BYTES: usize = KIMI_THINKING_REPLAY_CACHE_MAX_BYTES_PER_ENTRY + 1024;
+
+/// Home value: `{"generation", "deleted"?, "content"?}`; a tombstone has no content.
+#[derive(Deserialize)]
+struct HomeValue {
+    #[serde(default)]
+    generation: String,
+    #[serde(default)]
+    deleted: bool,
+    #[serde(default)]
+    content: Option<Box<RawValue>>,
+}
+
+fn kv_key(model_family: &str, session_key: &str) -> String {
+    scoped_kv_key(KV_PREFIX, model_family, session_key)
+}
+
+fn marshal_home_value(generation: &str, deleted: bool, content: &[u8]) -> KvResult<Vec<u8>> {
+    let mut out = format!("{{\"generation\":\"{generation}\"");
+    if deleted {
+        out.push_str(",\"deleted\":true");
+    } else if !content.is_empty() {
+        out.push_str(",\"content\":");
+        out.push_str(&compact_raw_json(content)?);
+    }
+    out.push('}');
+    Ok(out.into_bytes())
+}
+
+/// `(content, generation, deleted)` of a stored value; a bare content array is the legacy format.
+fn decode_home_value(raw: &[u8]) -> Option<(Vec<u8>, String, bool)> {
+    if raw.is_empty() || raw.len() > MAX_SERIALIZED_BYTES || !cpa_json::valid(raw) {
+        return None;
+    }
+    if raw.trim_ascii_start().first() == Some(&b'[') {
+        return content_is_valid(raw).then(|| (raw.to_vec(), "legacy".to_string(), false));
+    }
+    let value: HomeValue = serde_json::from_slice(raw).ok()?;
+    if value.generation.trim().is_empty() {
+        return None;
+    }
+    if value.deleted {
+        return Some((Vec::new(), value.generation, true));
+    }
+    let content = value.content?.get().as_bytes().to_vec();
+    content_is_valid(&content).then_some((content, value.generation, false))
+}
+
+fn home_get(
+    backend: &dyn KvBackend,
+    model_family: &str,
+    session_key: &str,
+) -> KvResult<(Option<Vec<u8>>, KimiThinkingReplaySnapshot)> {
+    let key = kv_key(model_family, session_key);
+    let raw = read_or_reserve(backend, &key, KIMI_THINKING_REPLAY_CACHE_TTL, MAX_SERIALIZED_BYTES, LABEL, || {
+        marshal_home_value(&new_uuid(), true, &[])
+    })?;
+    let mut snapshot = KimiThinkingReplaySnapshot { raw: raw.clone(), loaded: true, found: true, ..Default::default() };
+    let Some((content, generation, deleted)) = decode_home_value(&raw) else {
+        return Err(KvError::new("invalid kimi thinking replay content"));
+    };
+    snapshot.generation = generation;
+    if let Err(e) = backend.expire(&key, KIMI_THINKING_REPLAY_CACHE_TTL) {
+        tracing::warn!("home kv kimi thinking replay expire failed prefix=cpa:kimi:*: {e}");
+    }
+    Ok(((!deleted).then_some(content), snapshot))
+}
+
 /// Go: CacheKimiThinkingReplayBestEffort.
 pub fn cache_kimi_thinking_replay_best_effort(model_family: &str, session_key: &str, content: &[u8]) -> bool {
-    KimiThinkingReplayCache::global().cache_best_effort(model_family, session_key, content)
+    if cache_key(model_family, session_key).is_none() || !content_is_valid(content) {
+        return false;
+    }
+    let result = store().and_then(|store| match store {
+        Store::Local => Ok(None),
+        Store::Home(backend) => {
+            let raw = marshal_home_value(&new_uuid(), false, content)?;
+            backend
+                .set(&kv_key(model_family, session_key), &raw, KIMI_THINKING_REPLAY_CACHE_TTL)
+                .map(Some)
+        }
+    });
+    match result {
+        Ok(Some(written)) => written,
+        Ok(None) => KimiThinkingReplayCache::global().cache_best_effort(model_family, session_key, content),
+        Err(e) => {
+            tracing::error!("home kv best-effort kimi thinking replay set failed prefix=cpa:kimi:*: {e}");
+            false
+        }
+    }
 }
 
 /// Go: GetKimiThinkingReplayRequired.
-pub fn get_kimi_thinking_replay_required(model_family: &str, session_key: &str) -> Option<Vec<u8>> {
-    KimiThinkingReplayCache::global().get_required(model_family, session_key)
+pub fn get_kimi_thinking_replay_required(model_family: &str, session_key: &str) -> KvResult<Option<Vec<u8>>> {
+    get_kimi_thinking_replay_with_snapshot_required(model_family, session_key).map(|(content, _)| content)
 }
 
-/// Go: GetKimiThinkingReplayWithSnapshotRequired.
+/// Go: GetKimiThinkingReplayWithSnapshotRequired. In Home mode a miss reserves a tombstone, and
+/// the snapshot carries the stored value as the compare-and-swap guard.
 pub fn get_kimi_thinking_replay_with_snapshot_required(
     model_family: &str,
     session_key: &str,
-) -> (Option<Vec<u8>>, KimiThinkingReplaySnapshot) {
-    KimiThinkingReplayCache::global().get_with_snapshot_required(model_family, session_key)
+) -> KvResult<(Option<Vec<u8>>, KimiThinkingReplaySnapshot)> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok((None, KimiThinkingReplaySnapshot::default()));
+    }
+    match store()? {
+        Store::Home(backend) => home_get(backend, model_family, session_key),
+        Store::Local => Ok(KimiThinkingReplayCache::global().get_with_snapshot_required(model_family, session_key)),
+    }
 }
 
 /// Go: ReplaceKimiThinkingReplayIfUnchanged.
@@ -329,8 +433,27 @@ pub fn replace_kimi_thinking_replay_if_unchanged(
     session_key: &str,
     snapshot: &KimiThinkingReplaySnapshot,
     content: &[u8],
-) -> bool {
-    KimiThinkingReplayCache::global().replace_if_unchanged(model_family, session_key, snapshot, content)
+) -> KvResult<bool> {
+    if cache_key(model_family, session_key).is_none() || !content_is_valid(content) {
+        return Ok(false);
+    }
+    if !snapshot.loaded {
+        return Ok(cache_kimi_thinking_replay_best_effort(model_family, session_key, content));
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let raw = marshal_home_value(&new_uuid(), false, content)?;
+            backend.compare_and_swap(
+                &kv_key(model_family, session_key),
+                snapshot.found.then_some(snapshot.raw.as_slice()),
+                &raw,
+                KIMI_THINKING_REPLAY_CACHE_TTL,
+            )
+        }
+        Store::Local => {
+            Ok(KimiThinkingReplayCache::global().replace_if_unchanged(model_family, session_key, snapshot, content))
+        }
+    }
 }
 
 /// Go: DeleteKimiThinkingReplayIfUnchanged.
@@ -338,13 +461,42 @@ pub fn delete_kimi_thinking_replay_if_unchanged(
     model_family: &str,
     session_key: &str,
     snapshot: &KimiThinkingReplaySnapshot,
-) -> bool {
-    KimiThinkingReplayCache::global().delete_if_unchanged(model_family, session_key, snapshot)
+) -> KvResult<bool> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok(false);
+    }
+    if !snapshot.loaded {
+        delete_kimi_thinking_replay_required(model_family, session_key)?;
+        return Ok(true);
+    }
+    match store()? {
+        Store::Home(backend) => {
+            let tombstone = marshal_home_value(&new_uuid(), true, &[])?;
+            backend.compare_and_swap(
+                &kv_key(model_family, session_key),
+                snapshot.found.then_some(snapshot.raw.as_slice()),
+                &tombstone,
+                KIMI_THINKING_REPLAY_CACHE_TTL,
+            )
+        }
+        Store::Local => {
+            Ok(KimiThinkingReplayCache::global().delete_if_unchanged(model_family, session_key, snapshot))
+        }
+    }
 }
 
 /// Go: DeleteKimiThinkingReplayRequired.
-pub fn delete_kimi_thinking_replay_required(model_family: &str, session_key: &str) {
-    KimiThinkingReplayCache::global().delete_required(model_family, session_key);
+pub fn delete_kimi_thinking_replay_required(model_family: &str, session_key: &str) -> KvResult<()> {
+    if cache_key(model_family, session_key).is_none() {
+        return Ok(());
+    }
+    match store()? {
+        Store::Home(backend) => backend.del(&kv_key(model_family, session_key)),
+        Store::Local => {
+            KimiThinkingReplayCache::global().delete_required(model_family, session_key);
+            Ok(())
+        }
+    }
 }
 
 /// Go: ClearKimiThinkingReplayCache.

@@ -21,18 +21,18 @@ use crate::req::ReqInfo;
 use crate::state::AppState;
 
 /// `GET /v1beta/models`.
-pub async fn list_models() -> Response {
-    models::gemini_models().into_response()
+pub async fn list_models(State(st): State<AppState>, info: ReqInfo) -> Response {
+    models::gemini_models(&st.cfg(), &info).await.into_response()
 }
 
 /// `GET /v1beta/models/*action`: single model lookup.
-pub async fn get_model(Path(action): Path<String>) -> Response {
-    models::gemini_get_model(&action).into_response()
+pub async fn get_model(State(st): State<AppState>, info: ReqInfo, Path(action): Path<String>) -> Response {
+    models::gemini_get_model(&st.cfg(), &info, &action).await.into_response()
 }
 
 /// `GET /v1beta/models/` (gin's wildcard also matches the empty action).
-pub async fn get_model_root() -> Response {
-    models::gemini_get_model("/").into_response()
+pub async fn get_model_root(State(st): State<AppState>, info: ReqInfo) -> Response {
+    models::gemini_get_model(&st.cfg(), &info, "/").await.into_response()
 }
 
 /// `POST /v1beta/models/` (empty action).

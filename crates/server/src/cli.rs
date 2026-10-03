@@ -34,6 +34,9 @@ pub struct Cli {
     pub discover_service_type: String,
     pub discover_include: Vec<String>,
     pub discover_exclude: Vec<String>,
+    /// `-home-jwt`: Home control plane JWT (config and credentials come from Home).
+    pub home_jwt: String,
+    pub home_disable_cluster_discovery: bool,
     /// `-tui`: start the terminal management UI instead of the server.
     pub tui: bool,
     /// `-standalone`: with `-tui`, run an embedded server in-process.
@@ -87,10 +90,7 @@ const VALUE_FLAGS: &[&str] = &[
 ];
 
 /// Flags that exist in Go but have no counterpart here.
-const UNSUPPORTED: &[&str] = &[
-    "home-jwt",
-    "home-disable-cluster-discovery",
-];
+const UNSUPPORTED: &[&str] = &[];
 
 fn parse_bool(value: &str) -> Option<bool> {
     match value {
@@ -180,6 +180,8 @@ pub fn parse(args: &[String]) -> ParseOutcome {
             "discover-service-type" => cli.discover_service_type = value,
             "discover-include" => cli.discover_include.extend(cpa_discovery::scan::parse_interface_list(&[value])),
             "discover-exclude" => cli.discover_exclude.extend(cpa_discovery::scan::parse_interface_list(&[value])),
+            "home-jwt" => cli.home_jwt = value,
+            "home-disable-cluster-discovery" => cli.home_disable_cluster_discovery = flag_on(),
             other if UNSUPPORTED.contains(&other) => {
                 let enabled = !BOOL_FLAGS.contains(&other) || flag_on();
                 if enabled {
@@ -207,6 +209,8 @@ pub fn usage(program: &str) -> String {
         ("discover-json", "", "Output discovered gateways in JSON format"),
         ("discover-service-type", "string", "DNS-SD service type for LAN discovery (default _ai-gateway._tcp)"),
         ("discover-timeout", "int", "Timeout in seconds for LAN discovery (default 3s) (default 3)"),
+        ("home-disable-cluster-discovery", "", "Disable Home CLUSTER NODES discovery and keep using the configured -home-jwt address"),
+        ("home-jwt", "string", "Home control plane JWT for mTLS certificate bootstrap and connection"),
         ("kimi-ai-login", "", "Login to Kimi.ai using OAuth"),
         ("kimi-login", "", "Login to Kimi (.com) using OAuth"),
         ("local-model", "", "Use embedded models.json and codex_client_models.json only, skip remote model catalog fetching"),
@@ -483,8 +487,15 @@ mod tests {
 
     #[test]
     fn unsupported_flags_are_recorded() {
-        let c = run("-tui -standalone=false -home-jwt tok");
-        assert_eq!(c.unsupported, vec!["home-jwt"]);
+        let c = run("-tui -standalone=false -discover tok");
+        assert_eq!(c.unsupported, vec!["discover"]);
         assert!(c.tui && !c.standalone);
+    }
+
+    #[test]
+    fn home_flags_are_parsed() {
+        let c = run("-home-jwt tok -home-disable-cluster-discovery");
+        assert_eq!((c.home_jwt.as_str(), c.home_disable_cluster_discovery), ("tok", true));
+        assert!(c.unsupported.is_empty());
     }
 }

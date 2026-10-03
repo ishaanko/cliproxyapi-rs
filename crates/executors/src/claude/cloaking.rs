@@ -59,27 +59,31 @@ pub fn get_workload(incoming: Option<&HeaderMap>) -> String {
 }
 
 /// Generates and injects a fake `metadata.user_id` unless a valid one exists (Go: injectFakeUserID).
-/// With `use_cache` false a new device id is generated for every call.
-pub fn inject_fake_user_id(payload: &[u8], api_key: &str, use_cache: bool) -> Vec<u8> {
+/// With `use_cache` false a new device id is generated for every call. In Home mode the cached
+/// ids come from Home KV and a Home failure fails the request.
+pub fn inject_fake_user_id(payload: &[u8], api_key: &str, use_cache: bool) -> Result<Vec<u8>, ExecError> {
+    use crate::helps::id_cache::{
+        cached_session_id_required_blocking, cached_user_id_required_blocking, generate_fake_user_id_with_session_id,
+    };
     let generate = || {
-        if use_cache {
-            crate::helps::id_cache::cached_user_id(api_key)
+        let id = if use_cache {
+            cached_user_id_required_blocking(api_key)
         } else {
-            let session_id = crate::helps::id_cache::cached_session_id(api_key);
-            crate::helps::id_cache::generate_fake_user_id_with_session_id(&session_id)
-        }
+            cached_session_id_required_blocking(api_key).map(|s| generate_fake_user_id_with_session_id(&s))
+        };
+        id.map_err(|e| crate::helps::home_kv::exec_error(&e))
     };
     let mut root = cpa_json::parse(payload);
     if !root.g("metadata").exists() {
-        cpa_json::set(&mut root, "metadata.user_id", generate());
-        return cpa_json::to_vec(&root);
+        cpa_json::set(&mut root, "metadata.user_id", generate()?);
+        return Ok(cpa_json::to_vec(&root));
     }
     let existing = root.g("metadata.user_id").str();
     if existing.is_empty() || !crate::helps::id_cache::is_valid_user_id(&existing) {
-        cpa_json::set(&mut root, "metadata.user_id", generate());
-        return cpa_json::to_vec(&root);
+        cpa_json::set(&mut root, "metadata.user_id", generate()?);
+        return Ok(cpa_json::to_vec(&root));
     }
-    payload.to_vec()
+    Ok(payload.to_vec())
 }
 
 /// The 3-char build fingerprint embedded in `cc_version` (Go: computeFingerprint):
@@ -1133,7 +1137,7 @@ pub fn apply_cloaking_internal(
     // CLI-profile identity is applied later through ApplyClaudeCredentialMetadata; other cloaking
     // keeps the legacy per-request fake user_id.
     if !policy.profile_claude_code_cli {
-        payload = inject_fake_user_id(&payload, api_key, settings.cache_user_id);
+        payload = inject_fake_user_id(&payload, api_key, settings.cache_user_id)?;
     }
 
     if obfuscate_sensitive_words_flag && !settings.sensitive_words.is_empty() {

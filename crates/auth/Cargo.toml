@@ -6,6 +6,11 @@ license.workspace = true
 
 # Port of internal/auth/**, sdk/auth and the Auth data model of sdk/cliproxy/auth:
 # credential file formats, file store + watcher, OAuth flows and token refresh per provider.
+[features]
+# TLS fingerprinted Claude OAuth transport on BoringSSL (see crates/tlsfp for build requirements).
+default = ["tls-fingerprint"]
+tls-fingerprint = ["dep:cpa-tlsfp"]
+
 [dependencies]
 cpa-misc = { path = "../misc" }
 serde.workspace = true
@@ -27,6 +32,7 @@ url = "2"
 notify = "8"
 pkcs1 = { version = "0.7", features = ["pem", "std"] }
 pkcs8 = { version = "0.10", features = ["pem", "std"] }
+cpa-tlsfp = { path = "../tlsfp", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

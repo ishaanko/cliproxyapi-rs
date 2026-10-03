@@ -123,7 +123,14 @@ pub fn prepare_claude_thinking_replay_request(
     if !scope.valid() {
         return (req, scope);
     }
-    let (contents, snapshot) = get_claude_thinking_replay_with_snapshot_required(&scope.model_family, &scope.session_key);
+    let (contents, snapshot) =
+        match get_claude_thinking_replay_with_snapshot_required(&scope.model_family, &scope.session_key) {
+            Ok(read) => read,
+            Err(err) => {
+                tracing::warn!("claude compatible thinking replay cache read failed: {err}");
+                return (req, scope);
+            }
+        };
     scope.snapshot = snapshot;
     scope.cache_ready = true;
     let Some(contents) = contents else { return (req, scope) };
@@ -168,7 +175,11 @@ pub fn cache_claude_thinking_replay_content(scope: &ClaudeThinkingReplayScope, c
         return;
     }
     if replay_content_is_replayable(content) {
-        replace_claude_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot, content);
+        if let Err(err) =
+            replace_claude_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot, content)
+        {
+            tracing::warn!("claude compatible thinking replay cache replace failed: {err}");
+        }
         return;
     }
     clear_claude_thinking_replay_content(scope);
@@ -180,7 +191,11 @@ pub fn clear_claude_thinking_replay_content(scope: &ClaudeThinkingReplayScope) {
     if !scope.valid() || !scope.cache_ready {
         return;
     }
-    delete_claude_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot);
+    if let Err(err) =
+        delete_claude_thinking_replay_if_unchanged(&scope.model_family, &scope.session_key, &scope.snapshot)
+    {
+        tracing::warn!("claude compatible thinking replay cache delete failed: {err}");
+    }
 }
 
 /// Whether an upstream error means the replayed content was rejected, so the cache should be
@@ -894,7 +909,7 @@ mod tests {
 
         let (req, opts) = test_request(first, session, true, Format::Claude);
         let scope = scope_for(&auth, &req, &opts);
-        assert!(cpa_core::cache::get_claude_thinking_replay_required(&scope.model_family, &scope.session_key).is_none());
+        assert!(cpa_core::cache::get_claude_thinking_replay_required(&scope.model_family, &scope.session_key).ok().flatten().is_none());
     }
 
     #[test]

@@ -82,6 +82,12 @@ impl ApiLog {
         d.api_response.extend_from_slice(data);
     }
 
+    /// `c.Set("API_RESPONSE", body)` as done by `WriteModelListResponse`: replaces the response
+    /// text without touching the timestamp.
+    pub fn set_api_response(&self, data: &[u8]) {
+        self.data.lock().api_response = data.to_vec();
+    }
+
     /// `markAPIResponseTimestamp`.
     pub fn mark_response_timestamp(&self) {
         let mut d = self.data.lock();
@@ -164,6 +170,11 @@ impl RequestLogger {
     pub fn enabled(&self) -> bool {
         let cfg = self.cfg();
         cfg.request_log && !cfg.commercial_mode
+    }
+
+    /// `homeEnabled` (`SetHomeEnabled(cfg.Home.Enabled)`): full request logs go to Home, not files.
+    pub fn home_enabled(&self) -> bool {
+        self.cfg().home.enabled
     }
 
     fn logs_dir(&self) -> PathBuf {
@@ -291,7 +302,7 @@ fn create_unique_log_file(dir: &Path, filename: &str) -> std::io::Result<fs::Fil
     Err(std::io::Error::other(format!("too many conflicting log files for {filename}")))
 }
 
-fn canonical_header_name(name: &str) -> String {
+pub(crate) fn canonical_header_name(name: &str) -> String {
     name.split('-')
         .map(|part| {
             let mut chars = part.chars();
@@ -608,6 +619,11 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         None
     };
 
+    // Home mode with request-log on: the log goes to Home. A streaming exchange that starts
+    // without a healthy Home client gets no log (`LogStreamingRequest` returns a no-op writer).
+    let to_home = enabled && logger.home_enabled();
+    let skip_home = to_home && streaming && crate::reqlog_home::ready_client().is_none();
+
     let on_done = {
         let captured = captured.clone();
         let logger = logger.clone();
@@ -623,6 +639,12 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
                 if ws_upgrade && status == 101 {
                     api_log.ws_done.notified().await;
                 }
+                if to_home {
+                    if !skip_home {
+                        forward_to_home(&exchange, &api_log, ws_upgrade).await;
+                    }
+                    return;
+                }
                 // Rendering and the file write are blocking fs work.
                 let _ = tokio::task::spawn_blocking(move || finalize(&logger, exchange, &api_log, enabled, ws_upgrade)).await;
             };
@@ -637,6 +659,22 @@ pub async fn request_log(State(st): State<AppState>, req: Request, next: Next) -
         })
     };
     Response::from_parts(resp_parts, TeeBody::wrap(resp_body, on_chunk, on_done))
+}
+
+/// Home variant of the log write: render the log text and `RPUSH request-log` it.
+async fn forward_to_home(exchange: &Exchange, api_log: &ApiLog, websocket: bool) {
+    // Health is checked again now: the log may have outlived the Home connection.
+    if crate::reqlog_home::ready_client().is_none() {
+        return;
+    }
+    let content = {
+        let data = api_log.data.lock();
+        render(exchange, &data, websocket)
+    };
+    let text = String::from_utf8_lossy(&content);
+    if let Err(e) = crate::reqlog_home::forward_request_log(&exchange.info.headers, &exchange.info.request_id, &text).await {
+        tracing::debug!("failed to forward request log to home: {e}");
+    }
 }
 
 fn finalize(logger: &RequestLogger, exchange: Exchange, api_log: &ApiLog, enabled: bool, websocket: bool) {

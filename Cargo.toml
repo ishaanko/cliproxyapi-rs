@@ -30,6 +30,13 @@ cpa-json = { path = "crates/json" }
 [profile.dev]
 debug = 1
 
+# RSA key generation (home enrollment) is unusably slow unoptimized.
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
+[profile.dev.package.rsa]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

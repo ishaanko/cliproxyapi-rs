@@ -1,5 +1,6 @@
 //! Claude Code device profile: baseline fingerprint values, version compare/upgrade rules and the
-//! 7 day per-credential cache (Go: helps/claude_device_profile.go). Home KV paths are not ported.
+//! 7 day per-credential cache (Go: helps/claude_device_profile.go). In Home mode the profile is
+//! kept in Home KV instead (`cpa:claude:device-profile:*`, with a short lock key per scope).
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
@@ -7,11 +8,16 @@ use std::time::{Duration, Instant};
 
 use cpa_auth::Auth;
 use cpa_config::Config;
+use cpa_home::kv::hash_key_part;
+use cpa_home::{Client, HomeError, KvSetOptions};
+use serde::{Deserialize, Serialize};
 use http::header::{HeaderName, HeaderValue};
 use http::HeaderMap;
 use parking_lot::{Mutex, RwLock};
 use regex::Regex;
 use sha2::{Digest, Sha256};
+
+use crate::helps::home_kv;
 
 use super::client_detection::{
     header_value, native_claude_entrypoint, parse_claude_code_user_agent_details,
@@ -25,6 +31,8 @@ pub const DEFAULT_CLAUDE_FINGERPRINT_OS: &str = "MacOS";
 pub const DEFAULT_CLAUDE_FINGERPRINT_ARCH: &str = "arm64";
 /// Go: `claudeDeviceProfileTTL`.
 pub const CLAUDE_DEVICE_PROFILE_TTL: Duration = Duration::from_secs(7 * 24 * 3600);
+/// Go: `claudeDeviceProfileLockTTL` (Home KV upgrade lock).
+const CLAUDE_DEVICE_PROFILE_LOCK_TTL: Duration = Duration::from_secs(5);
 /// Go: `claudeDeviceProfileCleanupPeriod`.
 const CLAUDE_DEVICE_PROFILE_CLEANUP_PERIOD: Duration = Duration::from_secs(3600);
 
@@ -245,15 +253,33 @@ fn claude_device_profile_subclient_scope(profile: &ClaudeDeviceProfile) -> Strin
     "other".to_string()
 }
 
-/// Go: `claudeDeviceProfileCacheKey` (sha256 hex of the scoped key).
-fn claude_device_profile_cache_key(auth: Option<&Auth>, api_key: &str, profile: &ClaudeDeviceProfile) -> String {
+/// Go: `claudeDeviceProfileScopedKey`: the credential scope plus the client subclient.
+fn claude_device_profile_scoped_key(auth: Option<&Auth>, api_key: &str, profile: &ClaudeDeviceProfile) -> String {
     let mut key = claude_device_profile_scope_key(auth, api_key);
     let subclient = claude_device_profile_subclient_scope(profile);
     if !subclient.is_empty() {
         key.push_str("|subclient:");
         key.push_str(&subclient);
     }
-    hex::encode(Sha256::digest(key.as_bytes()))
+    key
+}
+
+/// Go: `claudeDeviceProfileCacheKey` (sha256 hex of the scoped key).
+fn claude_device_profile_cache_key(auth: Option<&Auth>, api_key: &str, profile: &ClaudeDeviceProfile) -> String {
+    hex::encode(Sha256::digest(claude_device_profile_scoped_key(auth, api_key, profile).as_bytes()))
+}
+
+/// Go: `claudeDeviceProfileKVKey`: Home KV key of the stored profile.
+fn claude_device_profile_kv_key(auth: Option<&Auth>, api_key: &str, profile: &ClaudeDeviceProfile) -> String {
+    format!("cpa:claude:device-profile:{}", hash_key_part(&claude_device_profile_scoped_key(auth, api_key, profile)))
+}
+
+/// Go: `claudeDeviceProfileLockKVKey`: Home KV key of the short lock around profile upgrades.
+fn claude_device_profile_lock_kv_key(auth: Option<&Auth>, api_key: &str, profile: &ClaudeDeviceProfile) -> String {
+    format!(
+        "cpa:claude:device-profile-lock:{}",
+        hash_key_part(&claude_device_profile_scoped_key(auth, api_key, profile))
+    )
 }
 
 /// Drops expired entries at most once per cleanup period (Go runs a goroutine ticker).
@@ -265,25 +291,150 @@ fn purge_expired_if_due(cache: &mut ProfileCache, now: Instant) {
     cache.last_cleanup = now;
 }
 
-/// Go: `ResolveClaudeDeviceProfile`.
+/// Go: `ResolveClaudeDeviceProfile`: the baseline profile when Home KV fails.
 pub fn resolve_claude_device_profile(
     auth: Option<&Auth>,
     api_key: &str,
     headers: &HeaderMap,
     cfg: Option<&Config>,
 ) -> ClaudeDeviceProfile {
-    resolve_claude_device_profile_local(auth, api_key, headers, cfg)
+    resolve_claude_device_profile_required_blocking(auth, api_key, headers, cfg)
+        .unwrap_or_else(|_| default_claude_device_profile(cfg))
 }
 
-/// Go: `ResolveClaudeDeviceProfileRequired`. Home mode is not supported, so this is the local
-/// path and cannot fail.
-pub fn resolve_claude_device_profile_required(
+/// Go: `ResolveClaudeDeviceProfileRequired`: a stable Claude Code device profile for request-time
+/// paths. In Home mode the profile is shared through Home KV and any Home failure is an error.
+pub async fn resolve_claude_device_profile_required(
     auth: Option<&Auth>,
     api_key: &str,
     headers: &HeaderMap,
     cfg: Option<&Config>,
-) -> ClaudeDeviceProfile {
-    resolve_claude_device_profile_local(auth, api_key, headers, cfg)
+) -> Result<ClaudeDeviceProfile, HomeError> {
+    match home_kv::client()? {
+        Some(client) => resolve_claude_device_profile_home(&client, auth, api_key, headers, cfg).await,
+        None => Ok(resolve_claude_device_profile_local(auth, api_key, headers, cfg)),
+    }
+}
+
+/// [`resolve_claude_device_profile_required`] for synchronous callers; the local path needs no
+/// async runtime.
+pub fn resolve_claude_device_profile_required_blocking(
+    auth: Option<&Auth>,
+    api_key: &str,
+    headers: &HeaderMap,
+    cfg: Option<&Config>,
+) -> Result<ClaudeDeviceProfile, HomeError> {
+    match home_kv::client()? {
+        Some(client) => home_kv::call(resolve_claude_device_profile_home(&client, auth, api_key, headers, cfg)),
+        None => Ok(resolve_claude_device_profile_local(auth, api_key, headers, cfg)),
+    }
+}
+
+/// Go: `claudeDeviceProfileKVValue`: the stored profile (software tuple and platform).
+#[derive(Serialize, Deserialize, Default)]
+#[serde(default)]
+struct ProfileKvValue {
+    user_agent: String,
+    package_version: String,
+    runtime_version: String,
+    os: String,
+    arch: String,
+}
+
+impl ProfileKvValue {
+    fn from_profile(profile: &ClaudeDeviceProfile) -> Self {
+        Self {
+            user_agent: profile.user_agent.clone(),
+            package_version: profile.package_version.clone(),
+            runtime_version: profile.runtime_version.clone(),
+            os: profile.os.clone(),
+            arch: profile.arch.clone(),
+        }
+    }
+
+    /// Go: `ToProfile` (trims every field and parses the version).
+    fn into_profile(self) -> ClaudeDeviceProfile {
+        let user_agent = self.user_agent.trim().to_string();
+        ClaudeDeviceProfile {
+            version: parse_claude_cli_version(&user_agent),
+            user_agent,
+            package_version: self.package_version.trim().to_string(),
+            runtime_version: self.runtime_version.trim().to_string(),
+            os: self.os.trim().to_string(),
+            arch: self.arch.trim().to_string(),
+        }
+    }
+}
+
+/// Go: `resolveClaudeDeviceProfileHome`: the profile lives in Home KV for 7 days. A native client's
+/// candidate takes a 5 second lock (`SET NX`) so concurrent nodes agree; only a strictly newer
+/// candidate than the stored profile replaces it, and a node that lost the lock serves the stored
+/// profile.
+async fn resolve_claude_device_profile_home(
+    client: &Client,
+    auth: Option<&Auth>,
+    api_key: &str,
+    headers: &HeaderMap,
+    cfg: Option<&Config>,
+) -> Result<ClaudeDeviceProfile, HomeError> {
+    let baseline = default_claude_device_profile(cfg);
+    let candidate = extract_claude_device_profile(headers, cfg)
+        .map(|c| pin_claude_device_profile_platform(c, &baseline))
+        .filter(|c| meets_claude_device_profile_baseline(c, &baseline));
+
+    let scope_profile = candidate.clone().unwrap_or_default();
+    let value_key = claude_device_profile_kv_key(auth, api_key, &scope_profile);
+    let Some(candidate) = candidate else {
+        return match read_claude_device_profile_value_from_home(client, &value_key, &baseline).await? {
+            None => Ok(baseline),
+            Some(profile) => {
+                client.kv_expire(&value_key, CLAUDE_DEVICE_PROFILE_TTL).await?;
+                Ok(profile)
+            }
+        };
+    };
+
+    let lock_key = claude_device_profile_lock_kv_key(auth, api_key, &scope_profile);
+    let got_lock = client.kv_set_nx(&lock_key, b"1", CLAUDE_DEVICE_PROFILE_LOCK_TTL).await?;
+    let hook = BEFORE_CANDIDATE_STORE.lock().clone();
+    if let Some(hook) = hook {
+        hook(&candidate);
+    }
+
+    let cached = read_claude_device_profile_value_from_home(client, &value_key, &baseline).await?;
+    if let Some(cached) = &cached
+        && !should_upgrade_claude_device_profile(&candidate, cached)
+    {
+        client.kv_expire(&value_key, CLAUDE_DEVICE_PROFILE_TTL).await?;
+        return Ok(cached.clone());
+    }
+    if !got_lock {
+        return cached
+            .ok_or_else(|| HomeError::other("home kv device profile lock not acquired and profile missing"));
+    }
+
+    let raw = serde_json::to_vec(&ProfileKvValue::from_profile(&candidate)).map_err(HomeError::other)?;
+    let opts = KvSetOptions { ex: CLAUDE_DEVICE_PROFILE_TTL, ..Default::default() };
+    if !client.kv_set(&value_key, &raw, opts).await? {
+        return Err(HomeError::other("home kv device profile write skipped"));
+    }
+    Ok(candidate)
+}
+
+/// Go: `readClaudeDeviceProfileValueFromHome`: the stored profile normalized against `baseline`,
+/// `None` when absent or without a user agent.
+async fn read_claude_device_profile_value_from_home(
+    client: &Client,
+    key: &str,
+    baseline: &ClaudeDeviceProfile,
+) -> Result<Option<ClaudeDeviceProfile>, HomeError> {
+    let Some(raw) = client.kv_get(key).await? else { return Ok(None) };
+    let value: ProfileKvValue = serde_json::from_slice(&raw).map_err(HomeError::other)?;
+    let profile = value.into_profile();
+    if profile.user_agent.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(normalize_claude_device_profile(profile, baseline)))
 }
 
 /// Go: `resolveClaudeDeviceProfileLocal`: learns a native client's profile per credential,
@@ -457,12 +608,12 @@ mod tests {
         let mut invalid = device_headers("claude-cli/999.0.0 (external, cli)");
         set_header(&mut invalid, "X-Stainless-Package-Version", "999.0.0");
         set_header(&mut invalid, "X-Stainless-Runtime-Version", "v999.0.0");
-        let got = resolve_claude_device_profile_required(Some(&auth("dp-invalid")), "api-key", &invalid, None);
+        let got = resolve_claude_device_profile(Some(&auth("dp-invalid")), "api-key", &invalid, None);
         assert_eq!(software(&got), software(&baseline));
 
         // A newer patch release is not an exact measured software tuple either.
         let newer = device_headers("claude-cli/2.1.281 (external, cli)");
-        let got = resolve_claude_device_profile_required(Some(&auth("dp-newer-patch")), "api-key", &newer, None);
+        let got = resolve_claude_device_profile(Some(&auth("dp-newer-patch")), "api-key", &newer, None);
         assert_eq!(software(&got), software(&baseline));
     }
 

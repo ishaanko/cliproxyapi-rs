@@ -1,11 +1,8 @@
 //! Standard Realtime websocket relayed through Codex OAuth (Go: websocket.go).
 
-use std::sync::Arc;
-
 use axum::extract::ws::WebSocketUpgrade;
 use axum::response::Response;
 use http::{HeaderMap, HeaderValue};
-use serde_json::Value;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message as UpMessage;
 
@@ -13,7 +10,7 @@ use futures_util::SinkExt;
 
 use crate::reply::{Reply, content_type_of, realtime_error};
 use crate::sideband::{RelayEnd, finish_upgrade, is_websocket_upgrade, relay_websockets, upgrade_failed};
-use crate::upstream::{call_response_headers, copy_handshake_headers, protocol_headers};
+use crate::upstream::{MAX_WS_MESSAGE_SIZE, call_response_headers, copy_handshake_headers, protocol_headers};
 use crate::util::{codex_realtime_model, marshal_raw_map, model_from_json, unmarshal_raw_map};
 use crate::{Caller, Handler, RequestParts, live_selection_headers, selection_error};
 
@@ -111,7 +108,7 @@ impl Handler {
             None => ws,
         };
         let log = caller.log.clone();
-        let resp = ws.max_message_size(usize::MAX).max_frame_size(usize::MAX).on_upgrade(move |socket| async move {
+        let resp = ws.max_message_size(MAX_WS_MESSAGE_SIZE).max_frame_size(MAX_WS_MESSAGE_SIZE).on_upgrade(move |socket| async move {
             // The direct socket has no owner to cancel it: the relay ends with either peer.
             let (_keep, cancel_rx) = watch::channel(false);
             let end = relay_websockets(socket, dialed.stream, cancel_rx).await;
@@ -159,6 +156,3 @@ fn direct_dial_error(caller: &Caller, failure: crate::ws_client::DialFailure) ->
     }
     reply.into_response()
 }
-
-#[allow(dead_code)]
-fn _unused(_: Arc<()>, _: Value) {}

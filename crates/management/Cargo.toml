@@ -8,8 +8,9 @@ license.workspace = true
 # internal/api/server_management*.go as an axum Router.
 [dependencies]
 cpa-config = { path = "../config" }
-cpa-auth = { path = "../auth" }
+cpa-auth = { path = "../auth", default-features = false }
 cpa-runtime = { path = "../runtime" }
+cpa-home = { path = "../home" }
 cpa-core = { path = "../core" }
 axum = { version = "0.8", features = ["multipart"] }
 serde.workspace = true
@@ -29,7 +30,7 @@ bcrypt = "0.17"
 subtle = "2"
 url = "2"
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "socks", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots", "rustls-tls-native-roots", "gzip", "brotli", "deflate", "zstd", "socks", "json"] }
 
 tower = { version = "0.5", features = ["util"] }
 

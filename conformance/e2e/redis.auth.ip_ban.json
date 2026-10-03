@@ -1,0 +1,113 @@
+{
+  "id": "redis.auth.ip_ban",
+  "desc": "five failed attempts ban the client on the Redis path too",
+  "steps": [
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"bad\"]), Cmd([\"AUTH\", \"bad\"]), Cmd([\"AUTH\", \"bad\"]), Cmd([\"AUTH\", \"bad\"]), Cmd([\"AUTH\", \"bad\"]), Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"PING\"])]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "bad"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "bad"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "bad"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "bad"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "bad"
+              ],
+              "reply": {
+                "error": "ERR invalid management key"
+              }
+            },
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "error": "ERR IP banned due to too many failed attempts. Try again in <duration>"
+              }
+            },
+            {
+              "sent": [
+                "PING"
+              ],
+              "reply": {
+                "error": "ERR IP banned due to too many failed attempts. Try again in <duration>"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v0/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "IP banned due to too many failed attempts. Try again in <duration>"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

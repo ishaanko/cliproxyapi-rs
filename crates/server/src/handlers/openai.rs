@@ -20,7 +20,7 @@ use crate::state::AppState;
 /// `GET /v1/models`.
 pub async fn unified_models(State(st): State<AppState>, info: ReqInfo) -> Response {
     let cfg = st.cfg();
-    models::unified_models(&cfg, &st.manager, &info.headers, &info.query).into_response()
+    models::unified_models(&cfg, &st.manager, &info).await.into_response()
 }
 
 /// `shouldTreatAsResponsesFormat`: Responses-style payloads sent to the chat endpoint.

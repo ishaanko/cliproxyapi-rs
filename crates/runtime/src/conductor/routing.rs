@@ -5,6 +5,9 @@ use cpa_auth::Auth;
 use cpa_config::Config;
 
 use super::Manager;
+use super::home_selection::{
+    HOME_FORCE_MAPPING_ATTRIBUTE, HOME_ORIGINAL_ALIAS_ATTRIBUTE, HOME_UPSTREAM_MODEL_ATTRIBUTE,
+};
 use super::cooldown::{CoolingPolicy, is_auth_blocked_for_model};
 use super::models::{
     AliasResult, apply_api_key_model_alias, apply_oauth_model_alias, execution_alias_pool_model,
@@ -13,6 +16,24 @@ use super::models::{
     resolve_openai_compat_upstream_model_pool, rewrite_model_for_auth, rotate_strings,
 };
 use super::util::canonical_model_key;
+
+/// Go: `homeForceMappingAliasResult`: Home told us to rewrite responses back to the alias.
+pub(super) fn home_force_mapping_alias_result(auth: &Auth, requested: &str) -> AliasResult {
+    if !auth.attr(HOME_FORCE_MAPPING_ATTRIBUTE).eq_ignore_ascii_case("true") {
+        return AliasResult::default();
+    }
+    let original_alias = auth.attr(HOME_ORIGINAL_ALIAS_ATTRIBUTE);
+    let canonical_original = super::home_concurrency::canonical_concurrency_model_key(&original_alias);
+    let canonical_requested = super::home_concurrency::canonical_concurrency_model_key(requested);
+    if canonical_original.is_empty() || canonical_original != canonical_requested {
+        return AliasResult::default();
+    }
+    let mut upstream = auth.attr(HOME_UPSTREAM_MODEL_ATTRIBUTE);
+    if upstream.is_empty() {
+        upstream = requested.trim().to_string();
+    }
+    AliasResult { upstream_model: upstream, force_mapping: true, original_alias }
+}
 
 impl Manager {
     /// Model name used for availability checks and state keys of this credential: prefix
@@ -43,6 +64,11 @@ impl Manager {
         upstream_model: &str,
         pooled: bool,
     ) -> String {
+        let home_model = auth.attr(HOME_UPSTREAM_MODEL_ATTRIBUTE);
+        if !home_model.is_empty() {
+            let resolved = upstream_model.trim();
+            return if resolved.is_empty() { home_model } else { resolved.to_string() };
+        }
         let state_model = execution_result_model(route_model, upstream_model, pooled);
         let selection = self.selection_model_for_auth(auth, route_model);
         if canonical_model_key(&selection) == canonical_model_key(upstream_model)
@@ -68,12 +94,16 @@ impl Manager {
         offset % size
     }
 
-    fn alias_result_for_requested(
+    pub(crate) fn alias_result_for_requested(
         &self,
         cfg: &Config,
         auth: &Auth,
         requested: &str,
     ) -> AliasResult {
+        let home = home_force_mapping_alias_result(auth, requested);
+        if home.force_mapping {
+            return home;
+        }
         if is_configured_model_routing_auth(auth) {
             return resolve_api_key_model_alias_with_result(cfg, auth, requested);
         }
@@ -98,10 +128,20 @@ impl Manager {
     ) -> (Vec<String>, bool, AliasResult) {
         let cfg = self.cfg();
         let requested = rewrite_model_for_auth(route_model, auth);
-        let alias = self.alias_result_for_requested(&cfg, auth, &requested);
+        let mut alias = self.alias_result_for_requested(&cfg, auth, &requested);
+        if alias.force_mapping && auth.attr(HOME_FORCE_MAPPING_ATTRIBUTE).eq_ignore_ascii_case("true") {
+            alias.original_alias = route_model.trim().to_string();
+        }
         let upstream_model = execution_alias_pool_model(auth, &requested, &alias);
-        let pool = resolve_openai_compat_upstream_model_pool(&cfg, auth, &upstream_model);
-        let candidates = if pool.len() == 1 {
+        let home_model = auth.attr(HOME_UPSTREAM_MODEL_ATTRIBUTE);
+        let pool = if home_model.is_empty() {
+            resolve_openai_compat_upstream_model_pool(&cfg, auth, &upstream_model)
+        } else {
+            Vec::new()
+        };
+        let candidates = if !home_model.is_empty() {
+            vec![home_model]
+        } else if pool.len() == 1 {
             pool
         } else if pool.len() > 1 {
             let offset = self.next_model_pool_offset(
@@ -144,6 +184,10 @@ impl Manager {
     /// Whether cooling is disabled for the credential (Go: quotaCooldownDisabledForAuthWithConfig):
     /// per-auth override, compat provider setting, config, then the global switch.
     pub(crate) fn cooldown_disabled_for_auth_cfg(&self, auth: &Auth, cfg: &Config) -> bool {
+        // Home owns cooldown state, so downstream instances must not schedule local cooldowns.
+        if cfg.home.enabled {
+            return true;
+        }
         if let Some(b) = auth.disable_cooling_override() {
             return b;
         }

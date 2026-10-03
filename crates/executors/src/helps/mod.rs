@@ -1,7 +1,8 @@
 //! Provider-independent executor helpers (Go: internal/runtime/executor/helps plus the shared
 //! helpers of internal/runtime/executor/*.go).
 //!
-//! - HTTP: [`proxy`] (proxy-aware cached reqwest clients), [`sse`] (`bufio.Scanner` style line
+//! - HTTP: [`proxy`] (proxy-aware cached reqwest clients), [`tls_fingerprint`] (Claude Code and
+//!   Chrome ClientHello transports, Go: utls_client), [`sse`] (`bufio.Scanner` style line
 //!   reader), [`status`] (upstream non-2xx to `ExecError`, `Retry-After`).
 //! - Payload: [`payload`] (config payload rules), [`codex_tool_integers`], [`openai_compat`]
 //!   (max tokens, tool results), [`openai_responses_signature`], [`responses_usage`].
@@ -16,8 +17,12 @@
 //!   [`cloak_obfuscate`] (sensitive words), [`gemini_content_turns`], [`session`] (Claude Code
 //!   scope, prompt cache ids).
 //!
+//! - Home control plane: [`home_refresh`] (credential refresh through Home, the first step of every
+//!   executor `refresh`) and [`home_kv`] (blocking bridge to the async Home KV client, and the
+//!   `cpa_core` cache backend).
+//!
 //! Helpers used by a single provider (claude_* identity, signing and cloaking, codex_*,
-//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*, utls_client, home_refresh,
+//! antigravity_*, devin_*, kimi_*, meta_*, vertex_*,
 //! plugin_executor_usage) stay in the provider modules.
 
 pub mod apply_patch;
@@ -27,6 +32,8 @@ pub mod cloak_obfuscate;
 pub mod codex_tool_integers;
 pub mod content_type;
 pub mod gemini_content_turns;
+pub mod home_kv;
+pub mod home_refresh;
 pub mod id_cache;
 pub mod json_retry;
 pub mod logging;
@@ -43,6 +50,7 @@ pub mod status;
 pub mod stream_response_model_observer;
 pub mod text;
 pub mod thinking;
+pub mod tls_fingerprint;
 pub mod translate;
 pub mod token_count;
 pub mod ttft;

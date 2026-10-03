@@ -25,6 +25,7 @@ use super::util::{eq_fold, parse_suffix, rewrite_model_for_prefix};
 pub const OAUTH_MODEL_ALIASES_ATTRIBUTE_KEY: &str = "model_aliases";
 pub const RESOLVED_API_KEY_MODEL_INFO: &str = "cliproxy.resolved_api_key_model_info";
 pub const RESOLVED_CODEX_OAUTH_MODEL_INFO: &str = "cliproxy.resolved_codex_oauth_model_info";
+pub const RESOLVED_HOME_MODEL_INFO: &str = "cliproxy.resolved_home_model_info";
 
 /// Resolved upstream model plus force-mapping metadata (Go: OAuthModelAliasResult).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -111,7 +112,7 @@ pub fn canonical_scheduling_provider(key: &str) -> String {
 // ---- Suffix-preserving alias helpers ----
 
 /// Candidates tried for alias lookups: the requested name, then its base without suffix.
-fn alias_lookup_candidates(requested: &str) -> (super::util::SuffixResult, Vec<String>) {
+pub(crate) fn alias_lookup_candidates(requested: &str) -> (super::util::SuffixResult, Vec<String>) {
     let requested = requested.trim();
     if requested.is_empty() {
         return (Default::default(), Vec::new());
@@ -1161,7 +1162,7 @@ pub struct ResolvedModelInfo {
     pub support_configuration_update: bool,
 }
 
-fn model_info_value(info: &ModelInfo) -> Value {
+pub(crate) fn model_info_value(info: &ModelInfo) -> Value {
     let mut v = serde_json::to_value(info).unwrap_or(Value::Null);
     if let Value::Object(m) = &mut v {
         m.insert("is_compat".into(), Value::Bool(info.is_compat));
@@ -1175,7 +1176,7 @@ fn model_info_value(info: &ModelInfo) -> Value {
 
 /// Capability snapshot bound to this execution attempt, if any (Go: ResolvedModelInfo).
 pub fn resolved_model_info(req: &Request) -> Option<ResolvedModelInfo> {
-    for key in [RESOLVED_CODEX_OAUTH_MODEL_INFO, RESOLVED_API_KEY_MODEL_INFO] {
+    for key in [RESOLVED_HOME_MODEL_INFO, RESOLVED_CODEX_OAUTH_MODEL_INFO, RESOLVED_API_KEY_MODEL_INFO] {
         let Some(v) = req.metadata.get(key) else {
             continue;
         };
@@ -1241,6 +1242,11 @@ pub fn attach_resolved_execution_model_info(
 pub fn codex_api_key_model_is_compat(cfg: &Config, auth: &Auth, model: &str) -> bool {
     if !auth.provider.trim().eq_ignore_ascii_case("codex") {
         return false;
+    }
+    if cfg.home.enabled
+        && let Some(options) = super::home_model_info::home_api_key_model_options(auth, model, model)
+    {
+        return options.is_compat;
     }
     let Some(entry) = resolve_api_key_config(&cfg.codex_key, auth) else {
         return false;

@@ -13,6 +13,7 @@ use cpa_translator::{Ctx, Format};
 use super::CodexExecutor;
 use super::request::{is_native_request, thinking_error};
 use super::terminal::status_error;
+use crate::helps::home_refresh::refresh_auth_via_home;
 use crate::helps::thinking::{api_key_model_is_compat, apply_request_thinking};
 use crate::helps::translate::{RequestTranslation, translate_request};
 use crate::helps::token_count::{Tokenizer, tokenizer_for_model};
@@ -56,6 +57,9 @@ impl CodexExecutor {
 
     /// Exchanges the refresh token and writes the new tokens back (Go: CodexExecutor.Refresh).
     pub(super) async fn refresh_auth(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        if let Some(result) = refresh_auth_via_home(&self.config(), auth).await {
+            return result;
+        }
         let refresh_token = auth.metadata.get("refresh_token").and_then(Value::as_str).unwrap_or_default();
         if refresh_token.is_empty() {
             return Ok(auth.clone());

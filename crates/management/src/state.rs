@@ -91,8 +91,6 @@ pub(crate) struct Shared {
     pub verified: Mutex<Option<([u8; 32], String)>>,
     /// Serializes config file mutations (Go: `Handler.mu`).
     pub config_lock: Arc<tokio::sync::Mutex<()>>,
-    /// Highest usage event sequence number already popped through the usage queue endpoints.
-    pub usage_queue_cursor: Mutex<u64>,
 }
 
 /// Everything the management API needs, passed explicitly. Cheap to clone.

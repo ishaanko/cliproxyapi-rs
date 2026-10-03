@@ -57,18 +57,8 @@ pub async fn call(handler: &Handler, caller: &Caller, parts: RequestParts, body:
     handler.handle_call(caller, &parts, body).await.into_response()
 }
 
-/// `POST /v1/realtime/calls/:call_id/hangup`.
+/// `POST /v1/realtime/calls/:call_id/hangup`; the handler reads the body after its checks.
 pub async fn hangup(handler: &Handler, caller: &Caller, parts: RequestParts, body: Body) -> Response {
-    let body = match read_body(body, MAX_BODY_SIZE).await {
-        Ok(b) => b,
-        Err(BodyReadError::TooLarge) => {
-            return realtime_error(400, crate::call::ERR_BODY_TOO_LARGE, "invalid_request_error", "invalid_request").into_response();
-        }
-        Err(BodyReadError::Failed(e)) => {
-            return realtime_error(400, &format!("failed to read Codex live request: {e}"), "invalid_request_error", "invalid_request")
-                .into_response();
-        }
-    };
     handler.handle_hangup(caller, &parts, body).await.into_response()
 }
 

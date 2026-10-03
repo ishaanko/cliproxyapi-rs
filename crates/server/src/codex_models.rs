@@ -25,9 +25,14 @@ const ALLOWED_LEVELS: &[&str] = &["none", "minimal", "low", "medium", "high", "x
 const LEGACY_ALLOWED_LEVELS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
 const FALLBACK_INSTRUCTIONS: &str = "You are Codex, a coding agent. You and the user share one workspace.";
 
+/// Providers able to serve a model id (Go: `ProvidersForModelFunc`).
+pub type ProvidersForModel<'a> = dyn Fn(&str) -> Vec<String> + 'a;
+
 /// Inputs of the builder that depend on the running server (Go passes them as closures).
 pub struct CatalogContext<'a> {
-    pub providers_for_model: &'a dyn Fn(&str) -> Vec<String>,
+    /// `None` is Go's nil `providersForModel` (Home mode): templates keep their provider-neutral
+    /// capabilities instead of being treated as "no provider found".
+    pub providers_for_model: Option<&'a ProvidersForModel<'a>>,
     pub web_search_capability: &'a dyn Fn(&str) -> Option<bool>,
     /// `None` leaves `apply_patch_tool_type` null for every model.
     pub apply_patch_capability: Option<&'a dyn Fn(&str) -> bool>,
@@ -79,11 +84,12 @@ fn metadata_model_id(id: &str) -> String {
 }
 
 fn providers_of(ctx: &CatalogContext<'_>, id: &str) -> Vec<String> {
-    let mut providers = (ctx.providers_for_model)(id);
+    let Some(providers_for_model) = ctx.providers_for_model else { return Vec::new() };
+    let mut providers = providers_for_model(id);
     if providers.is_empty()
         && let Some(base) = after_slash(id)
     {
-        providers = (ctx.providers_for_model)(base);
+        providers = providers_for_model(base);
     }
     providers
 }
@@ -376,6 +382,9 @@ fn apply_model_capabilities(
 // ------------------------------------------------------------------ providers
 
 fn is_pure_codex_provider(id: &str, ctx: &CatalogContext<'_>) -> bool {
+    if ctx.providers_for_model.is_none() {
+        return true;
+    }
     let providers = providers_of(ctx, id);
     !providers.is_empty() && providers.iter().all(|p| p.trim().eq_ignore_ascii_case("codex"))
 }
@@ -392,6 +401,9 @@ fn apply_search_tool_support(entry: &mut Entry, id: &str, template_model: bool, 
     }
     if !template_model {
         entry.insert("supports_search_tool".into(), Value::Bool(false));
+        return;
+    }
+    if ctx.providers_for_model.is_none() {
         return;
     }
     let providers = providers_of(ctx, id);
@@ -747,7 +759,7 @@ pub fn build_client_models_body(client_version: &str, cfg: &Config, manager: &Ma
         Err(_) => false,
     };
     let ctx = CatalogContext {
-        providers_for_model: &providers_for_model,
+        providers_for_model: Some(&providers_for_model),
         web_search_capability: &web_search,
         apply_patch_capability: cfg.client.codex.enable_apply_patch.then_some(&apply_patch as &dyn Fn(&str) -> bool),
         optimize_multi_agent_v2: cfg.client.codex.optimize_multi_agent_v2,
@@ -767,7 +779,7 @@ mod tests {
         version: &'a str,
     ) -> CatalogContext<'a> {
         CatalogContext {
-            providers_for_model: providers,
+            providers_for_model: Some(providers),
             web_search_capability: search,
             apply_patch_capability: apply_patch,
             optimize_multi_agent_v2: false,
