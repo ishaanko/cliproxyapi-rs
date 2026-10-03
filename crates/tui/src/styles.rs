@@ -84,10 +84,6 @@ pub fn styled(text: impl Into<String>, style: Style) -> Line<'static> {
     Line::from(Span::styled(text.into(), style))
 }
 
-pub fn plain(text: impl Into<String>) -> Line<'static> {
-    Line::from(text.into())
-}
-
 pub fn blank() -> Line<'static> {
     Line::default()
 }
@@ -96,13 +92,6 @@ pub fn blank() -> Line<'static> {
 pub fn push_title(out: &mut Vec<Line<'static>>, text: &str) {
     out.push(styled(text, title()));
     out.push(blank());
-}
-
-/// Splits `text` on newlines into one styled line each.
-pub fn push_styled_lines(out: &mut Vec<Line<'static>>, text: &str, style: Style) {
-    for part in text.split('\n') {
-        out.push(styled(part, style));
-    }
 }
 
 /// `strings.Repeat("─", n)` in the muted colour.

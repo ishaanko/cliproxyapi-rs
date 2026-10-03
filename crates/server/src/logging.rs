@@ -9,7 +9,6 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cpa_config::Config;
@@ -249,24 +248,21 @@ pub type LogTap = Arc<dyn Fn(&str) + Send + Sync>;
 pub struct SwitchWriter {
     inner: Arc<Mutex<Output>>,
     tap: Arc<Mutex<Option<LogTap>>>,
-    /// Drop stdout output instead of printing (the TUI owns the terminal).
-    discard_stdout: Arc<AtomicBool>,
 }
 
+/// Writer for one log event. The tap sees the whole event once, when the guard is dropped.
 pub struct SwitchGuard {
     inner: Arc<Mutex<Output>>,
     tap: Arc<Mutex<Option<LogTap>>>,
-    discard_stdout: Arc<AtomicBool>,
+    event: Vec<u8>,
 }
 
 impl Write for SwitchGuard {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let tap = self.tap.lock().clone();
-        if let Some(tap) = tap {
-            tap(&String::from_utf8_lossy(buf));
+        if self.tap.lock().is_some() {
+            self.event.extend_from_slice(buf);
         }
         match &mut *self.inner.lock() {
-            Output::Stdout if self.discard_stdout.load(Ordering::Relaxed) => Ok(buf.len()),
             Output::Stdout => io::stdout().write(buf),
             Output::File(f) => f.write(buf),
         }
@@ -280,6 +276,18 @@ impl Write for SwitchGuard {
     }
 }
 
+impl Drop for SwitchGuard {
+    fn drop(&mut self) {
+        if self.event.is_empty() {
+            return;
+        }
+        let tap = self.tap.lock().clone();
+        if let Some(tap) = tap {
+            tap(&String::from_utf8_lossy(&self.event));
+        }
+    }
+}
+
 impl<'a> MakeWriter<'a> for SwitchWriter {
     type Writer = SwitchGuard;
 
@@ -287,7 +295,7 @@ impl<'a> MakeWriter<'a> for SwitchWriter {
         SwitchGuard {
             inner: self.inner.clone(),
             tap: self.tap.clone(),
-            discard_stdout: self.discard_stdout.clone(),
+            event: Vec::new(),
         }
     }
 }
@@ -304,7 +312,6 @@ pub fn init() -> Arc<LogControl> {
     let writer = SwitchWriter {
         inner: Arc::new(Mutex::new(Output::Stdout)),
         tap: Arc::new(Mutex::new(None)),
-        discard_stdout: Arc::new(AtomicBool::new(false)),
     };
     let (filter, level) = reload::Layer::new(LevelFilter::INFO);
     let fmt_layer = tracing_subscriber::fmt::layer()
@@ -351,16 +358,14 @@ fn is_dir_writable(dir: &Path) -> bool {
 }
 
 impl LogControl {
-    /// Standalone TUI: mirrors every log line to `tap` and stops printing to stdout.
+    /// Standalone TUI: mirrors every log event to `tap` (once per event).
     pub fn attach_tui(&self, tap: LogTap) {
         *self.writer.tap.lock() = Some(tap);
-        self.writer.discard_stdout.store(true, Ordering::Relaxed);
     }
 
     /// Undoes [`attach_tui`](Self::attach_tui) once the TUI has released the terminal.
     pub fn detach_tui(&self) {
         *self.writer.tap.lock() = None;
-        self.writer.discard_stdout.store(false, Ordering::Relaxed);
     }
 
     /// `ConfigureLogOutput` + `util.SetLogLevel`.

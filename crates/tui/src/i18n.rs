@@ -6,15 +6,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Active locale: false = "en", true = "zh". Process-wide like the Go package variable.
 static ZH: AtomicBool = AtomicBool::new(false);
 
-/// `SetLocale`; unknown locales are ignored.
-pub fn set_locale(locale: &str) {
-    match locale {
-        "zh" => ZH.store(true, Ordering::Relaxed),
-        "en" => ZH.store(false, Ordering::Relaxed),
-        _ => {}
-    }
-}
-
 /// `CurrentLocale`.
 pub fn current_locale() -> &'static str {
     if ZH.load(Ordering::Relaxed) { "zh" } else { "en" }
@@ -103,7 +94,7 @@ fn zh(key: &str) -> Option<&'static str> {
         "auth_gate_title" => "🔐 连接管理 API",
         "auth_gate_help" => " 请输入管理密码并按 Enter 连接",
         "auth_gate_password" => "密码",
-        "auth_gate_enter" => " Enter: 连接 • q/Ctrl+C: 退出 • L: 语言",
+        "auth_gate_enter" => " Enter: 连接 • Ctrl+C: 退出",
         "auth_gate_connecting" => "正在连接...",
         "auth_gate_connect_fail" => "连接失败：%s",
         "auth_gate_password_required" => "请输入密码",
@@ -255,7 +246,7 @@ fn en(key: &str) -> Option<&'static str> {
         "auth_gate_title" => "🔐 Connect Management API",
         "auth_gate_help" => " Enter management password and press Enter to connect",
         "auth_gate_password" => "Password",
-        "auth_gate_enter" => " Enter: connect • q/Ctrl+C: quit • L: lang",
+        "auth_gate_enter" => " Enter: connect • Ctrl+C: quit",
         "auth_gate_connecting" => "Connecting...",
         "auth_gate_connect_fail" => "Connection failed: %s",
         "auth_gate_password_required" => "password is required",

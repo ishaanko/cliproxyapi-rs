@@ -177,7 +177,6 @@ impl LogsTab {
         self.viewport.width = w;
         self.viewport.height = h;
         self.dirty = true;
-        self.flush();
     }
 
     fn render_logs(&self) -> Vec<Line<'static>> {

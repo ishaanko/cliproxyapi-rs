@@ -906,6 +906,7 @@ dependencies = [
  "rand 0.9.5",
  "regex",
  "rust-embed",
+ "rustix",
  "rustls-pemfile",
  "serde",
  "serde_json",

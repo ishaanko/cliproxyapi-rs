@@ -153,7 +153,11 @@ async fn run() -> i32 {
             0
         };
     }
-    let local = LocalManagement { password: cli.password.clone(), keep_alive: !cli.password.is_empty() };
+    let local = LocalManagement {
+        password: cli.password.clone(),
+        keep_alive: !cli.password.is_empty(),
+        handle_signals: true,
+    };
     serve_proxy(cfg, config_path, build, log, local, None).await
 }
 
@@ -183,6 +187,13 @@ async fn run_standalone_tui(
     let hook = cpa_tui::LogHook::new(2000);
     let tap_hook = hook.clone();
     log.attach_tui(Arc::new(move |line| tap_hook.push(line)));
+    // Like Go, point stdout/stderr at /dev/null so nothing the embedded server prints can draw
+    // over the TUI; the TUI keeps the original terminal.
+    let stdio = StdioRedirect::new().ok();
+    let tui_output: Box<dyn std::io::Write> = match stdio.as_ref().and_then(|s| s.terminal().ok()) {
+        Some(terminal) => Box::new(terminal),
+        None => Box::new(std::io::stdout()),
+    };
 
     let password = if cli.password.is_empty() {
         let nanos = std::time::SystemTime::now()
@@ -196,7 +207,9 @@ async fn run_standalone_tui(
     let port = if cfg.port > 0 { cfg.port } else { 8317 };
 
     // No keep-alive endpoint here: the TUI's lifetime owns the server.
-    let local = LocalManagement { password: password.clone(), keep_alive: false };
+    // The embedded server also ignores SIGINT/SIGTERM (Go's background service only stops on
+    // cancel); the TUI handles them and then stops the server.
+    let local = LocalManagement { password: password.clone(), keep_alive: false, handle_signals: false };
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(serve_proxy(cfg, config_path, build, log.clone(), local, Some(stop_rx)));
 
@@ -206,6 +219,10 @@ async fn run_standalone_tui(
     for _ in 0..30 {
         if client.get_config().await.is_ok() {
             ready = true;
+            break;
+        }
+        // The server task ending (bind failure, bad config) means it will never become ready.
+        if server.is_finished() {
             break;
         }
         tokio::time::sleep(backoff).await;
@@ -218,11 +235,18 @@ async fn run_standalone_tui(
         log.detach_tui();
         let _ = stop_tx.send(());
         let _ = server.await;
+        drop(tui_output);
+        if let Some(stdio) = stdio {
+            stdio.restore();
+        }
         eprintln!("TUI error: embedded server is not ready");
         return 0;
     }
-    let tui_result = cpa_tui::run(port, &password, Some(hook)).await;
+    let tui_result = cpa_tui::run_with_output(port, &password, Some(hook), tui_output).await;
     log.detach_tui();
+    if let Some(stdio) = stdio {
+        stdio.restore();
+    }
     if let Err(e) = tui_result {
         eprintln!("TUI error: {e}");
     }
@@ -231,10 +255,59 @@ async fn run_standalone_tui(
     0
 }
 
-/// Local management password and whether the idle-shutdown keep-alive endpoint is enabled.
+/// Redirects fd 1 and 2 to /dev/null (Go reassigns `os.Stdout`/`os.Stderr` the same way) and keeps
+/// the originals so the TUI can draw to the real terminal and the streams can be restored.
+#[cfg(unix)]
+struct StdioRedirect {
+    out: std::os::fd::OwnedFd,
+    err: std::os::fd::OwnedFd,
+}
+
+#[cfg(unix)]
+impl StdioRedirect {
+    fn new() -> std::io::Result<Self> {
+        let out = rustix::io::dup(std::io::stdout())?;
+        let err = rustix::io::dup(std::io::stderr())?;
+        let devnull = std::fs::OpenOptions::new().read(true).write(true).open("/dev/null")?;
+        rustix::stdio::dup2_stdout(&devnull)?;
+        rustix::stdio::dup2_stderr(&devnull)?;
+        Ok(StdioRedirect { out, err })
+    }
+
+    /// A handle on the original stdout for the TUI.
+    fn terminal(&self) -> std::io::Result<std::fs::File> {
+        Ok(std::fs::File::from(self.out.try_clone()?))
+    }
+
+    fn restore(self) {
+        let _ = rustix::stdio::dup2_stdout(&self.out);
+        let _ = rustix::stdio::dup2_stderr(&self.err);
+    }
+}
+
+/// Windows has no fd-level redirect here; the TUI keeps using stdout.
+#[cfg(not(unix))]
+struct StdioRedirect;
+
+#[cfg(not(unix))]
+impl StdioRedirect {
+    fn new() -> std::io::Result<Self> {
+        Err(std::io::Error::other("unsupported"))
+    }
+
+    fn terminal(&self) -> std::io::Result<std::fs::File> {
+        Err(std::io::Error::other("unsupported"))
+    }
+
+    fn restore(self) {}
+}
+
+/// Local management password, whether the idle-shutdown keep-alive endpoint is enabled, and
+/// whether SIGINT/SIGTERM stop the server.
 struct LocalManagement {
     password: String,
     keep_alive: bool,
+    handle_signals: bool,
 }
 
 /// Serves the proxy until the listener fails, a signal arrives, keep-alive idles out, or `stop`
@@ -367,7 +440,13 @@ async fn serve_proxy(
                 tracing::error!("proxy service exited with error: {e}");
             }
         }
-        _ = shutdown_signal() => {}
+        _ = async {
+            if local.handle_signals {
+                shutdown_signal().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {}
         _ = idle => {}
         _ = async {
             match stop {
