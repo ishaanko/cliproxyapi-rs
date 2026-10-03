@@ -5,7 +5,7 @@
 use serde::Deserialize;
 
 use super::{map_stop_reason, unix_now, ClaudeUsageTokens, StreamState, ToolCallAccumulator};
-use crate::common::fast::{push_int, push_json_str, Field, Str};
+use crate::common::fast::{push_int, push_json_str, within_depth_limit, Field, Obj, Str};
 
 #[derive(Deserialize)]
 struct Event<'a> {
@@ -14,13 +14,13 @@ struct Event<'a> {
     #[serde(default)]
     index: Field<i64>,
     #[serde(default, borrow)]
-    message: Field<Message<'a>>,
+    message: Field<Obj<Message<'a>>>,
     #[serde(default, borrow)]
-    content_block: Field<Block<'a>>,
+    content_block: Field<Obj<Block<'a>>>,
     #[serde(default, borrow)]
-    delta: Field<Delta<'a>>,
+    delta: Field<Obj<Delta<'a>>>,
     #[serde(default)]
-    usage: Field<Usage>,
+    usage: Field<Obj<Usage>>,
 }
 
 #[derive(Deserialize)]
@@ -28,7 +28,7 @@ struct Message<'a> {
     #[serde(default, borrow)]
     id: Field<Str<'a>>,
     #[serde(default)]
-    usage: Field<Usage>,
+    usage: Field<Obj<Usage>>,
 }
 
 #[derive(Deserialize)]
@@ -77,7 +77,7 @@ impl ClaudeUsageTokens {
             (&usage.cache_creation_input_tokens, &mut self.cache_creation_input_tokens),
             (&usage.cache_read_input_tokens, &mut self.cache_read_input_tokens),
         ] {
-            if let Some(v) = field.as_ref() {
+            if let Some(v) = field.get() {
                 *slot = *v;
             }
         }
@@ -155,33 +155,36 @@ fn delta_str(key: &str, value: &str) -> Vec<u8> {
 }
 
 pub(super) fn convert(state: &mut StreamState, model_name: &str, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
-    let ev: Event<'_> = serde_json::from_slice(raw).ok()?;
-    let index = ev.index.as_ref().copied().unwrap_or(0);
+    if !within_depth_limit(raw) {
+        return None;
+    }
+    let ev: Obj<Event<'_>> = serde_json::from_slice(raw).ok()?;
+    let index = ev.index.get().copied().unwrap_or(0);
     match &*ev.ty {
         "message_start" => {
-            let Some(message) = ev.message.as_ref() else {
+            let Some(message) = ev.message.get() else {
                 return Some(vec![state.chunk(model_name, b"{}", None, false)]);
             };
-            state.response_id = message.id.as_ref().map(|s| s.to_string()).unwrap_or_default();
+            state.response_id = message.id.get().map(|s| s.to_string()).unwrap_or_default();
             state.created_at = unix_now();
             state.head_valid = false;
             state.next_tool_call_index = 0;
-            if let Some(usage) = message.usage.as_ref() {
+            if let Some(usage) = message.usage.get() {
                 state.usage.merge_fast(usage);
             }
             Some(vec![state.chunk(model_name, br#"{"role":"assistant"}"#, None, false)])
         }
         "content_block_start" => {
-            if let Some(block) = ev.content_block.as_ref()
-                && block.ty.as_ref().is_some_and(|t| &**t == "tool_use")
+            if let Some(block) = ev.content_block.get()
+                && block.ty.get().is_some_and(|t| &**t == "tool_use")
             {
                 let tool_call_index = state.next_tool_call_index;
                 state.next_tool_call_index += 1;
                 state.tool_calls.insert(
                     index,
                     ToolCallAccumulator {
-                        id: block.id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
-                        name: block.name.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                        id: block.id.get().map(|s| s.to_string()).unwrap_or_default(),
+                        name: block.name.get().map(|s| s.to_string()).unwrap_or_default(),
                         index: tool_call_index,
                         arguments: String::new(),
                     },
@@ -190,18 +193,18 @@ pub(super) fn convert(state: &mut StreamState, model_name: &str, raw: &[u8]) -> 
             Some(vec![])
         }
         "content_block_delta" => {
-            let Some(delta) = ev.delta.as_ref() else { return Some(vec![]) };
-            match delta.ty.as_ref().map(|t| &**t) {
-                Some("text_delta") => Some(match delta.text.as_ref() {
+            let Some(delta) = ev.delta.get() else { return Some(vec![]) };
+            match delta.ty.get().map(|t| &**t) {
+                Some("text_delta") => Some(match delta.text.get() {
                     Some(text) => vec![state.chunk(model_name, &delta_str("content", text), None, false)],
                     None => vec![],
                 }),
-                Some("thinking_delta") => Some(match delta.thinking.as_ref() {
+                Some("thinking_delta") => Some(match delta.thinking.get() {
                     Some(t) => vec![state.chunk(model_name, &delta_str("reasoning_content", t), None, false)],
                     None => vec![],
                 }),
                 Some("input_json_delta") => {
-                    if let Some(partial) = delta.partial_json.as_ref()
+                    if let Some(partial) = delta.partial_json.get()
                         && let Some(acc) = state.tool_calls.get_mut(&index)
                     {
                         acc.arguments.push_str(partial);
@@ -228,14 +231,14 @@ pub(super) fn convert(state: &mut StreamState, model_name: &str, raw: &[u8]) -> 
         }
         "message_delta" => {
             let mut finish = None;
-            if let Some(delta) = ev.delta.as_ref()
-                && let Some(stop_reason) = delta.stop_reason.as_ref()
+            if let Some(delta) = ev.delta.get()
+                && let Some(stop_reason) = delta.stop_reason.get()
             {
                 let mapped = map_stop_reason(stop_reason);
                 state.finish_reason = mapped.to_string();
                 finish = Some(mapped);
             }
-            let with_usage = match ev.usage.as_ref() {
+            let with_usage = match ev.usage.get() {
                 Some(usage) => {
                     state.usage.merge_fast(usage);
                     true

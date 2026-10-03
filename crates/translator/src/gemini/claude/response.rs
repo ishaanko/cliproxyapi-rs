@@ -297,7 +297,7 @@ pub fn convert_gemini_response_to_claude_non_stream(
 
     let cached_tokens = root.g("usageMetadata.cachedContentTokenCount").int();
     let input_tokens = (root.g("usageMetadata.promptTokenCount").int() - cached_tokens).max(0);
-    let output_tokens = root.g("usageMetadata.candidatesTokenCount").int() + root.g("usageMetadata.thoughtsTokenCount").int();
+    let output_tokens = root.g("usageMetadata.candidatesTokenCount").int().wrapping_add(root.g("usageMetadata.thoughtsTokenCount").int());
     cpa_json::set(&mut out, "usage.input_tokens", input_tokens);
     cpa_json::set(&mut out, "usage.output_tokens", output_tokens);
     if cached_tokens > 0 {

@@ -109,14 +109,16 @@ pub struct Registry {
 
 /// True when `body` is a well-formed JSON object whose single top-level `model` is exactly
 /// `model`: the passthrough model rewrite is then a no-op and the body needs no parse and
-/// re-serialization. Anything else (missing, other type, duplicates, malformed) answers false.
+/// re-serialization (which is also what Go does, so cpa_json's depth limit is irrelevant here).
+/// Anything else (missing, other type, duplicates, malformed, an array in place of the object)
+/// answers false.
 fn body_has_model(body: &[u8], model: &str) -> bool {
     #[derive(serde::Deserialize)]
     struct Probe<'a> {
         #[serde(default, borrow)]
         model: crate::common::fast::Field<crate::common::fast::Str<'a>>,
     }
-    serde_json::from_slice::<Probe>(body).is_ok_and(|p| p.model.as_ref().is_some_and(|m| &**m == model))
+    serde_json::from_slice::<crate::common::fast::Obj<Probe>>(body).is_ok_and(|p| p.model.get().is_some_and(|m| &**m == model))
 }
 
 /// Raw JSON of the Responses `configuration_update` input items (Go: `configurationUpdates`).

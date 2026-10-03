@@ -1,15 +1,64 @@
 //! Building blocks for the allocation-light "fast paths" of the hot translators.
 //!
-//! A fast path deserializes one event with a borrowed serde struct and writes the output with
-//! hand-built templates. It only accepts the canonical shapes it understands: any surprise
-//! (null where a value is read, wrong type, duplicate key, invalid UTF-8, malformed JSON)
-//! makes serde fail, and the caller then runs the general `cpa_json::Value` translation, which
-//! stays the reference for every odd input.
+//! A fast path deserializes one document with borrowed serde structs and writes the output with
+//! hand-built templates. It only accepts the canonical shapes it understands. Typed reads fail on
+//! a wrong type or `null`, duplicate keys and malformed JSON fail in serde, and every struct
+//! position is wrapped in [`Obj`] because derived structs would otherwise also accept a JSON
+//! array (fields filled by position) where gjson sees no fields. Bare presence probes
+//! (`Field<IgnoredAny>`) accept any value including `null`. Whenever the fast path fails or
+//! declines, the caller runs the general `cpa_json::Value` translation, which stays the
+//! reference for every other input.
+//!
+//! Depth: serde_json does not bound how deep it skips ignored or raw values, so a fast path
+//! would happily accept documents that `cpa_json::parse` rejects as nested beyond
+//! `cpa_json::MAX_DEPTH` (it yields `Null`). Every fast path therefore starts with
+//! [`within_depth_limit`] and declines deeper input, keeping the general path the literal reference.
 
 use std::borrow::Cow;
 use std::fmt;
+use std::marker::PhantomData;
 
-use serde::de::{self, Deserialize, Deserializer, Visitor};
+use serde::de::value::MapAccessDeserializer;
+use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
+
+/// True when the bracket nesting of `bytes` (outside strings) is at most `cpa_json::MAX_DEPTH`,
+/// the same measure `cpa_json::parse` applies before it parses anything. Input no longer than the
+/// limit cannot be deeper and skips the scan, so small stream events pay nothing; longer input is
+/// scanned with strings skipped in bulk. Fast paths decline (return `None`) when this is false.
+pub fn within_depth_limit(bytes: &[u8]) -> bool {
+    if bytes.len() <= cpa_json::MAX_DEPTH {
+        return true;
+    }
+    let (mut depth, mut i) = (0usize, 0usize);
+    while let Some(&b) = bytes.get(i) {
+        i += 1;
+        match b {
+            b'"' => {
+                // Jump to the closing quote: the first quote preceded by an even run of backslashes
+                // (text with many `\n` escapes then costs one SIMD search, not one per escape).
+                let start = i;
+                loop {
+                    let Some(p) = memchr::memchr(b'"', &bytes[i..]) else { return true };
+                    let quote = i + p;
+                    let escapes = bytes[start..quote].iter().rev().take_while(|&&c| c == b'\\').count();
+                    i = quote + 1;
+                    if escapes % 2 == 0 {
+                        break;
+                    }
+                }
+            }
+            b'{' | b'[' => {
+                depth += 1;
+                if depth > cpa_json::MAX_DEPTH {
+                    return false;
+                }
+            }
+            b'}' | b']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    true
+}
 
 /// A field that is either absent or present with a non-null value of type `T`. JSON `null`
 /// fails deserialization (gjson distinguishes absent from null, so fast paths bail out on it).
@@ -21,7 +70,7 @@ pub enum Field<T> {
 }
 
 impl<T> Field<T> {
-    pub fn as_ref(&self) -> Option<&T> {
+    pub fn get(&self) -> Option<&T> {
         match self {
             Field::Absent => None,
             Field::Present(v) => Some(v),
@@ -36,6 +85,36 @@ impl<T> Field<T> {
 impl<'de, T: Deserialize<'de>> Deserialize<'de> for Field<T> {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         T::deserialize(d).map(Field::Present)
+    }
+}
+
+/// A struct that only deserializes from a JSON object. Derived `Deserialize` also accepts a JSON
+/// array (fields filled by position), which the general path and gjson treat as having no fields;
+/// `deserialize_map` rejects arrays. Use it at every struct position (top level, `Vec<Obj<T>>`,
+/// `Field<Obj<T>>`); it derefs to `T`.
+#[derive(Debug)]
+pub struct Obj<T>(pub T);
+
+impl<T> std::ops::Deref for Obj<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Obj<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V<T>(PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> Visitor<'de> for V<T> {
+            type Value = Obj<T>;
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Obj<T>, A::Error> {
+                T::deserialize(MapAccessDeserializer::new(map)).map(Obj)
+            }
+        }
+        d.deserialize_map(V(PhantomData))
     }
 }
 
@@ -174,4 +253,28 @@ pub fn is_string_literal(raw: &str) -> bool {
 /// Appends a decimal integer.
 pub fn push_int(out: &mut Vec<u8>, n: i64) {
     out.extend_from_slice(itoa::Buffer::new().format(n).as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::within_depth_limit;
+    use cpa_json::MAX_DEPTH;
+
+    fn nested(depth: usize, pad: &str) -> Vec<u8> {
+        format!("{}{pad}{}", "[".repeat(depth), "]".repeat(depth)).into_bytes()
+    }
+
+    #[test]
+    fn depth_limit_matches_cpa_json_measure() {
+        assert!(within_depth_limit(&nested(MAX_DEPTH, "")));
+        assert!(!within_depth_limit(&nested(MAX_DEPTH + 1, "")));
+        // Brackets and escaped quotes inside strings do not count, and long input takes the scan.
+        let tricky = format!(r#"{}"[[[[\" {{{{ \\",{}"#, "[".repeat(MAX_DEPTH), "\"x\"".repeat(MAX_DEPTH));
+        assert!(within_depth_limit(tricky.as_bytes()));
+        let strings = r#""[\\\"{""#.repeat(MAX_DEPTH);
+        assert!(!within_depth_limit(&nested(MAX_DEPTH + 1, &strings)));
+        assert!(within_depth_limit(&nested(MAX_DEPTH, &strings)));
+        // Unterminated strings and trailing backslashes must not panic.
+        assert!(within_depth_limit(format!("{}\"abc\\", "x".repeat(MAX_DEPTH)).as_bytes()));
+    }
 }

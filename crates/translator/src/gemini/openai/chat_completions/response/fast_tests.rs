@@ -93,30 +93,63 @@ fn mask(frames: Vec<Vec<u8>>) -> Vec<String> {
     frames.into_iter().map(|f| re.replace_all(&String::from_utf8_lossy(&f), r#""id":"FC""#).into_owned()).collect()
 }
 
+/// Feeds `lines` through the public entry (fast path first) and the general path alone.
+fn assert_same(lines: &[String], label: &str) {
+    let mut param = Param::default();
+    let mut general = ChatParams {
+        unix_timestamp: 0,
+        function_index: HashMap::new(),
+        saw_tool_call: HashMap::new(),
+        upstream_finish_reason: HashMap::new(),
+        sanitized_name_map: HashMap::new(),
+    };
+    for (i, line) in lines.iter().enumerate() {
+        let got = mask(convert_gemini_response_to_openai(&Ctx::default(), "m", b"{}", b"{}", line.as_bytes(), &mut param));
+        let mut raw = line.as_bytes();
+        if let Some(rest) = raw.strip_prefix(b"data:") {
+            raw = rest.trim_ascii();
+        }
+        let want = if raw == b"[DONE]" { vec![] } else { mask(convert_general(&mut general, raw)) };
+        assert_eq!(got, want, "{label} history {:?}", &lines[..=i]);
+    }
+}
+
 #[test]
 fn fast_matches_general_on_generated_streams() {
     let total: u64 = std::env::var("FAST_DIFF_N").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
     for seed in 1..=total {
         let mut g = Gen::new(seed);
-        let mut param = Param::default();
-        let mut general = ChatParams {
-            unix_timestamp: 0,
-            function_index: HashMap::new(),
-            saw_tool_call: HashMap::new(),
-            upstream_finish_reason: HashMap::new(),
-            sanitized_name_map: HashMap::new(),
-        };
-        let mut history = Vec::new();
-        for _ in 0..1 + g.below(6) {
-            let line = chunk(&mut g);
-            history.push(line.clone());
-            let got = mask(convert_gemini_response_to_openai(&Ctx::default(), "m", b"{}", b"{}", line.as_bytes(), &mut param));
-            let mut raw = line.as_bytes();
-            if let Some(rest) = raw.strip_prefix(b"data:") {
-                raw = rest.trim_ascii();
-            }
-            let want = if raw == b"[DONE]" { vec![] } else { mask(convert_general(&mut general, raw)) };
-            assert_eq!(got, want, "seed {seed} history {history:?}");
-        }
+        let lines: Vec<String> = (0..1 + g.below(6)).map(|_| chunk(&mut g)).collect();
+        assert_same(&lines, &format!("seed {seed}"));
     }
+}
+
+/// Derived serde structs would fill fields by position from an array; gjson sees no fields.
+#[test]
+fn array_for_object_shapes() {
+    let lines: Vec<String> = [
+        r#"data: {"candidates":[{"content":{"parts":[["hello",true]]}}]}"#,
+        r#"data: {"candidates":[["STOP",{"parts":[{"text":"x"}]}]]}"#,
+        r#"data: {"candidates":[{"content":[[{"text":"x"}]]}]}"#,
+        r#"data: {"candidates":[{"content":{"parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":[1,2,3,4,5]}"#,
+        r#"data: {"usageMetadata":[1,2,3,4,5]}"#,
+        r#"data: [[{"text":"x"}],"m","id"]"#,
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    assert_same(&lines, "array shapes");
+}
+
+/// Token counts that overflow i64 wrap like Go's int64 instead of panicking.
+#[test]
+fn token_count_overflow_wraps() {
+    let lines = [format!(
+        r#"data: {{"usageMetadata":{{"candidatesTokenCount":{},"thoughtsTokenCount":5,"promptTokenCount":1}}}}"#,
+        i64::MAX
+    )];
+    assert_same(&lines, "overflow");
+    let out = convert_gemini_response_to_openai(&Ctx::default(), "m", b"{}", b"{}", lines[0].as_bytes(), &mut Param::default());
+    let text = String::from_utf8_lossy(&out[0]).into_owned();
+    assert!(text.contains(&format!(r#""completion_tokens":{}"#, i64::MIN + 4)), "{text}");
 }

@@ -1,7 +1,8 @@
 //! Translator micro-benchmark: wall time, allocations and bytes per operation for the hot bench
 //! scenarios (small requests, SSE streams, 2 MB requests). Run:
-//! `cargo run --release -p cpa-translator --example perf [-- filter]`.
+//! `cargo run --release -p cpa-bench --bin translator-perf [-- filter]`.
 //! Reuses the bench crate's scenario generators so the inputs are the real benchmark bodies.
+//! `--features prof` with `PROF=1` additionally prints an in-process SIGPROF profile.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::hint::black_box;
@@ -11,7 +12,6 @@ use std::time::Instant;
 use cpa_translator::{Ctx, Format, Param, translate_non_stream, translate_request, translate_stream};
 
 #[allow(dead_code)]
-#[path = "../../bench/src/scenarios.rs"]
 mod scenarios;
 
 struct Counting;
@@ -38,10 +38,10 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static A: Counting = Counting;
 
-/// User-space instruction counter for this thread (load-insensitive); 0 without `--features prof`.
-#[cfg(feature = "prof")]
+/// User-space instruction counter for this thread (load-insensitive); 0 when perf events are
+/// unavailable (see `perf_event_paranoid`).
 struct Insns(Option<perf_event::Counter>);
-#[cfg(feature = "prof")]
+
 impl Insns {
     fn new() -> Self {
         let c = perf_event::Builder::new(perf_event::events::Hardware::INSTRUCTIONS).exclude_kernel(true).exclude_hv(true).build().ok();
@@ -55,18 +55,6 @@ impl Insns {
         self.0.as_mut().and_then(|c| c.read().ok()).unwrap_or(0)
     }
 }
-#[cfg(not(feature = "prof"))]
-struct Insns;
-#[cfg(not(feature = "prof"))]
-impl Insns {
-    fn new() -> Self {
-        Insns
-    }
-    fn read(&mut self) -> u64 {
-        0
-    }
-}
-
 /// Runs `f` `iters` times, reports the best of 5 rounds (us/op) plus instructions, allocs and bytes per op.
 fn bench(name: &str, filter: &str, iters: u32, mut f: impl FnMut()) {
     if !name.contains(filter) {

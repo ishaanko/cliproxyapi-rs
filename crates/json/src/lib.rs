@@ -162,7 +162,8 @@ impl<'a> Res<'a> {
         match self.v() {
             Some(Value::Bool(true)) => 1.0,
             Some(Value::String(s)) => s.parse::<f64>().unwrap_or(0.0),
-            Some(Value::Number(n)) => n.as_f64().unwrap_or(0.0),
+            // Parse the raw text: `Number::as_f64` hides non-finite results (1e400), Go gives +Inf.
+            Some(Value::Number(n)) => n.as_str().parse::<f64>().unwrap_or(0.0),
             _ => 0.0,
         }
     }
@@ -342,9 +343,10 @@ pub fn parse_valid(bytes: &[u8]) -> Option<Value> {
         // Large documents go through the per-request memo, which keys `valid` and `parse` apart.
         return valid(bytes).then(|| parse(bytes));
     }
+    // The direct reader is stricter than `valid` inside strings (UTF-8, surrogate pairing), so
+    // any failure re-checks with `valid` and lets `parse` read what gjson accepts leniently.
     match fast::parse(bytes) {
         Ok(v) => Some(v),
-        Err(fast::Fail::Syntax) => None,
         Err(_) => valid(bytes).then(|| parse(bytes)),
     }
 }
@@ -356,12 +358,8 @@ fn parse_uncached(bytes: &[u8]) -> Value {
     match fast::parse(bytes) {
         Ok(v) => return v,
         Err(fast::Fail::Syntax) => {}
-        Err(fast::Fail::Special) => {
-            if let Ok(v) = serde_json::from_slice::<Value>(bytes) {
-                return v;
-            }
-        }
-        Err(fast::Fail::Deep) => deep = true,
+        // The strict serde path with the recursion limit lifted, so deep special-key shapes work.
+        Err(fast::Fail::Deep | fast::Fail::Special) => deep = true,
     }
     if nesting_depth(bytes) > MAX_DEPTH {
         return Value::Null;
@@ -765,6 +763,15 @@ fn nesting_depth(bytes: &[u8]) -> usize {
     max
 }
 
+/// Whether `v` nests containers no deeper than `limit` (what `valid` accepts of its output).
+fn within_depth(v: &Value, limit: usize) -> bool {
+    match v {
+        Value::Array(a) => limit > 0 && a.iter().all(|e| within_depth(e, limit - 1)),
+        Value::Object(m) => limit > 0 && m.values().all(|e| within_depth(e, limit - 1)),
+        _ => true,
+    }
+}
+
 /// gjson `ValidBytes`.
 pub fn valid(bytes: &[u8]) -> bool {
     memo::valid(bytes, valid_uncached)
@@ -774,8 +781,8 @@ fn valid_uncached(bytes: &[u8]) -> bool {
     match fast::validate(bytes) {
         Ok(()) => return true,
         Err(fast::Fail::Syntax) => return false,
-        Err(fast::Fail::Special) => return serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok(),
-        Err(fast::Fail::Deep) => {}
+        // Validation never reports `Special`; only `Deep` needs the stack-growing path.
+        Err(fast::Fail::Special | fast::Fail::Deep) => {}
     }
     if nesting_depth(bytes) > MAX_DEPTH {
         return false;
@@ -791,7 +798,7 @@ fn valid_uncached(bytes: &[u8]) -> bool {
 /// Compact serialization.
 pub fn to_vec(v: &Value) -> Vec<u8> {
     let out = fast::to_vec(v);
-    memo::note_serialized(&out);
+    memo::note_serialized(&out, || within_depth(v, MAX_DEPTH));
     out
 }
 
