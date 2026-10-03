@@ -62,13 +62,61 @@ fn normalized_provider_name(provider: &str) -> String {
     provider.trim().to_lowercase()
 }
 
-/// The applier registered for `provider` (trimmed, lowercased), if any.
+/// A plugin-owned applier with the owner and priority that won its provider name.
+struct PluginApplier {
+    owner: String,
+    priority: i64,
+    applier: Arc<dyn ProviderApplier>,
+}
+
+static PLUGIN_APPLIERS: LazyLock<RwLock<HashMap<String, PluginApplier>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// The applier registered for `provider` (trimmed, lowercased), if any. Built-in names win over
+/// plugin-provided ones.
 pub fn get_provider_applier(provider: &str) -> Option<Arc<dyn ProviderApplier>> {
     let name = normalized_provider_name(provider);
     if name.is_empty() {
         return None;
     }
-    APPLIERS.read().get(&name).cloned()
+    if let Some(a) = APPLIERS.read().get(&name) {
+        return Some(a.clone());
+    }
+    PLUGIN_APPLIERS.read().get(&name).map(|p| p.applier.clone())
+}
+
+/// Registers a plugin-owned provider applier (Go: `RegisterPluginProvider`). Built-in names cannot
+/// be taken; between plugins the higher priority (then the smaller owner id) wins.
+pub fn register_plugin_provider(owner: &str, name: &str, priority: i64, applier: Arc<dyn ProviderApplier>) -> bool {
+    let owner = owner.trim();
+    let name = normalized_provider_name(name);
+    if owner.is_empty() || name.is_empty() {
+        return false;
+    }
+    if APPLIERS.read().contains_key(&name) {
+        return false;
+    }
+    let mut plugins = PLUGIN_APPLIERS.write();
+    if let Some(current) = plugins.get(&name)
+        && (current.priority > priority || (current.priority == priority && current.owner.as_str() <= owner))
+    {
+        return false;
+    }
+    plugins.insert(name, PluginApplier { owner: owner.to_string(), priority, applier });
+    true
+}
+
+/// Removes every applier owned by one plugin (Go: `UnregisterPluginProviders`).
+pub fn unregister_plugin_providers(owner: &str) {
+    let owner = owner.trim();
+    if owner.is_empty() {
+        return;
+    }
+    PLUGIN_APPLIERS.write().retain(|_, p| p.owner != owner);
+}
+
+/// Removes all plugin-owned appliers (Go: `ClearPluginProviders`).
+pub fn clear_plugin_providers() {
+    PLUGIN_APPLIERS.write().clear();
 }
 
 /// Registers (or replaces) a provider applier by name.

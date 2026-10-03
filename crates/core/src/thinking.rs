@@ -32,7 +32,8 @@ mod tests;
 pub use apply::{
     apply_thinking, apply_thinking_with_model_info, apply_thinking_with_model_info_and_summary,
     apply_thinking_with_source_and_summary, apply_thinking_with_summary, get_provider_applier,
-    is_user_defined_model, register_provider,
+    clear_plugin_providers, is_user_defined_model, register_plugin_provider, register_provider,
+    unregister_plugin_providers,
 };
 pub use convert::{
     ModelCapability, THRESHOLD_HIGH, THRESHOLD_LOW, THRESHOLD_MEDIUM, THRESHOLD_MINIMAL,
