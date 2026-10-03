@@ -11,7 +11,19 @@ publish = false
 name = "cpa-bench"
 path = "src/main.rs"
 
+# Translator micro-benchmark: wall time, instructions, allocations and bytes per operation of the
+# hot conversions on the real benchmark bodies. `cargo run --release -p cpa-bench --bin
+# translator-perf [-- filter]`; with `--features prof` and `PROF=1` it also prints a SIGPROF profile.
+[[bin]]
+name = "translator-perf"
+path = "src/perf.rs"
+
+[features]
+prof = ["dep:pprof"]
+
 [dependencies]
+cpa-translator = { path = "../translator" }
+pprof = { version = "0.15", default-features = false, optional = true }
 anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true

@@ -67,7 +67,7 @@ fn inline_image_url(inline: &Res<'_>) -> Option<String> {
 fn set_usage(template: &mut Value, usage: &Res<'_>) {
     let thoughts = usage.g("thoughtsTokenCount").int();
     let cached = usage.g("cachedContentTokenCount").int();
-    cpa_json::set(template, "usage.completion_tokens", usage.g("candidatesTokenCount").int() + thoughts);
+    cpa_json::set(template, "usage.completion_tokens", usage.g("candidatesTokenCount").int().wrapping_add(thoughts));
     let total = usage.g("totalTokenCount");
     if total.exists() {
         cpa_json::set(template, "usage.total_tokens", total.int());

@@ -336,7 +336,7 @@ pub(super) fn set_usage(target: &mut Value, prefix: &str, um: &Res<'_>, zero_def
     // Input tokens are the prompt only (thoughts go to output).
     cpa_json::set(target, &p("input_tokens"), um.g("promptTokenCount").int());
     cpa_json::set(target, &p("input_tokens_details.cached_tokens"), um.g("cachedContentTokenCount").int());
-    cpa_json::set(target, &p("output_tokens"), um.g("candidatesTokenCount").int() + um.g("thoughtsTokenCount").int());
+    cpa_json::set(target, &p("output_tokens"), um.g("candidatesTokenCount").int().wrapping_add(um.g("thoughtsTokenCount").int()));
     let thoughts = um.g("thoughtsTokenCount");
     if thoughts.exists() {
         cpa_json::set(target, &p("output_tokens_details.reasoning_tokens"), thoughts.int());

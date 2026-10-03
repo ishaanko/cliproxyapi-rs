@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 
 use super::ChatParams;
-use crate::common::fast::{decode_literal, is_string_literal, push_int, push_json_str, push_literal, Field};
+use crate::common::fast::{decode_literal, is_string_literal, push_int, push_json_str, push_literal, within_depth_limit, Field, Obj};
 use crate::common::parse_create_time;
 
 type Raw<'a> = &'a RawValue;
@@ -16,9 +16,9 @@ type Raw<'a> = &'a RawValue;
 #[derive(Deserialize)]
 struct Chunk<'a> {
     #[serde(default, borrow)]
-    candidates: Field<Vec<Candidate<'a>>>,
+    candidates: Field<Vec<Obj<Candidate<'a>>>>,
     #[serde(default, rename = "usageMetadata")]
-    usage: Field<Usage>,
+    usage: Field<Obj<Usage>>,
     #[serde(default, rename = "modelVersion", borrow)]
     model_version: Field<Raw<'a>>,
     #[serde(default, rename = "createTime", borrow)]
@@ -34,13 +34,13 @@ struct Candidate<'a> {
     #[serde(default, rename = "finishReason", borrow)]
     finish_reason: Field<Raw<'a>>,
     #[serde(default, borrow)]
-    content: Field<Content<'a>>,
+    content: Field<Obj<Content<'a>>>,
 }
 
 #[derive(Deserialize)]
 struct Content<'a> {
     #[serde(default, borrow)]
-    parts: Field<Vec<Part<'a>>>,
+    parts: Field<Vec<Obj<Part<'a>>>>,
 }
 
 #[derive(Deserialize)]
@@ -87,16 +87,16 @@ fn int_literal(raw: &str) -> Option<i64> {
 
 /// `,"usage":{...}` as `set_usage` lays it out.
 fn push_usage(out: &mut Vec<u8>, u: &Usage) {
-    let thoughts = u.thoughts.as_ref().copied().unwrap_or(0);
-    let cached = u.cached.as_ref().copied().unwrap_or(0);
+    let thoughts = u.thoughts.get().copied().unwrap_or(0);
+    let cached = u.cached.get().copied().unwrap_or(0);
     out.extend_from_slice(br#","usage":{"completion_tokens":"#);
-    push_int(out, u.candidates.as_ref().copied().unwrap_or(0).wrapping_add(thoughts));
-    if let Some(total) = u.total.as_ref() {
+    push_int(out, u.candidates.get().copied().unwrap_or(0).wrapping_add(thoughts));
+    if let Some(total) = u.total.get() {
         out.extend_from_slice(br#","total_tokens":"#);
         push_int(out, *total);
     }
     out.extend_from_slice(br#","prompt_tokens":"#);
-    push_int(out, u.prompt.as_ref().copied().unwrap_or(0));
+    push_int(out, u.prompt.get().copied().unwrap_or(0));
     if thoughts > 0 {
         out.extend_from_slice(br#","completion_tokens_details":{"reasoning_tokens":"#);
         push_int(out, thoughts);
@@ -112,7 +112,7 @@ fn push_usage(out: &mut Vec<u8>, u: &Usage) {
 
 /// A string field's literal (`None` = decline for a non-string).
 fn lit<'a>(f: &Field<Raw<'a>>) -> Option<Option<&'a str>> {
-    match f.as_ref() {
+    match f.get() {
         None => Some(None),
         Some(r) if is_string_literal(r.get()) => Some(Some(r.get())),
         Some(_) => None,
@@ -120,11 +120,14 @@ fn lit<'a>(f: &Field<Raw<'a>>) -> Option<Option<&'a str>> {
 }
 
 pub(super) fn convert(p: &mut ChatParams, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
+    if !within_depth_limit(raw) {
+        return None;
+    }
     let text = std::str::from_utf8(raw).ok()?;
     if text.is_empty() {
         return Some(vec![]);
     }
-    let chunk: Chunk<'_> = serde_json::from_str(text).ok()?;
+    let chunk: Obj<Chunk<'_>> = serde_json::from_str(text).ok()?;
 
     let model = lit(&chunk.model_version)?;
     let id = lit(&chunk.response_id)?;
@@ -150,7 +153,7 @@ pub(super) fn convert(p: &mut ChatParams, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
     }
     head.extend_from_slice(br#","choices":[{"index":"#);
     let mut usage_tail = Vec::new();
-    if let Some(u) = chunk.usage.as_ref() {
+    if let Some(u) = chunk.usage.get() {
         push_usage(&mut usage_tail, u);
     }
     usage_tail.push(b'}');
@@ -163,10 +166,10 @@ pub(super) fn convert(p: &mut ChatParams, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
         out: Vec<u8>,
     }
     let mut planned: Vec<Planned> = Vec::new();
-    let candidates = chunk.candidates.as_ref();
+    let candidates = chunk.candidates.get();
     if let Some(candidates) = candidates {
         for candidate in candidates {
-            let index = match candidate.index.as_ref() {
+            let index = match candidate.index.get() {
                 None => 0,
                 Some(r) => int_literal(r.get())?,
             };
@@ -181,8 +184,8 @@ pub(super) fn convert(p: &mut ChatParams, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
 
             let mut role = false;
             let (mut content, mut reasoning): (Option<&str>, Option<&str>) = (None, None);
-            if let Some(c) = candidate.content.as_ref()
-                && let Some(parts) = c.parts.as_ref()
+            if let Some(c) = candidate.content.get()
+                && let Some(parts) = c.parts.get()
             {
                 for part in parts {
                     if part.function_call.exists()
@@ -193,11 +196,11 @@ pub(super) fn convert(p: &mut ChatParams, raw: &[u8]) -> Option<Vec<Vec<u8>>> {
                     {
                         return None;
                     }
-                    let Some(t) = part.text.as_ref() else { continue };
+                    let Some(t) = part.text.get() else { continue };
                     if !is_string_literal(t.get()) {
                         return None;
                     }
-                    let thought = match part.thought.as_ref().map(|r| r.get()) {
+                    let thought = match part.thought.get().map(|r| r.get()) {
                         None | Some("false") => false,
                         Some("true") => true,
                         Some(_) => return None,

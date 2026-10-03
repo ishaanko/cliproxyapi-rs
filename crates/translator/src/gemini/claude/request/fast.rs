@@ -19,7 +19,7 @@ use super::{
     apply_system_instruction, apply_tail, tool_name_from_claude_tool_use_id, GEMINI_CLAUDE_THOUGHT_SIGNATURE,
 };
 use crate::common::claude_message_system_reminder_text;
-use crate::common::fast::{decode_literal, is_string_literal, push_json_str, push_literal, Field, Str};
+use crate::common::fast::{decode_literal, is_string_literal, push_json_str, push_literal, within_depth_limit, Field, Obj, Str};
 use crate::gemini::common::default_safety_settings;
 
 type Raw<'a> = &'a RawValue;
@@ -27,7 +27,7 @@ type Raw<'a> = &'a RawValue;
 #[derive(Deserialize)]
 struct Request<'a> {
     #[serde(default, borrow)]
-    messages: Field<Vec<Message<'a>>>,
+    messages: Field<Vec<Obj<Message<'a>>>>,
     #[serde(default, borrow)]
     system: Field<Raw<'a>>,
     #[serde(default, borrow)]
@@ -71,7 +71,7 @@ struct Block<'a> {
     #[serde(default, borrow)]
     content: Field<Raw<'a>>,
     #[serde(default, borrow)]
-    source: Field<Source<'a>>,
+    source: Field<Obj<Source<'a>>>,
 }
 
 #[derive(Deserialize)]
@@ -86,11 +86,11 @@ struct Source<'a> {
 
 impl<'a> Block<'a> {
     fn ty(&self) -> &str {
-        self.ty.as_ref().map_or("", |t| &**t)
+        self.ty.get().map_or("", |t| &**t)
     }
 
     fn tool_use_id(&self) -> &str {
-        self.tool_use_id.as_ref().map_or("", |t| &**t)
+        self.tool_use_id.get().map_or("", |t| &**t)
     }
 }
 
@@ -120,8 +120,8 @@ struct Turn {
 }
 
 impl Turn {
-    fn new(role: &'static str, index: usize) -> (Self, usize) {
-        (Turn { role, buf: Vec::new(), parts: Vec::new() }, index)
+    fn new(role: &'static str) -> Self {
+        Turn { role, buf: Vec::new(), parts: Vec::new() }
     }
 
     /// Writes one part with `f` and records it; `f` returning `None` declines the whole request.
@@ -157,7 +157,7 @@ fn reorder(parts: &mut Vec<PartRef>) {
 
 /// Go `AlignClaudeToolResults`: the order of block indices after sorting `tool_result` blocks to
 /// the order of the preceding `tool_use` ids, or `None` to keep the blocks as they are.
-fn align(blocks: &[Block<'_>], ids: &[String]) -> Option<Vec<usize>> {
+fn align(blocks: &[Obj<Block<'_>>], ids: &[String]) -> Option<Vec<usize>> {
     if ids.is_empty() {
         return None;
     }
@@ -196,17 +196,20 @@ fn inline_data(buf: &mut Vec<u8>, mime: &str, data: &str) {
 
 /// Converts `raw` when it is a canonical body; `None` hands the request to the general path.
 pub(super) fn convert(model_name: &str, raw: &[u8], _stream: bool) -> Option<Vec<u8>> {
+    if !within_depth_limit(raw) {
+        return None;
+    }
     let text = std::str::from_utf8(raw).ok()?;
-    let req: Request<'_> = serde_json::from_str(text).ok()?;
+    let req: Obj<Request<'_>> = serde_json::from_str(text).ok()?;
 
-    let messages: &[Message<'_>] = req.messages.as_ref().map_or(&[], |m| m.as_slice());
+    let messages: &[Obj<Message<'_>>] = req.messages.get().map_or(&[], |m| m.as_slice());
     let mut turns: Vec<Turn> = Vec::new();
     let mut tool_name_by_id: HashMap<String, String> = HashMap::new();
     let mut pending_tool_use_ids: Vec<String> = Vec::new();
 
     for message in messages {
         // Messages without a string role are skipped before anything else happens to them.
-        let Some(role_raw) = message.role.as_ref() else { continue };
+        let Some(role_raw) = message.role.get() else { continue };
         if !is_string_literal(role_raw.get()) {
             continue;
         }
@@ -219,14 +222,14 @@ pub(super) fn convert(model_name: &str, raw: &[u8], _stream: bool) -> Option<Vec
         let (role, is_user) = match &*original_role {
             "system" | "developer" => {
                 // Mid-conversation system messages become one user reminder turn.
-                let value: Option<Value> = match message.content.as_ref() {
+                let value: Option<Value> = match message.content.get() {
                     Some(c) => Some(serde_json::from_str(c.get()).ok()?),
                     None => None,
                 };
                 let content = value.as_ref().map_or(Res::NONE, Res::of);
                 if let Some(reminder) = claude_message_system_reminder_text(&content) {
                     let index = turns.len();
-                    let (mut turn, _) = Turn::new("user", index);
+                    let mut turn = Turn::new("user");
                     turn.part(index, Kind::Text, |b| {
                         b.extend_from_slice(br#"{"text":"#);
                         push_json_str(b, &reminder);
@@ -242,13 +245,13 @@ pub(super) fn convert(model_name: &str, raw: &[u8], _stream: bool) -> Option<Vec
             _ => return None,
         };
 
-        let content = message.content.as_ref().map(|c| c.get());
+        let content = message.content.get().map(|c| c.get());
         match content.and_then(|c| c.as_bytes().first()) {
             Some(b'[') => {
-                let blocks: Vec<Block<'_>> = serde_json::from_str(content?).ok()?;
+                let blocks: Vec<Obj<Block<'_>>> = serde_json::from_str(content?).ok()?;
                 let order = if is_user { align(&blocks, &preceding_ids) } else { None };
                 let index = turns.len();
-                let (mut turn, _) = Turn::new(role, index);
+                let mut turn = Turn::new(role);
                 for k in 0..blocks.len() {
                     let block = &blocks[order.as_ref().map_or(k, |o| o[k])];
                     push_block(&mut turn, index, block, &original_role, &mut tool_name_by_id, &mut pending_tool_use_ids)?;
@@ -260,7 +263,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], _stream: bool) -> Option<Vec
             }
             Some(b'"') => {
                 let index = turns.len();
-                let (mut turn, _) = Turn::new(role, index);
+                let mut turn = Turn::new(role);
                 turn.part(index, Kind::Text, |b| text_part(b, content.unwrap_or(r#""""#)))?;
                 turns.push(turn);
             }
@@ -304,7 +307,7 @@ pub(super) fn convert(model_name: &str, raw: &[u8], _stream: bool) -> Option<Vec
         ("top_p", &req.top_p),
         ("top_k", &req.top_k),
     ] {
-        if let Some(raw) = field.as_ref() {
+        if let Some(raw) = field.get() {
             mini.insert(key.to_string(), serde_json::from_str(raw.get()).ok()?);
         }
     }
@@ -365,7 +368,7 @@ fn push_block(
 ) -> Option<()> {
     match block.ty() {
         "text" => {
-            let Some(raw) = block.text.as_ref() else { return Some(()) };
+            let Some(raw) = block.text.get() else { return Some(()) };
             let lit = raw.get();
             if !is_string_literal(lit) {
                 return None;
@@ -376,12 +379,12 @@ fn push_block(
             turn.part(index, Kind::Text, |b| text_part(b, lit))
         }
         "tool_use" => {
-            let name = block.name.as_ref().map_or("", |n| &**n);
-            let id = block.id.as_ref().map_or("", |n| &**n);
+            let name = block.name.get().map_or("", |n| &**n);
+            let id = block.id.get().map_or("", |n| &**n);
             if !id.is_empty() && !name.is_empty() {
                 tool_name_by_id.insert(id.to_string(), name.to_string());
             }
-            let args_text = match block.input.as_ref() {
+            let args_text = match block.input.get() {
                 None => return Some(()),
                 Some(raw) => match raw.get().as_bytes().first()? {
                     b'{' => std::borrow::Cow::Borrowed(raw.get()),
@@ -437,7 +440,7 @@ fn push_block(
                 Json(Vec<u8>),
             }
             let mut images = Vec::new();
-            let result = match block.content.as_ref() {
+            let result = match block.content.get() {
                 None => Payload::Literal(r#""""#),
                 Some(raw) if is_string_literal(raw.get()) => Payload::Literal(raw.get()),
                 Some(raw) => {
@@ -482,12 +485,12 @@ fn push_block(
             Some(())
         }
         "image" => {
-            let Some(source) = block.source.as_ref() else { return Some(()) };
-            if source.ty.as_ref().map_or("", |t| &**t) != "base64" {
+            let Some(source) = block.source.get() else { return Some(()) };
+            if source.ty.get().map_or("", |t| &**t) != "base64" {
                 return Some(());
             }
-            let mime = source.media_type.as_ref().map_or("", |t| &**t);
-            let data = source.data.as_ref().map_or("", |t| &**t);
+            let mime = source.media_type.get().map_or("", |t| &**t);
+            let data = source.data.get().map_or("", |t| &**t);
             if mime.is_empty() || data.is_empty() {
                 return Some(());
             }

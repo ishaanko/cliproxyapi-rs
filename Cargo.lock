@@ -942,12 +942,14 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
+ "cpa-translator",
  "futures-util",
  "http-body-util",
  "hyper",
  "hyper-util",
  "memchr",
  "perf-event2",
+ "pprof",
  "serde",
  "serde_json",
  "tokio",
@@ -1534,17 +1536,13 @@ name = "cpa-translator"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "bytes",
  "chrono",
  "cpa-core",
  "cpa-json",
  "flate2",
  "hex",
- "hyper",
  "itoa",
  "memchr",
- "perf-event2",
- "pprof",
  "rand 0.9.5",
  "regex",
  "serde",
@@ -1565,15 +1563,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "unicode-width",
-]
-
-[[package]]
-name = "cpp_demangle"
-version = "0.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2bb79cb74d735044c972aae58ed0aaa9a837e85b01106a54c39e42e97f62253"
-dependencies = [
- "cfg-if 1.0.5",
 ]
 
 [[package]]
@@ -5495,7 +5484,6 @@ version = "12.18.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "912017718eb4d21930546245af9a3475c9dccf15675a5c215664e76621afc471"
 dependencies = [
- "cpp_demangle",
  "rustc-demangle",
  "symbolic-common",
 ]

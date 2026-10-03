@@ -51,7 +51,9 @@ impl Json {
 
     /// Serializes with a random whitespace style and string-escaping style per document.
     pub fn emit(&self, g: &mut Gen) -> String {
-        let style = Style { ws: g.below(3), escape: g.below(3) };
+        // One document in six also emits some objects as arrays of their values.
+        let arr_obj = if g.chance(17) { 5 + g.below(30) } else { 0 };
+        let style = Style { ws: g.below(3), escape: g.below(3), arr_obj };
         let mut out = String::new();
         self.write(g, &style, &mut out);
         out
@@ -72,6 +74,11 @@ impl Json {
                 }
                 st.space(out);
                 out.push(']');
+            }
+            // An object serialized as the array of its values: derived serde structs would fill
+            // fields by position from it, while gjson sees no fields at all.
+            Json::Obj(fields) if st.arr_obj > 0 && g.chance(st.arr_obj) => {
+                Json::Arr(fields.iter().map(|(_, v)| v.clone()).collect()).write(g, st, out);
             }
             Json::Obj(fields) => {
                 out.push('{');
@@ -97,6 +104,8 @@ struct Style {
     ws: usize,
     /// 0 canonical, 1 escape every non-ASCII char and `/`, 2 mixed per character.
     escape: usize,
+    /// Percent of objects emitted as arrays of their values.
+    arr_obj: usize,
 }
 
 impl Style {
