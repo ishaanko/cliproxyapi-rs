@@ -360,3 +360,37 @@ async fn run_one(a: &RunArgs, who: &str, run: usize, standard: &[Scenario], larg
     }
     Ok(rec)
 }
+
+#[derive(Args, Clone)]
+pub struct LoadArgs {
+    /// Scenario id (standard or large).
+    #[arg(long)]
+    pub scenario: String,
+    #[arg(long, default_value_t = 64)]
+    pub conc: usize,
+    #[arg(long, default_value_t = 10.0)]
+    pub secs: f64,
+    #[arg(long, default_value_t = 1.5)]
+    pub warmup: f64,
+    /// Pid of the server, for CPU per request.
+    #[arg(long)]
+    pub pid: Option<u32>,
+    #[arg(long, default_value_t = 2_000_000)]
+    pub large_bytes: usize,
+}
+
+/// Runs one throughput cell against a server and mock that are already up (profiling aid).
+pub async fn load_only(a: LoadArgs) -> Result<()> {
+    let sc = scenarios::standard()
+        .into_iter()
+        .chain(scenarios::large(a.large_bytes))
+        .find(|s| s.id == a.scenario)
+        .ok_or_else(|| anyhow::anyhow!("unknown scenario {}", a.scenario))?;
+    let t = target_for(&sc, Side::Server).ok_or_else(|| anyhow::anyhow!("no server target"))?;
+    preflight(&sc, &t, "server", Side::Server).await?;
+    let cell = run_cell(CellSpec { kind: "tput", id: sc.id, target: &t, conc: a.conc, warmup: a.warmup, measure: a.secs, timing: false, pid: a.pid }).await?;
+    if let Some(c) = cell.cpu_ms_per_1k {
+        eprintln!("    cpu ms/1k req: {c:.0}");
+    }
+    Ok(())
+}
