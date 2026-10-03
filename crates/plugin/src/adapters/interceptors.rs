@@ -59,12 +59,14 @@ impl Host {
         self.any_active(|r| r.caps().stream_chunk_interceptor && !omits_history(r.schema_version()))
     }
 
+    /// Chained request interceptors before credential selection. The flag is true when at least
+    /// one interceptor answered, i.e. when `headers` of the response is authoritative.
     pub async fn intercept_request_before_auth(
         self: &Arc<Self>,
         ctx: &CallCtx,
         req: RequestInterceptRequest,
         skip_plugin_id: &str,
-    ) -> RequestInterceptResponse {
+    ) -> (RequestInterceptResponse, bool) {
         self.intercept_request(ctx, req, Stage::Before, skip_plugin_id).await
     }
 
@@ -73,7 +75,7 @@ impl Host {
         ctx: &CallCtx,
         req: RequestInterceptRequest,
         skip_plugin_id: &str,
-    ) -> RequestInterceptResponse {
+    ) -> (RequestInterceptResponse, bool) {
         self.intercept_request(ctx, req, Stage::After, skip_plugin_id).await
     }
 
@@ -106,8 +108,9 @@ impl Host {
         req: RequestInterceptRequest,
         stage: Stage,
         skip_plugin_id: &str,
-    ) -> RequestInterceptResponse {
+    ) -> (RequestInterceptResponse, bool) {
         let skip = skip_plugin_id.trim();
+        let mut ran = false;
         let mut current = RequestInterceptResponse { headers: req.headers.clone(), ..Default::default() };
         let mut current_base = req.body.clone();
         let mut body_modified = false;
@@ -122,6 +125,7 @@ impl Host {
                 next.metadata.insert(REQUEST_PATH_METADATA_KEY.into(), Value::String(current.path.clone()));
             }
             let Some(resp) = self.call_request_interceptor(ctx, &rec, stage, &next).await else { continue };
+            ran = true;
             current.headers = merge_headers(&current.headers, &resp.headers, &resp.clear_headers);
             if !resp.body.is_empty() {
                 current_base = resp.body.clone();
@@ -141,7 +145,7 @@ impl Host {
         if body_modified {
             current.body = current_base;
         }
-        current
+        (current, ran)
     }
 
     /// Schedules terminal notifications without blocking response delivery (Go:
@@ -170,8 +174,9 @@ impl Host {
         ctx: &CallCtx,
         req: ResponseInterceptRequest,
         skip_plugin_id: &str,
-    ) -> ResponseInterceptResponse {
+    ) -> (ResponseInterceptResponse, bool) {
         let skip = skip_plugin_id.trim();
+        let mut ran = false;
         let mut current = ResponseInterceptResponse { headers: req.response_headers.clone(), body: req.body.clone(), ..Default::default() };
         for rec in self.active_records() {
             if self.is_plugin_fused(&rec.id) || !rec.caps().response_interceptor || rec.id == skip {
@@ -185,6 +190,7 @@ impl Host {
             }
             match self.rpc_cb::<ResponseInterceptResponse>(&rec, ctx, abi::METHOD_RESPONSE_INTERCEPT_AFTER, &next).await {
                 Ok(resp) => {
+                    ran = true;
                     current.headers = merge_headers(&current.headers, &resp.headers, &resp.clear_headers);
                     if !resp.body.is_empty() {
                         current.body = resp.body;
@@ -193,7 +199,7 @@ impl Host {
                 Err(e) => tracing::warn!("pluginhost: response interceptor {} failed: {e}", rec.id),
             }
         }
-        current
+        (current, ran)
     }
 
     /// Chained stream chunk interceptors (Go: `InterceptStreamChunkExcept`).
@@ -202,8 +208,9 @@ impl Host {
         ctx: &CallCtx,
         req: StreamChunkInterceptRequest,
         skip_plugin_id: &str,
-    ) -> StreamChunkInterceptResponse {
+    ) -> (StreamChunkInterceptResponse, bool) {
         let skip = skip_plugin_id.trim();
+        let mut ran = false;
         let mut current = StreamChunkInterceptResponse { headers: req.response_headers.clone(), body: req.body.clone(), ..Default::default() };
         for rec in self.active_records() {
             if self.is_plugin_fused(&rec.id) || !rec.caps().stream_chunk_interceptor || current.drop_chunk || rec.id == skip {
@@ -226,6 +233,7 @@ impl Host {
             }
             match self.rpc_cb::<StreamChunkInterceptResponse>(&rec, ctx, abi::METHOD_RESPONSE_INTERCEPT_STREAM_CHUNK, &next).await {
                 Ok(resp) => {
+                    ran = true;
                     current.headers = merge_headers(&current.headers, &resp.headers, &resp.clear_headers);
                     if !resp.body.is_empty() {
                         current.body = resp.body;
@@ -237,7 +245,7 @@ impl Host {
                 Err(e) => tracing::warn!("pluginhost: stream chunk interceptor {} failed: {e}", rec.id),
             }
         }
-        current
+        (current, ran)
     }
 
     /// Delivers an upstream websocket response event to observers (Go:

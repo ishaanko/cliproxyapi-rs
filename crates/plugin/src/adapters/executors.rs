@@ -276,23 +276,24 @@ impl Host {
     }
 
     /// Go `ExecutePluginExecutor`.
-    pub async fn execute_plugin_executor(self: &Arc<Self>, plugin_id: &str, req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.executor_adapter_for_plugin(plugin_id)?.execute_inner(None, req, opts).await
+    pub async fn execute_plugin_executor(self: &Arc<Self>, ctx: &CallCtx, plugin_id: &str, req: Request, opts: Options) -> Result<Response, ExecError> {
+        self.executor_adapter_for_plugin(plugin_id)?.execute_inner(ctx, None, req, opts).await
     }
 
     /// Go `ExecutePluginExecutorStream`.
     pub async fn execute_plugin_executor_stream(
         self: &Arc<Self>,
+        ctx: &CallCtx,
         plugin_id: &str,
         req: Request,
         opts: Options,
     ) -> Result<StreamResult, ExecError> {
-        self.executor_adapter_for_plugin(plugin_id)?.execute_stream_inner(None, req, opts).await
+        self.executor_adapter_for_plugin(plugin_id)?.execute_stream_inner(ctx, None, req, opts).await
     }
 
     /// Go `CountPluginExecutor`.
-    pub async fn count_plugin_executor(self: &Arc<Self>, plugin_id: &str, req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.executor_adapter_for_plugin(plugin_id)?.count_tokens_inner(None, req, opts).await
+    pub async fn count_plugin_executor(self: &Arc<Self>, ctx: &CallCtx, plugin_id: &str, req: Request, opts: Options) -> Result<Response, ExecError> {
+        self.executor_adapter_for_plugin(plugin_id)?.count_tokens_inner(ctx, None, req, opts).await
     }
 
     /// Whether the named plugin could execute the routed request (Go: `executorPluginReady`).
@@ -441,12 +442,29 @@ impl ExecutorAdapter {
         }
     }
 
-    fn call_ctx(&self, opts: &Options) -> (CallCtx, tokio_util::sync::DropGuard) {
-        let ctx = CallCtx::background();
-        let trace = opts.metadata.get(cpa_runtime::executor::meta::TRACE_ID).and_then(|v| v.as_str()).unwrap_or("");
-        let ctx = ctx.with_request_id(trace);
+    /// Context for one plugin call: a child of `parent` that is canceled when the call's future
+    /// is dropped (Go: the request context ending). The attempt and nested markers are shared
+    /// with `parent`.
+    fn call_ctx(&self, parent: &CallCtx, opts: &Options) -> (CallCtx, tokio_util::sync::DropGuard) {
+        let mut ctx = parent.child();
+        if ctx.request_id.is_empty() {
+            let trace = opts.metadata.get(cpa_runtime::executor::meta::TRACE_ID).and_then(|v| v.as_str()).unwrap_or("");
+            ctx.request_id = trace.to_string();
+        }
         let guard = ctx.token().clone().drop_guard();
         (ctx, guard)
+    }
+
+    /// Context for calls made by the conductor, which has no request context of its own: the
+    /// execution metadata is attached for nested host model executions.
+    pub(crate) fn conductor_ctx(opts: &Options) -> CallCtx {
+        CallCtx::background().with_ext(Arc::new(crate::ctx::RequestMeta(opts.metadata.clone())))
+    }
+
+    fn to_exec_error_ctx(ctx: &CallCtx, e: crate::client::PluginError) -> ExecError {
+        let mut err = Self::to_exec_error(e);
+        err.upstream_attempted = ctx.upstream_attempted();
+        err
     }
 
     fn reporter(&self, auth: Option<&Auth>, model: &str, opts: &Options) -> Option<UsageReporter> {
@@ -517,28 +535,31 @@ impl ExecutorAdapter {
 
     // ---- execution ----
 
-    pub(crate) async fn execute_inner(&self, auth: Option<&Auth>, req: Request, opts: Options) -> Result<Response, ExecError> {
+    pub(crate) async fn execute_inner(&self, parent: &CallCtx, auth: Option<&Auth>, req: Request, opts: Options) -> Result<Response, ExecError> {
         if !self.available() {
             return Err(self.unavailable_error());
         }
         let reporter = self.reporter(auth, &req.model, &opts);
-        let result = self.execute_checked(auth, req, opts, reporter.as_ref()).await;
+        let result = self.execute_checked(parent, auth, req, opts, reporter.as_ref()).await;
         if let (Err(e), Some(r)) = (&result, &reporter) {
             r.publish_failure(e);
         }
         result
     }
 
-    async fn execute_checked(&self, auth: Option<&Auth>, req: Request, opts: Options, reporter: Option<&UsageReporter>) -> Result<Response, ExecError> {
+    async fn execute_checked(&self, parent: &CallCtx, auth: Option<&Auth>, req: Request, opts: Options, reporter: Option<&UsageReporter>) -> Result<Response, ExecError> {
         let prepared = self.prepare(req, opts)?;
         if let Some(r) = reporter {
             r.set_translated_reasoning_effort(&prepared.req.payload, prepared.input.as_str());
             r.start_response_ttft();
         }
-        let (ctx, _cancel) = self.call_ctx(&prepared.opts);
+        let (ctx, _cancel) = self.call_ctx(parent, &prepared.opts);
         let plugin_req = self.build_request(auth, &prepared.req, &prepared.opts);
-        let resp: ExecutorResponse =
-            self.host.rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_EXECUTE, &plugin_req).await.map_err(Self::to_exec_error)?;
+        let resp: ExecutorResponse = self
+            .host
+            .rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_EXECUTE, &plugin_req)
+            .await
+            .map_err(|e| Self::to_exec_error_ctx(&ctx, e))?;
         if let Some(r) = reporter {
             r.record_first_packet();
             r.publish(parse_plugin_executor_response_usage(prepared.output.as_str(), &resp.payload));
@@ -553,15 +574,18 @@ impl ExecutorAdapter {
         })
     }
 
-    pub(crate) async fn count_tokens_inner(&self, auth: Option<&Auth>, req: Request, opts: Options) -> Result<Response, ExecError> {
+    pub(crate) async fn count_tokens_inner(&self, parent: &CallCtx, auth: Option<&Auth>, req: Request, opts: Options) -> Result<Response, ExecError> {
         if !self.available() {
             return Err(self.unavailable_error());
         }
         let prepared = self.prepare(req, opts)?;
-        let (ctx, _cancel) = self.call_ctx(&prepared.opts);
+        let (ctx, _cancel) = self.call_ctx(parent, &prepared.opts);
         let plugin_req = self.build_request(auth, &prepared.req, &prepared.opts);
-        let resp: ExecutorResponse =
-            self.host.rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_COUNT_TOKENS, &plugin_req).await.map_err(Self::to_exec_error)?;
+        let resp: ExecutorResponse = self
+            .host
+            .rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_COUNT_TOKENS, &plugin_req)
+            .await
+            .map_err(|e| Self::to_exec_error_ctx(&ctx, e))?;
         let mut param = Param::default();
         let payload = self.translate_response(&prepared, &resp.payload, false, &mut param);
         Ok(Response {
@@ -571,12 +595,12 @@ impl ExecutorAdapter {
         })
     }
 
-    pub(crate) async fn execute_stream_inner(&self, auth: Option<&Auth>, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+    pub(crate) async fn execute_stream_inner(&self, parent: &CallCtx, auth: Option<&Auth>, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
         if !self.available() {
             return Err(self.unavailable_error());
         }
         let reporter = self.reporter(auth, &req.model, &opts);
-        let result = self.execute_stream_checked(auth, req, opts, reporter.clone()).await;
+        let result = self.execute_stream_checked(parent, auth, req, opts, reporter.clone()).await;
         if let (Err(e), Some(r)) = (&result, &reporter) {
             r.publish_failure(e);
         }
@@ -585,6 +609,7 @@ impl ExecutorAdapter {
 
     async fn execute_stream_checked(
         &self,
+        parent: &CallCtx,
         auth: Option<&Auth>,
         req: Request,
         opts: Options,
@@ -595,9 +620,14 @@ impl ExecutorAdapter {
             r.set_translated_reasoning_effort(&prepared.req.payload, prepared.input.as_str());
             r.start_response_ttft();
         }
-        let ctx = CallCtx::background().with_request_id(
-            prepared.opts.metadata.get(cpa_runtime::executor::meta::TRACE_ID).and_then(|v| v.as_str()).unwrap_or(""),
-        );
+        // The stream outlives this call, so its context is detached from the caller's drop.
+        let ctx = {
+            let mut c = parent.detached();
+            if c.request_id.is_empty() {
+                c.request_id = prepared.opts.metadata.get(cpa_runtime::executor::meta::TRACE_ID).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            }
+            c
+        };
         let plugin_req = self.build_request(auth, &prepared.req, &prepared.opts);
         let (stream_id, stream_rx, cleanup_stream) = self.host.bridges.streams.open(&ctx);
         let guard = self.host.bridges.contexts.open(&ctx, &self.record.id, Some(self.record.client.instance()));
@@ -610,7 +640,7 @@ impl ExecutorAdapter {
             Err(e) => {
                 cleanup_stream();
                 drop(guard);
-                return Err(Self::to_exec_error(e));
+                return Err(Self::to_exec_error_ctx(&ctx, e));
             }
         };
         let headers = headers_from_go(&resp.headers);
@@ -866,11 +896,17 @@ impl Executor for ExecutorAdapter {
     }
 
     async fn execute(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.execute_inner(Some(auth), req, opts).await
+        let ctx = Self::conductor_ctx(&opts);
+        self.execute_inner(&ctx, Some(auth), req, opts).await
     }
 
     async fn execute_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
-        self.execute_stream_inner(Some(auth), req, opts).await
+        let ctx = Self::conductor_ctx(&opts);
+        self.execute_stream_inner(&ctx, Some(auth), req, opts).await
+    }
+
+    fn request_to_format(&self, _req: &Request, opts: &Options) -> Option<Format> {
+        self.select_input_format(opts.source_format).ok()
     }
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
@@ -878,7 +914,8 @@ impl Executor for ExecutorAdapter {
     }
 
     async fn count_tokens(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
-        self.count_tokens_inner(Some(auth), req, opts).await
+        let ctx = Self::conductor_ctx(&opts);
+        self.count_tokens_inner(&ctx, Some(auth), req, opts).await
     }
 }
 

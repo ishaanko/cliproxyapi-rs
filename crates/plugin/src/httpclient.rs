@@ -97,6 +97,7 @@ impl HostHttpClient {
             builder = builder.body(req.body.clone());
         }
         let built = builder.build().map_err(|e| HostError::msg(format!("create host http request: {e}")))?;
+        ctx.mark_upstream_attempt();
         tokio::select! {
             r = client.execute(built) => r.map_err(|e| HostError::msg(format!("execute host http request: {}", error_chain(&e)))),
             () = ctx.cancelled() => Err(HostError::canceled()),

@@ -3,6 +3,7 @@
 
 use std::any::Any;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio_util::sync::CancellationToken;
 
@@ -15,6 +16,11 @@ pub struct CallCtx {
     /// Opaque embedder data (the server stores its request info here so nested model
     /// executions can reuse it).
     pub ext: Option<Arc<dyn Any + Send + Sync>>,
+    /// Set once a plugin ran a nested host model execution under this context (Go: the nested
+    /// execution tracker), so the outer call skips duplicate usage reporting.
+    nested: Arc<AtomicBool>,
+    /// Set once an upstream HTTP attempt was made through the host (Go: `MarkUpstreamAttempt`).
+    attempted: Arc<AtomicBool>,
 }
 
 impl CallCtx {
@@ -34,12 +40,40 @@ impl CallCtx {
 
     /// A child that is canceled with its parent but can also be canceled on its own.
     pub fn child(&self) -> CallCtx {
-        CallCtx { cancel: self.cancel.child_token(), request_id: self.request_id.clone(), ext: self.ext.clone() }
+        CallCtx {
+            cancel: self.cancel.child_token(),
+            request_id: self.request_id.clone(),
+            ext: self.ext.clone(),
+            nested: self.nested.clone(),
+            attempted: self.attempted.clone(),
+        }
     }
 
     /// Same values, cancellation detached from the parent (Go: `context.WithoutCancel`).
     pub fn detached(&self) -> CallCtx {
-        CallCtx { cancel: CancellationToken::new(), request_id: self.request_id.clone(), ext: self.ext.clone() }
+        CallCtx {
+            cancel: CancellationToken::new(),
+            request_id: self.request_id.clone(),
+            ext: self.ext.clone(),
+            nested: self.nested.clone(),
+            attempted: self.attempted.clone(),
+        }
+    }
+
+    pub fn mark_nested(&self) {
+        self.nested.store(true, Ordering::SeqCst);
+    }
+
+    pub fn has_nested(&self) -> bool {
+        self.nested.load(Ordering::SeqCst)
+    }
+
+    pub fn mark_upstream_attempt(&self) {
+        self.attempted.store(true, Ordering::SeqCst);
+    }
+
+    pub fn upstream_attempted(&self) -> bool {
+        self.attempted.load(Ordering::SeqCst)
     }
 
     pub fn is_canceled(&self) -> bool {
@@ -66,3 +100,8 @@ pub fn block_here<R>(f: impl FnOnce() -> R) -> R {
         _ => f(),
     }
 }
+
+/// Request facts a conductor-driven plugin call carries in [`CallCtx::ext`]: the execution
+/// metadata (client ip, api key, trace id, ...) nested host model executions reuse.
+#[derive(Debug, Clone, Default)]
+pub struct RequestMeta(pub std::collections::HashMap<String, serde_json::Value>);
