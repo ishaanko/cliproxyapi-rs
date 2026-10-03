@@ -35,14 +35,29 @@ mod pgo_dump;
 // load) with no CPU benefit. `.cargo/config.toml` compiles libmimalloc-sys with
 // `-DMI_DEFAULT_ARENA_EAGER_COMMIT=0`; the runtime option `MIMALLOC_ARENA_EAGER_COMMIT` still
 // overrides it.
+//
+// On Linux, blocks above 64 KiB (request bodies and their copies) are served by `bigheap`, which
+// recycles them across threads and returns idle ones to the OS within ~100 ms. Under load that
+// keeps the resident set near the live heap instead of ~2x it with mimalloc alone.
+#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+mod bigheap;
+#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+type Alloc = bigheap::Tiered<mimalloc::MiMalloc>;
+#[cfg(all(feature = "mimalloc", target_os = "linux"))]
+const ALLOC: Alloc = bigheap::Tiered(mimalloc::MiMalloc);
+#[cfg(all(feature = "mimalloc", not(target_os = "linux")))]
+type Alloc = mimalloc::MiMalloc;
+#[cfg(all(feature = "mimalloc", not(target_os = "linux")))]
+const ALLOC: Alloc = mimalloc::MiMalloc;
+
 #[cfg(all(feature = "mimalloc", not(feature = "alloc-stats")))]
 #[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+static GLOBAL: Alloc = ALLOC;
 
 // Benchmark hook (`--features alloc-stats`): counts allocations around the chosen allocator.
 #[cfg(all(feature = "mimalloc", feature = "alloc-stats"))]
 #[global_allocator]
-static GLOBAL: cpa_allocstats::Counting<mimalloc::MiMalloc> = cpa_allocstats::Counting::new(mimalloc::MiMalloc);
+static GLOBAL: cpa_allocstats::Counting<Alloc> = cpa_allocstats::Counting::new(ALLOC);
 
 #[cfg(all(not(feature = "mimalloc"), feature = "alloc-stats"))]
 #[global_allocator]

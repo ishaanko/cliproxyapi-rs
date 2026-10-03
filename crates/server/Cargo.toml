@@ -95,6 +95,9 @@ pprof = { version = "0.15", optional = true, default-features = false }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["stdio"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
