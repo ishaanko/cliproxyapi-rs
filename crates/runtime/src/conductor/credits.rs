@@ -341,10 +341,12 @@ impl Manager {
                 let mut credits_opts = credits_opts.clone();
                 credits_opts.usage_collector = Some(usage.clone());
                 let started = Instant::now();
+                credits_opts.api_log.reset_response_headers();
                 let res = c
                     .executor
                     .execute(&c.auth, exec_req, credits_opts.clone())
-                    .await;
+                    .await
+                    .map_err(|e| e.with_attempt_headers(&credits_opts.api_log));
                 let mut result = ExecResult {
                     auth_id: c.auth.id.clone(),
                     provider: c.provider.clone(),

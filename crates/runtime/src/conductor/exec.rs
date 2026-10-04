@@ -722,10 +722,14 @@ pub(crate) async fn call_unary(
     req: Request,
     opts: Options,
 ) -> Result<Response, ExecError> {
-    match kind {
+    // A fresh response-headers holder per upstream call (Go: newUpstreamAttemptContext).
+    opts.api_log.reset_response_headers();
+    let api_log = opts.api_log.clone();
+    let res = match kind {
         Kind::Execute => executor.execute(auth, req, opts).await,
         Kind::Count => executor.count_tokens(auth, req, opts).await,
-    }
+    };
+    res.map_err(|e| e.with_attempt_headers(&api_log))
 }
 
 /// A one-chunk stream carrying only the error, with the failed upstream's headers.

@@ -332,6 +332,18 @@ impl ApiLogHandle {
         }
     }
 
+    /// Starts a fresh upstream attempt for response headers (Go: `WithFreshResponseHeadersHolder`).
+    pub fn reset_response_headers(&self) {
+        if let Some(l) = self.get() {
+            l.state.lock().response_headers = HeaderMap::new();
+        }
+    }
+
+    /// Upstream response headers recorded since the last reset (Go: `GetResponseHeaders`).
+    pub fn response_headers(&self) -> HeaderMap {
+        self.get().map(ApiLog::response_headers).unwrap_or_default()
+    }
+
     pub fn mark_credits_used(&self) {
         if let Some(l) = self.get() {
             l.mark_credits_used();
