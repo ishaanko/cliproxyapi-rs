@@ -15,6 +15,7 @@ use bytes::Bytes;
 use serde_json::{Value as Json, json};
 use serde_yaml_ng::{Mapping, Value};
 
+use crate::config_auth_index;
 use crate::http::{ApiError, ApiResult, json_response, no_store};
 use crate::state::ManagementState;
 
@@ -61,7 +62,8 @@ pub(crate) async fn handle(st: &ManagementState, req: ConfigRequest) -> Response
     let task = tokio::spawn(async move {
         let _guard = st.shared.config_lock.clone().lock_owned().await;
         let path = st.config_path.clone();
-        let result = tokio::task::spawn_blocking(move || run(&path, &req)).await;
+        let task_st = st.clone();
+        let result = tokio::task::spawn_blocking(move || run(&task_st, &path, &req)).await;
         match result {
             Ok(Ok(Outcome::Read(resp))) => resp,
             Ok(Ok(Outcome::Saved)) => {
@@ -85,7 +87,7 @@ enum Outcome {
     Saved,
 }
 
-fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
+fn run(st: &ManagementState, config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
     let raw = std::fs::read(config_path).map_err(|_| ApiError::new(500, "read_failed"))?;
     let (normalized, _) = cpa_config::normalize_config_layout(&raw, true)
         .map_err(|e| ApiError::with_message(500, "invalid_config", e.to_string()))?;
@@ -95,11 +97,22 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
         .flatten()
         .ok_or_else(|| ApiError::new(500, "invalid_config"))?;
 
+    let dotted = req.parts.join(".");
     if req.method == Method::GET {
-        return read(&mut root, &text, req).map(Outcome::Read);
+        cpa_config::project_v8_config_aliases(&mut root, &dotted);
+        return read(st, &mut root, &text, req).map(Outcome::Read);
     }
 
     let before = root.clone();
+    // A replacement of the whole document brings its own comments and quoting; every other edit
+    // carries the comments of the previous document over to the same key paths.
+    let replaces_document = req.parts.is_empty() && req.method == Method::PUT;
+    let mut comments = cpa_config::DocComments::extract(if replaces_document {
+        std::str::from_utf8(&req.body).unwrap_or_default()
+    } else {
+        &text
+    });
+    cpa_config::project_v8_config_aliases(&mut root, &dotted);
     let parts = &req.parts;
     if req.method == Method::DELETE {
         if parts.is_empty() {
@@ -109,9 +122,14 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
             return Err(ApiError::new(404, "not_found"));
         }
     } else {
-        let update = parse_update(&req.body, req.yaml)?;
+        let mut update = parse_update(&req.body, req.yaml)?;
+        config_auth_index::strip_from_update(parts, &mut update);
         if parts.is_empty() && !update.is_mapping() {
             return Err(ApiError::new(400, "config_must_be_object"));
+        }
+        // A PUT of the whole document is normalized below, together with its comments.
+        if parts.is_empty() && !replaces_document {
+            cpa_config::normalize_v8_config_aliases(&mut update);
         }
         // Paths identify YAML keys, never array indexes. Lists are replaced whole.
         let dst = navigate(&mut root, parts)?;
@@ -121,6 +139,7 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
             *dst = update;
         }
     }
+    cpa_config::normalize_v8_config_aliases_with_comments(&mut root, &mut comments);
     if !req.yaml && req.method != Method::DELETE {
         preserve_turn_secrets(&mut root, &before);
     }
@@ -134,50 +153,32 @@ fn run(config_path: &Path, req: &ConfigRequest) -> ApiResult<Outcome> {
         }
     }
 
-    // A YAML replacement of the whole document keeps its own comments; every other edit carries
-    // the comments of the previous document over to the same key paths.
-    let data = if req.yaml && parts.is_empty() && req.method != Method::DELETE {
-        String::from_utf8_lossy(&req.body).into_owned()
-    } else {
-        cpa_config::marshal_document(&root, &text)
-            .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?
-    };
-    let mut next = cpa_config::parse_config_bytes(data.as_bytes())
+    config_auth_index::strip_from_root(&mut root);
+    let data = cpa_config::marshal_document_with_comments(&root, &comments)
+        .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
+    cpa_config::parse_config_bytes(data.as_bytes())
         .map_err(|e| ApiError::with_message(422, "invalid_config", e.to_string()))?;
     cpa_config::validate_v8_config(data.as_bytes())
         .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
-
-    // Prepare the normalized document before touching the live file.
-    let write_failed =
-        |e: &dyn std::fmt::Display| ApiError::with_message(500, "write_failed", e.to_string());
-    let dir = config_path
-        .parent()
-        .filter(|d| !d.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let mut tmp = tempfile::Builder::new()
-        .prefix(".config-v8-")
-        .suffix(".yaml")
-        .tempfile_in(dir)
-        .map_err(|_| ApiError::new(500, "write_failed"))?;
-    tmp.write_all(data.as_bytes())
-        .and_then(|()| tmp.as_file().sync_all())
-        .map_err(|e| write_failed(&e))?;
-    // DELETE already has a normalized, validated document: persist that tree as is. The typed
-    // saver would materialize absent defaults and can change explicit nulls and empty maps.
-    let final_text = if req.method == Method::DELETE {
-        data
-    } else {
-        cpa_config::save_config_preserve_comments(tmp.path(), &mut next, true)
-            .map_err(|e| write_failed(&e))?;
-        std::fs::read_to_string(tmp.path()).map_err(|e| write_failed(&e))?
-    };
-    write_config(config_path, &final_text).map_err(|e| write_failed(&e))?;
+    let (data, _) = cpa_config::normalize_config_layout(data.as_bytes(), true)
+        .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
+    // Save the validated canonical tree directly: projecting runtime defaults back onto it loses
+    // explicit nulls, empty maps and opaque plugin settings.
+    write_config(config_path, &data).map_err(|e| {
+        ApiError::with_message(500, "write_failed", e.to_string())
+    })?;
     Ok(Outcome::Saved)
 }
 
-fn read(root: &mut Value, text: &str, req: &ConfigRequest) -> ApiResult<Response> {
+fn read(
+    st: &ManagementState,
+    root: &mut Value,
+    text: &str,
+    req: &ConfigRequest,
+) -> ApiResult<Response> {
     if !req.yaml {
         redact_turn_secrets(root);
+        config_auth_index::inject_api_key_auth_indexes(st, root, text);
     }
     let Some(value) = node(root, &req.parts) else {
         return Err(ApiError::new(404, "not_found"));
@@ -199,9 +200,13 @@ fn read(root: &mut Value, text: &str, req: &ConfigRequest) -> ApiResult<Response
     )))
 }
 
-/// Overwrites the file in place (same inode, `O_TRUNC`, fsync); comment indentation normalized.
-fn write_config(path: &Path, data: &str) -> std::io::Result<()> {
-    let data = cpa_config::normalize_comment_indentation(data);
+/// Go: `WriteConfig`. A v8 document is re-normalized to the latest layout, then written in place
+/// (same inode, `O_TRUNC`, fsync) with comment indentation normalized.
+pub(crate) fn write_config(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let data = cpa_config::normalize_for_write(data)
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let data = String::from_utf8_lossy(&data);
+    let data = cpa_config::normalize_comment_indentation(&data);
     let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)

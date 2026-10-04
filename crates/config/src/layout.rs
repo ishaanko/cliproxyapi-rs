@@ -387,7 +387,7 @@ const SHARED_PATHS: &[(&str, &str)] = &[
 
 /// Historical empty containers of the shared upstream settings (an empty or null one is moved as
 /// an empty mapping). Longest paths first.
-const SHARED_STRUCT_PATHS: &[(&str, &str)] = &[
+pub(crate) const SHARED_STRUCT_PATHS: &[(&str, &str)] = &[
     (
         "oauth.providers.claude.header-defaults",
         "upstream.claude.header-defaults",
@@ -691,6 +691,9 @@ pub(crate) fn flatten_v8(node: &Value) -> Result<Value> {
     Ok(root)
 }
 
+/// Transient management-only fields carrying a credential's live index.
+const AUTH_INDEX_FIELDS: [&str; 2] = ["auth_index", "auth-index"];
+
 /// Flattens one family's v8 groups (`{name, base-url, keys: [..]}`) into one legacy entry per key.
 fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
     let Value::Sequence(groups) = groups else {
@@ -715,9 +718,21 @@ fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
         };
         validate_weight_sequence_node(keys, &format!("api-keys.{provider}.keys"))?;
         if provider == "openai-compatibility" {
+            // `auth_index` is a transient management field, never part of the stored config.
             let mut item = group.clone();
             delete_yaml_path(&mut item, "keys");
-            set_yaml_path(&mut item, "api-key-entries", keys.clone());
+            for name in AUTH_INDEX_FIELDS {
+                delete_yaml_path(&mut item, name);
+            }
+            let mut clean_keys = keys.clone();
+            if let Value::Sequence(entries) = &mut clean_keys {
+                for entry in entries {
+                    for name in AUTH_INDEX_FIELDS {
+                        delete_yaml_path(entry, name);
+                    }
+                }
+            }
+            set_yaml_path(&mut item, "api-key-entries", clean_keys);
             out.push(item);
             continue;
         }
@@ -754,7 +769,9 @@ fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
             }
             for (field, value) in key_map {
                 // Key-level null means "inherit the group value".
-                if let (Some(field), false) = (field.as_str(), value.is_null()) {
+                if let (Some(field), false) = (field.as_str(), value.is_null())
+                    && !AUTH_INDEX_FIELDS.contains(&field)
+                {
                     set_yaml_path(&mut item, field, value.clone());
                 }
             }
@@ -1015,6 +1032,17 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
     // The reference renders the normalized document with `yaml.Marshal` (4-space indent).
     comments.indent = 4;
     Ok((render_yaml(&root, &comments)?.into_bytes(), true))
+}
+
+/// Pre-write step of the management `WriteConfig`: a document in any v8 layout (including the
+/// historical spellings) is re-normalized to the latest one; other documents pass through. A
+/// document that does not parse is an error.
+pub fn normalize_for_write(data: &[u8]) -> Result<Vec<u8>> {
+    let text = utf8(data)?;
+    match parse_yaml(text)? {
+        Some(root) if is_v8_config_layout(&root) => Ok(normalize_config_layout(data, true)?.0),
+        _ => Ok(data.to_vec()),
+    }
 }
 
 /// Carries the comments of legacy entries (`gemini-api-key[i]`) to the grouped layout: the

@@ -68,7 +68,7 @@ pub(crate) async fn put_config_yaml(State(st): State<ManagementState>, body: Byt
         let path = st.config_path.clone();
         let data = body.clone();
         blocking(move || {
-            write_config_file(&path, &data).map_err(|e| {
+            crate::config_v8::write_config(&path, &data).map_err(|e| {
                 tracing::error!("failed to write config: {e}");
                 ApiError::with_message(500, "write_failed", "failed to write config")
             })
@@ -78,20 +78,6 @@ pub(crate) async fn put_config_yaml(State(st): State<ManagementState>, body: Byt
         Ok(ok_json(&json!({"ok": true, "changed": ["config"]})))
     })
     .await
-}
-
-/// Go: `WriteConfig` (comment indentation normalized, truncate in place, fsync).
-fn write_config_file(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::io::Write as _;
-    let text = String::from_utf8_lossy(data);
-    let data = cpa_config::normalize_comment_indentation(&text);
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)?;
-    f.write_all(data.as_bytes())?;
-    f.sync_all()
 }
 
 macro_rules! getter {
