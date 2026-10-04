@@ -51,6 +51,55 @@ fn media_codex_alias(s: &mut ConfigSpec) {
     s.codex[0].models = vec![ModelCfg { name: "gpt-5.5".into(), alias: "search-alias".into(), ..Default::default() }];
 }
 
+/// The first codex key also serves the xAI image model `grok-imagine-image` (as `gpt-5.5`), so a
+/// codex credential receives an images request for a model that is not a direct image model and
+/// the executor takes the Responses image tool path.
+fn media_image_tool(s: &mut ConfigSpec) {
+    media(s);
+    s.codex[0].models = vec![ModelCfg { name: "gpt-5.5".into(), alias: "grok-imagine-image".into(), ..Default::default() }];
+    // The higher priority keeps every request on that codex key instead of rotating over the
+    // xAI keys that serve the model too.
+    s.codex[0].priority = Some(10);
+}
+
+fn media_image_tool_base_model(s: &mut ConfigSpec) {
+    media_image_tool(s);
+    s.multimedia.push(("gpt-image-2-base-model", json!("gpt-5.5")));
+}
+
+fn media_image_tool_bad_base_model(s: &mut ConfigSpec) {
+    media_image_tool(s);
+    s.multimedia.push(("gpt-image-2-base-model", json!("claude-sonnet-4")));
+}
+
+fn media_image_tool_usage(s: &mut ConfigSpec) {
+    media_image_tool(s);
+    s.usage_statistics = true;
+}
+
+/// Only the codex key serves the model, so a failing call has no failover target and leaves one
+/// failed record.
+fn media_image_tool_usage_failed(s: &mut ConfigSpec) {
+    media_image_tool_usage(s);
+    s.xai.clear();
+}
+
+fn media_usage(s: &mut ConfigSpec) {
+    media(s);
+    s.usage_statistics = true;
+}
+
+/// A payload rule that targets the base model of the image tool request.
+fn media_image_tool_payload_rules(s: &mut ConfigSpec) {
+    media_image_tool(s);
+    s.multimedia.push(("payload", json!({"override": [{"models": [{"name": "gpt-5.4-mini", "protocol": "codex"}], "params": {"metadata.rule": "applied"}}]})));
+}
+
+fn media_image_tool_disable_chat(s: &mut ConfigSpec) {
+    media_image_tool(s);
+    s.multimedia.push(("disable-image-generation", json!("chat")));
+}
+
 fn media_keepalive(s: &mut ConfigSpec) {
     media(s);
     s.keepalive_seconds = 1;
@@ -129,6 +178,7 @@ fn edit_multipart(fields: &[(&str, &str)], files: &[(&str, &str, &str, &[u8])]) 
 pub fn scenarios() -> Vec<Scenario> {
     let mut out = vec![];
     codex_images(&mut out);
+    codex_image_tool(&mut out);
     xai_images(&mut out);
     compat_images(&mut out);
     image_validation(&mut out);
@@ -180,6 +230,65 @@ fn codex_images(out: &mut Vec<Scenario>) {
         one(edit_multipart(&[("prompt", "p"), ("stream", "yes")], &[("image", "a.png", "image/png", PNG)])));
     sc(out, "images.codex.edits_error", "edit upstream 500 on every key", fail_always(500), one(edit_multipart(&[("prompt", "p")], &[("image", "a.png", "image/png", PNG)])));
     sc_with(out, "images.codex.no_retry_500", "single attempt, upstream 500", fail_always(500), one(imgen(json!({}))), media_no_retry);
+}
+
+// ---------------------------------------------------------------- codex image tool (Responses)
+
+fn codex_image_tool(out: &mut Vec<Scenario>) {
+    // `grok-imagine-image` is an xAI image model by name, so the handler accepts it without
+    // consulting the model registry; the codex key serves it as an alias, which sends the call to
+    // the Codex executor with a model that is not a direct image model.
+    let imgen = |extra: Value| {
+        let mut body = json!({"model": "grok-imagine-image", "prompt": "a lighthouse"});
+        for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+            body[k] = v;
+        }
+        gen_req(body)
+    };
+    let edit = |extra: Value| {
+        let mut body = json!({"model": "grok-imagine-image", "prompt": "make it blue", "image": DATA_URL});
+        for (k, v) in extra.as_object().cloned().unwrap_or_default() {
+            body[k] = v;
+        }
+        edit_json(body)
+    };
+    let img = Script::ok(Content::Image);
+    let tool = |out: &mut Vec<Scenario>, id: &str, desc: &str, script: Script, steps: Vec<Req>| sc_with(out, &format!("images.codex_tool.{id}"), desc, script, steps, media_image_tool);
+    let tool_with = |out: &mut Vec<Scenario>, id: &str, desc: &str, script: Script, steps: Vec<Req>, profile: fn(&mut ConfigSpec)| {
+        sc_with(out, &format!("images.codex_tool.{id}"), desc, script, steps, profile)
+    };
+    let usage_queue = || Req::Http(HttpReq::get("/v0/management/usage-queue?count=5").auth(Auth::Mgmt));
+
+    tool(out, "gen_json", "xAI options become image tool fields", img.clone(), one(imgen(json!({"size": "1024x1024", "quality": "high", "n": 2, "extra": 1}))));
+    tool(out, "gen_url", "response_format url builds data urls", img.clone(), one(imgen(json!({"response_format": "URL"}))));
+    tool(out, "gen_stream", "the stream is synthesized from one call", img.clone(), many(vec![imgen(json!({"stream": true})), imgen(json!({"stream": true, "response_format": "url"}))]));
+    tool(out, "gen_cut_clean", "answer ends before completion", Script::steps(vec![Step::always(Reply::Cut { content: Content::Image, after: 6, abort: false })]), one(imgen(json!({}))));
+    tool(out, "gen_cut_abort", "upstream drops the connection", Script::steps(vec![Step::always(Reply::Cut { content: Content::Image, after: 6, abort: true })]), one(imgen(json!({}))));
+    tool(out, "gen_error_event", "failed event mid answer", Script::steps(vec![Step::always(Reply::StreamError { content: Content::Image, after: 6 })]), one(imgen(json!({}))));
+    tool(out, "gen_no_image", "completed without an image call", Script::ok(Content::Text), many(vec![imgen(json!({})), imgen(json!({"stream": true}))]));
+    tool(out, "gen_500", "upstream 500 on every key", fail_always(500), one(imgen(json!({}))));
+    tool(out, "gen_401", "upstream 401", fail_always(401), one(imgen(json!({}))));
+    tool(out, "gen_400", "upstream 400", fail_always(400), one(imgen(json!({}))));
+    tool(out, "gen_client_headers", "client Codex headers and user agent reach the upstream", img.clone(),
+        one(imgen(json!({})).header("User-Agent", "downstream-client/9.9").header("Version", "0.135.0").header("X-Codex-Turn-Metadata", "{\"turn_id\":\"t1\"}").header("X-Client-Request-Id", "client-req-1").header("Originator", "Codex Desktop")));
+
+    tool(out, "edits_json", "edit with the image as a string", img.clone(), one(edit(json!({"quality": "hd", "n": 2}))));
+    tool(out, "edits_json_images", "edit with several images", img.clone(), one(edit(json!({"image": null, "images": ["https://img/a.png", {"url": "https://img/b.png"}]}))));
+    tool(out, "edits_json_stream", "edit stream", img.clone(), one(edit(json!({"stream": true}))));
+    tool(out, "edits_multipart", "edit with uploaded images", img.clone(),
+        one(edit_multipart(&[("model", "grok-imagine-image"), ("prompt", "p"), ("size", "1024x1024"), ("response_format", "url")], &[("image[]", "a.png", "image/png", PNG), ("image[]", "b.png", "image/png", PNG2)])));
+
+    tool_with(out, "base_model_config", "gpt-image-2-base-model picks the base model", img.clone(), many(vec![imgen(json!({})), edit(json!({}))]), media_image_tool_base_model);
+    tool_with(out, "base_model_invalid", "a base model that is not a gpt model falls back", img.clone(), one(imgen(json!({}))), media_image_tool_bad_base_model);
+    tool_with(out, "usage", "usage records of the base model and of the image tool", img.clone(), vec![Req::Http(imgen(json!({}))), Req::Http(imgen(json!({"stream": true}))), Req::Pause(500), usage_queue()], media_image_tool_usage);
+    tool_with(out, "usage_failed", "usage record of a failed image call", fail_always(500), vec![Req::Http(imgen(json!({}))), Req::Pause(500), usage_queue()], media_image_tool_usage_failed);
+    tool_with(out, "payload_rules", "payload rules apply to the base model request", img.clone(), one(imgen(json!({}))), media_image_tool_payload_rules);
+    tool_with(out, "disable_chat", "chat mode keeps the image tool on the images endpoint", img.clone(), one(imgen(json!({}))), media_image_tool_disable_chat);
+
+    // Image generation inside a normal Responses request: the tool's usage is its own record and
+    // comes after the main model's (upstream a3b7756).
+    let responses_req = |stream: bool| HttpReq::post("/v1/responses", json!({"model": "gpt-5.5", "input": "draw a cat", "stream": stream, "tools": [{"type": "image_generation"}]}));
+    sc_with(out, "responses.image_tool_usage", "image tool usage is published after the main usage", img.clone(), vec![Req::Http(responses_req(false)), Req::Http(responses_req(true)), Req::Pause(500), usage_queue()], media_usage);
 }
 
 // ---------------------------------------------------------------- xai images

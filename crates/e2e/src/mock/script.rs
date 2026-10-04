@@ -24,6 +24,9 @@ pub enum Content {
     Length,
     /// Text with cached prompt tokens in the usage.
     Cached,
+    /// Responses only: an `image_generation_call` output item (with partial image events when
+    /// streaming) and `tool_usage.image_gen` in the completed event.
+    Image,
 }
 
 /// How a stream's events are split over network writes.

@@ -238,11 +238,12 @@ impl CodexExecutor {
                 Some(out) if apply_patch_translation_error(&param).is_none() && !out.is_empty() => out,
                 _ => return Err(status_error(502, APPLY_PATCH_UPSTREAM_ERROR_MESSAGE)),
             };
-            publish_image_tool_usage(reporter, &prepared.body, &event_data);
+            // The main model's usage is published first so the image tool's record cannot take its place.
             let detail = parse_codex_usage(&event_data);
             if let Some(detail) = &detail {
                 reporter.publish(detail.clone());
             }
+            publish_image_tool_usage(reporter, &prepared.body, &event_data);
             let out = if prepared.response_format == cpa_translator::Format::OpenAIResponse { ensure_responses_usage_details(&out) } else { out };
             let metadata = detail.as_ref().map(usage_metadata).unwrap_or_default();
             return Ok(Response { payload: Bytes::from(out), metadata, headers: resp_headers });
