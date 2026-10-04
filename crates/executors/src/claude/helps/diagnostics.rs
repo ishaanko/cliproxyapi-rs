@@ -829,7 +829,7 @@ mod tests {
     /// answers are pinned directly.
     #[test]
     fn classifiers_keep_escaped_matches() {
-        let escaped_title = r#"{"model":"m","system":[{"type":"text","text":"You are naming a coding session."}],"messages":[{"role":"user","content":"hi"}]}"#;
+        let escaped_title = r#"{"model":"m","system":[{"type":"text","text":"You are naming a\u0020coding session."}],"messages":[{"role":"user","content":"hi"}]}"#;
         assert!(is_claude_probe_or_helper_request(escaped_title.as_bytes()), "escaped system title instruction");
         let plain_title = r#"{"model":"m","system":"Return a short title for this.","messages":[{"role":"user","content":"hi"}]}"#;
         assert!(is_claude_probe_or_helper_request(plain_title.as_bytes()), "plain system title instruction");
@@ -837,7 +837,7 @@ mod tests {
         assert!(is_claude_probe_or_helper_request(schema_title.as_bytes()), "title schema request");
         let ordinary = r#"{"model":"m","system":"You are Claude Code.","messages":[{"role":"user","content":"Return a short answer"}]}"#;
         assert!(!is_claude_probe_or_helper_request(ordinary.as_bytes()), "ordinary request");
-        let escaped_1h = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}"#;
+        let escaped_1h = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"\u0031h"}}]}]}"#;
         assert!(claude_payload_has_1h_ttl(escaped_1h.as_bytes()), "escaped 1h ttl");
         let five_minutes = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"took 11h","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}"#;
         assert!(!claude_payload_has_1h_ttl(five_minutes.as_bytes()), "5m ttl");

@@ -367,6 +367,14 @@ mod tests {
         }
     }
 
+    /// gjson `String()` turns a JSON null (and nothing else) in a type array into "".
+    #[test]
+    fn type_array_items_stringify_like_gjson() {
+        let input = br#"{"tools":[{"type":"function","name":"memories__read","parameters":{"type":"object","properties":{"line_offset":{"type":["number",null,"null",1]}}}}]}"#;
+        let want = br#"{"tools":[{"type":"function","name":"memories__read","parameters":{"type":"object","properties":{"line_offset":{"type":["integer","","null","1"]}}}}]}"#;
+        assert_eq!(String::from_utf8_lossy(&normalize(input, "Codex/1.0")), String::from_utf8_lossy(&compact(want)));
+    }
+
     #[test]
     fn preserves_unproven_fields() {
         let cases = [

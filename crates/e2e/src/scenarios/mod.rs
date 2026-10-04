@@ -3,6 +3,7 @@
 mod access;
 mod bodies;
 mod chunking;
+mod codex_prepare;
 mod history;
 mod interactions;
 mod management;
@@ -33,6 +34,7 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(interactions::scenarios());
     v.extend(access::scenarios());
     v.extend(websocket::scenarios());
+    v.extend(codex_prepare::scenarios());
     v.extend(reqlog::scenarios());
     v.extend(realtime::scenarios());
     v.extend(management::scenarios(mock_port));
