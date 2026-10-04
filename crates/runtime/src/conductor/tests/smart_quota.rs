@@ -1,6 +1,69 @@
-//! Smart-quota selection through the manager. The failure list this file answers is at the end of
-//! `tests.rs` (written before the implementation); signal parsing and score math are covered by
-//! the unit tests of `quota_windows.rs`.
+//! Smart-quota selection (Rust-only extension) through the manager.
+//!
+//! Every way this feature could fail, written before the implementation (items 19-21 were added
+//! after review), with the test that pins it. `qw:` tests live in `quota_windows.rs`.
+//!
+//! Signal parsing
+//!  1. Claude utilization is a 0..1 fraction: forgetting the x100 makes 10% look like 0.1%.
+//!     -> qw: claude_utilization_and_reset_parse
+//!  2. Claude `-status: rejected` ignored, a rejected window still looks free.
+//!     -> qw: claude_rejected_status_means_full, claude_rejected_status_counts_as_full
+//!  3. Reset in the wrong unit (ms instead of unix seconds).
+//!     -> qw: claude_utilization_and_reset_parse
+//!  4. Header names matched case-sensitively against a differently cased stored key.
+//!     -> qw: lowercase_keys_are_accepted
+//!  5. Codex window classification off by one at 360 / 8640 minutes, missing minutes counted as
+//!     5h.  -> qw: codex_window_classes
+//!  6. Codex `reset-after-seconds` taken from now instead of observed_at; `reset-at` not
+//!     preferred; `limit-reached: true` not filling the primary window.
+//!     -> qw: codex_reset_after_is_relative_to_observed_at, codex_limit_reached_fills_primary,
+//!     codex_reset_after_is_measured_from_observed_at
+//!  7. Windows whose reset passed still counted, so a refilled credential stays "full".
+//!     -> qw: expired_windows_ignored, expired_windows_are_ignored
+//!  8. Garbage values (non-numeric, negative, > 100, NaN) giving NaN weights or bad headroom.
+//!     -> qw: garbage_values_are_clamped
+//! 19. Hostile reset values (1e15, -1e300 seconds) overflowing time math and panicking every
+//!     later pick on the route.  -> qw: hostile_reset_values_do_not_panic
+//!
+//! Scoring
+//!  9. Unknown data scored 0 (starving unobserved credentials) instead of 50; unknown
+//!     credentials not rotating.  -> unknown_data_scores_50_and_ties_rotate
+//! 10. Renewal direction inverted or not 1 when unknown; weekly fade missing or above 1.
+//!     -> qw: renewal_prefers_the_sooner_weekly_reset, qw: weekly_fade_penalizes_a_nearly_spent_week,
+//!     earlier_weekly_renewal_wins_at_equal_headroom, nearly_spent_week_is_avoided
+//! 11. No 5h window: headroom must fall back to the fullest known window.
+//!     -> qw: headroom_fallback
+//!
+//! Reserve
+//! 12. Exactly-at-reserve excluded (off by one / float noise); all-below-reserve refusing;
+//!     reserve 0 still filtering; unknown-data credentials staying eligible next to comfortable
+//!     ones; reserve not clamped or default not 30.
+//!     -> reserve_boundary_is_inclusive, all_below_reserve_falls_back_to_everyone,
+//!     reserve_filter_overrides_a_higher_weight_and_zero_disables_it,
+//!     reserve_excludes_unknown_when_someone_has_known_headroom,
+//!     reserve_value_is_clamped_and_defaults_to_30
+//!
+//! Selection
+//! 13. Float noise breaking exact ties (first id always wins), or a real difference treated as
+//!     a tie.  -> float_noise_ties_rotate_but_real_differences_do_not, unknown_data_scores_50_and_ties_rotate
+//! 14. Load ignored; guard leaked on error / failover / dropped stream so a credential is
+//!     penalized forever.  -> qw: load_divides_the_weight,
+//!     held_stream_load_shifts_picks_and_slot_is_released
+//! 20. Stale load: concurrent picks reading the same counts before any acquires, so a burst all
+//!     lands on the best credential (or lock-order deadlock).
+//!     -> concurrent_picks_spread_by_weight
+//! 15. Per-model signals shadowed by auth-level ones, or an empty per-model state shadowing real
+//!     auth-level signals.  -> per_model_signals_override_auth_level
+//! 16. Affinity: a bound session moved by the score; rebinding not using the score.
+//!     -> affinity_bound_sessions_do_not_move_and_rebind_by_score
+//! 17. Mixed-provider picks not scoring across providers.  -> mixed_providers_compete_on_score
+//!
+//! Config
+//! 18. Strategy aliases not parsed; hot reload not rebuilding on a reserve change under
+//!     smart-quota, or rebuilding (dropping affinity) under strategies that ignore it.
+//!     -> strategy_aliases_parse, reserve_change_rebuilds_selector_only_for_smart_quota
+//! 21. Default strategies changing behavior (Cand grew a field): the existing selector and
+//!     conductor tests must pass unchanged.
 
 use std::collections::BTreeMap;
 
@@ -268,7 +331,7 @@ async fn nearly_spent_week_is_avoided() {
 }
 
 #[tokio::test]
-async fn in_flight_load_spreads_simultaneous_picks_and_is_released() {
+async fn held_stream_load_shifts_picks_and_slot_is_released() {
     let h = harness(None);
     add_with(&h, "a", Some(five_hour(0.0))).await; // 100
     add_with(&h, "b", Some(five_hour(40.0))).await; // 60
@@ -290,6 +353,82 @@ async fn in_flight_load_spreads_simultaneous_picks_and_is_released() {
         (h.mgr.in_flight.load("a"), h.mgr.in_flight.load("b")),
         (0, 0)
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_picks_spread_by_weight() {
+    // Weights 100 and 60 with every stream held open. Because each pick reads the loads,
+    // selects and takes its slot atomically, any interleaving of 6 picks ends the same way:
+    // a, b, a, a, b, a as weights 100/(1+la) vs 60/(1+lb) dictate, i.e. 4 on a and 2 on b. A
+    // stale read would send (nearly) all of them to a.
+    let h = harness(None);
+    add_with(&h, "a", Some(five_hour(0.0))).await;
+    add_with(&h, "b", Some(five_hour(40.0))).await;
+    h.exec.script("a", vec![Step::Idle("x"); 6]);
+    h.exec.script("b", vec![Step::Idle("x"); 6]);
+    let tasks: Vec<_> = (0..6)
+        .map(|_| {
+            let mgr = h.mgr.clone();
+            tokio::spawn(async move {
+                mgr.execute_stream(
+                    &[PROVIDER.to_string()],
+                    request("m"),
+                    Options::new(Format::OpenAI),
+                )
+                .await
+                .unwrap()
+            })
+        })
+        .collect();
+    let mut held = Vec::new();
+    for t in tasks {
+        held.push(t.await.unwrap());
+    }
+    assert_eq!((h.exec.count("a"), h.exec.count("b")), (4, 2));
+    assert_eq!(
+        (h.mgr.in_flight.load("a"), h.mgr.in_flight.load("b")),
+        (4, 2)
+    );
+    drop(held);
+    assert_eq!(
+        (h.mgr.in_flight.load("a"), h.mgr.in_flight.load("b")),
+        (0, 0)
+    );
+}
+
+#[test]
+fn float_noise_ties_rotate_but_real_differences_do_not() {
+    use crate::conductor::quota_windows::Score;
+    use crate::conductor::selector::Cand;
+
+    let sel = Selector::new(
+        SelectorConfig {
+            strategy: Strategy::SmartQuota,
+            smart_quota_reserve: 0,
+            ..Default::default()
+        },
+        Arc::new(ManualClock::new(t0())),
+    );
+    let cands = |b_weight: f64| {
+        [("a", 50.0), ("b", b_weight)].map(|(id, weight)| Cand {
+            id,
+            provider: "p",
+            weight: 1,
+            smart: Some(Score {
+                weight,
+                five_hour_headroom: None,
+                load: 0,
+            }),
+        })
+    };
+    let ids = ["a", "b"];
+    let noisy = cands(50.0 + 1e-12);
+    let picks: Vec<&str> = (0..4)
+        .map(|_| ids[sel.pick_ordered("noisy", &noisy).unwrap()])
+        .collect();
+    assert_eq!(picks, ["a", "b", "a", "b"]);
+    let distinct = cands(50.0 + 1e-6);
+    assert!((0..4).all(|_| sel.pick_ordered("distinct", &distinct) == Some(1)));
 }
 
 #[tokio::test]

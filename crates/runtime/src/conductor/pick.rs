@@ -247,24 +247,27 @@ fn to_cands<'a>(list: &[(&'a Auth, &'a str)]) -> Vec<Cand<'a>> {
 }
 
 impl Manager {
-    /// Candidates for the configured strategy. Under smart-quota each carries its usage score
-    /// (per-model quota signals when present, else the credential's) and in-flight load.
-    fn strategy_cands<'a>(
+    /// Runs `pick` over `list` as `strategy` would. Under smart-quota each candidate first gets
+    /// its usage score (per-model quota signals when present, else the credential's), and the
+    /// selection plus the in-flight slot of the chosen credential are taken atomically; the slot
+    /// is returned with the index.
+    fn pick_counted<'a>(
         &self,
         strategy: Strategy,
         list: &[(&'a Auth, &'a str)],
         route_model: &str,
         now: DateTime<Utc>,
-    ) -> Vec<Cand<'a>> {
+        pick: impl FnOnce(&[Cand<'a>]) -> Option<usize>,
+    ) -> (Option<usize>, Option<InFlightGuard>) {
         let mut cands = to_cands(list);
-        if strategy == Strategy::SmartQuota {
-            for (cand, (auth, _)) in cands.iter_mut().zip(list) {
-                let model_key = self.selection_model_key_for_auth(auth, route_model);
-                let windows = windows_for_auth(auth, &model_key, now);
-                cand.smart = Some(score(&windows, now, self.in_flight.load(&auth.id)));
-            }
+        if strategy != Strategy::SmartQuota {
+            return (pick(&cands), None);
         }
-        cands
+        for (cand, (auth, _)) in cands.iter_mut().zip(list) {
+            let model_key = self.selection_model_key_for_auth(auth, route_model);
+            cand.smart = Some(score(&windows_for_auth(auth, &model_key, now), now));
+        }
+        self.in_flight.pick_and_acquire(&mut cands, pick)
     }
 
     /// Registry model support (Go: authSupportsRouteModel): the client registered the route model
@@ -573,6 +576,8 @@ impl Manager {
             return Ok(None);
         }
 
+        // Slot taken together with a smart-quota selection (see `pick_counted`).
+        let mut slot: Option<InFlightGuard> = None;
         let chosen: &Auth = if let Mode::Force(forced) = &mode {
             match forced {
                 Forced::Auth(id) => {
@@ -603,7 +608,6 @@ impl Manager {
             all.sort_by(|a, b| a.0.id.cmp(&b.0.id));
             let all_ids: Vec<&str> = all.iter().map(|(a, _)| a.id.as_str()).collect();
             let key = format!("mixed:{}", canonical_model_key(route_model));
-            let top_cands = self.strategy_cands(strategy, &top, route_model, now);
             match aff.decide(
                 "mixed",
                 route_model,
@@ -617,31 +621,41 @@ impl Manager {
                     None => return Err(auth_not_found("selector returned no auth")),
                 },
                 AffinityPick::Fallback(binder) => {
-                    let Some(i) = selector.pick_ordered(&key, &top_cands) else {
+                    let (idx, guard) = self.pick_counted(strategy, &top, route_model, now, |c| {
+                        selector.pick_ordered(&key, c)
+                    });
+                    let Some(i) = idx else {
                         return Err(auth_not_found("selector returned no auth"));
                     };
+                    slot = guard;
                     aff.bind(&binder, &top[i].0.id);
                     top[i].0
                 }
                 AffinityPick::Unbound => {
-                    let Some(i) = selector.pick_ordered(&key, &top_cands) else {
+                    let (idx, guard) = self.pick_counted(strategy, &top, route_model, now, |c| {
+                        selector.pick_ordered(&key, c)
+                    });
+                    let Some(i) = idx else {
                         return Err(auth_not_found("selector returned no auth"));
                     };
+                    slot = guard;
                     top[i].0
                 }
             }
         } else {
-            let top_cands = self.strategy_cands(strategy, &top, route_model, now);
             let canonical = canonical_model_key(route_model);
-            let idx = if eligible.len() == 1 {
-                let key = format!("{}:{canonical}:{best_priority}", eligible[0]);
-                selector.pick_ordered(&key, &top_cands)
-            } else {
-                selector.pick_mixed(&eligible, &canonical, best_priority, &top_cands)
-            };
+            let (idx, guard) = self.pick_counted(strategy, &top, route_model, now, |c| {
+                if eligible.len() == 1 {
+                    let key = format!("{}:{canonical}:{best_priority}", eligible[0]);
+                    selector.pick_ordered(&key, c)
+                } else {
+                    selector.pick_mixed(&eligible, &canonical, best_priority, c)
+                }
+            });
             let Some(i) = idx else {
                 return Err(auth_not_found("selector returned no auth"));
             };
+            slot = guard;
             top[i].0
         };
 
@@ -653,8 +667,10 @@ impl Manager {
             auth: chosen.clone(),
             executor,
             provider: executor_key_from_auth(chosen),
-            in_flight: (strategy == Strategy::SmartQuota)
-                .then(|| self.in_flight.acquire(&chosen.id)),
+            // Bound and forced picks did not go through `pick_counted`.
+            in_flight: slot.or_else(|| {
+                (strategy == Strategy::SmartQuota).then(|| self.in_flight.acquire(&chosen.id))
+            }),
         }))
     }
 

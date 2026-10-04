@@ -31,7 +31,7 @@ use crate::usage_report::UsageCollector;
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
 use crate::executor::{
-    ChunkRx, DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta,
+    DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,12 +505,14 @@ impl Manager {
             };
             match attempt {
                 // A stream keeps the credential's in-flight slot until it is dropped.
-                AuthAttempt::Success(Outcome::Stream(mut s)) => {
-                    if let Some(guard) = in_flight {
-                        let chunks = std::mem::replace(&mut s.chunks, ChunkRx::closed());
-                        s.chunks = super::in_flight::guard_stream(chunks, guard);
-                    }
-                    return Ok(Outcome::Stream(s));
+                AuthAttempt::Success(Outcome::Stream(s)) => {
+                    return Ok(Outcome::Stream(match in_flight {
+                        Some(guard) => StreamResult {
+                            chunks: super::in_flight::guard_stream(s.chunks, guard),
+                            ..s
+                        },
+                        None => s,
+                    }));
                 }
                 AuthAttempt::Success(o) => return Ok(o),
                 AuthAttempt::Return(f) => return Err(f),

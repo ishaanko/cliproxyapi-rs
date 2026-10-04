@@ -244,23 +244,25 @@ impl Selector {
         let best = cands
             .iter()
             .filter(|c| eligible(c))
-            .map(|c| score(c).weight)
+            .map(|c| score(c).effective())
             .max_by(f64::total_cmp)?;
         let tied: Vec<(usize, Cand<'_>)> = cands
             .iter()
             .copied()
             .enumerate()
-            .filter(|(_, c)| eligible(c) && score(c).weight >= best - TIE)
+            .filter(|(_, c)| eligible(c) && score(c).effective() >= best - TIE)
             .collect();
-        let tied_cands: Vec<Cand<'_>> = tied.iter().map(|(_, c)| *c).collect();
         let mut rot = self.rotation.lock();
         if !rot.last_picked.contains_key(key) && rot.last_picked.len() >= MAX_ROTATION_KEYS {
             rot.last_picked.clear();
         }
-        let i = successor_index(&tied_cands, rot.last_picked.get(key).map(String::as_str));
-        rot.last_picked
-            .insert(key.to_string(), tied_cands[i].id.to_string());
-        Some(tied[i].0)
+        // Successor of the previous pick among the tied candidates (sorted by id), wrapping.
+        let last = rot.last_picked.get(key).map(String::as_str).filter(|l| !l.is_empty());
+        let &(i, cand) = last
+            .and_then(|l| tied.iter().find(|(_, c)| c.id > l))
+            .or(tied.first())?;
+        rot.last_picked.insert(key.to_string(), cand.id.to_string());
+        Some(i)
     }
 
     /// Multi-provider pick (scheduler semantics): `cands` are the best-priority-tier candidates
