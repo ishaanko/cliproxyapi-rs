@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-ae0e95f74b6405953/target/release/cliproxy`
+- server: `target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `b5e44b319ad7f6c6`
-- scenarios: 1003 total, 1003 passed, 0 failed
+- goldens digest: `c7f18311c607fb14`
+- scenarios: 1060 total, 1060 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -243,6 +243,8 @@
 | `geminisse.codex.stream.text` | PASS | geminisse client -> codex upstream, stream, text |  |
 | `geminisse.gemini.stream.text` | PASS | geminisse client -> gemini upstream, stream, text |  |
 | `geminisse.compat.stream.text` | PASS | geminisse client -> compat upstream, stream, text |  |
+| `responses.claude.json.pause` | PASS | responses client -> claude upstream, json, pause_turn stop reason |  |
+| `responses.claude.stream.pause` | PASS | responses client -> claude upstream, stream, pause_turn stop reason |  |
 | `err.chat.claude.upstream401` | PASS | chat client -> claude upstream: upstream401 |  |
 | `err.chat.claude.upstream400` | PASS | chat client -> claude upstream: upstream400 |  |
 | `err.chat.claude.429_failover` | PASS | chat client -> claude upstream: 429_failover |  |
@@ -298,6 +300,7 @@
 | `err.claude.claude.stream_cut_abort` | PASS | claude client -> claude upstream: stream_cut_abort |  |
 | `err.claude.claude.stream_cut_clean` | PASS | claude client -> claude upstream: stream_cut_clean |  |
 | `err.claude.claude.json_cut_abort` | PASS | claude client -> claude upstream: json_cut_abort |  |
+| `err.claude.claude.upstream408` | PASS | claude client -> claude upstream: upstream408 |  |
 | `err.claude.codex.upstream401` | PASS | claude client -> codex upstream: upstream401 |  |
 | `err.claude.codex.upstream400` | PASS | claude client -> codex upstream: upstream400 |  |
 | `err.claude.codex.429_failover` | PASS | claude client -> codex upstream: 429_failover |  |
@@ -309,6 +312,7 @@
 | `err.claude.codex.stream_cut_abort` | PASS | claude client -> codex upstream: stream_cut_abort |  |
 | `err.claude.codex.stream_cut_clean` | PASS | claude client -> codex upstream: stream_cut_clean |  |
 | `err.claude.codex.json_cut_abort` | PASS | claude client -> codex upstream: json_cut_abort |  |
+| `err.claude.codex.upstream408` | PASS | claude client -> codex upstream: upstream408 |  |
 | `err.claude.gemini.upstream401` | PASS | claude client -> gemini upstream: upstream401 |  |
 | `err.claude.gemini.upstream400` | PASS | claude client -> gemini upstream: upstream400 |  |
 | `err.claude.gemini.429_failover` | PASS | claude client -> gemini upstream: 429_failover |  |
@@ -320,6 +324,7 @@
 | `err.claude.gemini.stream_cut_abort` | PASS | claude client -> gemini upstream: stream_cut_abort |  |
 | `err.claude.gemini.stream_cut_clean` | PASS | claude client -> gemini upstream: stream_cut_clean |  |
 | `err.claude.gemini.json_cut_abort` | PASS | claude client -> gemini upstream: json_cut_abort |  |
+| `err.claude.gemini.upstream408` | PASS | claude client -> gemini upstream: upstream408 |  |
 | `err.claude.compat.upstream401` | PASS | claude client -> compat upstream: upstream401 |  |
 | `err.claude.compat.upstream400` | PASS | claude client -> compat upstream: upstream400 |  |
 | `err.claude.compat.429_failover` | PASS | claude client -> compat upstream: 429_failover |  |
@@ -331,6 +336,7 @@
 | `err.claude.compat.stream_cut_abort` | PASS | claude client -> compat upstream: stream_cut_abort |  |
 | `err.claude.compat.stream_cut_clean` | PASS | claude client -> compat upstream: stream_cut_clean |  |
 | `err.claude.compat.json_cut_abort` | PASS | claude client -> compat upstream: json_cut_abort |  |
+| `err.claude.compat.upstream408` | PASS | claude client -> compat upstream: upstream408 |  |
 | `err.responses.claude.upstream401` | PASS | responses client -> claude upstream: upstream401 |  |
 | `err.responses.claude.upstream400` | PASS | responses client -> claude upstream: upstream400 |  |
 | `err.responses.claude.429_failover` | PASS | responses client -> claude upstream: 429_failover |  |
@@ -449,6 +455,8 @@
 | `route.cooling.disabled_500` | PASS | disable-cooling: failed keys stay eligible |  |
 | `route.cooling.disabled_429` | PASS | disable-cooling with 429s |  |
 | `route.cooling.500_second_request` | PASS | a 500 cools the key; the next request uses the other key |  |
+| `route.cooling.all_cooling_500` | PASS | every key cooling down: auth_unavailable with the last upstream error |  |
+| `route.cooling.all_cooling_401` | PASS | every key cooling down: auth_unavailable with the last upstream error |  |
 | `route.cooling.401_second_request` | PASS | a 401 cools the key for a long time |  |
 | `route.scoped.stop` | PASS | request-scoped-errors stop rule returns the 429 without failover or cooldown |  |
 | `route.scoped.continue_cooldown` | PASS | request-scoped-errors continue-and-cooldown rotates keys on a 400 |  |
@@ -666,6 +674,12 @@
 | `ws.handshake.codex_backend_path` | PASS | /backend-api/codex/responses alias |  |
 | `ws.handshake.turn_state_echo` | PASS | x-codex-turn-state is echoed on the upgrade response |  |
 | `ws.handshake.plain_get` | PASS | GET /v1/responses without an upgrade |  |
+| `responses.codex.collab_spawn.json` | PASS | orphan delegation output becomes a user message before routing (non-stream) |  |
+| `responses.codex.collab_spawn.stream` | PASS | orphan delegation output becomes a user message before routing (SSE) |  |
+| `responses.codex.collab_spawn.compact` | PASS | compact rewrites orphan delegations at the handler (tools are prepared by the executor only) |  |
+| `responses.codex.collab_spawn.no_subagent_header` | PASS | without X-Openai-Subagent the orphan output is untouched while tools are still prepared |  |
+| `ws.fallback.codex.collab_spawn` | PASS | orphan delegation with a call_id is rewritten before the tool-call cache; the next turn replays the rewritten input |  |
+| `ws.fallback.codex.collab_spawn_no_header` | PASS | the same websocket request without the sub-agent header keeps the orphan output untouched |  |
 | `reqlog.claude.json` | PASS | request-log file of a successful call |  |
 | `reqlog.claude.stream` | PASS | request-log file of a successful call |  |
 | `reqlog.codex.json` | PASS | request-log file of a successful call |  |
@@ -790,6 +804,14 @@
 | `mgmt.config.v8_write_errors` | PASS | invalid v8 config writes |  |
 | `mgmt.config.yaml_put_invalid` | PASS | invalid PUT /v0/management/config.yaml |  |
 | `mgmt.config.scalars` | PASS | v0 scalar settings: GET, PUT, PATCH |  |
+| `mgmt.config.v8_historical_paths` | PASS | historical oauth.providers paths read, merge and delete the shared upstream settings |  |
+| `mgmt.config.v8_historical_client_path` | PASS | historical spellings of client.codex.optimize-multi-agent-v2 |  |
+| `mgmt.config.v8_historical_body` | PASS | historical oauth.providers bodies on PATCH and PUT of the whole config |  |
+| `mgmt.config.v8_flow_style` | PASS | flow collections of YAML and JSON bodies survive the write, also when historical paths move |  |
+| `mgmt.config.v8_flow_moved` | PASS | flow containers and quoted values moved from historical paths to the canonical ones |  |
+| `mgmt.config.v8_unknown_fields` | PASS | nested unknown fields are reported with yaml.v3's line and Go type |  |
+| `mgmt.config.v8_upstream_invalid` | PASS | invalid shared upstream values are rejected at both paths |  |
+| `mgmt.config.v8_api_keys_auth_index` | PASS | auth_index is injected into v8 api-keys reads and never persisted |  |
 | `mgmt.keys.api_keys_crud` | PASS | client api-keys: list, replace, patch, delete; the new key authenticates |  |
 | `mgmt.keys.provider_lists` | PASS | provider key lists with their auth-index |  |
 | `mgmt.keys.claude_key_edit` | PASS | patch, delete and re-add a claude key |  |
@@ -848,6 +870,10 @@
 | `plugins.lifecycle.reject_keyword` | PASS | request interceptor terminating a request with a custom response |  |
 | `plugins.lifecycle.slot_release` | PASS | completion events release the interceptor's concurrency slots |  |
 | `plugins.lifecycle.reject_keyword_stream` | PASS | request interceptor terminating a streaming request |  |
+| `plugins.format.models` | PASS | the plugin's model is listed |  |
+| `plugins.format.custom_output` | PASS | a chat request to an executor with a custom output format is translated by the plugin (plain and streaming) |  |
+| `plugins.format.claude_entry` | PASS | a Claude-dialect request to the same executor |  |
+| `plugins.hostcb.reset_cooldown` | PASS | a plugin resets a credential's cooldown through the host callback |  |
 | `redis.auth.commands` | PASS | NOAUTH gate, AUTH argument handling and unknown commands |  |
 | `redis.auth.ip_ban` | PASS | five failed attempts ban the client on the Redis path too |  |
 | `redis.auth.noauth_counts_failures` | PASS | unauthenticated commands count as failed attempts |  |
@@ -863,6 +889,10 @@
 | `redis.usage.cached.codex` | PASS | queued usage of cached-token responses, codex upstream, json and stream |  |
 | `redis.usage.cached.gemini` | PASS | queued usage of cached-token responses, gemini upstream, json and stream |  |
 | `redis.usage.cached.compat` | PASS | queued usage of cached-token responses, compat upstream, json and stream |  |
+| `redis.usage.failed.claude` | PASS | queued usage of failed upstream calls, claude upstream, json and stream |  |
+| `redis.usage.failed.codex` | PASS | queued usage of failed upstream calls, codex upstream, json and stream |  |
+| `redis.usage.failed.gemini` | PASS | queued usage of failed upstream calls, gemini upstream, json and stream |  |
+| `redis.usage.failed.compat` | PASS | queued usage of failed upstream calls, compat upstream, json and stream |  |
 | `redis.usage_disabled` | PASS | no usage records are queued with usage-statistics-enabled off |  |
 | `media.images.codex.gen_json` | PASS | codex image generation, options pass through |  |
 | `media.images.codex.gen_default_model` | PASS | no model defaults to gpt-image-2 |  |
@@ -890,6 +920,28 @@
 | `media.images.codex.edits_multipart_stream_yes` | PASS | stream flag spelled yes |  |
 | `media.images.codex.edits_error` | PASS | edit upstream 500 on every key |  |
 | `media.images.codex.no_retry_500` | PASS | single attempt, upstream 500 |  |
+| `media.images.codex_tool.gen_json` | PASS | xAI options become image tool fields |  |
+| `media.images.codex_tool.gen_url` | PASS | response_format url builds data urls |  |
+| `media.images.codex_tool.gen_stream` | PASS | the stream is synthesized from one call |  |
+| `media.images.codex_tool.gen_cut_clean` | PASS | answer ends before completion |  |
+| `media.images.codex_tool.gen_cut_abort` | PASS | upstream drops the connection |  |
+| `media.images.codex_tool.gen_error_event` | PASS | failed event mid answer |  |
+| `media.images.codex_tool.gen_no_image` | PASS | completed without an image call |  |
+| `media.images.codex_tool.gen_500` | PASS | upstream 500 on every key |  |
+| `media.images.codex_tool.gen_401` | PASS | upstream 401 |  |
+| `media.images.codex_tool.gen_400` | PASS | upstream 400 |  |
+| `media.images.codex_tool.gen_client_headers` | PASS | client Codex headers and user agent reach the upstream |  |
+| `media.images.codex_tool.edits_json` | PASS | edit with the image as a string |  |
+| `media.images.codex_tool.edits_json_images` | PASS | edit with several images |  |
+| `media.images.codex_tool.edits_json_stream` | PASS | edit stream |  |
+| `media.images.codex_tool.edits_multipart` | PASS | edit with uploaded images |  |
+| `media.images.codex_tool.base_model_config` | PASS | gpt-image-2-base-model picks the base model |  |
+| `media.images.codex_tool.base_model_invalid` | PASS | a base model that is not a gpt model falls back |  |
+| `media.images.codex_tool.usage` | PASS | usage records of the base model and of the image tool |  |
+| `media.images.codex_tool.usage_failed` | PASS | usage record of a failed image call |  |
+| `media.images.codex_tool.payload_rules` | PASS | payload rules apply to the base model request |  |
+| `media.images.codex_tool.disable_chat` | PASS | chat mode keeps the image tool on the images endpoint |  |
+| `media.responses.image_tool_usage` | PASS | image tool usage is published after the main usage |  |
 | `media.images.xai.gen_b64` | PASS | xAI generation returns b64_json |  |
 | `media.images.xai.gen_url` | PASS | response_format url |  |
 | `media.images.xai.gen_options` | PASS | size, quality and n map to xAI options |  |
@@ -1010,3 +1062,8 @@
 | `media.search.unknown_model` | PASS | model without a matching credential |  |
 | `media.search.missing_auth` | PASS | alpha search needs a client key |  |
 | `media.search.wrong_method` | PASS | GET is not routed |  |
+| `media.search.routed_model` | PASS | a router maps the requested model to a Codex model |  |
+| `media.search.routed_provider_only` | PASS | a router naming the codex provider without a model keeps the requested one |  |
+| `media.search.routed_unsupported_provider` | PASS | a router pointing at another provider is rejected |  |
+| `media.search.routed_unsupported_self` | PASS | a router pointing at its own executor is rejected |  |
+| `media.search.routed_unhandled` | PASS | a router that declines leaves the request alone |  |
