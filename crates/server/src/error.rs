@@ -323,7 +323,7 @@ pub fn claude_error_type_from_status(status: u16) -> &'static str {
         404 => "not_found_error",
         413 => "request_too_large",
         429 => "rate_limit_error",
-        504 => "timeout_error",
+        408 | 504 => "timeout_error",
         529 => "overloaded_error",
         s if s >= 500 => "api_error",
         _ => "invalid_request_error",
@@ -509,6 +509,26 @@ mod tests {
         );
         assert_eq!(claude_error_type_from_status(529), "overloaded_error");
         assert_eq!(claude_error_type_from_status(502), "api_error");
+    }
+
+    /// Go `TestClaudeErrorTypeFromStatus` / `TestClaudeIncompleteStreamError`: 408 maps to timeout_error.
+    #[test]
+    fn claude_request_timeout_maps_to_timeout_error() {
+        for (status, want) in [
+            (400, "invalid_request_error"),
+            (408, "timeout_error"),
+            (429, "rate_limit_error"),
+            (500, "api_error"),
+            (504, "timeout_error"),
+        ] {
+            assert_eq!(claude_error_type_from_status(status), want, "status {status}");
+        }
+        let message = "stream error: stream disconnected before completion: stream closed before response.completed";
+        let body = claude_error_body(&ErrorMessage::new(408, message));
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["type"], "error");
+        assert_eq!(v["error"]["type"], "timeout_error");
+        assert_eq!(v["error"]["message"], message);
     }
 
     #[test]
