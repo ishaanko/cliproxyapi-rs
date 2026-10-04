@@ -24,10 +24,12 @@ use super::cooldown::{BlockReason, has_unauthorized_auth_failure, is_auth_blocke
 use super::errors::{
     AuthErrorExt, auth_not_found, auth_unavailable, model_cooldown_error, terminal_auth_error,
 };
+use super::in_flight::InFlightGuard;
 use super::models::{
     canonical_scheduling_provider, eligible_executor_index, executor_key_from_auth,
     has_oauth_alias_channel,
 };
+use super::quota_windows::{score, windows_for_auth};
 use super::selector::{AffinityPick, Cand, Strategy};
 use super::util::{canonical_model_key, canonical_model_key_ref, parse_suffix};
 use super::{Manager, executor_locked, meta_trimmed};
@@ -144,6 +146,8 @@ pub(crate) struct Picked {
     pub executor: DynExecutor,
     /// Executor registry key of the credential.
     pub provider: String,
+    /// Smart-quota in-flight slot of the credential; released when the attempt (or stream) ends.
+    pub in_flight: Option<InFlightGuard>,
 }
 
 struct Timed<'a> {
@@ -237,11 +241,32 @@ fn to_cands<'a>(list: &[(&'a Auth, &'a str)]) -> Vec<Cand<'a>> {
             id: a.id.as_str(),
             provider: p,
             weight: auth_weight(a),
+            smart: None,
         })
         .collect()
 }
 
 impl Manager {
+    /// Candidates for the configured strategy. Under smart-quota each carries its usage score
+    /// (per-model quota signals when present, else the credential's) and in-flight load.
+    fn strategy_cands<'a>(
+        &self,
+        strategy: Strategy,
+        list: &[(&'a Auth, &'a str)],
+        route_model: &str,
+        now: DateTime<Utc>,
+    ) -> Vec<Cand<'a>> {
+        let mut cands = to_cands(list);
+        if strategy == Strategy::SmartQuota {
+            for (cand, (auth, _)) in cands.iter_mut().zip(list) {
+                let model_key = self.selection_model_key_for_auth(auth, route_model);
+                let windows = windows_for_auth(auth, &model_key, now);
+                cand.smart = Some(score(&windows, now, self.in_flight.load(&auth.id)));
+            }
+        }
+        cands
+    }
+
     /// Registry model support (Go: authSupportsRouteModel): the client registered the route model
     /// or its alias-resolved selection key.
     pub(crate) fn auth_supports_route_model(&self, auth: &Auth, route_model: &str) -> bool {
@@ -578,7 +603,7 @@ impl Manager {
             all.sort_by(|a, b| a.0.id.cmp(&b.0.id));
             let all_ids: Vec<&str> = all.iter().map(|(a, _)| a.id.as_str()).collect();
             let key = format!("mixed:{}", canonical_model_key(route_model));
-            let top_cands = to_cands(&top);
+            let top_cands = self.strategy_cands(strategy, &top, route_model, now);
             match aff.decide(
                 "mixed",
                 route_model,
@@ -606,7 +631,7 @@ impl Manager {
                 }
             }
         } else {
-            let top_cands = to_cands(&top);
+            let top_cands = self.strategy_cands(strategy, &top, route_model, now);
             let canonical = canonical_model_key(route_model);
             let idx = if eligible.len() == 1 {
                 let key = format!("{}:{canonical}:{best_priority}", eligible[0]);
@@ -628,6 +653,8 @@ impl Manager {
             auth: chosen.clone(),
             executor,
             provider: executor_key_from_auth(chosen),
+            in_flight: (strategy == Strategy::SmartQuota)
+                .then(|| self.in_flight.acquire(&chosen.id)),
         }))
     }
 

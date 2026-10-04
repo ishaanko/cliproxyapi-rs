@@ -52,11 +52,13 @@ mod home_model_info;
 pub mod home_publisher;
 mod home_selection;
 mod home_session_alias;
+mod in_flight;
 mod lifecycle;
 pub mod merge;
 pub mod models;
 mod pick;
 mod plugin_hooks;
+pub mod quota_windows;
 mod refresh;
 mod results;
 mod retry;
@@ -153,6 +155,8 @@ pub struct Core {
     pub(crate) persist_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<(u64, u64)>>>>,
     pub(crate) refresh_state: Mutex<refresh::RefreshState>,
     pub(crate) selector_config: Mutex<SelectorConfig>,
+    /// Per-credential running requests, maintained only under the smart-quota strategy.
+    pub(crate) in_flight: Arc<in_flight::InFlight>,
     pub(crate) plugin_scheduler: RwLock<Option<Arc<dyn PluginScheduler>>>,
     pub(crate) home: home::HomeState,
 }
@@ -201,6 +205,7 @@ impl Manager {
             persist_locks: Mutex::new(HashMap::new()),
             refresh_state: Mutex::new(refresh::RefreshState::default()),
             selector_config: Mutex::new(selector_config),
+            in_flight: Arc::default(),
             plugin_scheduler: RwLock::new(None),
             home: home::HomeState::default(),
         };
@@ -282,8 +287,18 @@ impl Manager {
                 d.to_std().max(Duration::from_secs(1))
             });
         let session_affinity = cfg.routing.session_affinity;
+        let strategy = Strategy::parse(&cfg.routing.strategy);
         let next = SelectorConfig {
-            strategy: Strategy::parse(&cfg.routing.strategy),
+            strategy,
+            // Only smart-quota reads the reserve; keep the default elsewhere so changing it
+            // does not rebuild the selector (and drop affinity bindings).
+            smart_quota_reserve: if strategy == Strategy::SmartQuota {
+                cfg.routing
+                    .smart_quota_reserve_percent
+                    .map_or(selector::DEFAULT_SMART_QUOTA_RESERVE, |p| p.clamp(0, 100) as u8)
+            } else {
+                selector::DEFAULT_SMART_QUOTA_RESERVE
+            },
             session_affinity,
             affinity_ttl: ttl,
             // The subagent switch only matters (and only compares) with affinity on.

@@ -31,7 +31,7 @@ use crate::usage_report::UsageCollector;
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
 use crate::executor::{
-    DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta,
+    ChunkRx, DynExecutor, ExecError, Metadata, Options, Request, Response, StreamResult, meta,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -424,6 +424,7 @@ impl Manager {
                 auth,
                 executor,
                 provider,
+                in_flight,
             } = picked;
             publish_selected_auth_metadata(&mut opts, &auth);
             round_attempted.insert(auth.id.clone());
@@ -503,6 +504,14 @@ impl Manager {
                 }
             };
             match attempt {
+                // A stream keeps the credential's in-flight slot until it is dropped.
+                AuthAttempt::Success(Outcome::Stream(mut s)) => {
+                    if let Some(guard) = in_flight {
+                        let chunks = std::mem::replace(&mut s.chunks, ChunkRx::closed());
+                        s.chunks = super::in_flight::guard_stream(chunks, guard);
+                    }
+                    return Ok(Outcome::Stream(s));
+                }
                 AuthAttempt::Success(o) => return Ok(o),
                 AuthAttempt::Return(f) => return Err(f),
                 AuthAttempt::Next(fail) => last_err = Some(fail),
