@@ -63,20 +63,42 @@ const PREFIXES: &[(&str, &str)] = &[
     ("oauth-request-scoped-errors", "oauth.request-scoped-errors"),
     ("oauth-settings", "oauth.settings"),
     ("ws-auth", "oauth.providers.aistudio.ws-auth"),
+    // Shared Codex fields precede the `codex` container: the first match wins.
+    (
+        "codex.disable-codex-cloaking",
+        "upstream.codex.disable-codex-cloaking",
+    ),
+    (
+        "codex.stream-bootstrap-buffering",
+        "upstream.codex.stream-bootstrap-buffering",
+    ),
+    (
+        "codex.stream-bootstrap-timeout",
+        "upstream.codex.stream-bootstrap-timeout",
+    ),
+    (
+        "codex.orphan-delegation-compatibility",
+        "upstream.codex.orphan-delegation-compatibility",
+    ),
+    (
+        "codex.model-level-cooling",
+        "upstream.codex.model-level-cooling",
+    ),
+    ("codex.response-steering", "upstream.codex.response-steering"),
     ("codex", "oauth.providers.codex"),
     (
         "codex-header-defaults",
         "oauth.providers.codex.header-defaults",
     ),
-    ("claude", "oauth.providers.claude"),
-    ("claude-code", "oauth.providers.claude.claude-code"),
+    ("claude", "upstream.claude"),
+    ("claude-code", "upstream.claude"),
     (
         "disable-claude-cloak-mode",
-        "oauth.providers.claude.disable-claude-cloak-mode",
+        "upstream.claude.disable-claude-cloak-mode",
     ),
     (
         "claude-header-defaults",
-        "oauth.providers.claude.header-defaults",
+        "upstream.claude.header-defaults",
     ),
     ("antigravity", "oauth.providers.antigravity"),
     (
@@ -91,7 +113,7 @@ const PREFIXES: &[(&str, &str)] = &[
         "quota-exceeded.antigravity-credits",
         "oauth.providers.antigravity.antigravity-credits",
     ),
-    ("xai", "oauth.providers.xai"),
+    ("xai", "upstream.xai"),
     ("devin", "oauth.providers.devin"),
     (
         "disable-image-generation",
@@ -270,7 +292,7 @@ const STRUCT_PATHS: &[&str] = &[
 
 /// Historical spellings of the client options. The canonical `client.codex.*` wins by presence;
 /// otherwise the first of these that is present is used.
-const CLIENT_PATHS: &[(&str, &str)] = &[
+pub(crate) const CLIENT_PATHS: &[(&str, &str)] = &[
     (
         "oauth.providers.codex.optimize-multi-agent-v2",
         "client.codex.optimize-multi-agent-v2",
@@ -284,6 +306,106 @@ const CLIENT_PATHS: &[(&str, &str)] = &[
         "client.codex.optimize-multi-agent-v2",
     ),
 ];
+
+/// Historical OAuth spellings of the shared upstream fields (`upstream.*`). The canonical path
+/// wins by presence; otherwise the historical OAuth field applies, and both precede the global
+/// legacy field.
+const SHARED_PATHS: &[(&str, &str)] = &[
+    (
+        "oauth.providers.codex.disable-codex-cloaking",
+        "upstream.codex.disable-codex-cloaking",
+    ),
+    (
+        "oauth.providers.codex.stream-bootstrap-buffering",
+        "upstream.codex.stream-bootstrap-buffering",
+    ),
+    (
+        "oauth.providers.codex.stream-bootstrap-timeout",
+        "upstream.codex.stream-bootstrap-timeout",
+    ),
+    (
+        "oauth.providers.codex.orphan-delegation-compatibility",
+        "upstream.codex.orphan-delegation-compatibility",
+    ),
+    (
+        "oauth.providers.codex.model-level-cooling",
+        "upstream.codex.model-level-cooling",
+    ),
+    (
+        "oauth.providers.codex.response-steering",
+        "upstream.codex.response-steering",
+    ),
+    (
+        "oauth.providers.claude.model-level-cooling",
+        "upstream.claude.model-level-cooling",
+    ),
+    (
+        "oauth.providers.claude.claude-code.disable-cloaking-model-list",
+        "upstream.claude.disable-cloaking-model-list",
+    ),
+    (
+        "oauth.providers.claude.disable-claude-cloak-mode",
+        "upstream.claude.disable-claude-cloak-mode",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.user-agent",
+        "upstream.claude.header-defaults.user-agent",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.package-version",
+        "upstream.claude.header-defaults.package-version",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.runtime-version",
+        "upstream.claude.header-defaults.runtime-version",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.os",
+        "upstream.claude.header-defaults.os",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.arch",
+        "upstream.claude.header-defaults.arch",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.timeout",
+        "upstream.claude.header-defaults.timeout",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.timezone",
+        "upstream.claude.header-defaults.timezone",
+    ),
+    (
+        "oauth.providers.claude.header-defaults.stabilize-device-profile",
+        "upstream.claude.header-defaults.stabilize-device-profile",
+    ),
+    (
+        "oauth.providers.xai.inject-x-search",
+        "upstream.xai.inject-x-search",
+    ),
+];
+
+/// Historical empty containers of the shared upstream settings (an empty or null one is moved as
+/// an empty mapping). Longest paths first.
+pub(crate) const SHARED_STRUCT_PATHS: &[(&str, &str)] = &[
+    (
+        "oauth.providers.claude.header-defaults",
+        "upstream.claude.header-defaults",
+    ),
+    ("oauth.providers.claude.claude-code", "upstream.claude"),
+    ("oauth.providers.claude", "upstream.claude"),
+    ("oauth.providers.xai", "upstream.xai"),
+];
+
+/// The historical alias paths as (historical, canonical) pairs.
+pub fn v8_alias_paths() -> Vec<(&'static str, &'static str)> {
+    aliases().copied().collect()
+}
+
+/// Every historical alias: the client option spellings, then the shared upstream ones.
+pub(crate) fn aliases() -> impl Iterator<Item = &'static (&'static str, &'static str)> + Clone {
+    CLIENT_PATHS.iter().chain(SHARED_PATHS.iter())
+}
 
 /// Legacy API-key family field -> v8 `api-keys.<name>`.
 pub(crate) const KEY_FAMILIES: &[(&str, &str)] = &[
@@ -351,6 +473,49 @@ pub(crate) fn oauth_only_fields(source: &Value) -> Vec<String> {
         .filter(|(_, cur)| is_oauth_only_path(cur) && yaml_path(source, cur).is_some())
         .map(|(old, _)| (*old).to_string())
         .collect()
+}
+
+/// Whether a parsed document is in the v8 layout (declared version or any v8-only path). Roots
+/// shared with the legacy schema do not alone indicate v8 (port of `IsV8ConfigLayout`).
+pub fn is_v8_config_layout(root: &Value) -> bool {
+    let Value::Mapping(map) = root else {
+        return false;
+    };
+    let mut sections = v8_allowed_roots();
+    for shared in ["api-keys", "plugins", "quota-exceeded", "routing", "client"] {
+        sections.remove(shared);
+    }
+    if map
+        .keys()
+        .any(|key| key.as_str().is_some_and(|k| sections.contains(k)))
+    {
+        return true;
+    }
+    if yaml_path(root, "api-keys").is_some_and(Value::is_mapping) {
+        return true;
+    }
+    let pairs = V8_PATHS
+        .iter()
+        .chain(V8_STRUCT_PATHS.iter())
+        .map(|(o, c)| (*o, c.as_str()))
+        .chain(aliases().map(|(o, c)| (*o, *c)));
+    for (old, current) in pairs {
+        if old != current && yaml_path(root, current).is_some() {
+            return true;
+        }
+        if old.starts_with("providers.") && yaml_path(root, old).is_some() {
+            return true;
+        }
+        if old != current
+            && let Some(rest) = current.strip_prefix("routing.")
+        {
+            let child = rest.split('.').next().unwrap_or_default();
+            if yaml_path(root, &format!("routing.{child}")).is_some() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Root keys a v8 document may contain.
@@ -451,15 +616,6 @@ fn warn_unrecognized_v8_section(section: &str) {
 /// Converts a parsed document (any layout) into the legacy layout with presence-based precedence.
 /// The input must already have anchors and merge keys expanded (see `parse_yaml`).
 pub(crate) fn flatten_v8(node: &Value) -> Result<Value> {
-    flatten_v8_with_comments(node, None)
-}
-
-/// [`flatten_v8`] that also relocates the comments of historical client option paths, which
-/// (unlike other fields) are not moved back to their original place on save.
-pub(crate) fn flatten_v8_with_comments(
-    node: &Value,
-    mut comments: Option<&mut Comments>,
-) -> Result<Value> {
     if !node.is_mapping() {
         return Err(ConfigError::invalid("config must be a mapping"));
     }
@@ -468,7 +624,7 @@ pub(crate) fn flatten_v8_with_comments(
     let all_paths = V8_PATHS
         .iter()
         .map(|(_, cur)| cur.as_str())
-        .chain(CLIENT_PATHS.iter().map(|(_, cur)| *cur));
+        .chain(aliases().map(|(_, cur)| *cur));
     for path in all_paths {
         let parts: Vec<&str> = path.split('.').collect();
         for i in 1..parts.len() {
@@ -486,21 +642,28 @@ pub(crate) fn flatten_v8_with_comments(
         }
     }
     let mut root = node.clone();
-    for (old, current) in CLIENT_PATHS {
+    for (old, current) in aliases() {
         if let Some(value) = yaml_path(&root, old).cloned() {
-            let moved = yaml_path(&root, current).is_none();
-            if moved {
+            if yaml_path(&root, current).is_none() {
                 set_yaml_path(&mut root, current, value);
             }
             delete_yaml_path(&mut root, old);
-            if let Some(comments) = comments.as_deref_mut() {
-                if moved {
-                    comments.move_prefix(&dotted(old), &dotted(current));
-                } else {
-                    comments.remove_prefix(&dotted(old));
-                }
-            }
         }
+    }
+    for (old, current) in SHARED_STRUCT_PATHS {
+        let Some(value) = yaml_path(&root, old) else {
+            continue;
+        };
+        if !value.is_null() && !value.is_mapping() {
+            return Err(ConfigError::invalid(format!("{old} must be a mapping")));
+        }
+        if matches!(value, Value::Mapping(m) if !m.is_empty()) {
+            continue;
+        }
+        if yaml_path(&root, current).is_none() {
+            set_yaml_path(&mut root, current, empty_map());
+        }
+        delete_yaml_path(&mut root, old);
     }
     if let Some(version) = yaml_path(&root, "config-version")
         && version.as_i64() != Some(8)
@@ -514,7 +677,7 @@ pub(crate) fn flatten_v8_with_comments(
         delete_yaml_path(&mut root, "api-keys");
     }
     for (old, current) in V8_PATHS.iter() {
-        if let Some(value) = yaml_path(&node, current).cloned() {
+        if let Some(value) = yaml_path(&root, current).cloned() {
             delete_yaml_path(&mut root, current);
             set_yaml_path(&mut root, old, value);
         }
@@ -527,6 +690,9 @@ pub(crate) fn flatten_v8_with_comments(
     }
     Ok(root)
 }
+
+/// Transient management-only fields carrying a credential's live index.
+const AUTH_INDEX_FIELDS: [&str; 2] = ["auth_index", "auth-index"];
 
 /// Flattens one family's v8 groups (`{name, base-url, keys: [..]}`) into one legacy entry per key.
 fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
@@ -552,9 +718,21 @@ fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
         };
         validate_weight_sequence_node(keys, &format!("api-keys.{provider}.keys"))?;
         if provider == "openai-compatibility" {
+            // `auth_index` is a transient management field, never part of the stored config.
             let mut item = group.clone();
             delete_yaml_path(&mut item, "keys");
-            set_yaml_path(&mut item, "api-key-entries", keys.clone());
+            for name in AUTH_INDEX_FIELDS {
+                delete_yaml_path(&mut item, name);
+            }
+            let mut clean_keys = keys.clone();
+            if let Value::Sequence(entries) = &mut clean_keys {
+                for entry in entries {
+                    for name in AUTH_INDEX_FIELDS {
+                        delete_yaml_path(entry, name);
+                    }
+                }
+            }
+            set_yaml_path(&mut item, "api-key-entries", clean_keys);
             out.push(item);
             continue;
         }
@@ -591,7 +769,9 @@ fn expand_v8_groups(groups: &Value, provider: &str) -> Result<Value> {
             }
             for (field, value) in key_map {
                 // Key-level null means "inherit the group value".
-                if let (Some(field), false) = (field.as_str(), value.is_null()) {
+                if let (Some(field), false) = (field.as_str(), value.is_null())
+                    && !AUTH_INDEX_FIELDS.contains(&field)
+                {
                     set_yaml_path(&mut item, field, value.clone());
                 }
             }
@@ -759,6 +939,24 @@ fn utf8(data: &[u8]) -> Result<&str> {
 /// Returns the (possibly rewritten) document and whether it changed. Port of
 /// `NormalizeConfigLayout`.
 pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, bool)> {
+    normalize_config_layout_inner(data, migrate, None)
+}
+
+/// [`normalize_config_layout`] for a document rendered with JSON-origin styling (see
+/// [`crate::DocComments`]): a re-render keeps the flow style and quoting of those values.
+pub fn normalize_config_layout_keeping_styles(
+    data: &[u8],
+    migrate: bool,
+    marks: &crate::DocComments,
+) -> Result<(Vec<u8>, bool)> {
+    normalize_config_layout_inner(data, migrate, Some(marks))
+}
+
+fn normalize_config_layout_inner(
+    data: &[u8],
+    migrate: bool,
+    marks: Option<&crate::DocComments>,
+) -> Result<(Vec<u8>, bool)> {
     let text = utf8(data)?;
     let Some(mut root) = parse_yaml(text)? else {
         return if migrate {
@@ -769,22 +967,27 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
     };
     flatten_v8(&root)?;
     let mut comments = Comments::extract(text);
+    if let Some(marks) = marks {
+        comments.styles.adopt_marks(&marks.comments().styles);
+    }
     let mut changed = normalize_v8_private_ip_alias(&mut root, migrate)?;
 
     // Empty legacy structs have no leaf fields to move. Preserve them as empty v8 mappings; null
     // structs also mean defaults. User-owned maps are not included.
-    let mut paths: Vec<(&str, String)> = CLIENT_PATHS
-        .iter()
-        .map(|(o, c)| (*o, (*c).to_string()))
-        .collect();
+    let mut paths: Vec<(&str, String)> = aliases().map(|(o, c)| (*o, (*c).to_string())).collect();
     paths.extend(V8_PATHS.iter().map(|(o, c)| (*o, c.clone())));
-    for (old, current) in V8_STRUCT_PATHS.iter() {
+    let structs = V8_STRUCT_PATHS
+        .iter()
+        .map(|(o, c)| (*o, c.as_str()))
+        .chain(SHARED_STRUCT_PATHS.iter().copied());
+    for (old, current) in structs {
         let Some(node) = yaml_path(&root, old) else {
             continue;
         };
         if !migrate && yaml_path(&root, current).is_none() {
             continue;
         }
+        let current = current.to_string();
         let empty_struct = match node {
             Value::Null => true,
             Value::Mapping(m) => m.is_empty(),
@@ -794,7 +997,7 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
             continue;
         }
         set_yaml_path(&mut root, old, empty_map());
-        paths.push((old, current.clone()));
+        paths.push((old, current));
     }
     for (old, current) in &paths {
         let Some(value) = legacy_path(&root, old).cloned() else {
@@ -804,12 +1007,14 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
         if !target_exists && !migrate {
             continue;
         }
-        delete_yaml_path(&mut root, old);
         if target_exists {
             comments.remove_prefix(&dotted(old));
         } else {
+            comments.move_field(&root, old, current);
+        }
+        delete_yaml_path(&mut root, old);
+        if !target_exists {
             set_yaml_path(&mut root, current, value);
-            comments.move_prefix(&dotted(old), &dotted(current));
         }
         changed = true;
     }
@@ -848,6 +1053,19 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
     // The reference renders the normalized document with `yaml.Marshal` (4-space indent).
     comments.indent = 4;
     Ok((render_yaml(&root, &comments)?.into_bytes(), true))
+}
+
+/// Pre-write step of the management `WriteConfig`: a document in any v8 layout (including the
+/// historical spellings) is re-normalized to the latest one; other documents pass through. A
+/// document that does not parse is an error.
+pub fn normalize_for_write(data: &[u8], marks: Option<&crate::DocComments>) -> Result<Vec<u8>> {
+    let text = utf8(data)?;
+    match parse_yaml(text)? {
+        Some(root) if is_v8_config_layout(&root) => {
+            Ok(normalize_config_layout_inner(data, true, marks)?.0)
+        }
+        _ => Ok(data.to_vec()),
+    }
 }
 
 /// Carries the comments of legacy entries (`gemini-api-key[i]`) to the grouped layout: the
@@ -1089,7 +1307,8 @@ pub fn validate_v8_config(data: &[u8]) -> Result<()> {
     let legacy_pairs = V8_PATHS
         .iter()
         .map(|(o, c)| (*o, c.as_str()))
-        .chain(CLIENT_PATHS.iter().map(|(o, c)| (*o, *c)));
+        .chain(aliases().map(|(o, c)| (*o, *c)))
+        .chain(SHARED_STRUCT_PATHS.iter().copied());
     for (old, current) in legacy_pairs {
         if legacy_path(&root, old).is_some() {
             return Err(ConfigError::invalid(format!(

@@ -92,7 +92,7 @@
               "data": {
                 "type": "error",
                 "error": {
-                  "type": "invalid_request_error",
+                  "type": "timeout_error",
                   "message": "stream error: stream disconnected before completion: stream closed before response.completed"
                 }
               }

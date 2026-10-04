@@ -29,6 +29,8 @@ enum Case {
     StreamCutClean,
     /// Non-streaming request; upstream drops the connection mid-body.
     JsonCutAbort,
+    /// Every upstream call answers 408 (Claude clients see `timeout_error`).
+    RequestTimeout,
 }
 
 impl Case {
@@ -45,6 +47,7 @@ impl Case {
             Case::StreamCutAbort => "stream_cut_abort",
             Case::StreamCutClean => "stream_cut_clean",
             Case::JsonCutAbort => "json_cut_abort",
+            Case::RequestTimeout => "upstream408",
         }
     }
 
@@ -75,6 +78,7 @@ impl Case {
         match self {
             Case::Unauthorized => Script::steps(vec![Step::always(Reply::error(401))]),
             Case::BadRequest => Script::steps(vec![Step::always(Reply::error(400))]),
+            Case::RequestTimeout => Script::steps(vec![Step::always(Reply::error(408))]),
             Case::RateLimitFailover => Script::steps(vec![Step::once(Reply::error_with(429, &retry_after, None))]),
             Case::AllRateLimited => Script::steps(vec![Step::always(Reply::error_with(429, &retry_after, None))]),
             Case::ServerErrorFailover | Case::StreamBootstrapFailover => Script::steps(vec![Step::once(Reply::error(500))]),
@@ -124,9 +128,24 @@ const ALL_CASES: &[Case] = &[
     Case::JsonCutAbort,
 ];
 
+const CLAUDE_CASES: &[Case] = &[
+    Case::Unauthorized,
+    Case::BadRequest,
+    Case::RateLimitFailover,
+    Case::AllRateLimited,
+    Case::ServerErrorFailover,
+    Case::AllServerError,
+    Case::StreamBootstrapFailover,
+    Case::StreamMidError,
+    Case::StreamCutAbort,
+    Case::StreamCutClean,
+    Case::JsonCutAbort,
+    Case::RequestTimeout,
+];
+
 const DIALECTS: [Dialect; 4] = [
     Dialect { name: "chat", request: chat, cases: ALL_CASES },
-    Dialect { name: "claude", request: claude, cases: ALL_CASES },
+    Dialect { name: "claude", request: claude, cases: CLAUDE_CASES },
     Dialect { name: "responses", request: responses, cases: ALL_CASES },
     Dialect { name: "gemini", request: gemini, cases: ALL_CASES },
 ];

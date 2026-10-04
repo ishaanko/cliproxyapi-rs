@@ -12,6 +12,10 @@
 
 use std::collections::BTreeMap;
 
+use serde_yaml_ng::Value;
+
+use crate::yamlpath::yaml_path;
+
 /// One step of a document path.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Seg {
@@ -390,6 +394,20 @@ impl Comments {
                             out.push('\n');
                         }
                     }
+                    // A flow collection is one line: the heads of its inner nodes go above it.
+                    if is_flow_line(raw) {
+                        for (path, lines) in &self.head {
+                            if path.len() > info.deepest.len()
+                                && path.starts_with(&info.deepest)
+                                && used_head.insert(path.clone())
+                            {
+                                for l in lines.iter().filter(|l| !l.is_empty()) {
+                                    out.push_str(l);
+                                    out.push('\n');
+                                }
+                            }
+                        }
+                    }
                     out.push_str(raw);
                     if info.inline_comment.is_none()
                         && let Some(c) = self.line.get(&info.deepest)
@@ -520,6 +538,39 @@ impl Comments {
         }
     }
 
+    /// [`Self::move_prefix`] for a field whose single-child ancestors disappear with the move
+    /// (`doc` is the document before it): their head and line comments become head comments of
+    /// the moved field, outermost first, like `copyYAMLPathValue`.
+    pub(crate) fn move_field(&mut self, doc: &Value, from: &str, to: &str) {
+        let parts: Vec<&str> = from.split('.').collect();
+        let mut carried: Vec<String> = Vec::new();
+        for end in (1..parts.len()).rev() {
+            let ancestor = parts[..end].join(".");
+            let single = yaml_path(doc, &ancestor)
+                .and_then(Value::as_mapping)
+                .is_some_and(|m| m.len() == 1);
+            if !single {
+                break;
+            }
+            let path = dotted(&ancestor);
+            let mut lines: Vec<String> = Vec::new();
+            if let Some(head) = self.head.remove(&path) {
+                lines.extend(head.into_iter().filter(|l| !l.is_empty()));
+            }
+            if let Some(line) = self.line.remove(&path) {
+                lines.push(line);
+            }
+            carried.splice(0..0, lines);
+        }
+        self.move_prefix(&dotted(from), &dotted(to));
+        if !carried.is_empty() {
+            self.head
+                .entry(dotted(to))
+                .or_default()
+                .splice(0..0, carried);
+        }
+    }
+
     /// Drops the comments of `path` and everything under it.
     pub(crate) fn remove_prefix(&mut self, path: &CPath) {
         self.head.retain(|p, _| !p.starts_with(path));
@@ -575,6 +626,16 @@ impl Comments {
         }
         self.line = line;
     }
+}
+
+/// Whether a rendered `key: {..}` / `- [..]` line carries a whole flow collection.
+fn is_flow_line(raw: &str) -> bool {
+    let rest = raw.trim_start().trim_start_matches("- ").trim_start();
+    let value = match split_key(rest) {
+        Some((_, value)) => value.trim_start_matches(':').trim_start(),
+        None => rest,
+    };
+    value.starts_with('{') || value.starts_with('[')
 }
 
 /// Whether the last line of `out` is a "key:" line whose value is the block that follows.

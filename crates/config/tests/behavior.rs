@@ -1140,6 +1140,7 @@ fn oauth_scope_survives_snapshots_and_saves() {
 oauth:
   providers:
     codex: {disable-codex-cloaking: true, model-level-cooling: true}
+    aistudio: {ws-auth: true}
     claude:
       disable-claude-cloak-mode: true
       header-defaults: {user-agent: oauth-agent}
@@ -1161,12 +1162,16 @@ api-keys:
     ] {
         let api = value.for_api_key();
         assert!(
-            !api.codex.disable_codex_cloaking
-                && !api.codex.model_level_cooling
-                && !api.disable_claude_cloak_mode
-                && api.claude_header_defaults.user_agent.is_empty()
-                && !api.xai.inject_x_search,
-            "{name}: API-key view inherited OAuth-only settings"
+            !api.websocket_auth,
+            "{name}: API-key view inherited OAuth-only relay settings"
+        );
+        assert!(
+            api.codex.disable_codex_cloaking
+                && api.codex.model_level_cooling
+                && api.disable_claude_cloak_mode
+                && api.claude_header_defaults.user_agent == "oauth-agent"
+                && api.xai.inject_x_search,
+            "{name}: API-key view lost shared upstream settings"
         );
         assert!(
             api.codex.stream_bootstrap_buffering
@@ -1186,8 +1191,9 @@ api-keys:
     save_config_preserve_comments(&path, &mut cfg, false).unwrap();
     let reloaded = load_config(&path).unwrap();
     assert!(
-        !reloaded.for_api_key().codex.disable_codex_cloaking
-            && reloaded.codex.disable_codex_cloaking,
+        reloaded.for_api_key().codex.disable_codex_cloaking
+            && reloaded.codex.disable_codex_cloaking
+            && !reloaded.for_api_key().websocket_auth,
         "save/reload lost OAuth scope"
     );
 }
@@ -1219,8 +1225,10 @@ fn oauth_scope_is_published_after_a_saving_migration() {
             "migrate={migrate}: runtime and disk scopes differ"
         );
         let scoped = cfg.for_api_key();
-        assert_ne!(scoped.codex.disable_codex_cloaking, migrate);
-        assert_ne!(scoped.xai.inject_x_search, migrate);
+        assert!(
+            scoped.codex.disable_codex_cloaking && scoped.xai.inject_x_search,
+            "migrate={migrate}: migration lost shared API-key settings"
+        );
         // Runtime-only state and values are untouched by the save.
         before.oauth_only_fields = cfg.oauth_only_fields.clone();
         assert_eq!(before, cfg, "migrate={migrate}");

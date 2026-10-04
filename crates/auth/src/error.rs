@@ -166,12 +166,12 @@ impl AuthFlowError {
         }
     }
 
-    /// Whether retrying the same refresh might succeed (Claude: 5xx and network errors only).
+    /// Whether retrying the same refresh might succeed (Claude: retryable HTTP responses only; transport and decode errors are ambiguous because the single-use refresh token may already be consumed).
     pub fn is_retryable_refresh(&self) -> bool {
         match self {
             AuthFlowError::Refresh { retryable, .. } => *retryable,
             AuthFlowError::RetriesExhausted { source, .. } => source.is_retryable_refresh(),
-            _ => true,
+            _ => false,
         }
     }
 

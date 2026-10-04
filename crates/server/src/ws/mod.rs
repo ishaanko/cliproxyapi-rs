@@ -1132,7 +1132,6 @@ async fn run_session(
             let pinned = state.pinned.current.clone();
             let duplex_stream = duplex_stream.clone();
             let has_input = steering_input.is_some();
-            let steering_oauth_only = pipeline.cfg.oauth_only_fields.contains("codex.response-steering");
             std::sync::Arc::new(move |auth_id: &str| {
                 duplex_stream.store(false, std::sync::atomic::Ordering::Relaxed);
                 let Ok(mut seen) = observed_selection.lock() else { return };
@@ -1151,10 +1150,8 @@ async fn run_session(
                     } else {
                         UpstreamMode::Http
                     };
-                    // OAuth-only steering still leaves API keys in normal mode.
-                    let steering_allowed = !steering_oauth_only || auth.auth_kind() != cpa_auth::types::AUTH_KIND_API_KEY;
                     duplex_stream.store(
-                        has_input && steering_allowed && seen.mode == UpstreamMode::Ws && provider == "codex",
+                        has_input && seen.mode == UpstreamMode::Ws && provider == "codex",
                         std::sync::atomic::Ordering::Relaxed,
                     );
                     seen.preserve_native_output = native_request && provider == "codex";

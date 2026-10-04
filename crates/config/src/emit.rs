@@ -11,6 +11,8 @@ use std::collections::HashSet;
 use std::panic::AssertUnwindSafe;
 
 use serde_yaml_ng::{Mapping, Value};
+
+use crate::comments::{CPath, Seg};
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
 use yaml_rust2::scanner::{Marker, TScalarStyle};
 
@@ -29,20 +31,124 @@ pub(crate) struct Styles {
     double: HashSet<String>,
     single: HashSet<String>,
     literal: HashSet<String>,
+    /// Flow collections of the source document (by path), with the double-quoted keys and values
+    /// found inside them. Nodes parsed from a JSON request body are recorded the same way, since
+    /// yaml.v3 keeps their flow style and quoting.
+    flow: HashSet<CPath>,
+    quoted_keys: HashSet<CPath>,
+    quoted_values: HashSet<CPath>,
 }
 
-struct StyleCollector(Styles);
+/// One open collection while collecting styles.
+struct Frame {
+    /// A mapping (with its pending key state) or a sequence.
+    map: bool,
+    key_next: bool,
+    key: String,
+    index: usize,
+    flow: bool,
+}
+
+/// Collects the quoting of scalar values and the flow collections of the source. Mapping keys are
+/// skipped for the text-keyed styles (a quoted key, as JSON-origin flow collections write them,
+/// would quote every equal string); inside flow collections quoting is recorded per path.
+struct StyleCollector {
+    styles: Styles,
+    chars: Vec<char>,
+    open: Vec<Frame>,
+}
+
+impl StyleCollector {
+    /// Path of the node being started in the innermost collection (key already seen for values).
+    fn path(&self) -> CPath {
+        self.open
+            .iter()
+            .map(|f| {
+                if f.map {
+                    Seg::Key(f.key.clone())
+                } else {
+                    Seg::Index(f.index)
+                }
+            })
+            .collect()
+    }
+
+    fn in_flow(&self) -> bool {
+        self.open.iter().any(|f| f.flow)
+    }
+
+    /// Starts a node in the enclosing collection; true when it is a mapping key.
+    fn begin(&mut self, scalar: Option<&str>) -> bool {
+        match self.open.last_mut() {
+            Some(f) if f.map => {
+                let is_key = f.key_next;
+                f.key_next = !is_key;
+                if is_key && let Some(text) = scalar {
+                    f.key = text.to_string();
+                }
+                is_key
+            }
+            Some(f) => {
+                f.index = f.index.wrapping_add(1);
+                false
+            }
+            None => false,
+        }
+    }
+}
 
 impl MarkedEventReceiver for StyleCollector {
-    fn on_event(&mut self, event: Event, _mark: Marker) {
-        if let Event::Scalar(text, style, _, _) = event {
-            let set = match style {
-                TScalarStyle::DoubleQuoted => &mut self.0.double,
-                TScalarStyle::SingleQuoted => &mut self.0.single,
-                TScalarStyle::Literal | TScalarStyle::Folded => &mut self.0.literal,
-                TScalarStyle::Plain => return,
-            };
-            set.insert(text);
+    fn on_event(&mut self, event: Event, mark: Marker) {
+        match event {
+            Event::Scalar(text, style, _, _) => {
+                let is_key = self.begin(Some(&text));
+                let double = matches!(style, TScalarStyle::DoubleQuoted);
+                if self.in_flow() {
+                    if double {
+                        let path = self.path();
+                        if is_key {
+                            self.styles.quoted_keys.insert(path);
+                        } else {
+                            self.styles.quoted_values.insert(path);
+                        }
+                    }
+                    return;
+                }
+                if is_key {
+                    return;
+                }
+                let set = match style {
+                    TScalarStyle::DoubleQuoted => &mut self.styles.double,
+                    TScalarStyle::SingleQuoted => &mut self.styles.single,
+                    TScalarStyle::Literal | TScalarStyle::Folded => &mut self.styles.literal,
+                    TScalarStyle::Plain => return,
+                };
+                set.insert(text);
+            }
+            Event::MappingStart(..) | Event::SequenceStart(..) => {
+                let map = matches!(event, Event::MappingStart(..));
+                let is_key = self.begin(None);
+                let flow = self.chars.get(mark.index()).is_some_and(|c| *c == '{' || *c == '[');
+                if flow && !is_key {
+                    let path = self.path();
+                    self.styles.flow.insert(path);
+                }
+                self.open.push(Frame {
+                    map,
+                    key_next: true,
+                    key: String::new(),
+                    // Sequence items are numbered from 0 by `begin`.
+                    index: usize::MAX,
+                    flow,
+                });
+            }
+            Event::MappingEnd | Event::SequenceEnd => {
+                self.open.pop();
+            }
+            Event::Alias(_) => {
+                self.begin(None);
+            }
+            _ => {}
         }
     }
 }
@@ -51,11 +157,55 @@ impl Styles {
     /// Collects the quoting of every scalar of the first document of `text`. A document that does
     /// not parse yields no styles.
     pub(crate) fn from_text(text: &str) -> Self {
-        let mut collector = StyleCollector(Styles::default());
+        let mut collector = StyleCollector {
+            styles: Styles::default(),
+            chars: text.chars().collect(),
+            open: Vec::new(),
+        };
         let _ = std::panic::catch_unwind(AssertUnwindSafe(|| {
             let _ = Parser::new_from_str(text).load(&mut collector, false);
         }));
-        collector.0
+        collector.styles
+    }
+
+    /// Records that `value`, at `path`, was parsed from a JSON request body: collections stay in
+    /// flow style, keys and strings are double-quoted.
+    pub(crate) fn mark_json_subtree(&mut self, path: &CPath, value: &Value) {
+        match value {
+            Value::Mapping(m) => {
+                self.flow.insert(path.clone());
+                for (k, v) in m {
+                    let mut child = path.clone();
+                    child.push(Seg::Key(k.as_str().unwrap_or_default().to_string()));
+                    self.quoted_keys.insert(child.clone());
+                    self.mark_json_subtree(&child, v);
+                }
+            }
+            Value::Sequence(items) => {
+                self.flow.insert(path.clone());
+                for (i, v) in items.iter().enumerate() {
+                    let mut child = path.clone();
+                    child.push(Seg::Index(i));
+                    self.mark_json_subtree(&child, v);
+                }
+            }
+            Value::String(_) => {
+                self.quoted_values.insert(path.clone());
+            }
+            _ => {}
+        }
+    }
+
+    /// Records that the mapping key at `path` came from a JSON request body (written quoted).
+    pub(crate) fn mark_json_key(&mut self, path: CPath) {
+        self.quoted_keys.insert(path);
+    }
+
+    /// Adopts the flow and quoting marks of `other`.
+    pub(crate) fn adopt_marks(&mut self, other: &Styles) {
+        self.flow.extend(other.flow.iter().cloned());
+        self.quoted_keys.extend(other.quoted_keys.iter().cloned());
+        self.quoted_values.extend(other.quoted_values.iter().cloned());
     }
 
     fn get(&self, s: &str) -> Option<Style> {
@@ -363,6 +513,48 @@ struct Emitter<'a> {
     out: String,
     best_indent: i32,
     styles: &'a Styles,
+    /// Document path of the node being written (only tracked when JSON marks exist).
+    path: CPath,
+}
+
+/// A flow collection in yaml.v3 layout: `{a: 1, "b": [x, "y"]}`, strings double-quoted where the
+/// source (or a JSON body) quoted them (`path` names the collection in the document).
+fn flow_value(e: &Emitter<'_>, v: &Value, path: &mut CPath) -> String {
+    let quoted = |set: &HashSet<CPath>, path: &CPath| set.contains(path);
+    match v {
+        Value::Mapping(m) if m.is_empty() => "{}".into(),
+        Value::Sequence(s) if s.is_empty() => "[]".into(),
+        Value::Mapping(m) => {
+            let mut items = Vec::new();
+            for (k, v) in m {
+                path.push(Seg::Key(k.as_str().unwrap_or_default().to_string()));
+                let key = match k {
+                    Value::String(s) if quoted(&e.styles.quoted_keys, path) => double_quoted(s),
+                    other => match e.scalar(other, true) {
+                        Rendered::Inline(t) => t,
+                        Rendered::Block { content, .. } => double_quoted(&content),
+                    },
+                };
+                items.push(format!("{key}: {}", flow_value(e, v, path)));
+                path.pop();
+            }
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Sequence(s) => {
+            let mut items = Vec::new();
+            for (i, v) in s.iter().enumerate() {
+                path.push(Seg::Index(i));
+                items.push(flow_value(e, v, path));
+                path.pop();
+            }
+            format!("[{}]", items.join(", "))
+        }
+        Value::String(s) if quoted(&e.styles.quoted_values, path) => double_quoted(s),
+        other => match e.scalar(other, false) {
+            Rendered::Inline(t) => t,
+            Rendered::Block { content, .. } => double_quoted(&content),
+        },
+    }
 }
 
 /// How a scalar is written.
@@ -486,7 +678,33 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// The text of the value at the current path when it is a flow collection of the source (or
+    /// of a JSON body), or a string a JSON body wrote.
+    fn json_text(&self, v: &Value) -> Option<String> {
+        match v {
+            Value::Mapping(_) | Value::Sequence(_) if self.styles.flow.contains(&self.path) => {
+                Some(flow_value(self, v, &mut self.path.clone()))
+            }
+            Value::String(s) if self.styles.quoted_values.contains(&self.path) => {
+                Some(double_quoted(s))
+            }
+            _ => None,
+        }
+    }
+
+    fn tracking(&self) -> bool {
+        !self.styles.flow.is_empty()
+            || !self.styles.quoted_keys.is_empty()
+            || !self.styles.quoted_values.is_empty()
+    }
+
     fn put_key(&mut self, k: &Value) {
+        if let Value::String(s) = k
+            && self.styles.quoted_keys.contains(&self.path)
+        {
+            self.out.push_str(&double_quoted(s));
+            return;
+        }
         match self.scalar(k, true) {
             Rendered::Inline(t) => self.out.push_str(&t),
             Rendered::Block { content, .. } => self.out.push_str(&double_quoted(&content)),
@@ -506,13 +724,25 @@ impl<'a> Emitter<'a> {
             if !(i == 0 && inline_first) {
                 self.newline_indent(indent);
             }
+            if self.tracking() {
+                self.path
+                    .push(Seg::Key(k.as_str().unwrap_or_default().to_string()));
+            }
             self.put_key(k);
             self.out.push(':');
             self.value_after_key(v, indent);
+            if self.tracking() {
+                self.path.pop();
+            }
         }
     }
 
     fn value_after_key(&mut self, v: &Value, map_indent: i32) {
+        if let Some(text) = self.json_text(v) {
+            self.out.push(' ');
+            self.out.push_str(&text);
+            return;
+        }
         match v {
             Value::Mapping(m) if m.is_empty() => self.out.push_str(" {}"),
             Value::Sequence(s) if s.is_empty() => self.out.push_str(" []"),
@@ -538,21 +768,36 @@ impl<'a> Emitter<'a> {
                 self.newline_indent(indent);
             }
             self.out.push('-');
-            match item {
-                Value::Mapping(m) if m.is_empty() => self.out.push_str(" {}"),
-                Value::Sequence(s) if s.is_empty() => self.out.push_str(" []"),
-                Value::Mapping(m) => {
-                    self.out.push(' ');
-                    self.mapping(m, indent, true, true);
-                }
-                Value::Sequence(s) => {
-                    self.out.push(' ');
-                    self.sequence(s, indent, true, true);
-                }
-                other => {
-                    let block_indent = self.increase(indent, true);
-                    self.put_scalar(other, block_indent);
-                }
+            if self.tracking() {
+                self.path.push(Seg::Index(i));
+            }
+            self.sequence_item(item, indent);
+            if self.tracking() {
+                self.path.pop();
+            }
+        }
+    }
+
+    fn sequence_item(&mut self, item: &Value, indent: i32) {
+        if let Some(text) = self.json_text(item) {
+            self.out.push(' ');
+            self.out.push_str(&text);
+            return;
+        }
+        match item {
+            Value::Mapping(m) if m.is_empty() => self.out.push_str(" {}"),
+            Value::Sequence(s) if s.is_empty() => self.out.push_str(" []"),
+            Value::Mapping(m) => {
+                self.out.push(' ');
+                self.mapping(m, indent, true, true);
+            }
+            Value::Sequence(s) => {
+                self.out.push(' ');
+                self.sequence(s, indent, true, true);
+            }
+            other => {
+                let block_indent = self.increase(indent, true);
+                self.put_scalar(other, block_indent);
             }
         }
     }
@@ -619,7 +864,13 @@ pub(crate) fn emit(root: &Value, indent: usize, styles: &Styles) -> String {
         out: String::new(),
         best_indent: indent.max(1) as i32,
         styles,
+        path: Vec::new(),
     };
+    if let Some(text) = e.json_text(root) {
+        e.out.push_str(&text);
+        e.out.push('\n');
+        return e.out;
+    }
     match root {
         Value::Mapping(m) if !m.is_empty() => e.mapping(m, -1, false, false),
         Value::Sequence(s) if !s.is_empty() => e.sequence(s, -1, false, false),

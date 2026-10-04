@@ -16,7 +16,7 @@ use cpa_translator::Format;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
-use super::cooldown::is_auth_blocked_for_model;
+use super::cooldown::{has_unauthorized_auth_failure, is_auth_blocked_for_model};
 use super::*;
 use crate::executor::{ErrorCode, Executor, meta};
 
@@ -43,6 +43,12 @@ struct Mock {
     credit_flags: Mutex<Vec<bool>>,
     /// Senders of idle streams, kept alive so tests can watch them close.
     held: Mutex<Vec<mpsc::Sender<Result<Bytes, ExecError>>>>,
+    /// When set, `refresh` fails with this error.
+    refresh_err: Mutex<Option<ExecError>>,
+    /// Access token minted by `refresh` per credential (default `fresh-token`).
+    refresh_tokens: Mutex<HashMap<String, String>>,
+    /// Credential whose executions rendezvous on the barrier before answering.
+    barrier: Mutex<Option<(String, Arc<tokio::sync::Barrier>)>>,
 }
 
 impl Mock {
@@ -54,6 +60,9 @@ impl Mock {
             refreshes: Mutex::new(Vec::new()),
             credit_flags: Mutex::new(Vec::new()),
             held: Mutex::new(Vec::new()),
+            refresh_err: Mutex::new(None),
+            refresh_tokens: Mutex::new(HashMap::new()),
+            barrier: Mutex::new(None),
         })
     }
 
@@ -102,6 +111,15 @@ impl Executor for Mock {
         self.credit_flags
             .lock()
             .push(opts.metadata.contains_key(ANTIGRAVITY_CREDITS_METADATA_KEY));
+        let barrier = self
+            .barrier
+            .lock()
+            .as_ref()
+            .filter(|(id, _)| *id == auth.id)
+            .map(|(_, b)| b.clone());
+        if let Some(b) = barrier {
+            b.wait().await;
+        }
         match self.next(auth, &req.model) {
             Step::Ok(p) => Ok(Response {
                 payload: payload_for(p, auth),
@@ -145,10 +163,19 @@ impl Executor for Mock {
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
         self.refreshes.lock().push(auth.id.clone());
+        if let Some(e) = self.refresh_err.lock().clone() {
+            return Err(e);
+        }
+        let token = self
+            .refresh_tokens
+            .lock()
+            .get(&auth.id)
+            .cloned()
+            .unwrap_or_else(|| "fresh-token".into());
         let mut updated = auth.clone();
         updated
             .metadata
-            .insert("access_token".into(), serde_json::json!("fresh-token"));
+            .insert("access_token".into(), serde_json::json!(token));
         Ok(updated)
     }
 
@@ -539,6 +566,141 @@ async fn second_unauthorized_after_refresh_fails_over_and_cools() {
     );
     let st = h.mgr.get("a").unwrap();
     assert!(is_auth_blocked_for_model(&st, "m", h.clock.now()).blocked);
+}
+
+/// Registers the fill-first pair of the terminal-unauthorized scenarios: `a` holds a revoked
+/// access token that still claims a future expiry, `b` is the healthy fallback.
+async fn terminal_unauthorized_pair(h: &Harness) {
+    h.config(|c| c.routing.strategy = "fill-first".into());
+    let future = (t0() + chrono::Duration::hours(6)).to_rfc3339();
+    h.add("a", &["m"], |a| {
+        a.metadata
+            .insert("access_token".into(), serde_json::json!("stale"));
+        a.metadata
+            .insert("refresh_token".into(), serde_json::json!("rt"));
+        a.metadata
+            .insert("expired".into(), serde_json::json!(future));
+    })
+    .await;
+    h.add("b", &["m"], |_| {}).await;
+    *h.exec.refresh_err.lock() = Some(invalid_grant_err());
+}
+
+fn invalid_grant_err() -> ExecError {
+    ExecError::new(
+        0,
+        r#"token refresh failed with status 400: {"error": "invalid_grant", "error_description": "Refresh token not found or invalid"}"#,
+    )
+}
+
+#[tokio::test]
+async fn rejected_token_with_invalid_grant_stops_selecting_auth() {
+    let h = Harness::new();
+    terminal_unauthorized_pair(&h).await;
+    h.exec.script("a", vec![Step::Err(status_err(401, "revoked"))]);
+    for _ in 0..2 {
+        assert_eq!(h.payload("m").await, "b");
+    }
+    assert_eq!(h.exec.count("a"), 1);
+    assert_eq!(h.exec.refreshes.lock().len(), 1);
+    assert!(has_unauthorized_auth_failure(&h.mgr.get("a").unwrap()));
+}
+
+#[tokio::test]
+async fn in_flight_result_does_not_revive_terminal_unauthorized_auth() {
+    let h = Harness::new();
+    terminal_unauthorized_pair(&h).await;
+    h.exec.script("a", vec![Step::Err(status_err(401, "revoked"))]);
+    assert_eq!(h.payload("m").await, "b");
+    assert!(has_unauthorized_auth_failure(&h.mgr.get("a").unwrap()));
+
+    let result = |success: bool, error: Option<ExecError>| ExecResult {
+        auth_id: "a".into(),
+        provider: "mock".into(),
+        model: "m".into(),
+        route_model: String::new(),
+        success,
+        retry_after: None,
+        credential_scope: false,
+        error: error.map(|e| cpa_auth::types::AuthError {
+            code: "internal_error".into(),
+            message: e.message.clone(),
+            retryable: false,
+            http_status: e.status as i32,
+        }),
+        options: Options::new(Format::OpenAI),
+        skip_quota_observation: false,
+        response_headers: Default::default(),
+    };
+    h.mgr.mark_result(result(false, Some(status_err(500, "internal server error"))));
+    assert!(has_unauthorized_auth_failure(&h.mgr.get("a").unwrap()), "in-flight 500");
+    h.mgr.mark_result(result(true, None));
+    assert!(has_unauthorized_auth_failure(&h.mgr.get("a").unwrap()), "in-flight success");
+    h.mgr.reset_quota("a").unwrap();
+
+    let before = h.exec.count("a");
+    assert_eq!(h.payload("m").await, "b");
+    assert_eq!(h.exec.count("a"), before, "terminal credential must not be selected");
+}
+
+#[tokio::test]
+async fn concurrent_unauthorized_preserves_terminal_state_and_force_refresh_bypasses_it() {
+    let h = Harness::new();
+    terminal_unauthorized_pair(&h).await;
+    h.exec.script(
+        "a",
+        vec![Step::Err(status_err(401, "revoked")), Step::Err(status_err(401, "revoked"))],
+    );
+    *h.exec.barrier.lock() = Some(("a".into(), Arc::new(tokio::sync::Barrier::new(2))));
+    let (r1, r2) = tokio::join!(h.run("m"), h.run("m"));
+    for r in [r1, r2] {
+        assert_eq!(String::from_utf8(r.unwrap().payload.to_vec()).unwrap(), "b");
+    }
+    *h.exec.barrier.lock() = None;
+    assert_eq!(h.exec.refreshes.lock().len(), 1, "one refresh for the revoked token");
+    let fin = h.mgr.get("a").unwrap();
+    assert!(has_unauthorized_auth_failure(&fin));
+
+    // Neither the request-triggered nor the background path may call the executor again.
+    let before = h.exec.refreshes.lock().len();
+    let _ = h.mgr.refresh_auth_for_request("a", "").await;
+    assert!(
+        h.mgr
+            .try_refresh_after_unauthorized(&fin, &status_err(401, "401"), false)
+            .await
+            .is_none()
+    );
+    assert_eq!(h.exec.refreshes.lock().len(), before);
+
+    // A manual force refresh does reach the executor.
+    let _ = h.mgr.force_refresh_auth("a").await;
+    assert_eq!(h.exec.refreshes.lock().len(), before + 1);
+    let before_exec = h.exec.count("a");
+    assert_eq!(h.payload("m").await, "b");
+    assert_eq!(h.exec.count("a"), before_exec);
+}
+
+#[tokio::test]
+async fn force_refresh_failure_preserves_terminal_unauthorized_state() {
+    let h = Harness::new();
+    terminal_unauthorized_pair(&h).await;
+    h.exec.script("a", vec![Step::Err(status_err(401, "revoked"))]);
+    assert_eq!(h.payload("m").await, "b");
+    assert!(has_unauthorized_auth_failure(&h.mgr.get("a").unwrap()));
+
+    *h.exec.refresh_err.lock() = Some(ExecError::new(0, "upstream 503 service unavailable"));
+    assert!(h.mgr.force_refresh_auth("a").await.is_err());
+    let blocked = h.mgr.get("a").unwrap();
+    assert!(has_unauthorized_auth_failure(&blocked));
+    assert!(blocked.next_refresh_after.is_none());
+    assert_eq!(h.payload("m").await, "b");
+
+    *h.exec.refresh_err.lock() = None;
+    h.exec.refresh_tokens.lock().insert("a".into(), "newly-minted-token".into());
+    let refreshed = h.mgr.force_refresh_auth("a").await.unwrap();
+    assert_eq!(refreshed.status, cpa_auth::types::Status::Active);
+    assert!(!refreshed.unavailable);
+    assert!(!has_unauthorized_auth_failure(&refreshed));
 }
 
 #[tokio::test]

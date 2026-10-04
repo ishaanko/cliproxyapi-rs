@@ -20,6 +20,7 @@
 //! Not provided: the Redis usage queue (`/observability/usage/queue` answers 501; use `/observability/requests`), and
 //! the deprecated `/v0/management` tree except `/v0/management/oauth-callback`.
 
+mod config_auth_index;
 mod config_v8;
 mod cooldown;
 mod credential_edit;

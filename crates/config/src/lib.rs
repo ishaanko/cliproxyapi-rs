@@ -24,6 +24,7 @@ mod rawparse;
 mod save;
 mod scope;
 mod types;
+mod v8_api;
 mod validate;
 pub mod watcher;
 mod yamlpath;
@@ -34,8 +35,9 @@ pub use env::load_dotenv;
 pub use error::{ConfigError, Result};
 pub use layout::marshal_document;
 pub use layout::{
-    MAX_CREDENTIAL_WEIGHT, WarnFn, normalize_config_layout, set_v8_migration_warn_func,
-    validate_v8_config,
+    MAX_CREDENTIAL_WEIGHT, WarnFn, is_v8_config_layout, normalize_config_layout, normalize_config_layout_keeping_styles,
+    normalize_for_write,
+    set_v8_migration_warn_func, v8_alias_paths, validate_v8_config,
 };
 pub use load::{
     load_config, load_config_optional, looks_like_bcrypt, normalize_home_port, parse_config_bytes,
@@ -50,6 +52,10 @@ pub use normalize::{
 pub use paths::{clean_path, resolve_auth_dir, resolve_plugins_dir};
 pub use save::{save_config_preserve_comments, save_config_update_nested_scalar};
 pub use types::*;
+pub use v8_api::{
+    DocComments, marshal_document_with_comments, normalize_v8_config_aliases,
+    normalize_v8_config_aliases_with_comments, project_v8_config_aliases,
+};
 pub use validate::{
     DEFAULT_CODEX_LIVE_MEDIA_MAX_SESSIONS, validate_credential_weight, validate_trusted_proxies,
 };

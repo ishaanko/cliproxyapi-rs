@@ -1,6 +1,6 @@
 {
-  "id": "err.claude.codex.json_cut_abort",
-  "desc": "claude client -> codex upstream: json_cut_abort",
+  "id": "err.claude.compat.upstream408",
+  "desc": "claude client -> compat upstream: upstream408",
   "steps": [
     {
       "request": {
@@ -9,7 +9,7 @@
         "auth": "Client",
         "headers": [],
         "body": {
-          "model": "gpt-5.5",
+          "model": "compat-gpt-4o",
           "max_tokens": 4096,
           "messages": [
             {
@@ -28,15 +28,15 @@
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "content-type": "application/json",
-          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+          "x-cpa-trace-id": "<ts14>-8db9a3c0713f1d8d-<uuid:1>"
         },
         "body": {
           "type": "json",
           "value": {
             "type": "error",
             "error": {
-              "type": "timeout_error",
-              "message": "stream error: stream disconnected before completion: stream closed before response.completed"
+              "type": "server_error",
+              "message": "mock upstream error 408"
             }
           }
         }
@@ -45,52 +45,51 @@
   ],
   "upstream": [
     {
-      "family": "codex",
+      "family": "compat",
       "method": "POST",
-      "path": "/responses",
+      "path": "/chat/completions",
       "query": "",
-      "credential": "sk-codex-2",
+      "credential": "sk-compat-2",
       "headers": {
-        "accept": "text/event-stream",
         "accept-encoding": "gzip",
-        "authorization": "Bearer sk-codex-2",
-        "connection": "Keep-Alive",
+        "authorization": "Bearer sk-compat-2",
         "content-type": "application/json",
-        "originator": "codex-tui",
-        "session-id": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31",
-        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+        "user-agent": "cli-proxy-openai-compat"
       },
       "body": {
-        "model": "gpt-5.5",
-        "instructions": "",
-        "input": [
+        "model": "mock-gpt-4o",
+        "messages": [
           {
-            "type": "message",
             "role": "user",
-            "content": [
-              {
-                "type": "input_text",
-                "text": "What is the weather in Paris?"
-              }
-            ]
+            "content": "What is the weather in Paris?"
           }
         ],
-        "parallel_tool_calls": true,
-        "reasoning": {
-          "effort": "medium"
-        },
-        "stream": true,
-        "store": false,
-        "include": [
-          "reasoning.encrypted_content"
-        ],
-        "tools": [
+        "max_tokens": 4096,
+        "stream": false
+      }
+    },
+    {
+      "family": "compat",
+      "method": "POST",
+      "path": "/chat/completions",
+      "query": "",
+      "credential": "sk-compat-1",
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-compat-1",
+        "content-type": "application/json",
+        "user-agent": "cli-proxy-openai-compat"
+      },
+      "body": {
+        "model": "mock-gpt-4o",
+        "messages": [
           {
-            "type": "image_generation",
-            "output_format": "png"
+            "role": "user",
+            "content": "What is the weather in Paris?"
           }
         ],
-        "prompt_cache_key": "0125194a-61ab-5bc6-9f59-dcfcdcbe2a31"
+        "max_tokens": 4096,
+        "stream": false
       }
     }
   ]
