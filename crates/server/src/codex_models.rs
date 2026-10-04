@@ -525,10 +525,11 @@ fn apply_devin_display_name(entry: &mut Entry, id: &str, model: &Entry, ctx: &Ca
 // ------------------------------------------------------------------ apply_patch
 
 /// `applyCodexClientApplyPatchCapability`: advertise the freeform tool only for text models whose
-/// every routing candidate supports it.
+/// every routing candidate supports it. Without a capability probe (`enable-apply-patch` off) only
+/// the template's own `freeform` declaration is kept.
 fn apply_apply_patch_capability(entry: &mut Entry, id: &str, capability: Option<&dyn Fn(&str) -> bool>) {
+    let template_supported = entry.get("apply_patch_tool_type").and_then(Value::as_str) == Some("freeform");
     entry.insert("apply_patch_tool_type".into(), Value::Null);
-    let Some(capability) = capability else { return };
     let base_id = id.trim().to_lowercase();
     let base_id = after_slash(&base_id).unwrap_or(&base_id).trim().to_string();
     if is_image_or_video_model(&base_id) {
@@ -542,6 +543,12 @@ fn apply_apply_patch_capability(entry: &mut Entry, id: &str, capability: Option<
     if !supports_text && (has_modalities || entry.get("visibility").and_then(Value::as_str) == Some("hide")) {
         return;
     }
+    let Some(capability) = capability else {
+        if template_supported {
+            entry.insert("apply_patch_tool_type".into(), json!("freeform"));
+        }
+        return;
+    };
     if capability(id.trim()) {
         entry.insert("apply_patch_tool_type".into(), json!("freeform"));
     }
@@ -833,6 +840,10 @@ mod tests {
         let mut none = Entry::new();
         apply_apply_patch_capability(&mut none, "gpt-5", None);
         assert_eq!(none["apply_patch_tool_type"], Value::Null);
+        // Without a probe the template's own freeform declaration survives (issue 6286).
+        let mut templated = json!({"apply_patch_tool_type": "freeform"}).as_object().cloned().unwrap_or_default();
+        apply_apply_patch_capability(&mut templated, "gpt-5.5", None);
+        assert_eq!(templated["apply_patch_tool_type"], "freeform");
     }
 
     #[test]
