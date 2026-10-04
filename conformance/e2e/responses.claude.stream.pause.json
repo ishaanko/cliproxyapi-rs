@@ -1,6 +1,6 @@
 {
-  "id": "responses.gemini.stream.length",
-  "desc": "responses client -> gemini upstream, stream, length",
+  "id": "responses.claude.stream.pause",
+  "desc": "responses client -> claude upstream, stream, pause_turn stop reason",
   "steps": [
     {
       "request": {
@@ -9,10 +9,9 @@
         "auth": "Client",
         "headers": [],
         "body": {
-          "model": "gemini-2.5-flash",
+          "model": "claude-sonnet-4-5-20250929",
           "input": "What is the weather in Paris?",
-          "stream": true,
-          "max_output_tokens": 16
+          "stream": true
         }
       },
       "response": {
@@ -25,7 +24,7 @@
           "cache-control": "no-cache",
           "connection": "keep-alive",
           "content-type": "text/event-stream",
-          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>"
         },
         "body": {
           "type": "sse",
@@ -36,14 +35,14 @@
                 "type": "response.created",
                 "sequence_number": 1,
                 "response": {
-                  "id": "resp_mockresp01",
+                  "id": "msg_mock01",
                   "object": "response",
                   "created_at": "<now>",
                   "status": "in_progress",
                   "background": false,
                   "error": null,
                   "output": [],
-                  "model": "gemini-2.5-flash"
+                  "model": "claude-sonnet-4-5-20250929"
                 }
               }
             },
@@ -53,12 +52,12 @@
                 "type": "response.in_progress",
                 "sequence_number": 2,
                 "response": {
-                  "id": "resp_mockresp01",
+                  "id": "msg_mock01",
                   "object": "response",
                   "created_at": "<now>",
                   "status": "in_progress",
                   "output": [],
-                  "model": "gemini-2.5-flash"
+                  "model": "claude-sonnet-4-5-20250929"
                 }
               }
             },
@@ -69,7 +68,7 @@
                 "sequence_number": 3,
                 "output_index": 0,
                 "item": {
-                  "id": "msg_resp_mockresp01_0",
+                  "id": "msg_msg_mock01_0",
                   "type": "message",
                   "status": "in_progress",
                   "content": [],
@@ -82,7 +81,7 @@
               "data": {
                 "type": "response.content_part.added",
                 "sequence_number": 4,
-                "item_id": "msg_resp_mockresp01_0",
+                "item_id": "msg_msg_mock01_0",
                 "output_index": 0,
                 "content_index": 0,
                 "part": {
@@ -98,7 +97,7 @@
               "data": {
                 "type": "response.output_text.delta",
                 "sequence_number": 5,
-                "item_id": "msg_resp_mockresp01_0",
+                "item_id": "msg_msg_mock01_0",
                 "output_index": 0,
                 "content_index": 0,
                 "delta": "Hello from ",
@@ -110,7 +109,7 @@
               "data": {
                 "type": "response.output_text.delta",
                 "sequence_number": 6,
-                "item_id": "msg_resp_mockresp01_0",
+                "item_id": "msg_msg_mock01_0",
                 "output_index": 0,
                 "content_index": 0,
                 "delta": "mock",
@@ -122,7 +121,7 @@
               "data": {
                 "type": "response.output_text.done",
                 "sequence_number": 7,
-                "item_id": "msg_resp_mockresp01_0",
+                "item_id": "msg_msg_mock01_0",
                 "output_index": 0,
                 "content_index": 0,
                 "text": "Hello from mock",
@@ -134,7 +133,7 @@
               "data": {
                 "type": "response.content_part.done",
                 "sequence_number": 8,
-                "item_id": "msg_resp_mockresp01_0",
+                "item_id": "msg_msg_mock01_0",
                 "output_index": 0,
                 "content_index": 0,
                 "part": {
@@ -152,7 +151,7 @@
                 "sequence_number": 9,
                 "output_index": 0,
                 "item": {
-                  "id": "msg_resp_mockresp01_0",
+                  "id": "msg_msg_mock01_0",
                   "type": "message",
                   "status": "incomplete",
                   "content": [
@@ -173,20 +172,17 @@
                 "type": "response.incomplete",
                 "sequence_number": 10,
                 "response": {
-                  "id": "resp_mockresp01",
+                  "id": "msg_mock01",
                   "object": "response",
                   "created_at": "<now>",
                   "status": "incomplete",
                   "background": false,
                   "error": null,
-                  "incomplete_details": {
-                    "reason": "max_output_tokens"
-                  },
-                  "max_output_tokens": 16,
-                  "model": "gemini-2.5-flash",
+                  "incomplete_details": null,
+                  "model": "claude-sonnet-4-5-20250929",
                   "output": [
                     {
-                      "id": "msg_resp_mockresp01_0",
+                      "id": "msg_msg_mock01_0",
                       "type": "message",
                       "status": "incomplete",
                       "content": [
@@ -224,54 +220,39 @@
   ],
   "upstream": [
     {
-      "family": "gemini",
+      "family": "anthropic",
       "method": "POST",
-      "path": "/v1beta/models/gemini-2.5-flash:streamGenerateContent",
-      "query": "alt=sse",
-      "credential": "sk-gemini-1",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
       "headers": {
-        "accept-encoding": "gzip",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
-        "user-agent": "<go-default-ua>",
-        "x-goog-api-key": "sk-gemini-1"
+        "user-agent": "cpa-e2e/1"
       },
       "body": {
-        "contents": [
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
           {
             "role": "user",
-            "parts": [
+            "content": [
               {
-                "text": "What is the weather in Paris?"
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
               }
             ]
           }
         ],
-        "generationConfig": {
-          "maxOutputTokens": 16
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
         },
-        "safetySettings": [
-          {
-            "category": "HARM_CATEGORY_HARASSMENT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_HATE_SPEECH",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
-            "threshold": "BLOCK_NONE"
-          }
-        ],
-        "model": "gemini-2.5-flash"
+        "stream": true
       }
     }
   ]

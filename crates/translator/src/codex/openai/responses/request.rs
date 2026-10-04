@@ -104,14 +104,22 @@ fn set_required_bool(root: &mut Value, path: &str, value: bool) {
 }
 
 fn set_required_include(root: &mut Value) {
+    const REASONING: &str = "reasoning.encrypted_content";
+    const SOURCES: &str = "web_search_call.action.sources";
     let current = root.g("include");
-    if let Some(Value::Array(a)) = current.v()
-        && a.len() == 1
-        && a[0].as_str() == Some("reasoning.encrypted_content")
-    {
-        return;
+    let mut include_sources = false;
+    if let Some(Value::Array(values)) = current.v() {
+        // Web search sources are preserved when the caller asked for them.
+        include_sources = values.iter().any(|v| v.as_str() == Some(SOURCES));
+        if !include_sources && values.len() == 1 && values[0].as_str() == Some(REASONING) {
+            return;
+        }
+        if include_sources && values.len() == 2 && values[0].as_str() == Some(REASONING) && values[1].as_str() == Some(SOURCES) {
+            return;
+        }
     }
-    cpa_json::set(root, "include", json!(["reasoning.encrypted_content"]));
+    let encoded = if include_sources { json!([REASONING, SOURCES]) } else { json!([REASONING]) };
+    cpa_json::set(root, "include", encoded);
 }
 
 fn delete_fields(root: &mut Value, paths: &[&str]) {

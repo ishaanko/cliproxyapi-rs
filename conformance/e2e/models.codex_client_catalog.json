@@ -27,7 +27,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": {
@@ -203,7 +203,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -377,7 +377,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -551,7 +551,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -725,7 +725,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -863,7 +863,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -1001,7 +1001,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -1139,7 +1139,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,
@@ -1273,7 +1273,7 @@
                 "additional_speed_tiers": [
                   "fast"
                 ],
-                "apply_patch_tool_type": null,
+                "apply_patch_tool_type": "freeform",
                 "auto_compact_token_limit": null,
                 "auto_review_model_override": null,
                 "availability_nux": null,

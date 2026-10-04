@@ -197,6 +197,14 @@ struct StreamState {
     active_call_slot: Option<i64>,
     tool_call_count: usize,
     pending_actions: Vec<PendingAction>,
+    /// OpenAI text can stream while a thought is open (it must not overtake queued tools); other
+    /// formats queue all content behind the thought for late or split signatures.
+    stream_content_early: bool,
+    /// Responses only: thought stops held back so reasoning stays open for late signatures.
+    deferred_thought_stops: Vec<i64>,
+    /// Responses only: the signature accumulated per thought step (the translator accepts
+    /// complete signatures, not fragments).
+    response_thought_signatures: HashMap<i64, String>,
     /// Text after tool calls, flushed once the tools are closed so tool items precede the
     /// assistant message in Responses clients.
     post_tool_buffered_content: Vec<String>,
@@ -365,7 +373,11 @@ impl StreamState {
             } else {
                 self.thought_step_index
             };
-            if !self.stop_step(stop_idx).await {
+            if self.p.response_format == Format::OpenAIResponse {
+                // Responses items may overlap. Keep reasoning open for late signatures so
+                // output_item.done and response.completed contain the same item.
+                self.deferred_thought_stops.push(stop_idx);
+            } else if !self.stop_step(stop_idx).await {
                 return false;
             }
             self.thought_started = false;
@@ -494,6 +506,9 @@ impl StreamState {
 
     /// Closes thought, tool and text steps in order and flushes buffered post-tool text.
     async fn close_open_steps(&mut self) {
+        for index in std::mem::take(&mut self.deferred_thought_stops) {
+            let _ = self.stop_step(index).await;
+        }
         if !self.pending_actions.is_empty() || self.thought_started {
             let _ = self.flush_pending_actions().await;
         }
@@ -569,6 +584,9 @@ pub async fn stream_frames<S, E>(
         active_call_slot: None,
         tool_call_count: 0,
         pending_actions: Vec::new(),
+        stream_content_early: matches!(p.response_format, Format::OpenAI | Format::OpenAIResponse),
+        deferred_thought_stops: Vec::new(),
+        response_thought_signatures: HashMap::new(),
         post_tool_buffered_content: Vec::new(),
         first_stream_event: true,
         p,
@@ -766,10 +784,17 @@ async fn handle_frame(
             return false;
         }
         let target = st.thought_step_index.max(0);
+        let mut signature = go_lossy(&res.delta_signature);
+        if st.p.response_format == Format::OpenAIResponse {
+            // The Responses translator accepts complete signatures, not fragments.
+            let acc = st.response_thought_signatures.entry(target).or_default();
+            acc.push_str(&signature);
+            signature = acc.clone();
+        }
         let mut sig = json!({
             "event_type": "step.delta",
             "index": target,
-            "delta": {"type": "thought_signature", "signature": go_lossy(&res.delta_signature)},
+            "delta": {"type": "thought_signature", "signature": signature},
         });
         if !res.delta_signature_type.is_empty() {
             cpa_json::set(
@@ -796,7 +821,7 @@ async fn handle_frame(
     if !res.content_text.is_empty() {
         let chunk = content_buf.feed(&res.content_text);
         if !chunk.is_empty() {
-            if st.thought_started {
+            if st.thought_started && (!st.stream_content_early || !st.pending_actions.is_empty()) {
                 st.pending_actions.push(PendingAction::Content(chunk));
             } else if !st.emit_content_chunk(&chunk).await {
                 return false;

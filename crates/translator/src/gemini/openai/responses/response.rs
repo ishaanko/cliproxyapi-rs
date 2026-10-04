@@ -55,6 +55,7 @@ struct DetachedReasoningItem {
 struct CompletedMessageItem {
     id: String,
     text: String,
+    status: &'static str,
     annotations: Vec<Value>,
 }
 
@@ -80,6 +81,8 @@ struct GeminiToResponsesState {
     created_at: i64,
     started: bool,
     completed: bool,
+    finish_reason: String,
+    usage: ResponsesUsage,
 
     // message aggregation
     msg_opened: bool,
@@ -177,7 +180,7 @@ pub(super) fn unwrap_gemini_response_root(root: Value) -> (Value, bool) {
     if !resp.exists() {
         return (root, false);
     }
-    if resp.g("candidates").exists() || resp.g("responseId").exists() || resp.g("usageMetadata").exists() {
+    if resp.g("candidates").exists() || resp.g("responseId").exists() || resp.g("usageMetadata").exists() || resp.g("cpaUsageMetadata").exists() {
         return (resp.value(), true);
     }
     (root, false)
@@ -329,26 +332,62 @@ pub(super) fn echo_request_fields(target: &mut Value, prefix: &str, req: &Value,
     }
 }
 
-/// Maps `usageMetadata` into a Responses `usage` object at `prefix`. The stream variant writes
-/// zero defaults for missing thought and total counts, the non-stream one omits them.
-pub(super) fn set_usage(target: &mut Value, prefix: &str, um: &Res<'_>, zero_defaults: bool) {
-    let p = |name: &str| format!("{prefix}.{name}");
-    // Input tokens are the prompt only (thoughts go to output).
-    cpa_json::set(target, &p("input_tokens"), um.g("promptTokenCount").int());
-    cpa_json::set(target, &p("input_tokens_details.cached_tokens"), um.g("cachedContentTokenCount").int());
-    cpa_json::set(target, &p("output_tokens"), um.g("candidatesTokenCount").int().wrapping_add(um.g("thoughtsTokenCount").int()));
-    let thoughts = um.g("thoughtsTokenCount");
-    if thoughts.exists() {
-        cpa_json::set(target, &p("output_tokens_details.reasoning_tokens"), thoughts.int());
-    } else if zero_defaults {
-        cpa_json::set(target, &p("output_tokens_details.reasoning_tokens"), 0);
+/// Cumulative Gemini usage snapshot (Go: geminiResponsesUsage). Usage frames are snapshots, not
+/// deltas, so each frame overwrites the fields it carries.
+#[derive(Default, Clone, Copy)]
+pub(super) struct ResponsesUsage {
+    pub present: bool,
+    prompt: i64,
+    candidates: i64,
+    thoughts: i64,
+    total: i64,
+    cached: i64,
+}
+
+impl ResponsesUsage {
+    /// Merges `usageMetadata` (or `cpaUsageMetadata`) of `root`; false when neither exists.
+    pub(super) fn merge(&mut self, root: &Value) -> bool {
+        let mut metadata = root.g("usageMetadata");
+        if !metadata.exists() {
+            metadata = root.g("cpaUsageMetadata");
+        }
+        if !metadata.exists() {
+            return false;
+        }
+        self.present = true;
+        for (name, field) in [
+            ("promptTokenCount", &mut self.prompt),
+            ("candidatesTokenCount", &mut self.candidates),
+            ("thoughtsTokenCount", &mut self.thoughts),
+            ("totalTokenCount", &mut self.total),
+            ("cachedContentTokenCount", &mut self.cached),
+        ] {
+            let value = metadata.g(name);
+            if value.exists() {
+                *field = value.int();
+            }
+        }
+        true
     }
-    let total = um.g("totalTokenCount");
-    if total.exists() {
-        cpa_json::set(target, &p("total_tokens"), total.int());
-    } else if zero_defaults {
-        cpa_json::set(target, &p("total_tokens"), 0);
+
+    /// The Responses `usage` object. Input tokens are the prompt only (thoughts go to output).
+    pub(super) fn json(&self) -> Value {
+        json!({
+            "input_tokens": self.prompt,
+            "input_tokens_details": {"cached_tokens": self.cached},
+            "output_tokens": self.candidates.wrapping_add(self.thoughts),
+            "output_tokens_details": {"reasoning_tokens": self.thoughts},
+            "total_tokens": self.total
+        })
     }
+}
+
+/// Terminal event type, response status and `incomplete_details` for a Gemini finish reason.
+pub(super) fn terminal_state(finish_reason: &str) -> (&'static str, &'static str, Option<Value>) {
+    if finish_reason.trim().eq_ignore_ascii_case("MAX_TOKENS") {
+        return ("response.incomplete", "incomplete", Some(json!({"reason": "max_output_tokens"})));
+    }
+    ("response.completed", "completed", None)
 }
 
 /// Converts Gemini SSE chunks into OpenAI Responses SSE events. Also used by the antigravity
@@ -372,24 +411,30 @@ pub fn convert_gemini_response_to_openai_responses(
     if raw.is_empty() || st.completed {
         return Vec::new();
     }
-    let done_chunk;
-    if raw == b"[DONE]" {
+    let done = raw == b"[DONE]";
+    if done {
         if !st.started {
             return Vec::new();
         }
-        done_chunk = br#"{"candidates":[{"finishReason":"STOP"}]}"#;
-        raw = done_chunk;
+        if st.finish_reason.is_empty() {
+            st.finish_reason = "STOP".to_string();
+        }
+        raw = b"{}";
     }
 
     let Some(parsed) = parse_gjson(raw) else { return Vec::new() };
     let valid_json = gjson_valid(raw);
     let (root, wrapped) = unwrap_gemini_response_root(parsed);
+    let has_usage = st.usage.merge(&root);
     let root_raw: &[u8] = if wrapped { cpa_json::raw_at(raw, "response").map(str::as_bytes).unwrap_or(raw) } else { raw };
 
     let out = {
         let mut stream = Stream {
             st: &mut *st,
             out: Vec::new(),
+            done,
+            has_usage,
+            message_status: "completed",
             model_name,
             original: original_request_raw_json,
             request: request_raw_json,
@@ -413,10 +458,19 @@ pub(crate) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
     if st.err.tool_input_error().is_some() || st.completed {
         return Vec::new();
     }
+    // A validated source finish remains valid while Responses waits for usage.
+    if !st.finish_reason.is_empty() {
+        match pending_identity_error(&st.evidence, &st.tool_identity_map) {
+            None => return Vec::new(),
+            Some(err) => st.err.set_tool_input_error(err),
+        }
+    }
     if !st.tool_identity_map.values().any(|i| i.apply_patch) {
         return Vec::new();
     }
-    st.err.set_tool_input_error("upstream apply_patch stream ended before protocol completion");
+    if st.err.tool_input_error().is_none() {
+        st.err.set_tool_input_error("upstream apply_patch stream ended before protocol completion");
+    }
     st.completed = true;
     st.seq += 1;
     let event = emit_event("response.failed", &cpa_json::parse(&apply_patch_failure(&st.response_id, st.seq)));
@@ -430,6 +484,12 @@ pub(crate) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
 struct Stream<'a> {
     st: &'a mut GeminiToResponsesState,
     out: Vec<Vec<u8>>,
+    /// The chunk is the synthetic `[DONE]` terminator.
+    done: bool,
+    /// The chunk carried usage metadata.
+    has_usage: bool,
+    /// Status stamped on messages closed by this chunk (Go: messageStatus).
+    message_status: &'static str,
     model_name: &'a str,
     original: &'a [u8],
     request: &'a [u8],
@@ -667,13 +727,13 @@ impl Stream<'_> {
         }
         self.push("response.content_part.done", &part_done);
         let seq = self.next_seq();
-        let mut final_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": msg_index, "item": {"id": msg_id, "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": full_text}], "role": "assistant"}});
+        let mut final_event = json!({"type": "response.output_item.done", "sequence_number": seq, "output_index": msg_index, "item": {"id": msg_id, "type": "message", "status": self.message_status, "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": full_text}], "role": "assistant"}});
         if !msg_citations.is_empty() {
             cpa_json::set(&mut final_event, "item.content.0.annotations", Value::Array(msg_citations.clone()));
         }
         self.push("response.output_item.done", &final_event);
 
-        self.st.completed_messages.insert(msg_index, CompletedMessageItem { id: msg_id, text: full_text, annotations: msg_citations });
+        self.st.completed_messages.insert(msg_index, CompletedMessageItem { id: msg_id, text: full_text, status: self.message_status, annotations: msg_citations });
         self.st.msg_closed = true;
         self.st.current_msg_rune_offset = 0;
     }
@@ -858,18 +918,26 @@ impl Stream<'_> {
             return;
         }
 
-        // Finalization on finishReason.
-        let fr = root.g("candidates.0.finishReason");
-        if fr.exists() && !fr.str().is_empty() {
-            self.finish(root);
+        // Preserve the first source finish, including across a usage-only tail or [DONE].
+        let fr = root.g("candidates.0.finishReason").str();
+        if !fr.is_empty() && self.st.finish_reason.is_empty() {
+            self.st.finish_reason = fr;
+        }
+        if !self.st.finish_reason.is_empty() {
+            self.finish();
         }
     }
 
-    fn finish(&mut self, root: &Value) {
+    fn finish(&mut self) {
         if let Some(err) = pending_identity_error(&self.st.evidence, &self.st.tool_identity_map) {
             self.fail(err);
             return;
         }
+        if !self.done && !self.has_usage {
+            return;
+        }
+        let (event_type, status, incomplete_details) = terminal_state(&self.st.finish_reason);
+        self.message_status = status;
         if !self.st.pending_reasoning_signature.is_empty() {
             let pending = std::mem::take(&mut self.st.pending_reasoning_signature);
             self.emit_trailing_detached_reasoning(&pending);
@@ -913,9 +981,17 @@ impl Stream<'_> {
             self.st.func_done.insert(idx, true);
         }
 
-        // response.completed with aggregated outputs and request echo fields.
+        // The terminal response with aggregated outputs and request echo fields.
+        let mut completed = json!({"type": "response.completed", "sequence_number": 0, "response": {"id": "", "object": "response", "created_at": 0, "status": "completed", "background": false, "error": null}});
+        cpa_json::set(&mut completed, "type", event_type);
+        cpa_json::set(&mut completed, "response.status", status);
+        if let Some(details) = incomplete_details {
+            cpa_json::set(&mut completed, "response.incomplete_details", details);
+        }
         let seq = self.next_seq();
-        let mut completed = json!({"type": "response.completed", "sequence_number": seq, "response": {"id": self.st.response_id, "object": "response", "created_at": self.st.created_at, "status": "completed", "background": false, "error": null}});
+        cpa_json::set(&mut completed, "sequence_number", seq);
+        cpa_json::set(&mut completed, "response.id", self.st.response_id.as_str());
+        cpa_json::set(&mut completed, "response.created_at", self.st.created_at);
 
         if let Some(req_json) = pick_request_json(self.original, self.request) {
             let parsed = cpa_json::parse(req_json);
@@ -937,7 +1013,7 @@ impl Stream<'_> {
                 continue;
             }
             if let Some(m) = st.completed_messages.get(&idx) {
-                let mut item = json!({"id": m.id, "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": m.text}], "role": "assistant"});
+                let mut item = json!({"id": m.id, "type": "message", "status": m.status, "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": m.text}], "role": "assistant"});
                 if !m.annotations.is_empty() {
                     cpa_json::set(&mut item, "content.0.annotations", Value::Array(m.annotations.clone()));
                 }
@@ -973,12 +1049,11 @@ impl Stream<'_> {
             cpa_json::set(&mut completed, "response.tool_usage.web_search.num_requests", 1);
         }
 
-        let um = root.g("usageMetadata");
-        if um.exists() {
-            set_usage(&mut completed, "response.usage", &um, true);
+        if self.st.usage.present {
+            cpa_json::set(&mut completed, "response.usage", self.st.usage.json());
         }
 
-        self.push("response.completed", &completed);
+        self.push(event_type, &completed);
         self.st.completed = true;
     }
 

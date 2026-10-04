@@ -447,7 +447,7 @@ impl AiStudioExecutor {
             log.error(&err.message);
             return Err(err);
         };
-        if first.status > 0 && first.status != 200 {
+        if first.status > 0 && !(200..300).contains(&first.status) {
             // The upstream refused: drain the remaining frames into the error body.
             log.metadata(first.status, &first.headers);
             reporter.start_response_ttft();
@@ -569,7 +569,7 @@ async fn process_event(
             if feed_spaced(pump, &filtered).await { Flow::Continue } else { Flow::Stop }
         }
         MESSAGE_TYPE_STREAM_END => {
-            if pump.end_apply_patch().await {
+            if !finish_stream(pump).await {
                 return Flow::Stop;
             }
             Flow::Finish
@@ -584,10 +584,16 @@ async fn process_event(
                 reporter.mark_first_response_byte();
                 log.chunk(&event.payload);
             }
+            if !(200..300).contains(&event.status) {
+                let err = upstream_error(event.status, &event.payload);
+                log.error(&err.message);
+                pump.fail(err).await;
+                return Flow::Stop;
+            }
             if !feed_spaced(pump, &event.payload).await {
                 return Flow::Stop;
             }
-            if pump.end_apply_patch().await {
+            if !finish_stream(pump).await {
                 return Flow::Stop;
             }
             reporter.observe_response_model(&event.payload);
@@ -596,6 +602,15 @@ async fn process_event(
         }
         _ => Flow::Continue,
     }
+}
+
+/// Ends the translated stream: rejects an apply_patch stream that never completed, then emits the
+/// synthetic `[DONE]` terminal frames (Go: finishStream). False when the stream must stop.
+async fn finish_stream(pump: &mut StreamPump) -> bool {
+    if pump.end_apply_patch().await || pump.tx.is_closed() {
+        return false;
+    }
+    feed_spaced(pump, b"[DONE]").await
 }
 
 /// Translates a payload and sends each frame colon-spaced.

@@ -172,12 +172,15 @@ fn claude_reasoning_carrier(content_block: &Res<'_>) -> String {
     if signature.exists() { signature.str() } else { String::new() }
 }
 
-/// `response.incomplete` details when the stop reason is `max_tokens`.
+/// `response.incomplete` details for a stop reason. `max_tokens` is a token limit; `pause_turn`
+/// (Anthropic's server-tool iteration pause) is unfinished but has no matching Responses reason,
+/// so its nullable details stay null.
 fn incomplete_details(stop_reason: &str) -> Option<Value> {
-    stop_reason
-        .trim()
-        .eq_ignore_ascii_case("max_tokens")
-        .then(|| cpa_json::parse_str(r#"{"reason":"max_output_tokens"}"#))
+    match stop_reason.trim().to_lowercase().as_str() {
+        "max_tokens" => Some(cpa_json::parse_str(r#"{"reason":"max_output_tokens"}"#)),
+        "pause_turn" => Some(Value::Null),
+        _ => None,
+    }
 }
 
 fn output_status(stop_reason: &str) -> &'static str {

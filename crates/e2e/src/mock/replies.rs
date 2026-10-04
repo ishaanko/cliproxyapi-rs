@@ -278,7 +278,7 @@ enum Item {
 
 fn items(c: Content) -> Vec<Item> {
     match c {
-        Content::Text | Content::Length | Content::Cached => vec![Item::Text],
+        Content::Text | Content::Length | Content::Cached | Content::Pause => vec![Item::Text],
         Content::Thinking => vec![Item::Think, Item::Text],
         Content::ToolCall => vec![Item::Tool(1)],
         Content::Parallel => vec![Item::Tool(1), Item::Tool(2)],
@@ -328,6 +328,8 @@ fn anthropic_usage(c: Content) -> Value {
 fn anthropic_stop(c: Content) -> &'static str {
     if truncated(c) {
         "max_tokens"
+    } else if c == Content::Pause {
+        "pause_turn"
     } else if has_tool(c) {
         "tool_use"
     } else {

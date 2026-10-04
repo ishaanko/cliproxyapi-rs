@@ -40,6 +40,9 @@ pub struct ClaudeContinuityContext {
     pub previous_message_id: String,
     pub previous_request_id: String,
     pub prompt_id: String,
+    /// Calendar date this session was first seen on. The cloaked currentDate reminder reuses it
+    /// so the reminder text stays byte-stable within a session even when the local date flips.
+    pub pinned_date: String,
     pub initialized: bool,
 }
 
@@ -47,6 +50,7 @@ struct Entry {
     previous_message_id: String,
     previous_request_id: String,
     prompt_id: String,
+    pinned_date: String,
     minimum_sequence: u64,
     committed_sequence: u64,
     last_access: u64,
@@ -111,6 +115,7 @@ impl ClaudeDiagnosticsState {
                 previous_message_id: String::new(),
                 previous_request_id: String::new(),
                 prompt_id: String::new(),
+                pinned_date: String::new(),
                 minimum_sequence: sequence,
                 committed_sequence: 0,
                 last_access: 0,
@@ -139,6 +144,19 @@ impl ClaudeDiagnosticsState {
         };
         self.entries.insert(key, entry);
         result
+    }
+
+    /// Go: `PinClaudeSessionDate` body.
+    pub fn pin_date(&mut self, key: &str, date: &str) -> String {
+        let (key, date) = (key.trim(), date.trim());
+        if key.is_empty() || date.is_empty() {
+            return date.to_string();
+        }
+        let Some(entry) = self.entries.get_mut(key) else { return date.to_string() };
+        if entry.pinned_date.is_empty() {
+            entry.pinned_date = date.to_string();
+        }
+        entry.pinned_date.clone()
     }
 
     /// Go: `CommitClaudeContinuity` body.
@@ -235,6 +253,15 @@ pub fn begin_claude_continuity(
     explicit_prompt_id: &str,
 ) -> ClaudeContinuityBegin {
     STATE.lock().begin(credential_identity, session_id, is_new_prompt_turn, explicit_prompt_id, Instant::now())
+}
+
+/// Go: `PinClaudeSessionDate`: the calendar date pinned for this continuity session, recording
+/// `date` on the first call of a session and returning the pinned value afterwards. This keeps the
+/// cloaked currentDate reminder byte-stable so a local-midnight flip cannot invalidate the
+/// prompt-cache prefix. TTL expiry resets the entry (the next request re-anchors); an unknown key
+/// (for example after a restart) returns `date` unchanged.
+pub fn pin_claude_session_date(key: &str, date: &str) -> String {
+    STATE.lock().pin_date(key, date)
 }
 
 /// Go: `BeginClaudeDiagnostics`: `(key, sequence, previous_message_id)`.
@@ -583,6 +610,20 @@ mod tests {
     }
 
     #[test]
+    fn pin_session_date_anchors_first_request_and_reanchors_after_ttl() {
+        let (mut s, t0) = (ClaudeDiagnosticsState::new(), Instant::now());
+        let key = s.begin("credential", "session", false, "", t0).key;
+        assert_eq!(s.pin_date(&key, "2026-08-01"), "2026-08-01");
+        // Later requests of the same session keep the anchor even when the date flips.
+        assert_eq!(s.pin_date(&key, "2026-08-02"), "2026-08-01");
+        // TTL expiry resets the entry, so the session re-anchors to the current date.
+        s.begin("credential", "session", false, "", at(t0, 3601));
+        assert_eq!(s.pin_date(&key, "2026-08-02"), "2026-08-02");
+        // Unknown keys (no continuity entry) fall back to the candidate date.
+        assert_eq!(s.pin_date("unknown-key", "2026-08-03"), "2026-08-03");
+    }
+
+    #[test]
     fn expired_generation_commit_is_rejected() {
         let (mut s, t0) = (ClaudeDiagnosticsState::new(), Instant::now());
         let old = s.begin("credential", "session", false, "", t0);
@@ -780,5 +821,25 @@ mod tests {
         let mut beta = HeaderMap::new();
         beta.insert("anthropic-beta", "claude-code-20250219,extended-cache-ttl-2025-04-11".parse().expect("header value"));
         assert!(claude_subagent_requests_1h(&beta, payload));
+    }
+
+    /// Go's raw-byte prefilter (claude_json_prefilter.go) must never change a classifier answer,
+    /// including when the matched text is spelled with `\u` escapes. This port has no prefilter
+    /// (its parse is memoized and the tree walks are cheaper than the extra byte scans), so the
+    /// answers are pinned directly.
+    #[test]
+    fn classifiers_keep_escaped_matches() {
+        let escaped_title = r#"{"model":"m","system":[{"type":"text","text":"You are naming a coding session."}],"messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(is_claude_probe_or_helper_request(escaped_title.as_bytes()), "escaped system title instruction");
+        let plain_title = r#"{"model":"m","system":"Return a short title for this.","messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(is_claude_probe_or_helper_request(plain_title.as_bytes()), "plain system title instruction");
+        let schema_title = r#"{"model":"m","output_config":{"format":{"schema":{"properties":{"title":{"type":"string"}}}}},"messages":[{"role":"user","content":"<session>x</session>"}]}"#;
+        assert!(is_claude_probe_or_helper_request(schema_title.as_bytes()), "title schema request");
+        let ordinary = r#"{"model":"m","system":"You are Claude Code.","messages":[{"role":"user","content":"Return a short answer"}]}"#;
+        assert!(!is_claude_probe_or_helper_request(ordinary.as_bytes()), "ordinary request");
+        let escaped_1h = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}"#;
+        assert!(claude_payload_has_1h_ttl(escaped_1h.as_bytes()), "escaped 1h ttl");
+        let five_minutes = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"took 11h","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}"#;
+        assert!(!claude_payload_has_1h_ttl(five_minutes.as_bytes()), "5m ttl");
     }
 }

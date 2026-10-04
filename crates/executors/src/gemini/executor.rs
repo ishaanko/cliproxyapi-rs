@@ -434,12 +434,19 @@ impl GeminiExecutor {
             if pump.end_apply_patch().await {
                 return;
             }
-            if !pump.feed(b"[DONE]").await {
-                return;
-            }
+            // A read error is reported without a synthetic terminal event, and a gone client
+            // needs none.
             if let Some(err) = scan_err {
                 log.error(&err.to_string());
                 pump.fail(err.into()).await;
+                pump.finish();
+                return;
+            }
+            if pump.tx.is_closed() {
+                return;
+            }
+            if !pump.feed(b"[DONE]").await {
+                return;
             }
             pump.finish();
         });

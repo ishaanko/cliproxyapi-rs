@@ -246,6 +246,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
     // Tool declarations.
     let tools = root.g("tools");
     let mut tool_items: Vec<Value> = Vec::new();
+    let mut has_web_search_tool = false;
     if tools.is_array() {
         let web_search_tool_names = build_web_search_tool_name_set(&tools);
         cpa_json::set(
@@ -260,6 +261,7 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
         for tool in tools.array() {
             // Claude web search maps to Codex web_search.
             if is_web_search_tool_type(&tool.g("type").str()) {
+                has_web_search_tool = true;
                 tool_items.push(convert_web_search_tool_to_codex(&tool));
                 continue;
             }
@@ -360,11 +362,12 @@ fn convert(model_name: &str, raw_json: &[u8], preserve_empty_thinking_blocks: bo
     }
     cpa_json::set(&mut template, "stream", true);
     cpa_json::set(&mut template, "store", false);
-    cpa_json::set(
-        &mut template,
-        "include",
-        json!(["reasoning.encrypted_content"]),
-    );
+    let include_fields = if has_web_search_tool {
+        json!(["reasoning.encrypted_content", "web_search_call.action.sources"])
+    } else {
+        json!(["reasoning.encrypted_content"])
+    };
+    cpa_json::set(&mut template, "include", include_fields);
 
     // output_config.format -> text.format.
     let format = root.g("output_config.format");

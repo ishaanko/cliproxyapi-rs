@@ -23,7 +23,32 @@ fn claude_credential_timezone(auth: &Auth) -> String {
 /// `YYYY-MM-DD` of `now` in the credential timezone, else the configured one, else local time
 /// (Go: claudeCodeLocalDate(claudeCodeCurrentTime(cfg, auth))).
 pub fn claude_code_current_date(cfg: &Config, auth: &Auth) -> String {
-    date_at(Utc::now().timestamp(), &claude_credential_timezone(auth), cfg.claude_header_defaults.timezone.trim())
+    #[cfg(test)]
+    let now = test_clock::now_for(&auth.id).unwrap_or_else(|| Utc::now().timestamp());
+    #[cfg(not(test))]
+    let now = Utc::now().timestamp();
+    date_at(now, &claude_credential_timezone(auth), cfg.claude_header_defaults.timezone.trim())
+}
+
+/// Per-credential clock override for tests (Go: `claudeCodeCurrentTimeFunc`), keyed by auth id so
+/// concurrently running tests never see each other's time.
+#[cfg(test)]
+pub(crate) mod test_clock {
+    use std::collections::HashMap;
+    use std::sync::{LazyLock, Mutex};
+
+    static CLOCKS: LazyLock<Mutex<HashMap<String, i64>>> = LazyLock::new(Default::default);
+
+    /// Pins "now" (unix seconds) for requests made with credential `auth_id`.
+    pub(crate) fn set(auth_id: &str, unix: i64) {
+        if let Ok(mut clocks) = CLOCKS.lock() {
+            clocks.insert(auth_id.to_string(), unix);
+        }
+    }
+
+    pub(super) fn now_for(auth_id: &str) -> Option<i64> {
+        CLOCKS.lock().ok()?.get(auth_id).copied()
+    }
 }
 
 fn date_at(unix: i64, credential_tz: &str, config_tz: &str) -> String {

@@ -195,7 +195,7 @@ impl AntigravityExecutor {
             p.log.error(&err.message);
             reporter.publish_failure(&err);
             let _ = out.send(Err(err)).await;
-        } else if finished {
+        } else if finished && !out.is_closed() {
             // Only a clean end of stream may produce a synthetic terminal event: translating
             // [DONE] after a read error would report a truncated stream as complete.
             let tail = translate(&mut param, b"[DONE]", &mut claude_tokens);

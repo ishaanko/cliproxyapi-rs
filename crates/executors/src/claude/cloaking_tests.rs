@@ -446,3 +446,61 @@ fn cloaking_rejects_non_text_caller_system_blocks_unless_strict() {
     assert!(cloaked);
     assert_eq!(cpa_json::parse(&out).g("system").array().len(), 2);
 }
+
+/// Calendar date of the currentDate reminder in the first user message.
+fn cloak_date(payload: &[u8]) -> String {
+    let root = cpa_json::parse(payload);
+    let content = root.g("messages.0.content");
+    let texts: Vec<String> =
+        if content.is_array() { content.array().iter().map(|b| b.g("text").str()).collect() } else { vec![content.str()] };
+    for text in texts {
+        if let Some(rest) = text.split("Today's date is ").nth(1) {
+            return rest.chars().take(10).collect();
+        }
+    }
+    panic!("no currentDate reminder in first user message: {}", String::from_utf8_lossy(payload));
+}
+
+/// The cloaked currentDate reminder stays identical for one session even when the candidate date
+/// flips between two requests (a rewrite would invalidate the prompt-cache prefix).
+#[test]
+fn cloaked_date_reminder_is_pinned_to_the_session_across_midnight() {
+    use super::helps::ClaudeCtx;
+    use super::helps::diagnostics::pin_claude_session_date;
+    use chrono::{Days, NaiveDate};
+
+    let mut auth = Auth::new("test-date-pin-cred", "claude");
+    auth.attributes.insert("timezone".into(), "Asia/Shanghai".into());
+    let cfg = Config::default();
+    let headers = http::HeaderMap::new();
+    let ctx = ClaudeCtx { session_id: "sess-midnight".into(), ..Default::default() };
+    let checked = |payload: &str| {
+        let tags = resolve_claude_continuity_tags(&ctx, &cfg, &auth, &headers, payload.as_bytes(), true, "", "").expect("continuity");
+        let out = check_system_instructions_with_signing_mode_at(
+            payload.as_bytes(),
+            false,
+            false,
+            "2.1.280",
+            "cli",
+            &tags.ctx.pinned_date,
+            &BillingOptions { prev_req: &tags.prev_req, prompt_id: &tags.prompt_id, ..Default::default() },
+        );
+        (tags.ctx, out)
+    };
+
+    let (c1, out1) = checked(r#"{"model":"claude-opus-5","messages":[{"role":"user","content":"turn one"}]}"#);
+    assert!(!c1.pinned_date.is_empty(), "first request must establish a pinned session date");
+    let date1 = cloak_date(&out1);
+    assert_eq!(date1, c1.pinned_date);
+
+    // The next calendar day as a later request's candidate: the session pin must win.
+    let anchor = NaiveDate::parse_from_str(&c1.pinned_date, "%Y-%m-%d").expect("anchor date");
+    let next_day = anchor.checked_add_days(Days::new(1)).expect("next day").format("%Y-%m-%d").to_string();
+    assert_eq!(pin_claude_session_date(&c1.key, &next_day), c1.pinned_date);
+
+    let (c2, out2) = checked(
+        r#"{"model":"claude-opus-5","messages":[{"role":"user","content":"turn one"},{"role":"assistant","content":"ok"},{"role":"user","content":"turn two"}]}"#,
+    );
+    assert_eq!(c2.pinned_date, c1.pinned_date);
+    assert_eq!(cloak_date(&out2), date1, "date reminder changed within one session");
+}

@@ -26,6 +26,8 @@ mod test_support;
 mod tests;
 #[cfg(test)]
 mod tests_signatures;
+#[cfg(test)]
+mod tests_terminal;
 pub mod ttft;
 mod vertex;
 pub mod vertex_payload;

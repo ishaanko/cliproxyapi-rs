@@ -3,7 +3,7 @@
 
 use super::bodies::{self, FAMILIES, Family, KINDS, Kind};
 use crate::client::{HttpReq, Step};
-use crate::mock::script::Script;
+use crate::mock::script::{Content, Script};
 use crate::scenario::Scenario;
 
 /// A client dialect: how to build the request for a family/stream/kind combination.
@@ -68,6 +68,18 @@ pub fn scenarios() -> Vec<Scenario> {
                 }
             }
         }
+    }
+    // Claude's `pause_turn` stop reason through the Responses translator: unfinished, with null
+    // incomplete details.
+    for stream in [false, true] {
+        let mode = if stream { "stream" } else { "json" };
+        let req = HttpReq::post("/v1/responses", bodies::responses(Family::Claude.model(), stream, Kind::Text));
+        out.push(Scenario::new(
+            format!("responses.claude.{mode}.pause"),
+            format!("responses client -> claude upstream, {mode}, pause_turn stop reason"),
+            Script::ok(Content::Pause),
+            vec![Step::Http(req)],
+        ));
     }
     out
 }

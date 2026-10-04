@@ -21,9 +21,29 @@ pub fn parse_plugin_executor_response_usage(protocol: &str, payload: &[u8]) -> D
         "gemini" => parse_gemini_usage(payload),
         "interactions" | "interactions-response" => parse_interactions_usage(payload),
         "antigravity" => parse_antigravity_usage(payload),
-        "codex" | "openai-response" => parse_codex_usage(payload).unwrap_or_else(|| parse_openai_usage(payload)),
+        "codex" | "openai-response" => parse_responses_plugin_executor_usage(payload),
         _ => parse_openai_usage(payload),
     }
+}
+
+/// Reads both streaming-event usage (`response.usage`) and a completed Responses object
+/// (top-level `usage`). A service tier without `response.usage` must not hide the completed
+/// object's token counts.
+fn parse_responses_plugin_executor_usage(payload: &[u8]) -> Detail {
+    let codex = parse_codex_usage(payload);
+    if let Some(detail) = codex.as_ref().filter(|d| d.has_token_usage()) {
+        return detail.clone();
+    }
+    let mut openai = parse_openai_usage(payload);
+    if openai.has_token_usage() {
+        if openai.response_service_tier.is_empty()
+            && let Some(codex) = &codex
+        {
+            openai.response_service_tier = codex.response_service_tier.clone();
+        }
+        return openai;
+    }
+    codex.unwrap_or(openai)
 }
 
 /// Feeds streaming chunks into `buffer` using the parser of `protocol`.
@@ -55,8 +75,10 @@ pub fn observe_plugin_executor_stream_usage(protocol: &str, payload: &[u8], buff
         "codex" | "openai-response" => iterate_stream_lines(payload, |line| {
             if let Some(json) = extract_stream_json_payload(line)
                 && !json.is_empty()
-                && let Some(detail) = parse_codex_usage(json)
+                && let Some(detail) = parse_codex_usage(json).filter(Detail::has_token_usage)
             {
+                // A service tier without response.usage is not token usage: fall through so a
+                // completed Responses object's top-level usage is still recorded.
                 buffer.observe(detail, true);
                 return;
             }
@@ -109,4 +131,36 @@ fn parse_claude_stream_line(line: &[u8]) -> Option<Detail> {
     }
     let wrapped = usage_node_wrapped(payload)?;
     Some(parse_claude_usage(&wrapped))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_keeps_top_level_responses_tokens_when_service_tier_present() {
+        let mut buffer = StreamUsageBuffer::default();
+        let payload = b"data: {\"type\":\"response.completed\",\"service_tier\":\"default\",\"usage\":{\"input_tokens\":34,\"output_tokens\":499,\"total_tokens\":533}}\n\n";
+        observe_plugin_executor_stream_usage("openai-response", payload, &mut buffer);
+        let detail = buffer.detail().expect("observed usage");
+        assert_eq!((detail.input_tokens, detail.output_tokens, detail.total_tokens), (34, 499, 533));
+        assert_eq!(detail.response_service_tier, "default");
+    }
+
+    #[test]
+    fn response_usage_responses_shapes() {
+        // (name, protocol, payload, input, output, total, tier)
+        let cases = [
+            ("top-level usage without service tier", "openai-response", r#"{"usage":{"input_tokens":34,"output_tokens":499,"total_tokens":533}}"#, 34, 499, 533, ""),
+            ("completed object with service tier", "openai-response", r#"{"id":"resp_1","object":"response","service_tier":"default","usage":{"input_tokens":34,"output_tokens":499,"total_tokens":533}}"#, 34, 499, 533, "default"),
+            ("codex protocol keeps top-level usage with service tier", "codex", r#"{"service_tier":"default","usage":{"input_tokens":34,"output_tokens":499,"total_tokens":533}}"#, 34, 499, 533, "default"),
+            ("nested response usage wins over top-level usage", "openai-response", r#"{"service_tier":"priority","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},"response":{"usage":{"input_tokens":18,"output_tokens":22,"total_tokens":40}}}"#, 18, 22, 40, "priority"),
+            ("service tier only stays empty of tokens", "openai-response", r#"{"service_tier":"default"}"#, 0, 0, 0, "default"),
+        ];
+        for (name, protocol, payload, input, output, total, tier) in cases {
+            let detail = parse_plugin_executor_response_usage(protocol, payload.as_bytes());
+            assert_eq!((detail.input_tokens, detail.output_tokens, detail.total_tokens), (input, output, total), "{name}");
+            assert_eq!(detail.response_service_tier, tier, "{name}");
+        }
+    }
 }

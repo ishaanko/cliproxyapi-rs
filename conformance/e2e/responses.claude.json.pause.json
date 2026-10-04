@@ -1,6 +1,6 @@
 {
-  "id": "responses.gemini.json.length",
-  "desc": "responses client -> gemini upstream, json, length",
+  "id": "responses.claude.json.pause",
+  "desc": "responses client -> claude upstream, json, pause_turn stop reason",
   "steps": [
     {
       "request": {
@@ -9,10 +9,9 @@
         "auth": "Client",
         "headers": [],
         "body": {
-          "model": "gemini-2.5-flash",
+          "model": "claude-sonnet-4-5-20250929",
           "input": "What is the weather in Paris?",
-          "stream": false,
-          "max_output_tokens": 16
+          "stream": false
         }
       },
       "response": {
@@ -23,25 +22,21 @@
           "access-control-allow-origin": "*",
           "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
           "content-type": "application/json",
-          "x-cpa-trace-id": "<ts14>-50bf9a9aa89466fd-<uuid:1>"
+          "x-cpa-trace-id": "<ts14>-f46ece6b8824823d-<uuid:1>"
         },
         "body": {
           "type": "json",
           "value": {
-            "id": "resp_mockresp01",
+            "id": "msg_mock01",
             "object": "response",
             "created_at": "<now>",
             "status": "incomplete",
             "background": false,
             "error": null,
-            "incomplete_details": {
-              "reason": "max_output_tokens"
-            },
-            "max_output_tokens": 16,
-            "model": "gemini-2.5-flash",
+            "incomplete_details": null,
             "output": [
               {
-                "id": "msg_mockresp01_0",
+                "id": "msg_msg_mock01_0",
                 "type": "message",
                 "status": "incomplete",
                 "content": [
@@ -65,7 +60,8 @@
                 "reasoning_tokens": 0
               },
               "total_tokens": 18
-            }
+            },
+            "model": "claude-sonnet-4-5-20250929"
           }
         }
       }
@@ -73,54 +69,39 @@
   ],
   "upstream": [
     {
-      "family": "gemini",
+      "family": "anthropic",
       "method": "POST",
-      "path": "/v1beta/models/gemini-2.5-flash:generateContent",
-      "query": "",
-      "credential": "sk-gemini-1",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
       "headers": {
-        "accept-encoding": "gzip",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
         "content-type": "application/json",
-        "user-agent": "<go-default-ua>",
-        "x-goog-api-key": "sk-gemini-1"
+        "user-agent": "cpa-e2e/1"
       },
       "body": {
-        "contents": [
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
           {
             "role": "user",
-            "parts": [
+            "content": [
               {
-                "text": "What is the weather in Paris?"
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
               }
             ]
           }
         ],
-        "generationConfig": {
-          "maxOutputTokens": 16
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
         },
-        "safetySettings": [
-          {
-            "category": "HARM_CATEGORY_HARASSMENT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_HATE_SPEECH",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
-            "threshold": "OFF"
-          },
-          {
-            "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
-            "threshold": "BLOCK_NONE"
-          }
-        ],
-        "model": "gemini-2.5-flash"
+        "stream": true
       }
     }
   ]

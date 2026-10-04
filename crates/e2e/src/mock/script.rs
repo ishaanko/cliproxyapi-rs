@@ -27,6 +27,8 @@ pub enum Content {
     /// Responses only: an `image_generation_call` output item (with partial image events when
     /// streaming) and `tool_usage.image_gen` in the completed event.
     Image,
+    /// Text ending with Anthropic's `pause_turn` stop reason (server tool iteration pause).
+    Pause,
 }
 
 /// How a stream's events are split over network writes.

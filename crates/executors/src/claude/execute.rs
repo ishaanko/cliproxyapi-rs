@@ -26,6 +26,7 @@ use super::cache_control::{
 use super::cloaking::{
     ClaudeCodeContextManagementState, apply_cloaking_internal, capture_claude_code_fable_state, capture_claude_code_system_placement,
     claude_cch_fallback_billing_header, detect_incoming_claude_code_request, inject_claude_code_context_management,
+    inject_claude_code_current_date,
     reconcile_claude_code_context_management, reconcile_claude_code_fable_model_after_payload,
     reconcile_claude_code_system_placement_after_payload, resolve_claude_continuity_tags, validate_claude_mid_system_message_model,
 };
@@ -326,6 +327,7 @@ impl ClaudeExecutor {
             let (existing_prev_req, existing_prompt_id) = extract_claude_billing_tags(&body);
             if let Some(tags) = resolve_claude_continuity_tags(
                 &ctx,
+                cfg,
                 auth,
                 &incoming_headers,
                 &body,
@@ -334,6 +336,9 @@ impl ClaudeExecutor {
                 &existing_prompt_id,
             ) {
                 *continuity.lock() = tags.ctx.clone();
+                if !tags.ctx.pinned_date.is_empty() {
+                    body = inject_claude_code_current_date(&body, &tags.ctx.pinned_date);
+                }
                 body = inject_claude_billing_tags(&body, &tags.prev_req, &tags.prompt_id);
                 if fp.inject_diagnostics && is_anthropic_upstream_base(&base_url) {
                     let (updated, state) = inject_claude_diagnostics_with_state(

@@ -105,85 +105,16 @@
               }
             },
             {
-              "event": "response.output_text.done",
+              "event": "error",
               "data": {
-                "type": "response.output_text.done",
-                "sequence_number": 6,
-                "item_id": "msg_resp_mockresp01_0",
-                "output_index": 0,
-                "content_index": 0,
-                "text": "Hello from ",
-                "logprobs": []
-              }
-            },
-            {
-              "event": "response.content_part.done",
-              "data": {
-                "type": "response.content_part.done",
-                "sequence_number": 7,
-                "item_id": "msg_resp_mockresp01_0",
-                "output_index": 0,
-                "content_index": 0,
-                "part": {
-                  "type": "output_text",
-                  "annotations": [],
-                  "logprobs": [],
-                  "text": "Hello from "
-                }
-              }
-            },
-            {
-              "event": "response.output_item.done",
-              "data": {
-                "type": "response.output_item.done",
-                "sequence_number": 8,
-                "output_index": 0,
-                "item": {
-                  "id": "msg_resp_mockresp01_0",
-                  "type": "message",
-                  "status": "completed",
-                  "content": [
-                    {
-                      "type": "output_text",
-                      "annotations": [],
-                      "logprobs": [],
-                      "text": "Hello from "
-                    }
-                  ],
-                  "role": "assistant"
-                }
-              }
-            },
-            {
-              "event": "response.completed",
-              "data": {
-                "type": "response.completed",
-                "sequence_number": 9,
-                "response": {
-                  "id": "resp_mockresp01",
-                  "object": "response",
-                  "created_at": "<now>",
-                  "status": "completed",
-                  "background": false,
-                  "error": null,
-                  "model": "gemini-2.5-flash",
-                  "output": [
-                    {
-                      "id": "msg_resp_mockresp01_0",
-                      "type": "message",
-                      "status": "completed",
-                      "content": [
-                        {
-                          "type": "output_text",
-                          "annotations": [],
-                          "logprobs": [],
-                          "text": "Hello from "
-                        }
-                      ],
-                      "role": "assistant"
-                    }
-                  ]
-                }
+                "type": "error",
+                "error": {
+                  "code": "internal_server_error",
+                  "message": "unexpected EOF",
+                  "param": null,
+                  "type": "server_error"
+                },
+                "sequence_number": 5
               }
             }
           ]
