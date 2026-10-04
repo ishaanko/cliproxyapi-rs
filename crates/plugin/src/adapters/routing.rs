@@ -12,6 +12,7 @@ use cpa_runtime::conductor::PluginScheduler;
 use cpa_runtime::executor::ExecError;
 use cpa_translator::Format;
 
+use super::models::normalize_executor_format_name;
 use crate::caps::Record;
 use crate::ctx::CallCtx;
 use crate::host::Host;
@@ -170,8 +171,9 @@ impl Host {
                     return Some(resp);
                 }
                 ROUTE_TARGET_SELF | ROUTE_TARGET_EXECUTOR => {
-                    let source = Format::parse(&next.source_format);
-                    if !source.is_some_and(|f| self.executor_plugin_ready(&resp.target, f, next.stream)) {
+                    // Go: `executorInputFormat` normalizes the name and defaults an empty one to openai.
+                    let source = normalize_executor_format_name(&next.source_format).unwrap_or(Format::OpenAI);
+                    if !self.executor_plugin_ready(&resp.target, source, next.stream) {
                         tracing::warn!(plugin_id = %rec.id, target_plugin_id = %resp.target, "pluginhost: model router returned unavailable executor plugin");
                         continue;
                     }

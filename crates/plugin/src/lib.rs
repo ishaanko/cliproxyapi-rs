@@ -26,6 +26,7 @@ pub mod httpclient;
 pub mod loader;
 pub mod management;
 pub mod platform;
+pub mod routing_callbacks;
 pub mod rpc;
 pub mod sniff;
 pub mod usage_helpers;

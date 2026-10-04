@@ -294,6 +294,7 @@ impl Host {
             abi::METHOD_HOST_AUTH_GET_RUNTIME => self.cb_auth_get_runtime(req),
             abi::METHOD_HOST_AUTH_SAVE => self.cb_auth_save(req).await,
             abi::METHOD_HOST_AFFINITY_LOOKUP => self.cb_affinity_lookup(req),
+            abi::METHOD_HOST_ROUTING_RESET_COOLDOWN => self.cb_routing_reset_cooldown(id, req),
             other => Err(HostError::msg(format!("unsupported host callback {other}"))),
         }
     }

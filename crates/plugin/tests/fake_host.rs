@@ -434,6 +434,148 @@ fn plugin_http_status_survives_the_error_envelope() {
     }
 }
 
+// ---- custom formats, executor http_request, routing callbacks ----
+
+use cpa_runtime::conductor::Manager;
+use cpa_runtime::executor::{Options, Request};
+use cpa_translator::Format;
+
+/// An executor plugin declaring `input`/`output` formats that records every executor call.
+fn executor_plugin(id: &'static str, input: &str, output: &str, calls: Arc<Mutex<Vec<(String, Value)>>>) -> Fake {
+    let caps = json!({"executor": true, "executor_model_scope": "both", "executor_input_formats": [input], "executor_output_formats": [output]});
+    Fake::new(id, caps, move |method, req| {
+        calls.lock().push((method.to_string(), req.clone()));
+        match method {
+            abi::METHOD_EXECUTOR_IDENTIFIER => Ok(json!({"identifier": id})),
+            abi::METHOD_EXECUTOR_EXECUTE => Ok(json!({"Payload": base64(br#"{"ok":true}"#), "Headers": {"X-Plugin": ["1"]}})),
+            abi::METHOD_EXECUTOR_HTTP_REQUEST => Ok(json!({"StatusCode": 0, "Headers": {"X-Echo": [req["Method"].as_str().unwrap_or_default()]}, "Body": base64(b"hello")})),
+            other => Err(PluginError::msg(format!("unexpected method {other}"))),
+        }
+    })
+}
+
+#[tokio::test]
+async fn custom_executor_formats_reach_the_plugin_unchanged() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (host, _dir) = host_with(vec![executor_plugin("protoexec", "x-proto", "x-proto", calls.clone())]).await;
+    let proto = Format::intern("x-proto").expect("custom format");
+    assert!(proto.is_custom());
+    let req = Request { model: "m".into(), payload: bytes::Bytes::from_static(b"{}"), format: proto, metadata: Default::default() };
+    let resp = host.execute_plugin_executor(&CallCtx::background(), "protoexec", req, Options::new(proto)).await.expect("execute");
+    assert_eq!(&resp.payload[..], br#"{"ok":true}"#);
+    let calls = calls.lock();
+    let exec = calls.iter().find(|(m, _)| m == abi::METHOD_EXECUTOR_EXECUTE).expect("executor.execute call");
+    assert_eq!((exec.1["Format"].as_str(), exec.1["SourceFormat"].as_str()), (Some("x-proto"), Some("x-proto")));
+}
+
+#[tokio::test]
+async fn an_executor_without_a_translator_rejects_a_foreign_input_format() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (host, _dir) = host_with(vec![executor_plugin("protoexec", "x-proto", "x-proto", calls)]).await;
+    let req = Request { model: "m".into(), payload: bytes::Bytes::from_static(b"{}"), format: Format::OpenAI, metadata: Default::default() };
+    let err = host.execute_plugin_executor(&CallCtx::background(), "protoexec", req, Options::new(Format::OpenAI)).await.unwrap_err();
+    assert_eq!(err.message, r#"plugin executor protoexec does not support input format "openai""#);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_custom_output_format_is_translated_by_a_plugin_response_translator() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let recorded = calls.clone();
+    let caps = json!({"executor": true, "executor_model_scope": "both", "executor_input_formats": ["openai"], "executor_output_formats": ["x-proto"], "response_translator": true});
+    let plugin = Fake::new("protoxlate", caps, move |method, req| {
+        recorded.lock().push((method.to_string(), req.clone()));
+        match method {
+            abi::METHOD_EXECUTOR_IDENTIFIER => Ok(json!({"identifier": "protoxlate"})),
+            abi::METHOD_EXECUTOR_EXECUTE => Ok(json!({"Payload": base64(b"native-proto")})),
+            abi::METHOD_RESPONSE_TRANSLATE => Ok(json!({"Body": base64(br#"{"object":"chat.completion"}"#)})),
+            other => Err(PluginError::msg(format!("unexpected method {other}"))),
+        }
+    });
+    let (host, _dir) = host_with(vec![plugin]).await;
+    cpa_translator::registry::set_plugin_hooks(Some(Arc::new(cpa_plugin::TranslatorHooks(host.clone()))));
+    let req = Request { model: "m".into(), payload: bytes::Bytes::from_static(b"{}"), format: Format::OpenAI, metadata: Default::default() };
+    let resp = host.execute_plugin_executor(&CallCtx::background(), "protoxlate", req, Options::new(Format::OpenAI)).await;
+    cpa_translator::registry::set_plugin_hooks(None);
+    assert_eq!(&resp.expect("execute").payload[..], br#"{"object":"chat.completion"}"#);
+    let calls = calls.lock();
+    let exec = calls.iter().find(|(m, _)| m == abi::METHOD_EXECUTOR_EXECUTE).expect("executor.execute");
+    assert_eq!(exec.1["Format"], "x-proto");
+    let xlate = calls.iter().find(|(m, _)| m == abi::METHOD_RESPONSE_TRANSLATE).expect("response.translate");
+    assert_eq!((xlate.1["FromFormat"].as_str(), xlate.1["ToFormat"].as_str()), (Some("x-proto"), Some("openai")));
+}
+
+#[test]
+fn custom_format_names_are_interned_and_builtins_stay_builtin() {
+    assert_eq!(Format::intern("claude"), Some(Format::Claude));
+    assert_eq!(Format::intern(""), None);
+    let (a, b) = (Format::intern("acme").unwrap(), Format::intern("acme").unwrap());
+    assert_eq!((a, a.as_str()), (b, "acme"));
+    assert_ne!(a, Format::intern("acme2").unwrap());
+}
+
+#[tokio::test]
+async fn manager_http_request_goes_through_the_plugin_executor() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let (host, _dir) = host_with(vec![executor_plugin("httpexec", "chat-completions", "chat-completions", calls.clone())]).await;
+    let manager = Arc::new(Manager::new());
+    let registry = cpa_core::registry::ModelRegistry::new();
+    host.register_executors(&manager, &registry);
+    let auth = cpa_auth::Auth::new("a1", "httpexec");
+    let mut req = reqwest::Request::new(reqwest::Method::PATCH, "http://example.test/path?q=1".parse().unwrap());
+    req.headers_mut().insert("x-in", "v".parse().unwrap());
+    *req.body_mut() = Some(reqwest::Body::from("payload"));
+    let resp = manager.http_request(&auth, req).await.expect("plugin http request");
+    // Status 0 from the plugin means 200.
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(resp.headers()["x-echo"], "PATCH");
+    assert_eq!(&resp.bytes().await.unwrap()[..], b"hello");
+    let calls = calls.lock();
+    let sent = calls.iter().find(|(m, _)| m == abi::METHOD_EXECUTOR_HTTP_REQUEST).expect("http_request call");
+    assert_eq!(sent.1["URL"], "http://example.test/path?q=1");
+    assert_eq!(sent.1["AuthID"], "a1");
+    assert_eq!(sent.1["Headers"]["X-In"][0], "v");
+    assert_eq!(sent.1["Body"], base64(b"payload"));
+}
+
+fn reset_cooldown_call(host: &Arc<Host>, auth_index: &str) -> Result<Value, cpa_plugin::error::HostError> {
+    let id = cpa_plugin::callbacks::CbIdentity { plugin_id: "tester".into(), instance: None };
+    let body = serde_json::to_vec(&json!({"auth_index": auth_index})).unwrap();
+    let raw = futures_executor_block(host.call_from_plugin_async(&id, abi::METHOD_HOST_ROUTING_RESET_COOLDOWN, &body))?;
+    let envelope: Value = serde_json::from_slice(&raw).unwrap();
+    Ok(envelope["result"].clone())
+}
+
+fn futures_executor_block<T>(fut: impl std::future::Future<Output = T>) -> T {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn host_routing_reset_cooldown_clears_a_credential() {
+    let (host, _dir) = host_with(vec![]).await;
+    let manager = Arc::new(Manager::new());
+    host.set_auth_manager(Some(manager.clone()));
+    let mut auth = cpa_auth::Auth::new("claude-a.json", "claude");
+    let next = chrono::Utc::now() + chrono::Duration::hours(65);
+    auth.status = cpa_auth::Status::Error;
+    auth.unavailable = true;
+    auth.next_retry_after = Some(next);
+    auth.quota = cpa_auth::types::QuotaState { exceeded: true, reason: "credential_quota".into(), next_recover_at: Some(next), backoff_level: 1, ..Default::default() };
+    let mut registered = manager.register(auth).await.expect("register");
+    let index = registered.ensure_index();
+
+    let result = reset_cooldown_call(&host, &index).expect("reset");
+    assert_eq!(result["auth_index"], index.as_str());
+    let updated = manager.get("claude-a.json").expect("auth still registered");
+    assert!(!updated.unavailable && !updated.quota.exceeded);
+    assert_eq!(updated.status, cpa_auth::Status::Active);
+
+    // Unknown and empty indexes fail like Go's `authByIndex`.
+    assert!(reset_cooldown_call(&host, "missing").is_err());
+    assert!(reset_cooldown_call(&host, "").is_err());
+    host.set_auth_manager(None);
+    assert!(reset_cooldown_call(&host, "any").is_err());
+}
+
 #[test]
 fn envelope_and_payload_keys_match_ignoring_case() {
     let raw = br#"{"OK":true,"Result":{"resources":[{"path":"/status","MENU":"m"}]}}"#;

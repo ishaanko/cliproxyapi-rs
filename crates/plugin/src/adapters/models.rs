@@ -47,19 +47,19 @@ pub struct AuthModelResult {
     pub err: Option<String>,
 }
 
-/// `normalizeExecutorFormatName`: Go accepts any string as a format; formats the host does not
-/// know cannot flow through the translator registry and are dropped.
+/// `normalizeExecutorFormatName`: Go accepts any string as a format, so unknown names become
+/// custom formats (`Format::Custom`) that only plugin translators know.
 pub(crate) fn normalize_executor_format_name(raw: &str) -> Option<Format> {
     match raw.trim().to_lowercase().as_str() {
         "" | "none" => None,
         "chat-completions" | "chat_completions" | "openai-chat-completions" | "openai_chat_completions" => Some(Format::OpenAI),
         "responses" | "openai-responses" | "openai_responses" => Some(Format::OpenAIResponse),
         "anthropic" => Some(Format::Claude),
-        _ => Format::parse(raw.trim()),
+        _ => Format::intern(raw.trim()),
     }
 }
 
-/// `normalizeExecutorFormats`: de-duplicated known formats in declaration order.
+/// `normalizeExecutorFormats`: de-duplicated formats in declaration order.
 pub(crate) fn normalize_executor_formats(raw: &[String]) -> Vec<Format> {
     let mut out: Vec<Format> = Vec::new();
     for item in raw {

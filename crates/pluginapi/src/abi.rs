@@ -87,6 +87,7 @@ pub const METHOD_HOST_AUTH_GET: &str = "host.auth.get";
 pub const METHOD_HOST_AUTH_GET_RUNTIME: &str = "host.auth.get_runtime";
 pub const METHOD_HOST_AUTH_SAVE: &str = "host.auth.save";
 pub const METHOD_HOST_AFFINITY_LOOKUP: &str = "host.affinity.lookup";
+pub const METHOD_HOST_ROUTING_RESET_COOLDOWN: &str = "host.routing.reset_cooldown";
 
 /// Response envelope of every RPC call in both directions.
 #[derive(Debug, Default, Deserialize)]
