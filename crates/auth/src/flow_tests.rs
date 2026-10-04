@@ -213,6 +213,32 @@ async fn claude_5xx_is_retryable_4xx_is_not() {
     );
 }
 
+/// A lost or undecodable response may hide a consumed single-use refresh token: never replay it.
+#[tokio::test]
+async fn claude_refresh_does_not_replay_after_decode_or_transport_error() {
+    let srv = MockServer::start(|_| MockResponse::raw(200, b"invalid json payload".to_vec())).await;
+    let svc = ClaudeAuth::with_client(http()).with_endpoints(claude_endpoints(&srv.url));
+    let err = svc
+        .refresh_tokens_with_retry("single-use-rt", 3)
+        .await
+        .unwrap_err();
+    assert!(!err.is_retryable_refresh(), "{err}");
+    assert_eq!(srv.request_count(), 1);
+
+    // Nothing listens on the port: a transport error, also attempted exactly once.
+    let dead = MockServer::start(|_| MockResponse::raw(200, vec![])).await;
+    let url = dead.url.clone();
+    drop(dead);
+    let svc = ClaudeAuth::with_client(http()).with_endpoints(claude_endpoints(&url));
+    let started = std::time::Instant::now();
+    let err = svc
+        .refresh_tokens_with_retry("single-use-rt-2", 3)
+        .await
+        .unwrap_err();
+    assert!(!err.is_retryable_refresh(), "{err}");
+    assert!(started.elapsed() < Duration::from_millis(900), "no backoff sleep expected");
+}
+
 // ---------------- Codex ----------------
 
 fn codex_endpoints(base: &str) -> CodexEndpoints {

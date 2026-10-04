@@ -169,6 +169,16 @@ fn auth_last_refresh_timestamp(auth: &Auth) -> Option<DateTime<Utc>> {
     None
 }
 
+/// The 401 error recorded on a credential whose access and refresh tokens are both dead.
+fn terminal_unauthorized_error(err: &ExecError) -> cpa_auth::types::AuthError {
+    cpa_auth::types::AuthError {
+        code: "unauthorized".into(),
+        message: err.message.clone(),
+        retryable: false,
+        http_status: 401,
+    }
+}
+
 fn auth_has_refresh_credential(auth: &Auth) -> bool {
     if !auth.refresh_token().is_empty() {
         return true;
@@ -284,6 +294,9 @@ impl Manager {
         if !Failure::of_exec(err).is_unauthorized() || !auth_has_refresh_credential(auth) {
             return None;
         }
+        if has_unauthorized_auth_failure(auth) {
+            return None;
+        }
         // The refresh itself is rare and large; keep it out of the callers' future size.
         Box::pin(self.refresh_after_unauthorized(auth)).await
     }
@@ -325,7 +338,7 @@ impl Manager {
         id: &str,
         failed_access_token: &str,
     ) -> Result<Auth, ExecError> {
-        self.refresh_auth_at_epoch(id, failed_access_token, 0).await
+        self.refresh_auth_at_epoch(id, failed_access_token, 0, false).await
     }
 
     pub(crate) async fn refresh_auth_at_epoch(
@@ -333,6 +346,7 @@ impl Manager {
         id: &str,
         failed_access_token: &str,
         epoch: u64,
+        force: bool,
     ) -> Result<Auth, ExecError> {
         let id = id.trim();
         let plain = |m: &str| {
@@ -360,8 +374,11 @@ impl Manager {
         if epoch != 0 && auth.registration_epoch != epoch {
             return Err(plain("auth registration changed before refresh"));
         }
-        if has_disabled_invalid_grant_failure(&auth) {
+        if has_disabled_invalid_grant_failure(&auth) && !force {
             return Err(plain("auth is disabled with invalid grant"));
+        }
+        if has_unauthorized_auth_failure(&auth) && !force {
+            return Err(plain("auth is unauthorized"));
         }
         if !failed_access_token.is_empty() {
             let current = auth.access_token();
@@ -375,7 +392,7 @@ impl Manager {
         let now = self.now();
         match updated {
             Err(err) => {
-                self.apply_refresh_failure(id, &base, &err, now);
+                self.apply_refresh_failure(id, &base, &err, now, failed_access_token, force);
                 Err(err)
             }
             Ok(mut updated) => {
@@ -419,12 +436,20 @@ impl Manager {
         }
     }
 
-    fn apply_refresh_failure(&self, id: &str, base: &Auth, err: &ExecError, now: DateTime<Utc>) {
+    fn apply_refresh_failure(
+        &self,
+        id: &str,
+        base: &Auth,
+        err: &ExecError,
+        now: DateTime<Utc>,
+        failed_access_token: &str,
+        force: bool,
+    ) {
         let f = Failure::of_exec(err);
         let unauthorized = f.is_unauthorized();
         let invalid_grant = f.is_invalid_grant();
         let mut reschedule = false;
-        let mut permanently_disabled = false;
+        let mut should_unschedule = false;
         {
             let mut st = self.state.write();
             let Some(current) = st.auths.get_mut(id) else {
@@ -433,11 +458,35 @@ impl Manager {
             if current.registration_epoch != base.registration_epoch {
                 return;
             }
+            let was_terminal_unauthorized = has_unauthorized_auth_failure(current);
+            if was_terminal_unauthorized && !force {
+                return;
+            }
+            if was_terminal_unauthorized {
+                // A forced refresh of a terminal unauthorized credential keeps it blocked.
+                current.generation += 1;
+                current.updated_at = Some(now);
+                current.unavailable = true;
+                current.status = Status::Error;
+                current.next_refresh_after = None;
+                current.next_retry_after = None;
+                if unauthorized || invalid_grant {
+                    current.last_error = Some(terminal_unauthorized_error(err));
+                    current.status_message = "unauthorized (refresh token invalid)".into();
+                }
+                drop(st);
+                self.queue_refresh_unschedule(id);
+                return;
+            }
             current.generation += 1;
             current.updated_at = Some(now);
             current.last_error = Some(refresh_error_from_error(err));
             let disabled = is_disabled(current);
             let has_valid_token = current.has_valid_access_token(now);
+            // The failed token is set only when upstream rejected this exact access token; its
+            // expiry no longer proves it is usable.
+            let access_token_rejected =
+                !failed_access_token.is_empty() && current.access_token() == failed_access_token;
             let failure_backoff =
                 chrono::Duration::from_std(REFRESH_FAILURE_BACKOFF).unwrap_or_default();
             if disabled && invalid_grant {
@@ -446,7 +495,7 @@ impl Manager {
                 current.next_refresh_after = None;
                 current.refresh_failures = 0;
                 current.status_message = "disabled (invalid grant)".into();
-                permanently_disabled = true;
+                should_unschedule = true;
             } else if disabled {
                 current.unavailable = true;
                 current.status = Status::Disabled;
@@ -455,11 +504,23 @@ impl Manager {
                     current.status_message = "disabled".into();
                 }
                 reschedule = true;
+            } else if access_token_rejected && invalid_grant {
+                // Neither token can recover without a new login: stop selecting the credential
+                // until its tokens change.
+                current.unavailable = true;
+                current.status = Status::Error;
+                current.next_refresh_after = None;
+                current.next_retry_after = None;
+                current.refresh_failures = 0;
+                current.last_error = Some(terminal_unauthorized_error(err));
+                current.status_message = "unauthorized (refresh token invalid)".into();
+                should_unschedule = true;
             } else if !has_valid_token {
                 current.unavailable = true;
                 current.status = Status::Error;
                 if unauthorized {
                     current.next_refresh_after = None;
+                    current.next_retry_after = None;
                     current.refresh_failures = 0;
                     current.status_message = "unauthorized".into();
                 } else if invalid_grant {
@@ -510,7 +571,7 @@ impl Manager {
         }
         if reschedule {
             self.queue_refresh_reschedule(id);
-        } else if permanently_disabled {
+        } else if should_unschedule {
             self.queue_refresh_unschedule(id);
         }
     }
@@ -534,7 +595,7 @@ impl Manager {
 
     /// Immediate synchronous refresh for the management API (Go: ForceRefreshAuth).
     pub async fn force_refresh_auth(&self, id: &str) -> Result<Auth, ExecError> {
-        self.refresh_auth_for_request(id, "").await
+        self.refresh_auth_at_epoch(id, "", 0, true).await
     }
 
     /// Refreshes every credential that has refresh credentials, with bounded concurrency (Go:
@@ -833,7 +894,7 @@ impl Manager {
                 return;
             };
             if this.begin_refresh_job(&id_owned, epoch) {
-                let _ = this.refresh_auth_at_epoch(&id_owned, "", epoch).await;
+                let _ = this.refresh_auth_at_epoch(&id_owned, "", epoch, false).await;
             }
         });
         // The job's completion reschedules via `queue_refresh_reschedule`.

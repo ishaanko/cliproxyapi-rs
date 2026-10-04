@@ -185,6 +185,7 @@ pub fn has_unauthorized_auth_failure(auth: &Auth) -> bool {
     auth.unavailable
         && auth.status == Status::Error
         && auth.next_refresh_after.is_none()
+        && auth.next_retry_after.is_none()
         && (err.http_status == 401 || err.code.eq_ignore_ascii_case(CODE_UNAUTHORIZED))
 }
 
@@ -475,6 +476,12 @@ pub fn clear_aggregated_availability(auth: &mut Auth) {
 
 /// Go: updateAggregatedAvailability. Folds per-model states into the credential-level flags.
 pub fn update_aggregated_availability(auth: &mut Auth, now: DateTime<Utc>) {
+    // A terminal unauthorized credential stays blocked until its tokens change.
+    // Model-level results must not make it selectable again.
+    if has_unauthorized_auth_failure(auth) {
+        auth.unavailable = true;
+        return;
+    }
     if auth.quota.exceeded
         && auth.quota.reason == "credential_quota"
         && after(auth.quota.next_recover_at, now)
@@ -549,6 +556,10 @@ pub fn update_aggregated_availability(auth: &mut Auth, now: DateTime<Utc>) {
 }
 
 pub fn clear_auth_state_on_success(auth: &mut Auth, now: DateTime<Utc>) {
+    if has_unauthorized_auth_failure(auth) {
+        auth.unavailable = true;
+        return;
+    }
     auth.unavailable = false;
     auth.status = Status::Active;
     auth.status_message.clear();
@@ -597,6 +608,9 @@ pub fn clear_unauthorized_model_states(auth: &mut Auth, now: DateTime<Utc>) -> V
 
 /// Wipes cooldown/quota deadlines on the credential and every model (Go: clearCooldownStateForAuth).
 pub fn clear_cooldown_state_for_auth(auth: &mut Auth, now: DateTime<Utc>) -> bool {
+    if has_unauthorized_auth_failure(auth) {
+        return false;
+    }
     let mut changed = false;
     if auth.unavailable
         || auth.next_retry_after.is_some()
@@ -1001,8 +1015,17 @@ pub fn apply_result(
         auth.failed += 1;
     }
 
+    let was_terminal_unauthorized = has_unauthorized_auth_failure(auth);
+
     if result.success {
-        if auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
+        if was_terminal_unauthorized {
+            // In-flight successes must not revive a terminal unauthorized credential.
+            if !model_key.is_empty()
+                && let Some(state) = ensure_model_state(auth, model_key)
+            {
+                reset_model_state(state, now);
+            }
+        } else if auth.quota.reason == "credential_quota" && after(auth.quota.next_recover_at, now) {
             // Retain active credential-scoped cooldown.
         } else if !model_key.is_empty() {
             if let Some(state) = ensure_model_state(auth, model_key) {
@@ -1019,7 +1042,7 @@ pub fn apply_result(
         }
     } else if !model_key.is_empty() {
         if !should_skip_credential_cooldown(result.error.as_ref()) {
-            apply_model_failure(auth, result, model_key, now, policy);
+            apply_model_failure(auth, result, model_key, now, policy, was_terminal_unauthorized);
         }
     } else {
         let mut disable = policy.disable_cooling;
@@ -1030,14 +1053,23 @@ pub fn apply_result(
         {
             disable = false;
         }
-        apply_auth_failure_state(
-            auth,
-            result.error.as_ref(),
-            result.retry_after,
-            now,
-            policy,
-            disable,
-        );
+        if !was_terminal_unauthorized {
+            apply_auth_failure_state(
+                auth,
+                result.error.as_ref(),
+                result.retry_after,
+                now,
+                policy,
+                disable,
+            );
+        }
+    }
+
+    if was_terminal_unauthorized {
+        auth.unavailable = true;
+        auth.status = Status::Error;
+        auth.next_refresh_after = None;
+        auth.next_retry_after = None;
     }
 
     auth.generation += 1;
@@ -1069,6 +1101,7 @@ fn apply_model_failure(
     model_key: &str,
     now: DateTime<Utc>,
     policy: CoolingPolicy,
+    was_terminal_unauthorized: bool,
 ) {
     let mut disable = policy.disable_cooling;
     if result
@@ -1093,8 +1126,10 @@ fn apply_model_failure(
     if let Some(err) = &result.error {
         state.last_error = Some(err.clone());
         state.status_message = err.message.clone();
-        auth.last_error = Some(err.clone());
-        auth.status_message = err.message.clone();
+        if !was_terminal_unauthorized {
+            auth.last_error = Some(err.clone());
+            auth.status_message = err.message.clone();
+        }
     }
 
     let status_code = result.status_code();
@@ -1114,7 +1149,7 @@ fn apply_model_failure(
         let (next, level) = next_cloudflare_cooldown(state.quota.backoff_level, disable, now);
         state.next_retry_after = next;
         state.status_message = "cloudflare challenge".into();
-        if auth.last_error.is_some() {
+        if auth.last_error.is_some() && !was_terminal_unauthorized {
             auth.status_message = "cloudflare challenge".into();
         }
         apply_cooldown_fields(
@@ -1224,16 +1259,18 @@ fn apply_model_failure(
                             },
                         );
                     }
-                    auth.unavailable = true;
-                    let mut auth_next = credential_next;
-                    if auth_credential_quota && auth.quota.next_recover_at > auth_next {
-                        auth_next = auth.quota.next_recover_at;
+                    if !was_terminal_unauthorized {
+                        auth.unavailable = true;
+                        let mut auth_next = credential_next;
+                        if auth_credential_quota && auth.quota.next_recover_at > auth_next {
+                            auth_next = auth.quota.next_recover_at;
+                        }
+                        auth.quota.exceeded = true;
+                        auth.quota.reason = "credential_quota".into();
+                        auth.quota.next_recover_at = auth_next;
+                        auth.quota.backoff_level = backoff_level;
+                        auth.next_retry_after = auth_next;
                     }
-                    auth.quota.exceeded = true;
-                    auth.quota.reason = "credential_quota".into();
-                    auth.quota.next_recover_at = auth_next;
-                    auth.quota.backoff_level = backoff_level;
-                    auth.next_retry_after = auth_next;
                 }
             }
             408 | 500 | 502 | 503 | 504 | 520..=526 => {

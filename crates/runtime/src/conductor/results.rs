@@ -12,7 +12,8 @@ use cpa_core::registry::ClientModelProjection;
 use super::Manager;
 use super::cooldown::{
     CooldownView, ExecResult, apply_result, clear_cooldown_state_for_auth, cooldown_reason,
-    cooldown_snapshot_for_auth, existing_model_state, has_model_error, is_disabled,
+    cooldown_snapshot_for_auth, existing_model_state, has_model_error, has_unauthorized_auth_failure,
+    is_disabled,
     is_model_state_active_cooldown, merge_model_state, model_state_is_clean,
     normalize_model_states, reset_model_state, update_aggregated_availability,
 };
@@ -424,7 +425,7 @@ impl Manager {
                 models.extend(registered_models.iter().cloned());
             }
             let models = dedupe_strings(models);
-            if !is_disabled(auth) && !has_model_error(auth, now) {
+            if !is_disabled(auth) && !has_model_error(auth, now) && !has_unauthorized_auth_failure(auth) {
                 auth.last_error = None;
                 auth.status_message.clear();
                 auth.status = Status::Active;
@@ -562,7 +563,10 @@ impl Manager {
         let Some(auth) = st.auths.get_mut(&auth_id) else {
             return false;
         };
-        if is_disabled(auth) || self.cooldown_disabled_for_auth_cfg(auth, &cfg) {
+        if is_disabled(auth)
+            || self.cooldown_disabled_for_auth_cfg(auth, &cfg)
+            || has_unauthorized_auth_failure(auth)
+        {
             return false;
         }
         let updated_at = record.updated_at.unwrap_or(now);
