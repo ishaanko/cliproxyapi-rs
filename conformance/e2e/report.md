@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `8b6a10ae47df576b`
-- scenarios: 1061 total, 1061 passed, 0 failed
+- goldens digest: `ce72caa4bb02affa`
+- scenarios: 1069 total, 1069 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -893,6 +893,14 @@
 | `redis.usage.failed.codex` | PASS | queued usage of failed upstream calls, codex upstream, json and stream |  |
 | `redis.usage.failed.gemini` | PASS | queued usage of failed upstream calls, gemini upstream, json and stream |  |
 | `redis.usage.failed.compat` | PASS | queued usage of failed upstream calls, compat upstream, json and stream |  |
+| `redis.usage.abort.stream.claude` | PASS | queued usage of a stream the client abandons after the first chunk, claude upstream |  |
+| `redis.usage.abort.json.claude` | PASS | queued usage of a non-stream request the client abandons while waiting, claude upstream |  |
+| `redis.usage.abort.stream.codex` | PASS | queued usage of a stream the client abandons after the first chunk, codex upstream |  |
+| `redis.usage.abort.json.codex` | PASS | queued usage of a non-stream request the client abandons while waiting, codex upstream |  |
+| `redis.usage.abort.stream.gemini` | PASS | queued usage of a stream the client abandons after the first chunk, gemini upstream |  |
+| `redis.usage.abort.json.gemini` | PASS | queued usage of a non-stream request the client abandons while waiting, gemini upstream |  |
+| `redis.usage.abort.stream.compat` | PASS | queued usage of a stream the client abandons after the first chunk, compat upstream |  |
+| `redis.usage.abort.json.compat` | PASS | queued usage of a non-stream request the client abandons while waiting, compat upstream |  |
 | `redis.usage_disabled` | PASS | no usage records are queued with usage-statistics-enabled off |  |
 | `media.images.codex.gen_json` | PASS | codex image generation, options pass through |  |
 | `media.images.codex.gen_default_model` | PASS | no model defaults to gpt-image-2 |  |
