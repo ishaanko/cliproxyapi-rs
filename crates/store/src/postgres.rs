@@ -133,7 +133,7 @@ impl PostgresStore {
         let conn = Conn::new(&cfg.dsn).map_err(|e| db_err("open database connection", e))?;
         let shared = Arc::new(Shared { db: tokio::sync::Mutex::new(conn), cfg });
         let ping = shared.clone();
-        rt::block_on_deadline(async move {
+        rt::block_on_until(rt::Deadline::start(), async move {
             let mut db = ping.db.lock().await;
             let client = db.client().await?;
             client.simple_query("SELECT 1").await.map(|_| ())
@@ -173,24 +173,30 @@ impl PostgresStore {
 
     /// `EnsureSchema`: creates the schema (when set) and the three tables.
     pub fn ensure_schema(&self) -> Result<(), StoreError> {
+        self.ensure_schema_until(rt::Deadline::start())
+    }
+
+    fn ensure_schema_until(&self, dl: rt::Deadline) -> Result<(), StoreError> {
         let shared = self.shared.clone();
         rt::block_on(async move {
-            tokio::time::timeout(rt::DEADLINE, ensure_schema(&shared))
+            tokio::time::timeout_at(dl.instant(), ensure_schema(&shared))
                 .await
                 .unwrap_or_else(|_| Err(db_err("create schema", "context deadline exceeded".to_string())))
         })
     }
 
-    /// `Bootstrap`: syncs config and auth records between Postgres and the spool.
+    /// `Bootstrap`: syncs config and auth records between Postgres and the spool, all under one
+    /// 30 s deadline (Go: the `context.WithTimeout` in `cmd/server/main.go`).
     pub fn bootstrap(&self, example_config_path: &str) -> Result<(), StoreError> {
-        self.ensure_schema()?;
-        self.sync_config_from_database(example_config_path)?;
-        self.sync_auth_from_database()
+        let dl = rt::Deadline::start();
+        self.ensure_schema_until(dl)?;
+        self.sync_config_from_database(example_config_path, dl)?;
+        self.sync_auth_from_database(dl)
     }
 
-    fn query(&self, sql: String, params: Vec<DbParam>) -> Result<(), StoreError> {
+    fn query(&self, sql: String, params: Vec<DbParam>, dl: rt::Deadline) -> Result<(), StoreError> {
         let shared = self.shared.clone();
-        rt::block_on_deadline(async move {
+        rt::block_on_until(dl, async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = params.iter().map(DbParam::as_sql).collect();
@@ -199,11 +205,11 @@ impl PostgresStore {
         .map_err(backend_err)
     }
 
-    fn sync_config_from_database(&self, example: &str) -> Result<(), StoreError> {
+    fn sync_config_from_database(&self, example: &str, dl: rt::Deadline) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.config_table);
         let shared = self.shared.clone();
         let sql = format!("SELECT content FROM {table} WHERE id = $1");
-        let row: Option<String> = rt::block_on_deadline(async move {
+        let row: Option<String> = rt::block_on_until(dl, async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let row = client.query_opt(sql.as_str(), &[&DEFAULT_CONFIG_KEY]).await?;
@@ -228,7 +234,7 @@ impl PostgresStore {
                 }
                 let data = fs::read(&self.config_path)
                     .map_err(|e| backend_err(format!("postgres store: read local config: {e}")))?;
-                self.persist_config_data(&data)
+                self.persist_config_data(&data, dl)
             }
             Some(content) => {
                 if let Some(dir) = self.config_path.parent() {
@@ -241,8 +247,8 @@ impl PostgresStore {
         }
     }
 
-    fn sync_auth_from_database(&self) -> Result<(), StoreError> {
-        let rows = self.fetch_auth_rows(false)?;
+    fn sync_auth_from_database(&self, dl: rt::Deadline) -> Result<(), StoreError> {
+        let rows = self.fetch_auth_rows(false, dl)?;
         fs::remove_dir_all(&self.auth_dir)
             .or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
             .map_err(|e| backend_err(format!("postgres store: reset auth directory: {e}")))?;
@@ -270,12 +276,13 @@ impl PostgresStore {
     fn fetch_auth_rows(
         &self,
         ordered: bool,
+        dl: rt::Deadline,
     ) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>, StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.auth_table);
         let order = if ordered { " ORDER BY id" } else { "" };
         let sql = format!("SELECT id, content::text, created_at, updated_at FROM {table}{order}");
         let shared = self.shared.clone();
-        rt::block_on_deadline(async move {
+        rt::block_on_until(dl, async move {
             let mut db = shared.db.lock().await;
             let client = db.client().await?;
             let rows = client.query(sql.as_str(), &[]).await?;
@@ -288,27 +295,28 @@ impl PostgresStore {
         .map_err(|e| db_err(if ordered { "list auth" } else { "load auth from database" }, e))
     }
 
-    fn persist_config_data(&self, data: &[u8]) -> Result<(), StoreError> {
+    fn persist_config_data(&self, data: &[u8], dl: rt::Deadline) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.config_table);
         let sql = format!(
             "INSERT INTO {table} (id, content, created_at, updated_at) VALUES ($1, $2, NOW(), NOW()) \
              ON CONFLICT (id) DO UPDATE SET content = EXCLUDED.content, updated_at = NOW()"
         );
         let normalized = normalize_line_endings(&String::from_utf8_lossy(data));
-        self.query(sql, vec![DbParam::Text(DEFAULT_CONFIG_KEY.into()), DbParam::Text(normalized)])
+        self.query(sql, vec![DbParam::Text(DEFAULT_CONFIG_KEY.into()), DbParam::Text(normalized)], dl)
             .map_err(|e| backend_err(format!("postgres store: upsert config: {e}")))
     }
 
-    fn delete_config_record(&self) -> Result<(), StoreError> {
+    fn delete_config_record(&self, dl: rt::Deadline) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.config_table);
         self.query(
             format!("DELETE FROM {table} WHERE id = $1"),
             vec![DbParam::Text(DEFAULT_CONFIG_KEY.into())],
+            dl,
         )
         .map_err(|e| backend_err(format!("postgres store: delete config: {e}")))
     }
 
-    fn persist_auth(&self, rel_id: &str, data: &[u8]) -> Result<(), StoreError> {
+    fn persist_auth(&self, rel_id: &str, data: &[u8], dl: rt::Deadline) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.auth_table);
         // The raw bytes go to Postgres as text so it parses them exactly like Go's RawMessage.
         let sql = format!(
@@ -318,31 +326,31 @@ impl PostgresStore {
         let text = String::from_utf8(data.to_vec()).map_err(|_| {
             backend_err("postgres store: upsert auth record: invalid byte sequence for encoding \"UTF8\"")
         })?;
-        self.query(sql, vec![DbParam::Text(rel_id.into()), DbParam::Text(text)])
+        self.query(sql, vec![DbParam::Text(rel_id.into()), DbParam::Text(text)], dl)
             .map_err(|e| backend_err(format!("postgres store: upsert auth record: {e}")))
     }
 
-    fn delete_auth_record(&self, rel_id: &str) -> Result<(), StoreError> {
+    fn delete_auth_record(&self, rel_id: &str, dl: rt::Deadline) -> Result<(), StoreError> {
         let table = self.shared.full_table_name(&self.shared.cfg.auth_table);
-        self.query(format!("DELETE FROM {table} WHERE id = $1"), vec![DbParam::Text(rel_id.into())])
+        self.query(format!("DELETE FROM {table} WHERE id = $1"), vec![DbParam::Text(rel_id.into())], dl)
             .map_err(|e| backend_err(format!("postgres store: delete auth record: {e}")))
     }
 
     /// Upserts the spool file as the record for `rel_id`; empty files delete the record.
-    fn upsert_auth_record(&self, rel_id: &str, path: &Path) -> Result<(), StoreError> {
+    fn upsert_auth_record(&self, rel_id: &str, path: &Path, dl: rt::Deadline) -> Result<(), StoreError> {
         let data = fs::read(path).map_err(|e| backend_err(format!("postgres store: read auth file: {e}")))?;
         if data.is_empty() {
-            return self.delete_auth_record(rel_id);
+            return self.delete_auth_record(rel_id, dl);
         }
-        self.persist_auth(rel_id, &data)
+        self.persist_auth(rel_id, &data, dl)
     }
 
     /// `syncAuthFile`: like upsert, but a missing file deletes the record.
-    fn sync_auth_file(&self, rel_id: &str, path: &Path) -> Result<(), StoreError> {
+    fn sync_auth_file(&self, rel_id: &str, path: &Path, dl: rt::Deadline) -> Result<(), StoreError> {
         match fs::read(path) {
-            Ok(data) if data.is_empty() => self.delete_auth_record(rel_id),
-            Ok(data) => self.persist_auth(rel_id, &data),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.delete_auth_record(rel_id),
+            Ok(data) if data.is_empty() => self.delete_auth_record(rel_id, dl),
+            Ok(data) => self.persist_auth(rel_id, &data, dl),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.delete_auth_record(rel_id, dl),
             Err(e) => Err(backend_err(format!("postgres store: read auth file: {e}"))),
         }
     }
@@ -474,7 +482,7 @@ pub(crate) async fn ensure_schema(shared: &Shared) -> Result<(), StoreError> {
 impl Store for PostgresStore {
     /// `List`: every auth record in Postgres, skipping rows with invalid JSON or weights.
     fn list(&self) -> Result<Vec<Auth>, StoreError> {
-        let rows = self.fetch_auth_rows(true)?;
+        let rows = self.fetch_auth_rows(true, rt::Deadline::start())?;
         let mut auths = Vec::with_capacity(rows.len());
         for (id, payload, created_at, updated_at) in rows {
             let path = match self.absolute_auth_path(&id) {
@@ -549,7 +557,7 @@ impl Store for PostgresStore {
         }
         stamp_saved(auth, &path, AUTH_SOURCE_POSTGRES);
         let rel_id = self.relative_auth_id(&path)?;
-        self.upsert_auth_record(&rel_id, &path)?;
+        self.upsert_auth_record(&rel_id, &path, rt::Deadline::start())?;
         Ok(Some(path))
     }
 
@@ -567,7 +575,7 @@ impl Store for PostgresStore {
             Err(e) => return Err(backend_err(format!("postgres store: delete auth file: {e}"))),
         }
         let rel_id = self.relative_auth_id(&path)?;
-        self.delete_auth_record(&rel_id)
+        self.delete_auth_record(&rel_id, rt::Deadline::start())
     }
 
     fn base_dir(&self) -> Option<PathBuf> {
@@ -581,6 +589,8 @@ impl StorePersister for PostgresStore {
         if paths.is_empty() {
             return Ok(());
         }
+        // Go's watcher persists under one 30 s context that also covers the store lock wait.
+        let dl = rt::Deadline::start();
         let _guard = self.mu.lock();
         let run = || -> Result<(), StoreError> {
             for p in paths {
@@ -604,7 +614,7 @@ impl StorePersister for PostgresStore {
                         }
                     }
                 };
-                self.sync_auth_file(&rel_id, &trimmed)?;
+                self.sync_auth_file(&rel_id, &trimmed, dl)?;
             }
             Ok(())
         };
@@ -613,11 +623,12 @@ impl StorePersister for PostgresStore {
 
     /// `PersistConfig`: mirrors the spool config file into Postgres.
     fn persist_config(&self) -> Result<(), String> {
+        let dl = rt::Deadline::start();
         let _guard = self.mu.lock();
         let run = || -> Result<(), StoreError> {
             match fs::read(&self.config_path) {
-                Ok(data) => self.persist_config_data(&data),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.delete_config_record(),
+                Ok(data) => self.persist_config_data(&data, dl),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.delete_config_record(dl),
                 Err(e) => Err(backend_err(format!("postgres store: read config file: {e}"))),
             }
         };
