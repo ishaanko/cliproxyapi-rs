@@ -202,7 +202,7 @@ async fn route_selection_model(st: &AppState, info: &ReqInfo, body: &[u8], model
     };
     // The request context lets router callbacks see the inbound request; dropping the guard
     // cancels calls still running when the handler returns.
-    let ctx = CallCtx::background().with_request_id(info.request_id.clone()).with_ext(Arc::new(info.clone()));
+    let ctx = CallCtx::background().with_request_id(info.request_id.clone()).with_ext(Arc::new(info.clone())).with_api_log(info.api_log.exec_handle());
     let _cancel = ctx.token().clone().drop_guard();
     let Some(resp) = host.route_model(&ctx, req, "").await.filter(|r| r.handled) else {
         return Ok(model.to_string());

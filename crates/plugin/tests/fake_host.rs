@@ -576,6 +576,90 @@ async fn host_routing_reset_cooldown_clears_a_credential() {
     assert!(reset_cooldown_call(&host, "any").is_err());
 }
 
+// ---- host HTTP bridge: header profile and request-log capture ----
+
+/// A one-shot HTTP server: answers `ok` and hands back the raw request head it received.
+async fn one_shot_server() -> (u16, tokio::sync::oneshot::Receiver<String>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let Ok((mut conn, _)) = listener.accept().await else { return };
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+            match conn.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+        let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+        let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").await;
+    });
+    (port, rx)
+}
+
+// Go: TestHostHTTPClientAppliesWireProfile, through the `host.http.do` callback.
+#[tokio::test]
+async fn host_http_header_profile_reaches_the_wire_in_order() {
+    let (host, _dir) = host_with(vec![]).await;
+    let (port, head) = one_shot_server().await;
+    let request = json!({
+        "Method": "GET",
+        "URL": format!("http://127.0.0.1:{port}/test"),
+        "Headers": {"X-Custom-A": ["value-a"], "x-custom-b": ["value-b"], "User-Agent": ["test-agent"]},
+        "wire_profile": {"http1_only": true, "disable_auto_compression": true, "header_profile": ["x-custom-b", "X-Custom-A", "User-Agent", "Host"]},
+    });
+    let id = cpa_plugin::callbacks::CbIdentity { plugin_id: "tester".into(), instance: None };
+    let raw = host.call_from_plugin_async(&id, abi::METHOD_HOST_HTTP_DO, &serde_json::to_vec(&request).unwrap()).await.expect("host.http.do");
+    let envelope: Value = serde_json::from_slice(&raw).unwrap();
+    assert_eq!(envelope["result"]["StatusCode"], 200);
+    assert_eq!(envelope["result"]["Body"], base64(b"ok"));
+    let head = head.await.expect("request head");
+    let lines: Vec<&str> = head.split("\r\n\r\n").next().unwrap().split("\r\n").collect();
+    assert_eq!(
+        lines,
+        ["GET /test HTTP/1.1", "x-custom-b: value-b", "X-Custom-A: value-a", "User-Agent: test-agent", &format!("Host: 127.0.0.1:{port}"), "Connection: close"]
+    );
+}
+
+// Go: the bridge's `recordHTTPRequest` / `RecordAPIResponseMetadata` / `AppendAPIResponseChunk`.
+#[tokio::test]
+async fn host_http_calls_land_in_the_inbound_requests_upstream_log() {
+    use cpa_plugin::httpclient::HostHttpClient;
+    use cpa_pluginapi::api::HttpRequest;
+    use cpa_runtime::apilog::{ApiLog, ApiLogHandle};
+
+    let (port, _head) = one_shot_server().await;
+    let log = Arc::new(ApiLog::default());
+    let ctx = CallCtx::background().with_api_log(ApiLogHandle::new(log.clone()));
+    let cfg = Config { request_log: true, ..Config::default() };
+    let client = HostHttpClient { cfg: Some(Arc::new(cfg)), auth: None, request_proxy_url: String::new() };
+    let req = HttpRequest {
+        method: "POST".into(),
+        url: format!("http://127.0.0.1:{port}/log"),
+        headers: [("X-Test".to_string(), vec!["v".to_string()])].into(),
+        body: b"{\"q\":1}".to_vec(),
+        wire_profile: None,
+    };
+    let resp = client.do_request(&ctx, req).await.expect("request");
+    assert_eq!((resp.status_code, resp.body.as_slice()), (200, &b"ok"[..]));
+    let request = String::from_utf8(log.api_request()).unwrap();
+    assert!(request.contains("=== API REQUEST 1 ===") && request.contains(&format!("Upstream URL: http://127.0.0.1:{port}/log")), "{request}");
+    assert!(request.contains("HTTP Method: POST") && request.contains("X-Test: v") && request.contains("{\"q\":1}"), "{request}");
+    let response = String::from_utf8(log.api_response()).unwrap();
+    assert!(response.contains("Status: 200") && response.trim_end().ends_with("ok"), "{response}");
+
+    // A failed exchange is logged as an error entry.
+    let refused = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let dead = refused.local_addr().unwrap().port();
+    drop(refused);
+    let failed = client.do_request(&ctx, HttpRequest { url: format!("http://127.0.0.1:{dead}/"), ..Default::default() }).await.unwrap_err();
+    assert!(failed.message.starts_with("execute host http request:"), "{}", failed.message);
+    assert!(String::from_utf8(log.api_response()).unwrap().contains("Error: execute host http request:"));
+}
+
 #[test]
 fn envelope_and_payload_keys_match_ignoring_case() {
     let raw = br#"{"OK":true,"Result":{"resources":[{"path":"/status","MENU":"m"}]}}"#;

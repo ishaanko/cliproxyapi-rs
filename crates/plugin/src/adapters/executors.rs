@@ -458,7 +458,7 @@ impl ExecutorAdapter {
     /// Context for calls made by the conductor, which has no request context of its own: the
     /// execution metadata is attached for nested host model executions.
     pub(crate) fn conductor_ctx(opts: &Options) -> CallCtx {
-        CallCtx::background().with_ext(Arc::new(crate::ctx::RequestMeta(opts.metadata.clone())))
+        CallCtx::background().with_ext(Arc::new(crate::ctx::RequestMeta(opts.metadata.clone()))).with_api_log(opts.api_log.clone())
     }
 
     fn to_exec_error_ctx(ctx: &CallCtx, e: crate::client::PluginError) -> ExecError {

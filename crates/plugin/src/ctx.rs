@@ -5,6 +5,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use cpa_runtime::apilog::ApiLogHandle;
 use tokio_util::sync::CancellationToken;
 
 /// Cancellation plus the request identity host callbacks need. Clone is cheap.
@@ -21,6 +22,9 @@ pub struct CallCtx {
     nested: Arc<AtomicBool>,
     /// Set once an upstream HTTP attempt was made through the host (Go: `MarkUpstreamAttempt`).
     attempted: Arc<AtomicBool>,
+    /// Upstream capture of the inbound request this call serves (Go: the gin context in `ctx`),
+    /// so requests plugins make through the host land in that request's log.
+    pub api_log: ApiLogHandle,
 }
 
 impl CallCtx {
@@ -38,6 +42,11 @@ impl CallCtx {
         self
     }
 
+    pub fn with_api_log(mut self, api_log: ApiLogHandle) -> Self {
+        self.api_log = api_log;
+        self
+    }
+
     /// A child that is canceled with its parent but can also be canceled on its own.
     pub fn child(&self) -> CallCtx {
         CallCtx {
@@ -46,6 +55,7 @@ impl CallCtx {
             ext: self.ext.clone(),
             nested: self.nested.clone(),
             attempted: self.attempted.clone(),
+            api_log: self.api_log.clone(),
         }
     }
 
@@ -57,6 +67,7 @@ impl CallCtx {
             ext: self.ext.clone(),
             nested: self.nested.clone(),
             attempted: self.attempted.clone(),
+            api_log: self.api_log.clone(),
         }
     }
 

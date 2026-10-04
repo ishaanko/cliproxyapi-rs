@@ -142,15 +142,24 @@ async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
     Ok(stream)
 }
 
+/// Stock (non-impersonating) client TLS with ALPN `http/1.1` over `stream`, verifying the chain
+/// for `host` against the system roots plus `extra_roots` (Go: crypto/tls with
+/// `NextProtos: ["http/1.1"]`). The error is the bare cause; callers add their own prefix.
+pub(crate) async fn stock_tls<S>(host: &str, stream: S, extra_roots: &[Vec<u8>]) -> Result<rama_boring_tokio::SslStream<S>, String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let mut b = SslConnector::no_default_verify_builder(SslMethod::tls_client()).map_err(|e| e.to_string())?;
+    crate::profile::install_roots(&mut b, extra_roots).map_err(|e| e.to_string())?;
+    b.set_verify(SslVerifyMode::PEER);
+    b.set_alpn_protos(b"\x08http/1.1").map_err(|e| e.to_string())?;
+    let cfg = b.build().configure().map_err(|e| e.to_string())?;
+    rama_boring_tokio::connect(cfg, Some(host), stream).await.map_err(|e| e.to_string())
+}
+
 /// TLS to an `https://` proxy with a stock client hello (Go uses crypto/tls with ALPN http/1.1).
 async fn proxy_tls(host: &str, stream: TcpStream) -> io::Result<rama_boring_tokio::SslStream<TcpStream>> {
-    let other = |e: String| io::Error::other(format!("HTTPS proxy TLS handshake failed: {e}"));
-    let mut b = SslConnector::no_default_verify_builder(SslMethod::tls_client()).map_err(|e| other(e.to_string()))?;
-    crate::profile::install_roots(&mut b, &[]).map_err(|e| other(e.to_string()))?;
-    b.set_verify(SslVerifyMode::PEER);
-    b.set_alpn_protos(b"\x08http/1.1").map_err(|e| other(e.to_string()))?;
-    let cfg = b.build().configure().map_err(|e| other(e.to_string()))?;
-    rama_boring_tokio::connect(cfg, Some(host), stream).await.map_err(|e| other(e.to_string()))
+    stock_tls(host, stream, &[]).await.map_err(|e| io::Error::other(format!("HTTPS proxy TLS handshake failed: {e}")))
 }
 
 /// Writes `CONNECT host:port` and consumes the response head. Reads byte-wise so no tunnel bytes

@@ -439,7 +439,7 @@ impl FingerprintClient {
 }
 
 /// Closes the connection driver when the response (and its body) is dropped.
-struct AbortOnDrop(JoinHandle<()>);
+pub(crate) struct AbortOnDrop(pub(crate) JoinHandle<()>);
 
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
@@ -448,7 +448,7 @@ impl Drop for AbortOnDrop {
 }
 
 /// `err` and its sources joined with `": "`, skipping sources already contained in the text.
-fn chain(err: &dyn std::error::Error) -> String {
+pub(crate) fn chain(err: &dyn std::error::Error) -> String {
     let mut text = err.to_string();
     let mut source = err.source();
     while let Some(cause) = source {
@@ -618,6 +618,16 @@ fn decoded(content_encoding: &str, raw: ByteStream) -> ByteStream {
 }
 
 fn into_reqwest(resp: http::Response<Incoming>, guard: Option<AbortOnDrop>, deadline: Option<Instant>) -> reqwest::Response {
+    into_reqwest_with(resp, guard, deadline, |encoding| matches!(encoding, "gzip" | "x-gzip" | "deflate" | "br" | "zstd"))
+}
+
+/// [`into_reqwest`] decoding only the `Content-Encoding` values `decodable` accepts (lowercased).
+pub(crate) fn into_reqwest_with(
+    resp: http::Response<Incoming>,
+    guard: Option<AbortOnDrop>,
+    deadline: Option<Instant>,
+    decodable: impl Fn(&str) -> bool,
+) -> reqwest::Response {
     let (mut parts, body) = resp.into_parts();
     let mut stream: ByteStream = Box::pin(BodyDataStream::new(body).map_err(io::Error::other));
     let encoding = parts
@@ -626,7 +636,7 @@ fn into_reqwest(resp: http::Response<Incoming>, guard: Option<AbortOnDrop>, dead
         .and_then(|v| v.to_str().ok())
         .map(|v| v.trim().to_ascii_lowercase())
         .unwrap_or_default();
-    if matches!(encoding.as_str(), "gzip" | "x-gzip" | "deflate" | "br" | "zstd") {
+    if decodable(&encoding) {
         stream = decoded(&encoding, stream);
         // Like reqwest, the decoded body no longer matches these representation headers.
         parts.headers.remove(CONTENT_ENCODING);
