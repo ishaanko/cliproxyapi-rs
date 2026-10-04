@@ -205,16 +205,19 @@ async fn record(common: Common, runs: usize, rust_only: bool) -> Result<ExitCode
 async fn check(common: Common, strict_order: bool, report: Option<PathBuf>, skip_rust_only: bool) -> Result<ExitCode> {
     let _mock = mock::start(common.mock_port).await?;
     let opts = run_opts(&common);
-    let all = select(scenarios::all(common.mock_port), &common.filter);
-    // Goldens of skipped Rust-only scenarios still have a scenario.
-    let known_ids: Vec<String> = all.iter().map(|s| s.id.clone()).collect();
-    let list: Vec<Scenario> = all.into_iter().filter(|s| !(skip_rust_only && s.rust_only)).collect();
+    let list = select(scenarios::all(common.mock_port), &common.filter);
     if list.is_empty() {
         bail!("no scenarios match");
     }
     let mut outcomes: Vec<Outcome> = vec![];
     let mut skipped = 0;
     for s in &list {
+        if skip_rust_only && s.rust_only {
+            println!("SKIP  {} (rust-only)", s.id);
+            skipped += 1;
+            outcomes.push(Outcome { id: s.id.clone(), desc: s.desc.clone(), failures: vec![] });
+            continue;
+        }
         let missing = s.missing_plugins(common.mock_port);
         if !missing.is_empty() {
             println!("SKIP  {} (plugin libraries not built: {}; run crates/e2e/plugins/build.sh)", s.id, missing.join(", "));
@@ -249,8 +252,9 @@ async fn check(common: Common, strict_order: bool, report: Option<PathBuf>, skip
     }
     // Goldens without a scenario usually mean a renamed or removed scenario.
     if common.filter.is_none() {
+        let known: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
         for id in golden::list_ids(&common.golden_dir) {
-            if !known_ids.contains(&id) {
+            if !known.contains(&id.as_str()) {
                 println!("FAIL  {id}\n        golden has no scenario");
                 outcomes.push(Outcome { id, desc: String::new(), failures: vec!["golden has no scenario".into()] });
             }
