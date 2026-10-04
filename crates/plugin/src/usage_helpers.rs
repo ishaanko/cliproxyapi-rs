@@ -21,9 +21,29 @@ pub fn parse_plugin_executor_response_usage(protocol: &str, payload: &[u8]) -> D
         "gemini" => parse_gemini_usage(payload),
         "interactions" | "interactions-response" => parse_interactions_usage(payload),
         "antigravity" => parse_antigravity_usage(payload),
-        "codex" | "openai-response" => parse_codex_usage(payload).unwrap_or_else(|| parse_openai_usage(payload)),
+        "codex" | "openai-response" => parse_responses_plugin_executor_usage(payload),
         _ => parse_openai_usage(payload),
     }
+}
+
+/// Reads both streaming-event usage (`response.usage`) and a completed Responses object
+/// (top-level `usage`). A service tier without `response.usage` must not hide the completed
+/// object's token counts.
+fn parse_responses_plugin_executor_usage(payload: &[u8]) -> Detail {
+    let codex = parse_codex_usage(payload);
+    if let Some(detail) = codex.as_ref().filter(|d| d.has_token_usage()) {
+        return detail.clone();
+    }
+    let mut openai = parse_openai_usage(payload);
+    if openai.has_token_usage() {
+        if openai.response_service_tier.is_empty()
+            && let Some(codex) = &codex
+        {
+            openai.response_service_tier = codex.response_service_tier.clone();
+        }
+        return openai;
+    }
+    codex.unwrap_or(openai)
 }
 
 /// Feeds streaming chunks into `buffer` using the parser of `protocol`.
@@ -55,8 +75,10 @@ pub fn observe_plugin_executor_stream_usage(protocol: &str, payload: &[u8], buff
         "codex" | "openai-response" => iterate_stream_lines(payload, |line| {
             if let Some(json) = extract_stream_json_payload(line)
                 && !json.is_empty()
-                && let Some(detail) = parse_codex_usage(json)
+                && let Some(detail) = parse_codex_usage(json).filter(Detail::has_token_usage)
             {
+                // A service tier without response.usage is not token usage: fall through so a
+                // completed Responses object's top-level usage is still recorded.
                 buffer.observe(detail, true);
                 return;
             }
