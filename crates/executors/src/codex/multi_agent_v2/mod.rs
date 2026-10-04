@@ -35,7 +35,7 @@ use cpa_json::{J, Map, Value};
 use http::HeaderMap;
 use parking_lot::RwLock;
 
-pub use orphan::rewrite_orphan_delegation_input_for_config;
+pub use orphan::{is_collab_spawn_subagent, rewrite_orphan_delegation_input, rewrite_orphan_delegation_input_for_config};
 
 const SPAWN_AGENT_DESCRIPTION_MARKER: &str = "Spawns an agent";
 const SPAWN_AGENT_MODELS_HEADING: &str =
@@ -88,7 +88,8 @@ fn client_user_agent(headers: &HeaderMap) -> String {
     header_value_case_insensitive(headers, "User-Agent")
 }
 
-fn multi_agent_v2_client_enabled(headers: &HeaderMap, enabled: bool) -> bool {
+/// Whether `enabled` multi-agent v2 optimization applies to this client (an official Codex client).
+pub fn multi_agent_v2_client_enabled(headers: &HeaderMap, enabled: bool) -> bool {
     enabled && is_codex_client_user_agent(&client_user_agent(headers))
 }
 
@@ -134,7 +135,6 @@ pub fn rewrite_input(
 
 /// Prepares collaboration tool definitions at the Responses API boundary without renaming the
 /// namespace. The bool is Go's `prepared` flag: true when the client is an enabled Codex client.
-#[cfg_attr(not(test), allow(dead_code))] // handler-facing API, exercised by the tests
 pub fn prepare_tools(
     _ctx: &RequestCtx,
     headers: &HeaderMap,
@@ -165,24 +165,6 @@ pub fn optimize_request(
     let mut root = cpa_json::parse(payload);
     let (changed, optimized) = optimize_value(&mut root, ctx, headers, cfg);
     (finish(&root, changed, payload), optimized)
-}
-
-/// [`optimize_request_for_auth_with`] with a default [`RequestCtx`].
-pub fn optimize_request_for_auth(
-    headers: &HeaderMap,
-    payload: &[u8],
-    cfg: Option<&Config>,
-    auth: Option<&Auth>,
-    is_compat: bool,
-) -> (Vec<u8>, bool) {
-    optimize_request_for_auth_with(
-        &RequestCtx::default(),
-        headers,
-        payload,
-        cfg,
-        auth,
-        is_compat,
-    )
 }
 
 /// The standard Codex executor request stage: orphan delegation rewrite, multi-agent v2

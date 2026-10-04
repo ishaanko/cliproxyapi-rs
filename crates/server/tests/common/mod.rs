@@ -36,6 +36,8 @@ pub struct FakeExecutor {
     pub scripts: Mutex<Vec<(&'static str, Script)>>,
     pub default_body: &'static str,
     pub seen: Mutex<Vec<(String, String)>>,
+    /// `Options::codex_multi_agent_v2_tools_prepared` of each execute / execute_stream call.
+    pub prepared: Mutex<Vec<bool>>,
 }
 
 impl FakeExecutor {
@@ -57,7 +59,8 @@ impl Executor for FakeExecutor {
         &self.provider
     }
 
-    async fn execute(&self, _auth: &Auth, req: ExecRequest, _opts: Options) -> Result<ExecResponse, ExecError> {
+    async fn execute(&self, _auth: &Auth, req: ExecRequest, opts: Options) -> Result<ExecResponse, ExecError> {
+        self.prepared.lock().push(opts.codex_multi_agent_v2_tools_prepared);
         match self.pick(&req) {
             Script::Body(b) => Ok(ExecResponse { payload: Bytes::from_static(b.as_bytes()), ..Default::default() }),
             Script::Slow(d, b) => {
@@ -69,7 +72,8 @@ impl Executor for FakeExecutor {
         }
     }
 
-    async fn execute_stream(&self, _auth: &Auth, req: ExecRequest, _opts: Options) -> Result<StreamResult, ExecError> {
+    async fn execute_stream(&self, _auth: &Auth, req: ExecRequest, opts: Options) -> Result<StreamResult, ExecError> {
+        self.prepared.lock().push(opts.codex_multi_agent_v2_tools_prepared);
         match self.pick(&req) {
             Script::Fail(e) => Err(e),
             Script::Body(b) => stream_of(vec![Ok(b)]),
@@ -122,6 +126,7 @@ pub async fn harness(name: &str, edit: impl FnOnce(&mut Config)) -> Harness {
         scripts: Mutex::new(Vec::new()),
         default_body: r#"{"id":"c1","object":"chat.completion","model":"x","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]}"#,
         seen: Mutex::new(Vec::new()),
+        prepared: Mutex::new(Vec::new()),
     });
     let manager = Arc::new(Manager::default());
     manager.register_executor(exec.clone());

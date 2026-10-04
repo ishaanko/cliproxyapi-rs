@@ -51,7 +51,7 @@ pub fn rewrite_orphan_delegation_input_for_config(
 }
 
 /// Whether the request is a Codex `collab_spawn` sub-agent call.
-pub(super) fn is_collab_spawn_subagent(headers: &HeaderMap) -> bool {
+pub fn is_collab_spawn_subagent(headers: &HeaderMap) -> bool {
     header_value_case_insensitive(headers, OPENAI_SUBAGENT_HEADER)
         .eq_ignore_ascii_case(COLLAB_SPAWN_SUBAGENT)
 }
