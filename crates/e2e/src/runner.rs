@@ -10,7 +10,7 @@ use crate::client::{Body, Client, Observed, ObsBody, Step};
 use crate::config::{ConfigSpec, Layout};
 use crate::mock::LoggedRequest;
 use crate::normalize::{Normalizer, sort_model_listing};
-use crate::scenario::{Capture, Scenario, StepCapture, UpstreamCapture};
+use crate::scenario::{Capture, RUST_ONLY_ORIGIN, Scenario, StepCapture, UpstreamCapture};
 use crate::server::ServerProc;
 
 const WS_SETTLE_MS: u64 = 500;
@@ -117,7 +117,8 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
         })
         .collect();
     let request_logs = if s.capture_logs { read_request_logs(&log_dir).iter().map(|t| n.request_log(t)).collect() } else { vec![] };
-    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), steps, upstream, request_logs, volatile: vec![] })
+    let origin = s.rust_only.then(|| RUST_ONLY_ORIGIN.to_string());
+    Ok(Capture { id: s.id.clone(), desc: s.desc.clone(), origin, steps, upstream, request_logs, volatile: vec![] })
 }
 
 /// Request-log files under `dir`, oldest first (the application log `main.log` is not one).

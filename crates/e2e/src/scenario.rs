@@ -22,15 +22,27 @@ pub struct Scenario {
     pub steps: Vec<Step>,
     /// Also capture the request-log files the server wrote (normalized) into the golden.
     pub capture_logs: bool,
+    /// Covers a Rust-only extension the Go reference does not have: `record` skips it unless
+    /// `--rust-only` is given, and its golden is tagged [`RUST_ONLY_ORIGIN`].
+    pub rust_only: bool,
 }
+
+/// `Capture::origin` of goldens produced by the Rust server for Rust-only scenarios.
+pub const RUST_ONLY_ORIGIN: &str = "rust-only";
 
 impl Scenario {
     pub fn new(id: impl Into<String>, desc: impl Into<String>, script: Script, steps: Vec<Step>) -> Self {
-        Scenario { id: id.into(), desc: desc.into(), profile: default_profile, script, steps, capture_logs: false }
+        Scenario { id: id.into(), desc: desc.into(), profile: default_profile, script, steps, capture_logs: false, rust_only: false }
     }
 
     pub fn profile(mut self, profile: Profile) -> Self {
         self.profile = profile;
+        self
+    }
+
+    /// Marks a scenario of a Rust-only extension (see [`Scenario::rust_only`]).
+    pub fn rust_only(mut self) -> Self {
+        self.rust_only = true;
         self
     }
 
@@ -74,6 +86,10 @@ pub struct UpstreamCapture {
 pub struct Capture {
     pub id: String,
     pub desc: String,
+    /// Set (to [`RUST_ONLY_ORIGIN`]) when the golden comes from the Rust server rather than the
+    /// Go reference.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
     pub steps: Vec<StepCapture>,
     pub upstream: Vec<UpstreamCapture>,
     /// Normalized request-log files the server wrote, oldest first (only for `with_logs`).

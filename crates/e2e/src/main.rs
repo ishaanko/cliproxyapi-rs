@@ -78,6 +78,10 @@ enum Cmd {
         /// structural differences make the scenario unstable.
         #[arg(long, default_value_t = 2)]
         runs: usize,
+        /// Record only the Rust-only scenarios (extensions the Go reference lacks; run this with
+        /// the Rust server). Without it they are skipped, so a Go recording never touches them.
+        #[arg(long)]
+        rust_only: bool,
     },
     /// Re-run scenarios, compare with goldens, write the report; non-zero exit on any failure.
     Check {
@@ -89,6 +93,9 @@ enum Cmd {
         /// Report path (default: <golden-dir>/report.md).
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Skip the Rust-only scenarios (for checking the Go reference, which lacks them).
+        #[arg(long)]
+        skip_rust_only: bool,
     },
     /// List scenario ids.
     List {
@@ -135,7 +142,8 @@ async fn real_main() -> Result<ExitCode> {
     match Cli::parse().cmd {
         Cmd::List { filter } => {
             for s in select(scenarios::all(DEFAULT_MOCK_PORT), &filter) {
-                println!("{}\t{}", s.id, s.desc);
+                let tag = if s.rust_only { " [rust-only]" } else { "" };
+                println!("{}\t{}{tag}", s.id, s.desc);
             }
             Ok(ExitCode::SUCCESS)
         }
@@ -145,15 +153,16 @@ async fn real_main() -> Result<ExitCode> {
             std::future::pending::<()>().await;
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::Record { common, runs } => record(common, runs).await,
-        Cmd::Check { common, ignore_key_order, report } => check(common, !ignore_key_order, report).await,
+        Cmd::Record { common, runs, rust_only } => record(common, runs, rust_only).await,
+        Cmd::Check { common, ignore_key_order, report, skip_rust_only } => check(common, !ignore_key_order, report, skip_rust_only).await,
     }
 }
 
-async fn record(common: Common, runs: usize) -> Result<ExitCode> {
+async fn record(common: Common, runs: usize, rust_only: bool) -> Result<ExitCode> {
     let _mock = mock::start(common.mock_port).await?;
     let opts = run_opts(&common);
-    let list = select(scenarios::all(common.mock_port), &common.filter);
+    let mut list = select(scenarios::all(common.mock_port), &common.filter);
+    list.retain(|s| s.rust_only == rust_only);
     if list.is_empty() {
         bail!("no scenarios match");
     }
@@ -193,10 +202,13 @@ async fn record(common: Common, runs: usize) -> Result<ExitCode> {
     Ok(if unstable == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE })
 }
 
-async fn check(common: Common, strict_order: bool, report: Option<PathBuf>) -> Result<ExitCode> {
+async fn check(common: Common, strict_order: bool, report: Option<PathBuf>, skip_rust_only: bool) -> Result<ExitCode> {
     let _mock = mock::start(common.mock_port).await?;
     let opts = run_opts(&common);
-    let list = select(scenarios::all(common.mock_port), &common.filter);
+    let all = select(scenarios::all(common.mock_port), &common.filter);
+    // Goldens of skipped Rust-only scenarios still have a scenario.
+    let known_ids: Vec<String> = all.iter().map(|s| s.id.clone()).collect();
+    let list: Vec<Scenario> = all.into_iter().filter(|s| !(skip_rust_only && s.rust_only)).collect();
     if list.is_empty() {
         bail!("no scenarios match");
     }
@@ -237,9 +249,8 @@ async fn check(common: Common, strict_order: bool, report: Option<PathBuf>) -> R
     }
     // Goldens without a scenario usually mean a renamed or removed scenario.
     if common.filter.is_none() {
-        let known: Vec<&str> = list.iter().map(|s| s.id.as_str()).collect();
         for id in golden::list_ids(&common.golden_dir) {
-            if !known.contains(&id.as_str()) {
+            if !known_ids.contains(&id) {
                 println!("FAIL  {id}\n        golden has no scenario");
                 outcomes.push(Outcome { id, desc: String::new(), failures: vec!["golden has no scenario".into()] });
             }

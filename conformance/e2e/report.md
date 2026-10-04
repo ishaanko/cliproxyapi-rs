@@ -1,9 +1,9 @@
 # E2E differential report
 
-- server: `target/release/cliproxy`
+- server: `/home/ishaan/box/cliproxyapirust/.claude/worktrees/agent-a0ea6fe72acaafe85/target/release/cliproxy`
 - config layout: `legacy`
-- goldens digest: `c7f18311c607fb14`
-- scenarios: 1060 total, 1060 passed, 0 failed
+- goldens digest: `8b6a10ae47df576b`
+- scenarios: 1061 total, 1061 passed, 0 failed
 
 | scenario | result | what | first difference |
 |---|---|---|---|
@@ -1067,3 +1067,4 @@
 | `media.search.routed_unsupported_provider` | PASS | a router pointing at another provider is rejected |  |
 | `media.search.routed_unsupported_self` | PASS | a router pointing at its own executor is rejected |  |
 | `media.search.routed_unhandled` | PASS | a router that declines leaves the request alone |  |
+| `rust.smart_quota.claude` | PASS | smart-quota: a cold session lands on key 1 (tie), then new sessions avoid it (90% used) while the bound session stays |  |
