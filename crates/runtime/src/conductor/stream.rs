@@ -48,17 +48,21 @@ async fn start_stream(
     opts: Options,
     home: Option<&HomeStreamCtx>,
 ) -> Result<StreamResult, ExecError> {
-    let Some(home) = home else {
-        return executor.execute_stream(auth, req, opts).await;
+    // A fresh response-headers holder per upstream call (Go: newUpstreamAttemptContext).
+    opts.api_log.reset_response_headers();
+    let api_log = opts.api_log.clone();
+    let res = match home {
+        None => executor.execute_stream(auth, req, opts).await,
+        Some(home) => tokio::select! {
+            _ = home.cancel.wait() => {
+                let mut e = ExecError::new(0, "context canceled");
+                e.upstream_attempted = false;
+                Err(e)
+            }
+            r = executor.execute_stream(auth, req, opts) => r,
+        },
     };
-    tokio::select! {
-        _ = home.cancel.wait() => {
-            let mut e = ExecError::new(0, "context canceled");
-            e.upstream_attempted = false;
-            Err(e)
-        }
-        r = executor.execute_stream(auth, req, opts) => r,
-    }
+    res.map_err(|e| e.with_attempt_headers(&api_log))
 }
 
 /// Reads chunks until the first non-empty payload. `Ok((buffered, closed))`: `closed` means the

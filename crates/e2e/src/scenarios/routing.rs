@@ -173,6 +173,16 @@ fn retry_policy(out: &mut Vec<Scenario>) {
         fail_once(500),
         repeat(3, chat(claude)),
     ));
+    // Every key cooling after upstream failures: the "no auth available" error carries
+    // providers, model and the last upstream error.
+    for status in [500, 401] {
+        out.push(Scenario::new(
+            format!("route.cooling.all_cooling_{status}"),
+            "every key cooling down: auth_unavailable with the last upstream error",
+            always(status),
+            repeat(3, chat(claude)),
+        ));
+    }
     out.push(Scenario::new(
         "route.cooling.401_second_request",
         "a 401 cools the key for a long time",

@@ -1350,15 +1350,36 @@ pub fn validate_v8_config(data: &[u8]) -> Result<()> {
             }
         }
     }
+    // The line numbers of the report refer to the marshalled tree, nulls included.
+    let marshalled = flat.clone();
     strip_nulls(&mut flat);
-    let mut ignored = Vec::new();
+    let mut ignored: Vec<Vec<Seg>> = Vec::new();
     let _: crate::Config = serde_ignored::deserialize(crate::lenient::Lenient(flat), |path| {
-        ignored.push(path.to_string())
+        ignored.push(ignored_segments(&path))
     })?;
-    if let Some(field) = ignored.first() {
-        return Err(ConfigError::invalid(format!(
-            "field {field} not found in type config.legacyConfig"
-        )));
+    if !ignored.is_empty() {
+        return Err(ConfigError::invalid(crate::unknown::unknown_fields_message(text, &root, &marshalled, &ignored)));
     }
     Ok(())
+}
+
+/// Key/index steps of a `serde_ignored` path.
+fn ignored_segments(path: &serde_ignored::Path<'_>) -> Vec<Seg> {
+    use serde_ignored::Path;
+    match path {
+        Path::Root => Vec::new(),
+        Path::Seq { parent, index } => {
+            let mut segs = ignored_segments(parent);
+            segs.push(Seg::Index(*index));
+            segs
+        }
+        Path::Map { parent, key } => {
+            let mut segs = ignored_segments(parent);
+            segs.push(Seg::Key(key.clone()));
+            segs
+        }
+        Path::Some { parent } | Path::NewtypeStruct { parent } | Path::NewtypeVariant { parent } => {
+            ignored_segments(parent)
+        }
+    }
 }

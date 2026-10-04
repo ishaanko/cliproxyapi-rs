@@ -463,6 +463,15 @@ impl ExecError {
         if self.headers.is_empty() { self.response_headers.clone() } else { self.headers.clone() }
     }
 
+    /// Keeps the upstream headers the attempt logged (Go: the response-headers holder) on a
+    /// failure whose executor attached none, so usage records and quota observation see them.
+    pub fn with_attempt_headers(mut self, api_log: &crate::apilog::ApiLogHandle) -> Self {
+        if self.headers.is_empty() && self.response_headers.is_empty() {
+            self.response_headers = api_log.response_headers();
+        }
+        self
+    }
+
     pub fn with_body(mut self, body: impl Into<Bytes>) -> Self {
         self.body = Some(body.into());
         self

@@ -50,7 +50,6 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",

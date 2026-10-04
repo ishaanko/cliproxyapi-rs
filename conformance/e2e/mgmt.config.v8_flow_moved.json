@@ -1,0 +1,199 @@
+{
+  "id": "mgmt.config.v8_flow_moved",
+  "desc": "flow containers and quoted values moved from historical paths to the canonical ones",
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, disable-control-panel: true}\naccess:\n  api-keys: [e2e-client-key]\noauth:\n  auth-dir: \"{{AUTH_DIR}}\"\n  providers:\n    claude: {header-defaults: {timezone: \"Asia/Shanghai\", user-agent: claude-cli/1.0}, model-level-cooling: true}\n    xai: {inject-x-search: false}\n"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_moved/auth\"\nupstream:\n    claude:\n        model-level-cooling: true\n        header-defaults:\n            user-agent: claude-cli/1.0\n            timezone: \"Asia/Shanghai\"\n    xai:\n        inject-x-search: false\n"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "oauth": {
+            "providers": {
+              "codex": {
+                "header-defaults": {
+                  "user-agent": "json-agent"
+                },
+                "stream-bootstrap-timeout": "5s"
+              }
+            }
+          },
+          "providers": {
+            "codex": {
+              "optimize-multi-agent-v2": true
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_moved/auth\"\n    \"providers\": {\"codex\": {\"header-defaults\": {\"user-agent\": \"json-agent\"}}}\nupstream:\n    claude:\n        model-level-cooling: true\n        header-defaults:\n            user-agent: claude-cli/1.0\n            timezone: \"Asia/Shanghai\"\n    xai:\n        inject-x-search: false\n    codex:\n        stream-bootstrap-timeout: \"5s\"\nclient:\n    codex:\n        optimize-multi-agent-v2: true\n"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/oauth/providers/claude/header-defaults",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "timezone": "UTC"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_moved/auth\"\n    \"providers\": {\"codex\": {\"header-defaults\": {\"user-agent\": \"json-agent\"}}}\nupstream:\n    claude:\n        model-level-cooling: true\n        header-defaults:\n            timezone: \"UTC\"\n    xai:\n        inject-x-search: false\n    codex:\n        stream-bootstrap-timeout: \"5s\"\nclient:\n    codex:\n        optimize-multi-agent-v2: true\n"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

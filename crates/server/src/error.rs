@@ -217,8 +217,21 @@ pub fn enrich_auth_selection_error(err: &ExecError, providers: &[String], model:
         providers.join(",")
     };
     let model_text = if model.trim().is_empty() { "unknown" } else { model.trim() };
+    // The conductor appends " (last upstream error: ..)" to the message when it wraps a cause;
+    // Go keeps the base message and the cause apart, so split them again here.
+    let mut base = base;
+    if err.cause_text.is_some()
+        && let Some(idx) = base.rfind(" (last upstream error: ")
+    {
+        base = &base[..idx];
+    }
     let base = if base.trim().is_empty() { "no auth available" } else { base.trim() };
-    let mut detail = format!("{base} (providers={provider_text}, model={model_text})");
+    let summary = err.cause_text.as_deref().map(cpa_runtime::conductor::errors::extract_upstream_error_summary).unwrap_or_default();
+    let mut detail = if !summary.is_empty() && !base.contains(&summary) {
+        format!("{base} (providers={provider_text}, model={model_text}; last upstream error: {summary})")
+    } else {
+        format!("{base} (providers={provider_text}, model={model_text})")
+    };
     if format!(",{provider_text},").contains(",claude,") {
         detail.push_str("; check Claude auth/key session and cooldown state via /v0/management/auth-files");
     }
@@ -544,6 +557,10 @@ mod tests {
         assert_eq!(plain.message, "auth_unavailable: no auth available (providers=x, model=unknown)");
         let other = ExecError::new(500, "boom");
         assert_eq!(enrich_auth_selection_error(&other, &[], "m").message, "boom");
+        // A wrapped upstream cause is reported after providers/model, like Go.
+        let cause = cpa_runtime::conductor::errors::auth_unavailable(None, chrono::Utc::now(), Some("upstream said no"));
+        let out = enrich_auth_selection_error(&cause, &["x".into()], "m");
+        assert_eq!(out.message, "auth_unavailable: no auth available (providers=x, model=m; last upstream error: upstream said no)");
     }
 
     #[test]

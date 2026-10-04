@@ -210,6 +210,65 @@ fn v8_aliases(out: &mut Vec<Scenario>) {
         ],
     ));
     out.push(s(
+        "v8_flow_style",
+        "flow collections of YAML and JSON bodies survive the write, also when historical paths move",
+        vec![
+            mgmt(HttpReq::put(&format!("{V8}/config.yaml"), Value::Null).typed(
+                "application/yaml",
+                "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, disable-control-panel: true}\naccess:\n  api-keys: [e2e-client-key, \"e2e-client-key-2\"]\noauth:\n  auth-dir: \"{{AUTH_DIR}}\"\n  providers:\n    codex: {response-steering: true, header-defaults: {user-agent: yaml-agent, beta-features: \"a,b\"}}\nrouting: {retry: {request-retry: 2}}\n",
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+            mgmt(HttpReq::patch(
+                &format!("{V8}/config"),
+                json!({"oauth": {"providers": {"codex": {"stream-bootstrap-timeout": "10s", "header-defaults": {"user-agent": "json-agent", "beta-features": "c"}}}}, "routing": {"retry": {"request-retry": 3}}}),
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+            mgmt(HttpReq::put(&format!("{V8}/config/oauth/providers/codex/header-defaults"), json!({"user-agent": "put-agent"}))),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+        ],
+    ));
+    out.push(s(
+        "v8_flow_moved",
+        "flow containers and quoted values moved from historical paths to the canonical ones",
+        vec![
+            mgmt(HttpReq::put(&format!("{V8}/config.yaml"), Value::Null).typed(
+                "application/yaml",
+                "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, disable-control-panel: true}\naccess:\n  api-keys: [e2e-client-key]\noauth:\n  auth-dir: \"{{AUTH_DIR}}\"\n  providers:\n    claude: {header-defaults: {timezone: \"Asia/Shanghai\", user-agent: claude-cli/1.0}, model-level-cooling: true}\n    xai: {inject-x-search: false}\n",
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+            mgmt(HttpReq::patch(
+                &format!("{V8}/config"),
+                json!({"oauth": {"providers": {"codex": {"header-defaults": {"user-agent": "json-agent"}, "stream-bootstrap-timeout": "5s"}}}, "providers": {"codex": {"optimize-multi-agent-v2": true}}}),
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+            mgmt(HttpReq::put(&format!("{V8}/config/oauth/providers/claude/header-defaults"), json!({"timezone": "UTC"}))),
+            Req::Pause(SETTLE_MS),
+            get(&format!("{V8}/config.yaml")),
+        ],
+    ));
+    out.push(s(
+        "v8_unknown_fields",
+        "nested unknown fields are reported with yaml.v3's line and Go type",
+        vec![
+            mgmt(HttpReq::patch(&format!("{V8}/config"), json!({"routing": {"nope": 1}}))),
+            mgmt(HttpReq::patch(&format!("{V8}/config"), json!({"client": {"codex": {"yy": 1}, "zz": true}}))),
+            mgmt(HttpReq::put(
+                &cfg("api-keys/claude"),
+                json!([{"name": "edge", "base-url": "https://api.anthropic.invalid", "keys": [{"api-key": "sk-e2e-edge", "zzz": 1}], "models": [{"name": "m", "alias": "a", "qq": 1}]}]),
+            )),
+            mgmt(HttpReq::put(&format!("{V8}/config.yaml"), Value::Null).typed(
+                "application/yaml",
+                "config-version: 8\n# server section\nserver:\n  host: 127.0.0.1\n  port: 38922\nrouting:\n  # retry comment\n  retry:\n    request-retry: 2\n    nope: 1\n  other: 2\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, bogus: 1}\n",
+            )),
+            get(&format!("{V8}/config/routing")),
+        ],
+    ));
+    out.push(s(
         "v8_upstream_invalid",
         "invalid shared upstream values are rejected at both paths",
         vec![

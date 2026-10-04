@@ -52,7 +52,7 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
             tokio::time::sleep(std::time::Duration::from_millis(*ms)).await;
             continue;
         }
-        let resp = match client.run(step).await {
+        let resp = match client.run(&with_work_dir(step, &dir)).await {
             Ok(o) => o,
             // Connection-level failures are part of the observable behavior.
             Err(e) => Observed { status: 0, headers: Default::default(), body: ObsBody::Text { value: format!("<client error: {}>", error_kind(&e)) } },
@@ -180,5 +180,24 @@ fn step_summary(step: &Step) -> Value {
         Step::Ws(r) => json!({"method": "WS", "path": r.path, "auth": format!("{:?}", r.auth), "headers": r.headers, "messages": r.messages}),
         Step::Resp(r) => json!({"method": "RESP", "acts": format!("{:?}", r.acts)}),
         Step::Pause(ms) => json!({"pause_ms": ms}),
+    }
+}
+
+/// Substitutes `{{AUTH_DIR}}` in typed request bodies with the scenario's auth directory, for
+/// whole-config replacements that must keep the server's own credential directory.
+fn with_work_dir(step: &Step, dir: &std::path::Path) -> Step {
+    const TOKEN: &str = "{{AUTH_DIR}}";
+    match step {
+        Step::Http(req) => {
+            if let Body::Typed(content_type, text) = &req.body
+                && text.contains(TOKEN)
+            {
+                let mut req = req.clone();
+                req.body = Body::Typed(content_type, text.replace(TOKEN, &dir.join("auth").to_string_lossy()));
+                return Step::Http(req);
+            }
+            step.clone()
+        }
+        other => other.clone(),
     }
 }

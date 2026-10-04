@@ -208,6 +208,19 @@ impl Normalizer {
                     .into_owned();
             }
         }
+        // The reference races two goroutines to write the terminal error frame of a Responses
+        // websocket (the request handler and the upstream-disconnect watcher). Only the winner
+        // logs the frame to the timeline, so a `websocket.response` error event may or may not
+        // be there; either outcome is valid and the event is dropped.
+        let mut i = 1;
+        while i + 1 < lines.len() {
+            if lines[i] == "Event: websocket.response" && lines[i + 1].starts_with("{\"type\":\"error\"") {
+                let end = lines[i..].iter().position(|l| l.is_empty()).map_or(lines.len(), |p| i + p + 1);
+                lines.drain(i - 1..end);
+            } else {
+                i += 1;
+            }
+        }
         // Sort the lines of `=== HEADERS ===` and of the header lines after `Status:` in `=== RESPONSE ===`.
         let mut i = 0;
         while i < lines.len() {
