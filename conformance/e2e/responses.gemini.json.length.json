@@ -31,17 +31,19 @@
             "id": "resp_mockresp01",
             "object": "response",
             "created_at": "<now>",
-            "status": "completed",
+            "status": "incomplete",
             "background": false,
             "error": null,
-            "incomplete_details": null,
+            "incomplete_details": {
+              "reason": "max_output_tokens"
+            },
             "max_output_tokens": 16,
             "model": "gemini-2.5-flash",
             "output": [
               {
                 "id": "msg_mockresp01_0",
                 "type": "message",
-                "status": "completed",
+                "status": "incomplete",
                 "content": [
                   {
                     "type": "output_text",
@@ -59,10 +61,10 @@
                 "cached_tokens": 0
               },
               "output_tokens": 7,
-              "total_tokens": 18,
               "output_tokens_details": {
                 "reasoning_tokens": 0
-              }
+              },
+              "total_tokens": 18
             }
           }
         }

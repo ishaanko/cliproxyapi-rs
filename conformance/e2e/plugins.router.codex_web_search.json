@@ -281,7 +281,8 @@
         "stream": true,
         "store": false,
         "include": [
-          "reasoning.encrypted_content"
+          "reasoning.encrypted_content",
+          "web_search_call.action.sources"
         ],
         "tools": [
           {
@@ -334,7 +335,8 @@
         "stream": true,
         "store": false,
         "include": [
-          "reasoning.encrypted_content"
+          "reasoning.encrypted_content",
+          "web_search_call.action.sources"
         ],
         "tools": [
           {

@@ -12,7 +12,6 @@ pub mod client_detection;
 pub mod credential_identity;
 pub mod device_profile;
 pub mod diagnostics;
-pub mod json_prefilter;
 pub mod mcp_alias;
 pub mod ratelimit;
 pub mod ttft_helpers;

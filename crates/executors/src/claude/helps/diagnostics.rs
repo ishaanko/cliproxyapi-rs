@@ -15,7 +15,6 @@ use uuid::Uuid;
 
 use crate::helps::session::{header_value_case_insensitive, header_values_case_insensitive};
 use super::credential_identity::sjson_string;
-use super::json_prefilter::json_may_contain_ascii;
 
 const CLAUDE_DIAGNOSTICS_TTL: Duration = Duration::from_secs(3600);
 const CLAUDE_DIAGNOSTICS_CLEANUP_PERIOD: Duration = Duration::from_secs(15 * 60);
@@ -425,15 +424,7 @@ fn is_claude_title_helper_request(root: &serde_json::Value) -> bool {
 /// which native Claude Code sends without `cc_prompt_id` or `cc_prev_req`.
 pub fn is_claude_probe_or_helper_request(body: &[u8]) -> bool {
     let root = crate::helps::parse_cache::parse(body);
-    if is_claude_probe_request(&root) {
-        return true;
-    }
-    // Without an output_config key the request is a helper only if one of the system title
-    // instructions appears, so skip the walks when none can.
-    json_may_contain_ascii(
-        body,
-        &["output_config", "naming a coding session", "Return a short title", "Write the title in the predominant language"],
-    ) && is_claude_title_helper_request(&root)
+    is_claude_probe_request(&root) || is_claude_title_helper_request(&root)
 }
 
 /// Go: `IsClaudeSubagentRequest`: agent id headers, a `parent_session_id` in `metadata.user_id`, or
@@ -467,9 +458,7 @@ pub fn is_claude_subagent_request(headers: &HeaderMap, body: &[u8]) -> bool {
 /// Go: `ClaudePayloadHas1hTTL`: any tool, system or message content block with
 /// `cache_control.ttl == "1h"`.
 pub fn claude_payload_has_1h_ttl(payload: &[u8]) -> bool {
-    // A ttl of "1h" is the JSON string "1h"; its quotes are structural and never escaped, so a
-    // payload without that token cannot match.
-    if payload.is_empty() || !json_may_contain_ascii(payload, &[r#""1h""#]) || !crate::helps::parse_cache::valid(payload) {
+    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
         return false;
     }
     let root = crate::helps::parse_cache::parse(payload);
@@ -832,5 +821,25 @@ mod tests {
         let mut beta = HeaderMap::new();
         beta.insert("anthropic-beta", "claude-code-20250219,extended-cache-ttl-2025-04-11".parse().expect("header value"));
         assert!(claude_subagent_requests_1h(&beta, payload));
+    }
+
+    /// Go's raw-byte prefilter (claude_json_prefilter.go) must never change a classifier answer,
+    /// including when the matched text is spelled with `\u` escapes. This port has no prefilter
+    /// (its parse is memoized and the tree walks are cheaper than the extra byte scans), so the
+    /// answers are pinned directly.
+    #[test]
+    fn classifiers_keep_escaped_matches() {
+        let escaped_title = r#"{"model":"m","system":[{"type":"text","text":"You are naming a coding session."}],"messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(is_claude_probe_or_helper_request(escaped_title.as_bytes()), "escaped system title instruction");
+        let plain_title = r#"{"model":"m","system":"Return a short title for this.","messages":[{"role":"user","content":"hi"}]}"#;
+        assert!(is_claude_probe_or_helper_request(plain_title.as_bytes()), "plain system title instruction");
+        let schema_title = r#"{"model":"m","output_config":{"format":{"schema":{"properties":{"title":{"type":"string"}}}}},"messages":[{"role":"user","content":"<session>x</session>"}]}"#;
+        assert!(is_claude_probe_or_helper_request(schema_title.as_bytes()), "title schema request");
+        let ordinary = r#"{"model":"m","system":"You are Claude Code.","messages":[{"role":"user","content":"Return a short answer"}]}"#;
+        assert!(!is_claude_probe_or_helper_request(ordinary.as_bytes()), "ordinary request");
+        let escaped_1h = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"x","cache_control":{"type":"ephemeral","ttl":"1h"}}]}]}"#;
+        assert!(claude_payload_has_1h_ttl(escaped_1h.as_bytes()), "escaped 1h ttl");
+        let five_minutes = r#"{"messages":[{"role":"user","content":[{"type":"text","text":"took 11h","cache_control":{"type":"ephemeral","ttl":"5m"}}]}]}"#;
+        assert!(!claude_payload_has_1h_ttl(five_minutes.as_bytes()), "5m ttl");
     }
 }

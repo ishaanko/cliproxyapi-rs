@@ -5,7 +5,7 @@ use bytes::Bytes;
 use cpa_json::J;
 use std::sync::Arc;
 
-use cpa_runtime::executor::{DynExecutor, ExecError, Options, Request};
+use cpa_runtime::executor::{DynExecutor, ExecError, Executor, Options, Request};
 use cpa_translator::Format;
 use serde_json::Value;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -161,5 +161,96 @@ async fn read_error_has_no_terminal() {
             }
         }
         assert!(read_errors == 1 && deltas > 0, "{provider}: errors={read_errors} deltas={deltas}, want 1/>0");
+    }
+}
+
+/// AI Studio relay: a clean `stream_end` (or an `http_response` 2xx) completes the Responses
+/// stream; a non-2xx `http_response` is exactly one error and never a synthesized terminal.
+#[tokio::test]
+async fn aistudio_relay_endings() {
+    use super::wsrelay::{Inbound, Manager, Message, Outbound};
+    use tokio::sync::mpsc;
+
+    struct Rx(mpsc::Receiver<Result<Inbound, String>>);
+    impl futures_util::Stream for Rx {
+        type Item = Result<Inbound, String>;
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            self.0.poll_recv(cx)
+        }
+    }
+
+    let stop = r#"{"responseId":"executor-6258","candidates":[{"content":{"parts":[{"text":"answer"}]},"finishReason":"STOP"}]}"#;
+    // (name, body, http status of an http_response reply or 0 for a chunked stream)
+    let cases = [
+        ("no_finish", CONTENT, 0),
+        ("stop_without_usage", stop, 0),
+        ("http_response_success", CONTENT, 200),
+        ("http_response_201_success", CONTENT, 201),
+        ("http_response_error_after_start", CONTENT, 503),
+    ];
+    for (name, body, http_status) in cases {
+        let relay = Arc::new(Manager::new(""));
+        let (out_tx, mut out_rx) = mpsc::channel(16);
+        let (in_tx, in_rx) = mpsc::channel(16);
+        let channel = relay.attach(out_tx, Rx(in_rx));
+        let exec = super::AiStudioExecutor::new(config_rx(), relay.clone());
+        let auth = cpa_auth::Auth::new(channel, "aistudio");
+        let page = tokio::spawn(async move {
+            let Some(Outbound::Text(text)) = out_rx.recv().await else { return };
+            let msg: Message = serde_json::from_str(&text).expect("relay request");
+            let frame = |kind: &str, payload: Value| {
+                Inbound::Text(serde_json::json!({"id": msg.id, "type": kind, "payload": payload}).to_string())
+            };
+            let mut frames = if http_status == 0 {
+                vec![
+                    frame("stream_start", serde_json::json!({"status": 200})),
+                    frame("stream_chunk", serde_json::json!({"data": format!("data: {body}\n\n")})),
+                    frame("stream_end", serde_json::json!({})),
+                ]
+            } else {
+                vec![frame("http_response", serde_json::json!({"status": http_status, "body": body}))]
+            };
+            if http_status >= 400 {
+                frames.insert(0, frame("stream_start", serde_json::json!({"status": 200})));
+            }
+            for f in frames {
+                let _ = in_tx.send(Ok(f)).await;
+            }
+        });
+        let req = Request {
+            model: "gemini-3.7-flash".into(),
+            payload: Bytes::from(PAYLOAD.to_string()),
+            format: Format::OpenAIResponse,
+            metadata: Default::default(),
+        };
+        let mut opts = Options::new(Format::OpenAIResponse);
+        opts.response_format = Some(Format::OpenAIResponse);
+        opts.original_request = req.payload.clone();
+        opts.stream = true;
+        let started = exec.execute_stream(&auth, req, opts).await;
+        if http_status >= 400 {
+            // The error may surface when the stream starts or as the only chunk.
+            let mut errors = usize::from(started.is_err());
+            if let Ok(mut stream) = started {
+                while let Some(chunk) = stream.chunks.recv().await {
+                    match chunk {
+                        Err(_) => errors += 1,
+                        Ok(chunk) => {
+                            for event in events(&chunk) {
+                                assert!(!is_terminal(event["type"].as_str().unwrap_or("")), "{name}: terminal after an error");
+                            }
+                        }
+                    }
+                }
+            }
+            assert_eq!(errors, 1, "{name}: unsuccessful http_response errors");
+        } else {
+            let response = clean_terminal(started.expect("stream")).await;
+            assert_eq!(response.g("output.0.content.0.text").str(), "answer", "{name}: {response}");
+        }
+        let _ = page.await;
     }
 }
