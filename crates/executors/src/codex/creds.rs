@@ -187,6 +187,27 @@ mod tests {
         assert!(!websockets_enabled(&auth));
     }
 
+    /// Go `TestCodexV8HistoricalCloakingAliasAffectsBothAuthKinds`.
+    #[test]
+    fn historical_cloaking_alias_affects_both_auth_kinds() {
+        for (name, settings, key_option, want_api) in [
+            ("legacy global", "codex: {disable-codex-cloaking: true}\n", "", true),
+            ("historical alias", "oauth: {providers: {codex: {disable-codex-cloaking: true}}}\n", "", true),
+            ("explicit key override", "oauth: {providers: {codex: {disable-codex-cloaking: true}}}\n", ", disable-codex-cloaking: false", false),
+        ] {
+            let raw = format!(
+                "{settings}api-keys: {{codex: [{{name: independent, base-url: 'https://example.invalid/v1', keys: [{{api-key: test-key{key_option}}}]}}]}}\n"
+            );
+            let cfg = cpa_config::parse_config_bytes(raw.as_bytes()).expect("config");
+            let mut oauth = Auth::new("oauth", "codex");
+            oauth.metadata.insert("access_token".into(), Value::String("test-oauth".into()));
+            assert!(is_cloaking_disabled(&cfg, &oauth), "{name}: OAuth setting was not applied");
+            let key = api_key_auth("test-key", "https://example.invalid/v1", None);
+            assert_eq!(is_cloaking_disabled(&cfg, &key), want_api, "{name}: wrong API-key cloaking policy");
+            assert!(cfg.codex.disable_codex_cloaking, "{name}: shared configuration was mutated");
+        }
+    }
+
     #[test]
     fn cloaking_precedence_attr_then_entry_then_global() {
         let mut cfg = Config::default();

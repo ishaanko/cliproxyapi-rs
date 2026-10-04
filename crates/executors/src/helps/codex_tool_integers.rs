@@ -120,9 +120,10 @@ fn normalize_field_types(params: &mut Value, fields: &[&str]) -> bool {
                 let mut seen: HashSet<String> = HashSet::new();
                 let mut next = Vec::with_capacity(items.len());
                 for item in items.iter() {
-                    // Go's gjson `String()` stringifies non-string items.
+                    // Go's gjson `String()` stringifies non-string items (null becomes "").
                     let mut s = match item {
                         Value::String(s) => s.clone(),
+                        Value::Null => String::new(),
                         other => other.to_string(),
                     };
                     if s == "number" {
@@ -364,6 +365,14 @@ mod tests {
             let want = set_raw(&want, &format!("{path}.properties.max_lines.type"), r#"["integer","null"]"#);
             assert_eq!(String::from_utf8_lossy(&normalize(&input, "Codex/1.0")), String::from_utf8_lossy(&want), "{name}");
         }
+    }
+
+    /// gjson `String()` turns a JSON null (and nothing else) in a type array into "".
+    #[test]
+    fn type_array_items_stringify_like_gjson() {
+        let input = br#"{"tools":[{"type":"function","name":"memories__read","parameters":{"type":"object","properties":{"line_offset":{"type":["number",null,"null",1]}}}}]}"#;
+        let want = br#"{"tools":[{"type":"function","name":"memories__read","parameters":{"type":"object","properties":{"line_offset":{"type":["integer","","null","1"]}}}}]}"#;
+        assert_eq!(String::from_utf8_lossy(&normalize(input, "Codex/1.0")), String::from_utf8_lossy(&compact(want)));
     }
 
     #[test]

@@ -795,6 +795,9 @@ struct SessionState {
     mode: upstream::UpstreamMode,
     upstream_ws_auth_id: String,
     observed_compaction: upstream::ObservedCompaction,
+    /// Go's `CodexMultiAgentV2ToolsPreparedContextKey` on the connection's gin context: set once a
+    /// turn was prepared and never cleared for the rest of the connection.
+    tools_prepared: bool,
 }
 
 /// What the credential-selection callback saw during one turn (Go: the variables captured by
@@ -929,6 +932,7 @@ async fn run_session(
         mode: UpstreamMode::Unknown,
         upstream_ws_auth_id: String::new(),
         observed_compaction: upstream::ObservedCompaction::default(),
+        tools_prepared: false,
     };
     loop {
         let frame = tokio::select! {
@@ -1081,6 +1085,17 @@ async fn run_session(
             }
         };
 
+        // Go prepares tools and orphan delegations on every normalized request, ahead of the prewarm
+        // branch and the tool-call cache, so the cache and `last_request` see the rewritten input.
+        let (updated, prepared) = crate::handlers::responses::prepare_codex_multi_agent_v2_tools(st, &pipeline.cfg, &info.headers, &request_json);
+        state.tools_prepared |= prepared;
+        if let Some(updated) = updated {
+            request_json = updated;
+        }
+        if let Some(updated) = crate::handlers::responses::prepare_codex_orphan_delegation(&pipeline.cfg, &info.headers, &request_json) {
+            request_json = updated;
+        }
+
         if is_prewarm {
             for buf in [&mut request_json, &mut updated_last_request] {
                 let mut v = cpa_json::parse(buf);
@@ -1164,6 +1179,7 @@ async fn run_session(
         args.execution_session_id = Some(session_id);
         args.downstream_websocket = true;
         args.required_upstream_websocket = native && requires_current_upstream;
+        args.tools_prepared = state.tools_prepared;
         args.on_selected_auth = Some(on_selected);
         if let Some(input) = steering_input {
             let manager = st.manager.clone();

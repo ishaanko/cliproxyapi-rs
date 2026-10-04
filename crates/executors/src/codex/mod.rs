@@ -18,7 +18,7 @@ mod image_tool;
 mod images;
 mod input_ids;
 mod logging;
-pub(crate) mod multi_agent_v2;
+pub mod multi_agent_v2;
 mod quota;
 mod reasoning;
 mod request;

@@ -537,6 +537,42 @@ async fn manager_http_request_goes_through_the_plugin_executor() {
     assert_eq!(sent.1["Body"], base64(b"payload"));
 }
 
+/// Go `TestExecutorAdapterExecuteAttributesResponsesUsageToSelectedAuth` (upstream 8fbf152): the
+/// adapter reports the Responses top-level `usage` and `service_tier` for the selected credential.
+#[tokio::test]
+async fn executor_adapter_attributes_responses_usage_to_selected_auth() {
+    let caps = json!({"executor": true, "executor_model_scope": "both", "executor_input_formats": ["openai-response"], "executor_output_formats": ["openai-response"]});
+    let plugin = Fake::new("plugin-provider-responses", caps, |method, _| match method {
+        abi::METHOD_EXECUTOR_IDENTIFIER => Ok(json!({"identifier": "plugin-provider-responses"})),
+        abi::METHOD_EXECUTOR_EXECUTE => Ok(json!({"Payload": base64(br#"{"id":"resp_1","object":"response","service_tier":"default","usage":{"input_tokens":34,"output_tokens":499,"total_tokens":533}}"#)})),
+        other => Err(PluginError::msg(format!("unexpected method {other}"))),
+    });
+    let (host, _dir) = host_with(vec![plugin]).await;
+    let manager = Arc::new(Manager::new());
+    host.register_executors(&manager, &cpa_core::registry::ModelRegistry::new());
+    let executor = manager.executor("plugin-provider-responses").expect("plugin executor registered");
+
+    let mut auth = cpa_auth::Auth::new("auth-responses-1", "plugin-provider-responses");
+    auth.attributes.insert("type".into(), "oauth".into());
+    let model = "deepseek/deepseek-v4.1-flash";
+    let payload = format!(r#"{{"model":"{model}","input":"Write me a poem"}}"#);
+    let req = Request { model: model.into(), payload: bytes::Bytes::from(payload), format: Format::OpenAIResponse, metadata: Default::default() };
+    let collector = cpa_runtime::usage_report::UsageCollector::new();
+    let mut opts = Options::new(Format::OpenAIResponse);
+    opts.response_format = Some(Format::OpenAIResponse);
+    opts.usage_collector = Some(collector.clone());
+    let resp = executor.execute(&auth, req, opts).await.expect("adapter execute");
+    assert!(!resp.payload.is_empty());
+
+    let records = collector.take();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let record = &records[0];
+    assert_eq!(record.auth_id, auth.id);
+    assert!(!record.stream);
+    assert_eq!((record.detail.input_tokens, record.detail.output_tokens, record.detail.total_tokens), (34, 499, 533), "{:?}", record.detail);
+    assert_eq!(record.response_service_tier, "default");
+}
+
 fn reset_cooldown_call(host: &Arc<Host>, auth_index: &str) -> Result<Value, cpa_plugin::error::HostError> {
     let id = cpa_plugin::callbacks::CbIdentity { plugin_id: "tester".into(), instance: None };
     let body = serde_json::to_vec(&json!({"auth_index": auth_index})).unwrap();
@@ -549,31 +585,104 @@ fn futures_executor_block<T>(fut: impl std::future::Future<Output = T>) -> T {
     tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn host_routing_reset_cooldown_clears_a_credential() {
-    let (host, _dir) = host_with(vec![]).await;
-    let manager = Arc::new(Manager::new());
-    host.set_auth_manager(Some(manager.clone()));
-    let mut auth = cpa_auth::Auth::new("claude-a.json", "claude");
-    let next = chrono::Utc::now() + chrono::Duration::hours(65);
+/// A claude credential held in a `credential_quota` cooldown, with a model state held the same way.
+fn cooling_auth(id: &str, model: &str, hours: i64) -> cpa_auth::Auth {
+    let mut auth = cpa_auth::Auth::new(id, "claude");
+    let next = chrono::Utc::now() + chrono::Duration::hours(hours);
+    let quota = cpa_auth::types::QuotaState { exceeded: true, reason: "credential_quota".into(), next_recover_at: Some(next), backoff_level: 1, ..Default::default() };
     auth.status = cpa_auth::Status::Error;
     auth.unavailable = true;
     auth.next_retry_after = Some(next);
-    auth.quota = cpa_auth::types::QuotaState { exceeded: true, reason: "credential_quota".into(), next_recover_at: Some(next), backoff_level: 1, ..Default::default() };
-    let mut registered = manager.register(auth).await.expect("register");
+    auth.quota = quota.clone();
+    auth.model_states.insert(
+        model.into(),
+        cpa_auth::types::ModelState {
+            status: cpa_auth::Status::Error,
+            unavailable: true,
+            next_retry_after: Some(next),
+            quota,
+            updated_at: Some(chrono::Utc::now()),
+            ..Default::default()
+        },
+    );
+    auth
+}
+
+/// Go `TestHostRoutingResetCooldownClearsCredentialCooldown`.
+#[tokio::test(flavor = "multi_thread")]
+async fn host_routing_reset_cooldown_clears_a_credential() {
+    const MODEL: &str = "claude-sonnet-5-5";
+    let (host, _dir) = host_with(vec![]).await;
+    let manager = Arc::new(Manager::new());
+    host.set_auth_manager(Some(manager.clone()));
+    let mut registered = manager.register(cooling_auth("claude-a.json", MODEL, 65)).await.expect("register");
     let index = registered.ensure_index();
+    let held = manager.get("claude-a.json").expect("registered");
+    assert!(held.quota.exceeded && held.unavailable, "registered auth must hold the cooldown");
 
     let result = reset_cooldown_call(&host, &index).expect("reset");
     assert_eq!(result["auth_index"], index.as_str());
+    assert_eq!(result["models"], json!([MODEL]));
     let updated = manager.get("claude-a.json").expect("auth still registered");
-    assert!(!updated.unavailable && !updated.quota.exceeded);
     assert_eq!(updated.status, cpa_auth::Status::Active);
+    assert!(!updated.unavailable && updated.next_retry_after.is_none());
+    assert!(!updated.quota.exceeded && updated.quota.reason.is_empty() && updated.quota.next_recover_at.is_none(), "{:?}", updated.quota);
+    let state = updated.model_states.get(MODEL).expect("model state");
+    assert!(!state.unavailable && state.next_retry_after.is_none() && !state.quota.exceeded, "{state:?}");
 
     // Unknown and empty indexes fail like Go's `authByIndex`.
     assert!(reset_cooldown_call(&host, "missing").is_err());
     assert!(reset_cooldown_call(&host, "").is_err());
     host.set_auth_manager(None);
     assert!(reset_cooldown_call(&host, "any").is_err());
+}
+
+/// Counts `save` calls.
+#[derive(Default)]
+struct CountingStore(std::sync::atomic::AtomicUsize);
+
+impl cpa_auth::Store for CountingStore {
+    fn list(&self) -> Result<Vec<cpa_auth::Auth>, cpa_auth::store::StoreError> {
+        Ok(Vec::new())
+    }
+
+    fn save(&self, _auth: &mut cpa_auth::Auth, _opts: cpa_auth::store::SaveOptions) -> Result<Option<std::path::PathBuf>, cpa_auth::store::StoreError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(None)
+    }
+
+    fn delete(&self, _id: &str) -> Result<(), cpa_auth::store::StoreError> {
+        Ok(())
+    }
+}
+
+/// Go `TestHostRoutingResetCooldownLeavesTokenFilesAlone`: the reset never saves the credential.
+#[tokio::test(flavor = "multi_thread")]
+async fn host_routing_reset_cooldown_leaves_token_files_alone() {
+    let (host, _dir) = host_with(vec![]).await;
+    let manager = Arc::new(Manager::new());
+    let store = Arc::new(CountingStore::default());
+    manager.set_store(Some(store.clone()));
+    host.set_auth_manager(Some(manager.clone()));
+    let mut registered = manager.register(cooling_auth("claude-token-test.json", "claude-sonnet-5-5", 48)).await.expect("register");
+    let index = registered.ensure_index();
+    store.0.store(0, std::sync::atomic::Ordering::SeqCst);
+
+    let result = reset_cooldown_call(&host, &index).expect("reset");
+    assert_eq!(result["auth_index"], index.as_str());
+    assert_eq!(store.0.load(std::sync::atomic::Ordering::SeqCst), 0, "token store save was called during the cooldown reset");
+    let updated = manager.get("claude-token-test.json").expect("auth");
+    assert!(!updated.unavailable && !updated.quota.exceeded, "cooldown must still be cleared in memory");
+}
+
+/// Go `TestHostRoutingResetCooldownRejectsInvalidJSON`.
+#[tokio::test(flavor = "multi_thread")]
+async fn host_routing_reset_cooldown_rejects_invalid_json() {
+    let (host, _dir) = host_with(vec![]).await;
+    host.set_auth_manager(Some(Arc::new(Manager::new())));
+    let id = cpa_plugin::callbacks::CbIdentity { plugin_id: "tester".into(), instance: None };
+    let result = host.call_from_plugin_async(&id, abi::METHOD_HOST_ROUTING_RESET_COOLDOWN, b"{invalid-json").await;
+    assert!(result.is_err(), "expected an error on an invalid JSON request");
 }
 
 // ---- host HTTP bridge: header profile and request-log capture ----

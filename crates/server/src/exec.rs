@@ -183,6 +183,9 @@ pub struct ExecArgs<'a> {
     pub ws_input: Option<cpa_runtime::executor::WebsocketInput>,
     /// Live credential-state check of the bound socket (Go: `WithWebsocketAuthCheck`).
     pub ws_auth_check: Option<cpa_runtime::executor::WebsocketAuthCheck>,
+    /// The Responses handler ran the Codex multi-agent v2 tool preparation on this request (Go:
+    /// `CodexMultiAgentV2ToolsPreparedContextKey` on the gin context).
+    pub tools_prepared: bool,
 }
 
 impl<'a> ExecArgs<'a> {
@@ -211,6 +214,7 @@ impl<'a> ExecArgs<'a> {
             disallow_free_auth: false,
             ws_input: None,
             ws_auth_check: None,
+            tools_prepared: false,
         }
     }
 
@@ -369,6 +373,7 @@ impl Pipeline {
         opts.api_log = self.info.api_log.exec_handle();
         opts.ws_input = a.ws_input.clone();
         opts.ws_auth_check = a.ws_auth_check.clone();
+        opts.codex_multi_agent_v2_tools_prepared = a.tools_prepared;
         // Every credential pick (including failover) refreshes the trace id header value.
         let (trace, request_id) = (self.info.trace.clone(), self.info.request_id.clone());
         let on_selected = a.on_selected_auth.clone();
