@@ -10,7 +10,7 @@ use cpa_json::{json, Value, J};
 use super::lenient::gjson_valid;
 use super::function_evidence::{pending_identity_error, record_function_evidence, EvidenceStore};
 use super::response::{
-    echo_request_fields, ModelEcho, next_func_call_id_counter, next_response_id_counter, pick_request_json, set_usage,
+    echo_request_fields, ModelEcho, next_func_call_id_counter, next_response_id_counter, pick_request_json, terminal_state, ResponsesUsage,
     unwrap_gemini_response_root, unwrap_request_root, with_tool_identity,
 };
 use super::signature_carrier::{encode_gemini_responses_carrier, CARRIER_ANY, CARRIER_FUNCTION, CARRIER_NEXT, CARRIER_PREVIOUS, CARRIER_STANDALONE, CARRIER_TEXT};
@@ -130,6 +130,11 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
 
     // Base response scaffold.
     let mut resp = json!({"id": "", "object": "response", "created_at": 0, "status": "completed", "background": false, "error": null, "incomplete_details": null});
+    let (_, status, incomplete_details) = terminal_state(&root.g("candidates.0.finishReason").str());
+    cpa_json::set(&mut resp, "status", status);
+    if let Some(details) = incomplete_details {
+        cpa_json::set(&mut resp, "incomplete_details", details);
+    }
 
     // id: prefer provider responseId, otherwise synthesize; normalized to resp_ prefix.
     let mut id = root.g("responseId").str();
@@ -383,6 +388,8 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
         param.tool_input_error = Some(err);
         return None;
     }
+    // Only a trailing, still-open message carries the terminal status.
+    let active_message_index = if agg.current_message_text.is_empty() { None } else { Some(agg.message_outputs.len()) };
     agg.flush_reasoning_output();
     agg.flush_message_output();
 
@@ -445,6 +452,9 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
                     }
                 }
                 let mut item = json!({"id": format!("msg_{rid}_{index}"), "type": "message", "status": "completed", "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": message_output.text}], "role": "assistant"});
+                if active_message_index == Some(index) {
+                    cpa_json::set(&mut item, "status", status);
+                }
                 if let Some(c) = message_citations.get(&(index as i64)).filter(|c: &&Vec<Value>| !c.is_empty()) {
                     cpa_json::set(&mut item, "content.0.annotations", Value::Array(c.clone()));
                 }
@@ -470,9 +480,9 @@ pub fn convert_gemini_response_to_openai_responses_non_stream(
         cpa_json::set(&mut resp, "tool_usage.web_search.num_requests", 1);
     }
 
-    let um = root.g("usageMetadata");
-    if um.exists() {
-        set_usage(&mut resp, "usage", &um, false);
+    let mut usage = ResponsesUsage::default();
+    if usage.merge(&root) {
+        cpa_json::set(&mut resp, "usage", usage.json());
     }
 
     Some(cpa_json::to_vec(&resp))
