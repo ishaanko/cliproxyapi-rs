@@ -283,6 +283,8 @@ fn items(c: Content) -> Vec<Item> {
         Content::ToolCall => vec![Item::Tool(1)],
         Content::Parallel => vec![Item::Tool(1), Item::Tool(2)],
         Content::Mixed => vec![Item::Text, Item::Tool(1)],
+        // Only the Responses family renders images; the others answer plain text.
+        Content::Image => vec![Item::Text],
     }
 }
 
@@ -501,7 +503,16 @@ fn responses_usage(c: Content) -> Value {
     })
 }
 
+/// `image_generation_call` output item of a Responses image answer.
+fn image_call_item() -> Value {
+    json!({"id":"ig_mock01","type":"image_generation_call","status":"completed","result":"AAEC","revised_prompt":"mock revised",
+        "output_format":"png","size":"1024x1024","background":"opaque","quality":"high"})
+}
+
 fn responses_items(ctx: &ReqCtx, c: Content) -> Vec<Value> {
+    if c == Content::Image {
+        return vec![image_call_item()];
+    }
     items(c)
         .into_iter()
         .map(|i| match i {
@@ -523,6 +534,9 @@ fn responses_object(ctx: &ReqCtx, c: Content, status: &str) -> Value {
     });
     if done {
         obj["usage"] = responses_usage(c);
+        if c == Content::Image {
+            obj["tool_usage"] = json!({"image_gen":{"input_tokens":5,"output_tokens":7,"total_tokens":12,"input_tokens_details":{"cached_tokens":2}}});
+        }
     }
     if status == "incomplete" {
         obj["incomplete_details"] = json!({"reason":"max_output_tokens"});
@@ -548,6 +562,12 @@ fn responses_events(ctx: &ReqCtx, c: Content) -> Vec<Ev> {
         let kind = item["type"].as_str().unwrap_or_default();
         let id = item["id"].clone();
         match kind {
+            "image_generation_call" => {
+                evs.push(Ev::named("response.output_item.added", json!({"type":"response.output_item.added","sequence_number":next(),"output_index":i,"item":{"id":id,"type":"image_generation_call","status":"in_progress"}})));
+                evs.push(Ev::named("response.image_generation_call.in_progress", json!({"type":"response.image_generation_call.in_progress","sequence_number":next(),"item_id":id,"output_index":i})));
+                evs.push(Ev::named("response.image_generation_call.generating", json!({"type":"response.image_generation_call.generating","sequence_number":next(),"item_id":id,"output_index":i})));
+                evs.push(Ev::named("response.image_generation_call.partial_image", json!({"type":"response.image_generation_call.partial_image","sequence_number":next(),"item_id":id,"output_index":i,"partial_image_index":0,"partial_image_b64":"AAE=","output_format":"png","size":"1024x1024","quality":"high","background":"opaque"})));
+            }
             "reasoning" => {
                 evs.push(Ev::named("response.output_item.added", json!({"type":"response.output_item.added","sequence_number":next(),"output_index":i,"item":{"id":id,"type":"reasoning","summary":[]}})));
                 evs.push(Ev::named("response.reasoning_summary_part.added", json!({"type":"response.reasoning_summary_part.added","sequence_number":next(),"item_id":id,"output_index":i,"summary_index":0,"part":{"type":"summary_text","text":""}})));

@@ -980,3 +980,163 @@ event: image_generation.completed\ndata: {\"type\":\"image_generation.completed\
     assert_eq!(sent["stream"], true);
     assert_eq!(sent["partial_images"], 2);
 }
+
+// ---------------------------------------------------------------- image usage order
+
+fn completed_with_tool_usage(main_usage: &str, image_usage: &str) -> String {
+    format!(
+        r#"{{"type":"response.completed","response":{{"id":"resp_usage","object":"response","status":"completed","model":"gpt-5.5","output":[{{"type":"message","role":"assistant","content":[{{"type":"output_text","text":"ok"}}]}}]{main_usage}{image_usage}}}}}"#
+    )
+}
+
+/// Go `TestCodexExecutorExecutePublishesMainUsageBeforeImageUsage` (upstream a3b7756): the main
+/// model's record comes first and keeps its tokens; the image tool only adds a record of its own
+/// model when it used tokens.
+#[tokio::test]
+async fn execute_publishes_main_usage_before_image_usage() {
+    let main = r#","usage":{"input_tokens":100,"output_tokens":40,"total_tokens":140,"input_tokens_details":{"cached_tokens":25}}"#;
+    let zero = r#","tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0}}"#;
+    let nonzero = r#","tool_usage":{"image_gen":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":3}}}"#;
+    let cases = [(main, zero, false), (main, nonzero, true), (main, "", false), ("", zero, false), ("", nonzero, true)];
+    for (main_usage, image_usage, expect_image_record) in cases {
+        let body = format!("data: {}\n\n", completed_with_tool_usage(main_usage, image_usage));
+        let (url, _) = http_server(move |_| raw_sse(body.clone())).await;
+        let (exec, _keep) = executor(Config::default());
+        let collector = cpa_runtime::usage_report::UsageCollector::new();
+        let (mut req, mut opts) = request(r#"{"model":"gpt-5.5","input":"hi"}"#, false);
+        req.model = "gpt-5.5".into();
+        opts.usage_collector = Some(collector.clone());
+        exec.execute(&api_key_auth(&url, false), req, opts).await.expect("execute");
+
+        let records = collector.take();
+        assert_eq!(records.len(), 1 + usize::from(expect_image_record), "{main_usage} {image_usage}: {records:?}");
+        let main_record = &records[0];
+        assert!(main_record.model == "gpt-5.5" && !main_record.failed);
+        let want_main = if main_usage.is_empty() { (0, 0, 0, 0) } else { (100, 40, 140, 25) };
+        let d = &main_record.detail;
+        assert_eq!((d.input_tokens, d.output_tokens, d.total_tokens, d.cached_tokens), want_main, "{main_usage} {image_usage}");
+        if expect_image_record {
+            let image = &records[1];
+            assert!(image.model == "gpt-image-2" && !image.failed);
+            let d = &image.detail;
+            assert_eq!((d.input_tokens, d.output_tokens, d.total_tokens, d.cached_tokens, d.cache_read_tokens), (10, 20, 30, 3, 3));
+        }
+    }
+}
+
+// ---------------------------------------------------------------- Responses image tool
+
+/// Image call item as the upstream sends it in `response.output_item.done`.
+const IMAGE_ITEM: &str = r#"{"id":"ig_1","type":"image_generation_call","status":"completed","result":"QUJD","revised_prompt":"revised","output_format":"jpeg","size":"1024x1024","background":"opaque","quality":"high"}"#;
+
+fn image_tool_sse(with_image: bool) -> String {
+    let done = format!(r#"{{"type":"response.output_item.done","output_index":0,"item":{IMAGE_ITEM}}}"#);
+    let partial = r#"{"type":"response.image_generation_call.partial_image","item_id":"ig_1","output_index":0,"partial_image_index":1,"partial_image_b64":"UEFSVA==","output_format":"webp"}"#;
+    let completed = r#"{"type":"response.completed","response":{"created_at":1700000001,"output":[],"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7},"tool_usage":{"image_gen":{"input_tokens":5,"output_tokens":6,"total_tokens":11}}}}"#;
+    let mut events = vec![partial.to_string()];
+    if with_image {
+        events.push(done);
+    }
+    events.push(completed.to_string());
+    events.iter().map(|e| format!("data: {e}\n\n")).collect()
+}
+
+fn image_tool_request(path: &str, model: &str, payload: &str, stream: bool) -> (Request, Options) {
+    let req = Request { model: model.into(), payload: Bytes::from(payload.to_string()), format: Format::OpenAI, metadata: Default::default() };
+    let mut opts = image_options(stream);
+    opts.metadata.insert("request_path".into(), json!(path));
+    (req, opts)
+}
+
+/// A model that is not a direct image model takes the Responses path: forced `image_generation`
+/// tool on the base model, answer rebuilt as an images response, usage of the base model and of
+/// the tool published as two records.
+#[tokio::test]
+async fn image_tool_generation_builds_an_images_response_and_reports_both_usages() {
+    let body = image_tool_sse(true);
+    let (url, recorded) = http_server(move |_| raw_sse(body.clone())).await;
+    let mut cfg = Config::default();
+    cfg.gpt_image_2_base_model = "gpt-5.5".into();
+    let (exec, _keep) = executor(cfg);
+    let collector = cpa_runtime::usage_report::UsageCollector::new();
+    let payload = r#"{"model":"custom-image","prompt":" a lighthouse ","size":"512x512","output_compression":80,"partial_images":2,"response_format":"URL","n":3}"#;
+    let (req, mut opts) = image_tool_request("/v1/images/generations", "custom-image", payload, false);
+    opts.usage_collector = Some(collector.clone());
+    let resp = exec.execute(&api_key_auth(&url, false), req, opts).await.expect("image tool call");
+
+    let out: Value = serde_json::from_slice(&resp.payload).unwrap();
+    assert_eq!(
+        out,
+        json!({"created": 1700000001, "background": "opaque", "output_format": "jpeg", "quality": "high", "size": "1024x1024",
+            "usage": {"input_tokens": 5, "output_tokens": 6, "total_tokens": 11},
+            "data": [{"revised_prompt": "revised", "url": "data:image/jpeg;base64,QUJD"}]})
+    );
+    let seen = recorded.lock();
+    assert_eq!(seen[0].headers["accept"], "text/event-stream");
+    let sent: Value = serde_json::from_slice(&seen[0].body).unwrap();
+    assert_eq!(sent["model"], "gpt-5.5");
+    assert_eq!(sent["stream"], true);
+    assert_eq!(sent["tool_choice"], json!({"type": "image_generation"}));
+    assert_eq!(
+        sent["tools"],
+        json!([{"type": "image_generation", "action": "generate", "model": "custom-image", "size": "512x512", "output_compression": 80, "partial_images": 2}])
+    );
+    assert_eq!(sent["input"], json!([{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "a lighthouse"}]}]));
+    drop(seen);
+
+    let records = collector.take();
+    let summary: Vec<_> = records.iter().map(|r| (r.model.as_str(), r.detail.total_tokens, r.failed)).collect();
+    assert_eq!(summary, vec![("gpt-5.5", 7, false), ("custom-image", 11, false)]);
+}
+
+#[tokio::test]
+async fn image_tool_edit_forwards_images_and_mask() {
+    let body = image_tool_sse(true);
+    let (url, recorded) = http_server(move |_| raw_sse(body.clone())).await;
+    let (exec, _keep) = executor(Config::default());
+    let payload = r#"{"model":"custom-image","prompt":"p","images":[{"image_url":" data:image/png;base64,AA== "},{"file_id":"f"},{"image_url":""}],"mask":{"image_url":"data:image/png;base64,BB=="},"input_fidelity":"high"}"#;
+    let (req, opts) = image_tool_request("/v1/images/edits", "custom-image", payload, false);
+    let resp = exec.execute(&api_key_auth(&url, false), req, opts).await.expect("image tool edit");
+    let out: Value = serde_json::from_slice(&resp.payload).unwrap();
+    assert_eq!(out["data"], json!([{"revised_prompt": "revised", "b64_json": "QUJD"}]));
+    let sent: Value = serde_json::from_slice(&recorded.lock()[0].body).unwrap();
+    assert_eq!(sent["model"], "gpt-5.4-mini");
+    assert_eq!(
+        sent["tools"],
+        json!([{"type": "image_generation", "action": "edit", "model": "custom-image", "input_fidelity": "high", "input_image_mask": {"image_url": "data:image/png;base64,BB=="}}])
+    );
+    assert_eq!(
+        sent["input"][0]["content"],
+        json!([{"type": "input_text", "text": "p"}, {"type": "input_image", "image_url": "data:image/png;base64,AA=="}])
+    );
+}
+
+#[tokio::test]
+async fn image_tool_stream_emits_partial_and_completed_events() {
+    let body = image_tool_sse(true);
+    let (url, _) = http_server(move |_| raw_sse(body.clone())).await;
+    let (exec, _keep) = executor(Config::default());
+    let (req, opts) = image_tool_request("/v1/images/edits", "custom-image", r#"{"model":"custom-image","prompt":"p","response_format":"url"}"#, true);
+    let (out, err) = drain(exec.execute_stream(&api_key_auth(&url, false), req, opts).await.expect("stream")).await;
+    assert!(err.is_none());
+    assert_eq!(
+        out,
+        "event: image_edit.partial_image\ndata: {\"type\":\"image_edit.partial_image\",\"partial_image_index\":1,\"url\":\"data:image/webp;base64,UEFSVA==\"}\n\n\n\
+event: image_edit.completed\ndata: {\"type\":\"image_edit.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":6,\"total_tokens\":11},\"url\":\"data:image/jpeg;base64,QUJD\"}\n\n"
+    );
+}
+
+#[tokio::test]
+async fn image_tool_without_image_output_is_a_502_and_without_completion_a_504() {
+    let body = image_tool_sse(false);
+    let (url, _) = http_server(move |_| raw_sse(body.clone())).await;
+    let (exec, _keep) = executor(Config::default());
+    let (req, opts) = image_tool_request("/v1/images/generations", "custom-image", r#"{"prompt":"p"}"#, false);
+    let err = exec.execute(&api_key_auth(&url, false), req, opts).await.unwrap_err();
+    assert_eq!((err.status, err.message.as_str()), (502, "upstream did not return image output"));
+
+    let (url, _) = http_server(|_| raw_sse("data: {\"type\":\"response.in_progress\"}\n\n".into())).await;
+    let (req, opts) = image_tool_request("/v1/images/generations", "custom-image", r#"{"prompt":"p"}"#, false);
+    let err = exec.execute(&api_key_auth(&url, false), req, opts).await.unwrap_err();
+    assert_eq!((err.status, err.message.as_str()), (504, "stream error: stream disconnected before completion"));
+}

@@ -3,10 +3,8 @@
 //! `/images/generations` and `/images/edits` endpoints, bodies converted to JSON, answers (and
 //! SSE streams) relayed unchanged.
 //!
-//! Go also has a Responses-API based image path (`codexPrepareOpenAIImageRequest`,
-//! `codexExtractImageResults`, `codexBuildImagesAPIResponse`, the partial-image frame builders).
-//! It only runs for a model that is not one of the direct image models, and the image handlers
-//! only route those five models here, so it is unreachable and not ported.
+//! Any other model reaching this executor on an images endpoint takes the Responses image tool
+//! path (see [`super::image_tool`]).
 
 use base64::Engine as _;
 use cpa_auth::Auth;
@@ -21,6 +19,7 @@ use super::CodexExecutor;
 use super::creds::codex_creds;
 use super::headers::{apply_codex_headers, apply_model_header_overrides, set_header};
 use super::request::{apply_prompt_cache_and_ids, prompt_cache_id};
+use super::image_tool::with_recorded_headers;
 use super::terminal::new_status_err_with_cooling;
 use crate::helps::content_type::detect_content_type;
 use crate::helps::payload::payload_request_path;
@@ -86,7 +85,7 @@ fn direct_endpoint(req: &Request, opts: &Options) -> &'static str {
     }
 }
 
-fn plain_error(message: impl Into<String>) -> ExecError {
+pub(super) fn plain_error(message: impl Into<String>) -> ExecError {
     ExecError::new(0, message)
 }
 
@@ -159,14 +158,19 @@ fn rewrite_edit_multipart_to_json(payload: &[u8], model: &str, boundary: &str, s
     Ok((cpa_json::to_vec(&out), "application/json".into()))
 }
 
+/// `codexFormValue`: first value of a form field, trimmed (empty when absent).
+pub(super) fn form_value(form: &Form, key: &str) -> String {
+    form.values.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.first()).map(|v| v.trim().to_string()).unwrap_or_default()
+}
+
 /// `codexMultipartImageFiles`: `image[]` files, else `image`.
-fn image_files(form: &Form) -> Vec<&FilePart> {
+pub(super) fn image_files(form: &Form) -> Vec<&FilePart> {
     let list: Vec<&FilePart> = form.files.iter().filter(|f| f.key == "image[]").collect();
     if list.is_empty() { form.files.iter().filter(|f| f.key == "image").collect() } else { list }
 }
 
 /// `codexMultipartFileToDataURL`.
-fn file_to_data_url(file: &FilePart) -> String {
+pub(super) fn file_to_data_url(file: &FilePart) -> String {
     let declared = file.headers.get("Content-Type").and_then(|v| v.first()).map(|v| v.trim()).unwrap_or_default();
     let media_type = if declared.is_empty() { detect_content_type(&file.data) } else { declared };
     format!("data:{media_type};base64,{}", base64::engine::general_purpose::STANDARD.encode(&file.data))
@@ -254,7 +258,7 @@ impl CodexExecutor {
 
     /// Reads a whole response body into the request log (`RecordAPIResponseError` on failure,
     /// `AppendAPIResponseChunk` on success), marking TTFT at the first body byte.
-    async fn read_logged_body(&self, cfg: &cpa_config::Config, opts: &Options, resp: reqwest::Response, reporter: &UsageReporter) -> Result<bytes::Bytes, ExecError> {
+    pub(super) async fn read_logged_body(&self, cfg: &cpa_config::Config, opts: &Options, resp: reqwest::Response, reporter: &UsageReporter) -> Result<bytes::Bytes, ExecError> {
         match super::exec_http::read_all_marking(resp, reporter).await {
             Ok(data) => {
                 opts.api_log.append_api_response_chunk(cfg, &data);
@@ -268,9 +272,27 @@ impl CodexExecutor {
         }
     }
 
-    /// `executeDirectOpenAIImage`: one JSON answer, usage read from the body.
+    /// `executeOpenAIImage`: direct image models go to the backend's image endpoints, every other
+    /// model through the Responses image tool.
     pub(super) async fn execute_openai_image(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {
         let endpoint = direct_endpoint(&req, &opts);
+        if endpoint.is_empty() {
+            return self.execute_image_tool(auth, req, opts).await;
+        }
+        self.execute_direct_image(auth, req, opts, endpoint).await
+    }
+
+    /// `executeOpenAIImageStream`, see [`Self::execute_openai_image`].
+    pub(super) async fn execute_openai_image_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        let endpoint = direct_endpoint(&req, &opts);
+        if endpoint.is_empty() {
+            return self.execute_image_tool_stream(auth, req, opts).await;
+        }
+        self.execute_direct_image_stream(auth, req, opts, endpoint).await
+    }
+
+    /// `executeDirectOpenAIImage`: one JSON answer, usage read from the body.
+    async fn execute_direct_image(&self, auth: &Auth, req: Request, opts: Options, endpoint: &str) -> Result<Response, ExecError> {
         let cfg = self.config();
         let (url, headers, body, model) = self.build_direct_image_request(auth, &req, &opts, endpoint, false)?;
         let reporter = self.image_reporter(auth, &opts, &model, &body);
@@ -278,9 +300,9 @@ impl CodexExecutor {
             let resp = self.send_http(&cfg, auth, &opts, &url, headers, body, &reporter).await?;
             let status = resp.status().as_u16();
             let resp_headers = resp.headers().clone();
-            let data = self.read_logged_body(&cfg, &opts, resp, &reporter).await?;
+            let data = self.read_logged_body(&cfg, &opts, resp, &reporter).await.map_err(|err| with_recorded_headers(err, &resp_headers))?;
             if !(200..300).contains(&status) {
-                return Err(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling));
+                return Err(with_recorded_headers(new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling), &resp_headers));
             }
             let detail = parse_openai_usage(&data);
             reporter.publish(detail.clone());
@@ -294,8 +316,7 @@ impl CodexExecutor {
 
     /// `executeDirectOpenAIImageStream`: the upstream SSE bytes are relayed as read; usage is
     /// collected from the data lines of each chunk.
-    pub(super) async fn execute_openai_image_stream(&self, auth: &Auth, req: Request, opts: Options) -> Result<StreamResult, ExecError> {
-        let endpoint = direct_endpoint(&req, &opts);
+    async fn execute_direct_image_stream(&self, auth: &Auth, req: Request, opts: Options, endpoint: &str) -> Result<StreamResult, ExecError> {
         let cfg = self.config();
         let (url, headers, body, model) = self.build_direct_image_request(auth, &req, &opts, endpoint, true)?;
         let reporter = self.image_reporter(auth, &opts, &model, &body);
@@ -313,6 +334,7 @@ impl CodexExecutor {
                 Ok(data) => new_status_err_with_cooling(status, &data, cfg.codex.model_level_cooling),
                 Err(err) => err,
             };
+            let err = with_recorded_headers(err, &resp_headers);
             reporter.publish_failure(&err);
             return Err(err);
         }

@@ -14,6 +14,7 @@ mod count;
 mod creds;
 mod headers;
 mod exec_http;
+mod image_tool;
 mod images;
 mod input_ids;
 mod logging;
