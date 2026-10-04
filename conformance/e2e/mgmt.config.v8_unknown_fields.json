@@ -1,0 +1,194 @@
+{
+  "id": "mgmt.config.v8_unknown_fields",
+  "desc": "nested unknown fields are reported with yaml.v3's line and Go type",
+  "steps": [
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "routing": {
+            "nope": 1
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "yaml: unmarshal errors:\n  line 2: field nope not found in type config.RoutingConfig"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "client": {
+            "codex": {
+              "yy": 1
+            },
+            "zz": true
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "yaml: unmarshal errors:\n  line 1: field yy not found in type config.CodexClientConfig\n  line 1: field zz not found in type config.ClientConfig"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/api-keys/claude",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": [
+          {
+            "name": "edge",
+            "base-url": "https://api.anthropic.invalid",
+            "keys": [
+              {
+                "api-key": "sk-e2e-edge",
+                "zzz": 1
+              }
+            ],
+            "models": [
+              {
+                "name": "m",
+                "alias": "a",
+                "qq": 1
+              }
+            ]
+          }
+        ]
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "yaml: unmarshal errors:\n  line 34: field qq not found in type config.ClaudeModel\n  line 36: field zzz not found in type config.ClaudeKey"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "config-version: 8\n# server section\nserver:\n  host: 127.0.0.1\n  port: 38922\nrouting:\n  # retry comment\n  retry:\n    request-retry: 2\n    nope: 1\n  other: 2\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, bogus: 1}\n"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "invalid_config",
+            "message": "yaml: unmarshal errors:\n  line 3: field retry not found in type config.RoutingConfig\n  line 5: field other not found in type config.RoutingConfig\n  line 6: field management not found in type config.legacyConfig"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/routing",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "cooldown": {
+              "disable-cooling": false
+            },
+            "force-model-prefix": false,
+            "retry": {
+              "max-retry-credentials": 0,
+              "max-retry-interval": 0,
+              "request-retry": 2
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

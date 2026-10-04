@@ -87,7 +87,6 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "gzip, deflate, br, zstd",
         "anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
         "anthropic-version": "2023-06-01",

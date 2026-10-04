@@ -606,7 +606,6 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
@@ -643,7 +642,6 @@
       "query": "beta=true",
       "credential": "sk-claude-2",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
@@ -680,7 +678,6 @@
       "query": "beta=true",
       "credential": "sk-claude-2",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",

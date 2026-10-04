@@ -475,7 +475,6 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
@@ -512,155 +511,6 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
-        "accept-encoding": "identity",
-        "anthropic-version": "2023-06-01",
-        "authorization": "Bearer sk-claude-1",
-        "content-type": "application/json",
-        "user-agent": "cpa-e2e/1"
-      },
-      "body": {
-        "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 32000,
-        "messages": [
-          {
-            "role": "user",
-            "content": [
-              {
-                "type": "text",
-                "text": "What is the weather in Paris?",
-                "cache_control": {
-                  "type": "ephemeral"
-                }
-              }
-            ]
-          }
-        ],
-        "metadata": {
-          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
-        },
-        "stream": true
-      }
-    },
-    {
-      "family": "anthropic",
-      "method": "POST",
-      "path": "/v1/messages",
-      "query": "beta=true",
-      "credential": "sk-claude-2",
-      "headers": {
-        "accept": "*/*",
-        "accept-encoding": "identity",
-        "anthropic-version": "2023-06-01",
-        "authorization": "Bearer sk-claude-2",
-        "content-type": "application/json",
-        "user-agent": "cpa-e2e/1"
-      },
-      "body": {
-        "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 32000,
-        "messages": [
-          {
-            "role": "user",
-            "content": [
-              {
-                "type": "text",
-                "text": "What is the weather in Paris?",
-                "cache_control": {
-                  "type": "ephemeral"
-                }
-              }
-            ]
-          }
-        ],
-        "metadata": {
-          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
-        },
-        "stream": true
-      }
-    },
-    {
-      "family": "anthropic",
-      "method": "POST",
-      "path": "/v1/messages",
-      "query": "beta=true",
-      "credential": "sk-claude-1",
-      "headers": {
-        "accept": "*/*",
-        "accept-encoding": "identity",
-        "anthropic-version": "2023-06-01",
-        "authorization": "Bearer sk-claude-1",
-        "content-type": "application/json",
-        "user-agent": "cpa-e2e/1"
-      },
-      "body": {
-        "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 32000,
-        "messages": [
-          {
-            "role": "user",
-            "content": [
-              {
-                "type": "text",
-                "text": "What is the weather in Paris?",
-                "cache_control": {
-                  "type": "ephemeral"
-                }
-              }
-            ]
-          }
-        ],
-        "metadata": {
-          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
-        },
-        "stream": true
-      }
-    },
-    {
-      "family": "anthropic",
-      "method": "POST",
-      "path": "/v1/messages",
-      "query": "beta=true",
-      "credential": "sk-claude-1",
-      "headers": {
-        "accept": "*/*",
-        "accept-encoding": "identity",
-        "anthropic-version": "2023-06-01",
-        "authorization": "Bearer sk-claude-1",
-        "content-type": "application/json",
-        "user-agent": "cpa-e2e/1"
-      },
-      "body": {
-        "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 32000,
-        "messages": [
-          {
-            "role": "user",
-            "content": [
-              {
-                "type": "text",
-                "text": "What is the weather in Paris?",
-                "cache_control": {
-                  "type": "ephemeral"
-                }
-              }
-            ]
-          }
-        ],
-        "metadata": {
-          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
-        },
-        "stream": true
-      }
-    },
-    {
-      "family": "anthropic",
-      "method": "POST",
-      "path": "/v1/messages",
-      "query": "beta=true",
-      "credential": "sk-claude-1",
-      "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",
@@ -697,7 +547,6 @@
       "query": "beta=true",
       "credential": "sk-claude-2",
       "headers": {
-        "accept": "*/*",
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-2",
@@ -734,7 +583,150 @@
       "query": "beta=true",
       "credential": "sk-claude-1",
       "headers": {
-        "accept": "*/*",
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-1",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-2",
+      "headers": {
+        "accept-encoding": "identity",
+        "anthropic-version": "2023-06-01",
+        "authorization": "Bearer sk-claude-2",
+        "content-type": "application/json",
+        "user-agent": "cpa-e2e/1"
+      },
+      "body": {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32000,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "What is the weather in Paris?",
+                "cache_control": {
+                  "type": "ephemeral"
+                }
+              }
+            ]
+          }
+        ],
+        "metadata": {
+          "user_id": "9812614c93f1fa851b3d0f72b7b284944d46ba61ee24ee868cfd79dc61b548e0"
+        },
+        "stream": true
+      }
+    },
+    {
+      "family": "anthropic",
+      "method": "POST",
+      "path": "/v1/messages",
+      "query": "beta=true",
+      "credential": "sk-claude-1",
+      "headers": {
         "accept-encoding": "identity",
         "anthropic-version": "2023-06-01",
         "authorization": "Bearer sk-claude-1",

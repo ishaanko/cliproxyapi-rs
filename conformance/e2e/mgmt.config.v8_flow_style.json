@@ -1,0 +1,200 @@
+{
+  "id": "mgmt.config.v8_flow_style",
+  "desc": "flow collections of YAML and JSON bodies survive the write, also when historical paths move",
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: e2e-mgmt-secret, disable-control-panel: true}\naccess:\n  api-keys: [e2e-client-key, \"e2e-client-key-2\"]\noauth:\n  auth-dir: \"{{AUTH_DIR}}\"\n  providers:\n    codex: {response-steering: true, header-defaults: {user-agent: yaml-agent, beta-features: \"a,b\"}}\nrouting: {retry: {request-retry: 2}}\n"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key, \"e2e-client-key-2\"]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_style/auth\"\n    providers:\n        codex: {header-defaults: {user-agent: yaml-agent, beta-features: \"a,b\"}}\nrouting: {retry: {request-retry: 2}}\nupstream:\n    codex:\n        response-steering: true\n"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PATCH",
+        "path": "/v8/management/config",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "oauth": {
+            "providers": {
+              "codex": {
+                "stream-bootstrap-timeout": "10s",
+                "header-defaults": {
+                  "user-agent": "json-agent",
+                  "beta-features": "c"
+                }
+              }
+            }
+          },
+          "routing": {
+            "retry": {
+              "request-retry": 3
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key, \"e2e-client-key-2\"]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_style/auth\"\n    providers:\n        codex: {header-defaults: {user-agent: \"json-agent\", beta-features: \"c\"}}\nrouting: {retry: {request-retry: 3}}\nupstream:\n    codex:\n        response-steering: true\n        stream-bootstrap-timeout: \"10s\"\n"
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/oauth/providers/codex/header-defaults",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": {
+          "user-agent": "put-agent"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config.yaml",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/yaml; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "text",
+          "value": "config-version: 8\nserver: {host: 127.0.0.1, port: 38922}\nmanagement: {allow-remote: false, secret-key: <bcrypt>, disable-control-panel: true}\naccess:\n    api-keys: [e2e-client-key, \"e2e-client-key-2\"]\noauth:\n    auth-dir: \"<work>/mgmt.config.v8_flow_style/auth\"\n    providers:\n        codex: {header-defaults: {\"user-agent\": \"put-agent\"}}\nrouting: {retry: {request-retry: 3}}\nupstream:\n    codex:\n        response-steering: true\n        stream-bootstrap-timeout: \"10s\"\n"
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

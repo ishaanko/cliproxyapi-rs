@@ -1,0 +1,359 @@
+{
+  "id": "redis.usage.failed.codex",
+  "desc": "queued usage of failed upstream calls, codex upstream, json and stream",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "mock upstream error 400",
+              "type": "invalid_request_error",
+              "code": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "gpt-5.5",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-80228c41b545cfb8-<uuid:2>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": {
+              "message": "mock upstream error 400",
+              "type": "invalid_request_error",
+              "code": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "RESP",
+        "acts": "[Cmd([\"AUTH\", \"e2e-mgmt-secret\"]), Cmd([\"LPOP\", \"usage\"]), Cmd([\"LPOP\", \"usage\"])]"
+      },
+      "response": {
+        "status": 0,
+        "headers": {},
+        "body": {
+          "type": "json",
+          "value": [
+            {
+              "sent": [
+                "AUTH",
+                "e2e-mgmt-secret"
+              ],
+              "reply": {
+                "simple": "OK"
+              }
+            },
+            {
+              "sent": [
+                "LPOP",
+                "usage"
+              ],
+              "reply": {
+                "timestamp": "<now>",
+                "latency_ms": "<latency_ms>",
+                "ttft_ms": "<ttft_ms>",
+                "source": "sk-codex-2",
+                "auth_index": "4af74ce5d38820a1",
+                "client_ip": "127.0.0.1",
+                "resolved_client_ip": "127.0.0.1",
+                "x_forwarded_for": "",
+                "user_agent": "cpa-e2e/1",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_read_tokens_present": true,
+                  "cache_creation_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true,
+                "generate": true,
+                "stream": false,
+                "fail": {
+                  "status_code": 400,
+                  "body": "{\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}"
+                },
+                "response_headers": {
+                  "Content-Length": [
+                    "90"
+                  ],
+                  "Content-Type": [
+                    "application/json"
+                  ],
+                  "Date": "<date>"
+                },
+                "accounting_version": 2,
+                "token_breakdown": {
+                  "schema_version": 2,
+                  "quality": "complete",
+                  "total_tokens": 0,
+                  "input": {
+                    "total_tokens": 0,
+                    "uncached_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0
+                  },
+                  "output": {
+                    "total_tokens": 0,
+                    "non_reasoning_tokens": 0,
+                    "reasoning_tokens": 0
+                  },
+                  "unclassified_tokens": 0
+                },
+                "provider": "codex",
+                "executor_type": "CodexExecutor",
+                "model": "gpt-5.5",
+                "alias": "gpt-5.5",
+                "endpoint": "POST /v1/chat/completions",
+                "auth_type": "apikey",
+                "api_key": "e2e-client-key",
+                "request_id": "<request_id>",
+                "execution_id": "<execution_id>",
+                "trace_id": "<trace_id>",
+                "session_id": "6ae58c5c-b8ab-81a6-ab97-26da30358da1",
+                "reasoning_effort": "medium",
+                "service_tier": "auto"
+              }
+            },
+            {
+              "sent": [
+                "LPOP",
+                "usage"
+              ],
+              "reply": {
+                "timestamp": "<now>",
+                "latency_ms": "<latency_ms>",
+                "ttft_ms": "<ttft_ms>",
+                "source": "sk-codex-1",
+                "auth_index": "80228c41b545cfb8",
+                "client_ip": "127.0.0.1",
+                "resolved_client_ip": "127.0.0.1",
+                "x_forwarded_for": "",
+                "user_agent": "cpa-e2e/1",
+                "tokens": {
+                  "input_tokens": 0,
+                  "output_tokens": 0,
+                  "reasoning_tokens": 0,
+                  "cached_tokens": 0,
+                  "cache_read_tokens": 0,
+                  "cache_read_tokens_present": true,
+                  "cache_creation_tokens": 0,
+                  "total_tokens": 0
+                },
+                "failed": true,
+                "generate": true,
+                "stream": true,
+                "fail": {
+                  "status_code": 400,
+                  "body": "{\"error\":{\"message\":\"mock upstream error 400\",\"type\":\"invalid_request_error\",\"code\":null}}"
+                },
+                "response_headers": {
+                  "Content-Length": [
+                    "90"
+                  ],
+                  "Content-Type": [
+                    "application/json"
+                  ],
+                  "Date": "<date>"
+                },
+                "accounting_version": 2,
+                "token_breakdown": {
+                  "schema_version": 2,
+                  "quality": "complete",
+                  "total_tokens": 0,
+                  "input": {
+                    "total_tokens": 0,
+                    "uncached_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0
+                  },
+                  "output": {
+                    "total_tokens": 0,
+                    "non_reasoning_tokens": 0,
+                    "reasoning_tokens": 0
+                  },
+                  "unclassified_tokens": 0
+                },
+                "provider": "codex",
+                "executor_type": "CodexExecutor",
+                "model": "gpt-5.5",
+                "alias": "gpt-5.5",
+                "endpoint": "POST /v1/chat/completions",
+                "auth_type": "apikey",
+                "api_key": "e2e-client-key",
+                "request_id": "<request_id>",
+                "execution_id": "<execution_id>",
+                "trace_id": "<trace_id>",
+                "session_id": "6ae58c5c-b8ab-81a6-ab97-26da30358da1",
+                "reasoning_effort": "medium",
+                "service_tier": "auto"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "21e58078-e35b-56a5-90c8-532d647c353d",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "instructions": "",
+        "stream": true,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "parallel_tool_calls": true,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "model": "gpt-5.5",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "tools": [
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "prompt_cache_key": "21e58078-e35b-56a5-90c8-532d647c353d"
+      }
+    },
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses",
+      "query": "",
+      "credential": "sk-codex-1",
+      "headers": {
+        "accept": "text/event-stream",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-1",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "session-id": "21e58078-e35b-56a5-90c8-532d647c353d",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "instructions": "",
+        "stream": true,
+        "reasoning": {
+          "effort": "medium"
+        },
+        "parallel_tool_calls": true,
+        "include": [
+          "reasoning.encrypted_content"
+        ],
+        "model": "gpt-5.5",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "What is the weather in Paris?"
+              }
+            ]
+          }
+        ],
+        "store": false,
+        "tools": [
+          {
+            "type": "image_generation",
+            "output_format": "png"
+          }
+        ],
+        "prompt_cache_key": "21e58078-e35b-56a5-90c8-532d647c353d"
+      }
+    }
+  ]
+}

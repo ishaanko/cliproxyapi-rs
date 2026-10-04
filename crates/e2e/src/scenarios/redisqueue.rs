@@ -216,6 +216,25 @@ pub fn scenarios() -> Vec<Scenario> {
             .profile(profiles::usage_stats),
         );
     }
+    // Failed attempts keep the upstream response headers (Go: the response-headers holder is
+    // read when the failure record is published), whatever the executor.
+    for f in FAMILIES {
+        let failing_chat = |stream| Req::Http(HttpReq::post("/v1/chat/completions", bodies::chat(f.model(), stream, Kind::Text)));
+        out.push(
+            s(
+                &format!("usage.failed.{}", f.label()),
+                &format!("queued usage of failed upstream calls, {} upstream, json and stream", f.label()),
+                Script::steps(vec![Step::always(Reply::error(400))]),
+                vec![
+                    failing_chat(false),
+                    failing_chat(true),
+                    Req::Pause(SETTLE_MS),
+                    session(vec![auth(), cmd(&["LPOP", "usage"]), cmd(&["LPOP", "usage"])]),
+                ],
+            )
+            .profile(profiles::usage_stats),
+        );
+    }
     out.push(s(
         "usage_disabled",
         "no usage records are queued with usage-statistics-enabled off",
