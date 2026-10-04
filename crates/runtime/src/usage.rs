@@ -105,6 +105,9 @@ pub struct UsageExtra {
     pub node_kind: String,
     pub is_fork: bool,
     pub is_compaction: bool,
+    /// Final client response status of the request the record belongs to (Go: the context's
+    /// response-status holder); `None` outside an inbound request.
+    pub response_status: Option<crate::apilog::ResponseStatus>,
 }
 
 /// Receives every usage record, whether or not statistics are enabled (Go: a registered

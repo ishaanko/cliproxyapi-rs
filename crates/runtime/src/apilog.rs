@@ -213,10 +213,31 @@ struct LogState {
     credits_used: bool,
 }
 
+/// Final client response status of one inbound request (Go: the logging response-status
+/// holder). Zero until the handler finished; usage records share it so the queue can fold the
+/// final status into `failed` when a record is dispatched after the response.
+#[derive(Clone, Default, Debug)]
+pub struct ResponseStatus(std::sync::Arc<std::sync::atomic::AtomicU16>);
+
+impl ResponseStatus {
+    /// Stores the status; zero is ignored like Go's `SetResponseStatus`.
+    pub fn set(&self, status: u16) {
+        if status > 0 {
+            self.0.store(status, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// The stored status, 0 while unknown.
+    pub fn get(&self) -> u16 {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Capture of the upstream attempts of one inbound request.
 #[derive(Default)]
 pub struct ApiLog {
     state: Mutex<LogState>,
+    response_status: ResponseStatus,
 }
 
 impl std::fmt::Debug for ApiLog {
@@ -237,6 +258,11 @@ impl ApiLogHandle {
 
     pub fn get(&self) -> Option<&ApiLog> {
         self.0.as_deref()
+    }
+
+    /// The request's final-status holder, for usage records of its attempts.
+    pub fn response_status(&self) -> Option<ResponseStatus> {
+        self.get().map(|l| l.response_status.clone())
     }
 
     pub fn record_api_request(&self, cfg: &Config, info: UpstreamRequestLog) {
@@ -318,6 +344,12 @@ impl ApiLogHandle {
 }
 
 impl ApiLog {
+    /// Records the final client response status once the handler finished (Go: the cancel
+    /// function of `GetContextWithCancel` calling `SetResponseStatus`).
+    pub fn set_response_status(&self, status: u16) {
+        self.response_status.set(status);
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

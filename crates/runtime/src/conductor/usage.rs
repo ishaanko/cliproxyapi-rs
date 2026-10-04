@@ -135,6 +135,7 @@ fn usage_extra(result: &ExecResult, auth: Option<&Auth>) -> UsageExtra {
         auth_id: auth.map(|a| a.id.clone()).unwrap_or_default(),
         queue_source: String::new(),
         access_token_sha256: String::new(),
+        response_status: result.options.api_log.response_status(),
         ..Default::default()
     }
 }

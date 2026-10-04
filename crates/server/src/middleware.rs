@@ -208,6 +208,7 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
     let api_log = ApiLogHandle::default();
     api_log.0.set_error_logging(cfg.request_log);
     drop(cfg);
+    let status_log = api_log.0.clone();
     req.extensions_mut().insert(api_log);
 
     let scope_id = request_id.clone();
@@ -225,6 +226,8 @@ pub async fn access_log(State(st): State<AppState>, mut req: Request, next: Next
     let (parts, body) = resp.into_parts();
     let display_path = if raw_query.is_empty() { path } else { format!("{path}?{raw_query}") };
     let on_done = Box::new(move || {
+        // Go's handler cancel function stores the final status for usage records dispatched after it.
+        status_log.set_response_status(status.as_u16());
         let mut latency = start.elapsed();
         latency = if latency.as_secs() > 60 {
             std::time::Duration::from_secs(latency.as_secs())
