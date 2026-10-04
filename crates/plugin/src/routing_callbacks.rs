@@ -24,7 +24,7 @@ impl Host {
             return Err(HostError::msg(format!("auth not found for auth_index {auth_index}")));
         };
         let index = updated.ensure_index();
-        tracing::info!(plugin_id = %id.plugin_id, auth_index = %index, models = models.len(), "pluginhost: plugin reset credential cooldown");
+        tracing::info!(plugin_id = %id.plugin_id, auth_index = index.as_str(), models = models.len(), "pluginhost: plugin reset credential cooldown");
         marshal_result(&HostRoutingResetCooldownResponse { auth_index: index, models })
     }
 }
