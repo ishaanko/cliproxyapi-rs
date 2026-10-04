@@ -4,7 +4,7 @@ import { clearKey, useKey } from "@/lib/auth";
 import { MOD, fmtVersion } from "@/lib/format";
 import { isTyping, modalOpen } from "@/lib/hotkeys";
 import { useClientKeys, useCredentials, useHealth } from "@/lib/queries";
-import { go, href, useRoute, type Page } from "@/lib/route";
+import { NAV, go, href, useRoute, type Page } from "@/lib/route";
 import ApiKeys from "@/screens/ApiKeys";
 import Config from "@/screens/Config";
 import Credentials from "@/screens/Credentials";
@@ -13,21 +13,13 @@ import Logs from "@/screens/Logs";
 import Models from "@/screens/Models";
 import Overview from "@/screens/Overview";
 import Providers from "@/screens/Providers";
+import Quotas from "@/screens/Quotas";
+import Tools from "@/screens/Tools";
 import { Brand } from "@/ui/Brand";
 import { CommandPalette } from "@/ui/CommandPalette";
 import { ConfirmHost, Dialog, Toaster } from "@/ui/overlays";
 import { Icon } from "@/ui/icons";
 import { Kbd, StatusDot, cx } from "@/ui/primitives";
-
-const nav: { page: Page; label: string; key: string }[] = [
-  { page: "overview", label: "Overview", key: "o" },
-  { page: "credentials", label: "Credentials", key: "c" },
-  { page: "keys", label: "API keys", key: "k" },
-  { page: "providers", label: "Providers", key: "p" },
-  { page: "models", label: "Models", key: "m" },
-  { page: "config", label: "Config", key: "y" },
-  { page: "logs", label: "Logs", key: "l" },
-];
 
 export default function App() {
   const key = useKey();
@@ -70,7 +62,7 @@ function Shell() {
       }
       if (chord.current && Date.now() - chord.current < 900) {
         chord.current = 0;
-        const target = nav.find((n) => n.key === e.key);
+        const target = NAV.find((n) => n.key === e.key);
         if (target) {
           e.preventDefault();
           go(target.page);
@@ -88,7 +80,9 @@ function Shell() {
       <Sidebar active={route.page} onPalette={() => setPalette(true)} />
       <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         {route.page === "overview" && <Overview />}
+        {route.page === "tools" && <Tools />}
         {route.page === "credentials" && <Credentials sub={route.sub} />}
+        {route.page === "quotas" && <Quotas />}
         {route.page === "keys" && <ApiKeys sub={route.sub} />}
         {route.page === "providers" && <Providers sub={route.sub} />}
         {route.page === "models" && <Models sub={route.sub} />}
@@ -115,7 +109,7 @@ function Sidebar({ active, onPalette }: { active: Page; onPalette: () => void })
         <Brand />
       </div>
       <nav className="flex gap-0.5 overflow-x-auto px-2 pb-2 md:flex-1 md:flex-col md:overflow-visible md:pb-0">
-        {nav.map((n) => {
+        {NAV.map((n) => {
           const on = n.page === active;
           const count = counts[n.page];
           return (
@@ -168,7 +162,7 @@ function Sidebar({ active, onPalette }: { active: Page; onPalette: () => void })
 
 const shortcuts: [string, string[]][] = [
   ["Command palette", [MOD, "K"]],
-  ["Go to page", ["g", "then o c k p m y l"]],
+  ["Go to page", ["g", `then ${NAV.map((n) => n.key).join(" ")}`]],
   ["Focus search", ["/"]],
   ["Move in lists", ["j", "k"]],
   ["Open selected", ["Enter"]],

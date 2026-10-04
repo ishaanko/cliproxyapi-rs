@@ -1,7 +1,10 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useMemo, type ReactNode } from "react";
 import { useServerMeta } from "@/lib/api";
 import { NONE, clock, fmtCompact, fmtInt, fmtMs, fmtPct, fmtVersion, isSemver, maskKey, sameVersion } from "@/lib/format";
+import { credentialState, credentialTitle, planOf } from "@/lib/credential";
 import {
+  getConfigNode,
   useApiKeyUsage,
   useCredentials,
   useHealth,
@@ -9,16 +12,11 @@ import {
   useRequestFeed,
   useUsageSummary,
 } from "@/lib/queries";
-import { href } from "@/lib/route";
+import { go, href } from "@/lib/route";
 import type { CredentialFile, RecentBucket, UsageAgg, UsageEvent } from "@/lib/types";
-import { EmptyState, PageHeader, Section, Spark, StatusDot, cx } from "@/ui/primitives";
-
-interface Bar {
-  label: string;
-  requests: number;
-  failed: number;
-  tokens?: number;
-}
+import { DotBars, DotStrip, type Column } from "@/ui/dots";
+import { QuotaCell } from "@/ui/limits";
+import { Button, EmptyState, PageHeader, Section, StatusDot, cx } from "@/ui/primitives";
 
 export default function Overview() {
   const creds = useCredentials();
@@ -53,7 +51,8 @@ export default function Overview() {
   const failed = sum ? sum.totals.failed : fallback.failed;
   const tokens = sum?.totals.tokens;
 
-  const bars = useMemo<Bar[]>(() => (sum ? hourlyBars(sum.hourly) : bucketBars(files, apiUsage.data ?? {})), [sum, files, apiUsage.data]);
+  const columns = useMemo<Column[]>(() => (sum ? hourlyColumns(sum.hourly) : bucketColumns(files, apiUsage.data ?? {})), [sum, files, apiUsage.data]);
+  const peak = Math.max(0, ...columns.map((c) => c.requests));
 
   const active = files.filter((f) => !f.disabled && !f.unavailable).length;
   const cooling = files.filter((f) => !f.disabled && (f.unavailable || (f.cooldowns?.length ?? 0) > 0)).length;
@@ -62,7 +61,11 @@ export default function Overview() {
 
   return (
     <>
-      <PageHeader title="Overview" />
+      <PageHeader title="Overview">
+        <Button variant="primary" icon="plus" onClick={() => go("credentials", "add")}>
+          Connect account
+        </Button>
+      </PageHeader>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="grid grid-cols-2 border-b border-line md:grid-cols-3 xl:grid-cols-6">
           <Stat label="Requests" value={fmtCompact(requests)} meta={failed > 0 ? <span className="text-bad">{fmtInt(failed)} failed</span> : "0 failed"} />
@@ -90,11 +93,12 @@ export default function Overview() {
             }
           />
         </div>
+        <RoutingLine />
 
-        <div className="grid gap-x-8 px-5 pb-8 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+        <div className="grid gap-x-8 px-5 pb-8 xl:grid-cols-2">
           <div className="min-w-0">
             <Section title="Activity" right={<span className="text-[12px] text-muted">{sum ? "Last 24 hours" : "Last 3 hours"}</span>} className="pt-3">
-              <BarChart bars={bars} />
+              <DotBars columns={columns} caption={<span className="text-faint">{peak === 0 ? "No activity" : `Peak ${fmtInt(peak)} per ${sum ? "hour" : "10 minutes"}`}</span>} />
             </Section>
             <Section title="Recent requests" right={<a href={href("logs", "requests")} className="text-[12px] text-muted transition-colors hover:text-fg">View all</a>} className="pt-5">
               {feed.data === null || feed.isError ? (
@@ -106,11 +110,11 @@ export default function Overview() {
           </div>
 
           <div className="min-w-0">
-            <Section title="Models" className="pt-3">
-              {sum ? <ModelsTable rows={sum.models.slice(0, 8)} /> : <Unavailable />}
+            <Section title="Accounts" right={<a href={href("quotas")} className="text-[12px] text-muted transition-colors hover:text-fg">Quotas</a>} className="pt-5">
+              <Accounts files={files} summary={sum?.credentials} />
             </Section>
-            <Section title="Credentials" right={<a href={href("credentials")} className="text-[12px] text-muted transition-colors hover:text-fg">Manage</a>} className="pt-5">
-              <CredentialUsage files={files} summary={sum?.credentials} />
+            <Section title="Models" className="pt-5">
+              {sum ? <ModelsTable rows={sum.models.slice(0, 8)} /> : <Unavailable />}
             </Section>
             <Section title="API keys" right={<a href={href("keys")} className="text-[12px] text-muted transition-colors hover:text-fg">Manage</a>} className="pt-5">
               {sum ? <KeyUsage rows={sum.api_keys} /> : <Unavailable />}
@@ -136,17 +140,17 @@ function Stat({ label, value, meta }: { label: string; value: ReactNode; meta?: 
   );
 }
 
-function hourlyBars(hourly: { hour: string; requests: number; failed: number; tokens: { total_tokens: number } }[]): Bar[] {
+function hourlyColumns(hourly: { hour: string; requests: number; failed: number; tokens: { total_tokens: number } }[]): Column[] {
   return hourly.map((h) => ({
     label: new Date(h.hour).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }),
     requests: h.requests,
     failed: h.failed,
-    tokens: h.tokens.total_tokens,
+    note: `${fmtCompact(h.tokens.total_tokens)} tokens`,
   }));
 }
 
 // Sum the per-credential and per-key 10 minute buckets the base API reports.
-function bucketBars(files: CredentialFile[], usage: Record<string, Record<string, { recent_requests?: RecentBucket[] }>>): Bar[] {
+function bucketColumns(files: CredentialFile[], usage: Record<string, Record<string, { recent_requests?: RecentBucket[] }>>): Column[] {
   const acc = new Map<string, { success: number; failed: number }>();
   const add = (list: RecentBucket[] | undefined) => {
     for (const b of list ?? []) {
@@ -161,66 +165,27 @@ function bucketBars(files: CredentialFile[], usage: Record<string, Record<string
   return [...acc.entries()].map(([time, v]) => ({ label: time.split("-")[0] ?? time, requests: v.success + v.failed, failed: v.failed }));
 }
 
-function BarChart({ bars }: { bars: Bar[] }) {
-  const [hover, setHover] = useState<number | null>(null);
-  const max = Math.max(0, ...bars.map((b) => b.requests));
-  const niceMax = niceCeil(Math.max(1, max));
-  const H = 132;
-  const n = Math.max(1, bars.length);
-  const active = hover !== null ? bars[hover] : undefined;
-  const labelEvery = n > 12 ? Math.ceil(n / 6) : 1;
-
-  return (
-    <div>
-      <div className="num flex h-5 items-center gap-3 text-[12px]" aria-live="polite">
-        {active ? (
-          <>
-            <span className="text-fg">{active.label}</span>
-            <span>{fmtInt(active.requests)} requests</span>
-            {active.failed > 0 && <span className="text-bad">{fmtInt(active.failed)} failed</span>}
-            {active.tokens !== undefined && <span className="text-muted">{fmtCompact(active.tokens)} tokens</span>}
-          </>
-        ) : (
-          <span className="text-faint">{max === 0 ? "No activity" : `Peak ${fmtInt(max)}`}</span>
-        )}
-      </div>
-      <div className="relative mt-1.5 pl-8">
-        {[1, 0.5, 0].map((f) => (
-          <div key={f} className="pointer-events-none absolute right-0 left-8 border-t border-line" style={{ top: `${(1 - f) * H}px` }}>
-            <span className="num absolute -top-[7px] -left-8 w-6 text-right text-[11px] text-faint">{fmtCompact(Math.round(niceMax * f))}</span>
-          </div>
-        ))}
-        <div className="relative flex items-end gap-[3px]" style={{ height: H }} onMouseLeave={() => setHover(null)}>
-          {bars.map((b, i) => {
-            const h = (b.requests / niceMax) * H;
-            const hf = b.requests ? (b.failed / b.requests) * h : 0;
-            return (
-              <div key={i} className="relative flex h-full flex-1 items-end" onMouseEnter={() => setHover(i)}>
-                <div className="w-full" style={{ height: Math.max(b.requests ? 2 : 0, h) }}>
-                  <div className={cx("w-full", hover === i ? "bg-white" : "bg-[#9a9a9a]")} style={{ height: `calc(100% - ${hf}px)` }} />
-                  {hf > 0 && <div className="w-full bg-bad" style={{ height: hf }} />}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="num mt-1.5 flex gap-[3px] text-[11px] text-faint">
-          {bars.map((b, i) => (
-            <div key={i} className="flex-1 overflow-visible whitespace-nowrap">
-              {i % labelEvery === 0 ? b.label : ""}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+interface RoutingNode {
+  strategy?: string;
+  "session-affinity"?: boolean;
+  retry?: { "request-retry"?: number };
 }
 
-function niceCeil(n: number): number {
-  if (n <= 4) return 4;
-  const pow = 10 ** Math.floor(Math.log10(n));
-  for (const m of [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10]) if (m * pow >= n) return m * pow;
-  return 10 * pow;
+/** One line naming how requests are spread over accounts. */
+function RoutingLine() {
+  const routing = useQuery({ queryKey: ["config", "routing"], queryFn: () => getConfigNode<RoutingNode>("routing"), staleTime: 30_000 });
+  if (!routing.isSuccess) return null;
+  const r = routing.data ?? {};
+  const retries = r.retry?.["request-retry"];
+  const parts = [retries !== undefined && `${retries} ${retries === 1 ? "retry" : "retries"}`, r["session-affinity"] && "session affinity"].filter(Boolean);
+  return (
+    <div className="flex h-9 items-center gap-1.5 border-b border-line px-5 text-[12.5px] text-muted">
+      Routing <span className="text-fg">{(r.strategy || "round-robin").replaceAll("-", " ")}</span>
+      {parts.map((p) => (
+        <span key={String(p)}>· {p}</span>
+      ))}
+    </div>
+  );
 }
 
 function RecentRequests({ events, loading }: { events: UsageEvent[]; loading: boolean }) {
@@ -290,38 +255,43 @@ function ModelsTable({ rows }: { rows: (UsageAgg & { model: string })[] }) {
   );
 }
 
-function CredentialUsage({ files, summary }: { files: CredentialFile[]; summary?: (UsageAgg & { auth_index: string })[] }) {
+/** Accounts grouped by provider, busiest first: state, last 3h, tightest limit, requests. */
+function Accounts({ files, summary }: { files: CredentialFile[]; summary?: (UsageAgg & { auth_index: string })[] }) {
   const agg = new Map(summary?.map((s) => [s.auth_index, s]));
   const reqs = (f: CredentialFile) => agg.get(f.auth_index)?.requests ?? f.success + f.failed;
   const failedOf = (f: CredentialFile) => agg.get(f.auth_index)?.failed ?? f.failed;
-  const rows = [...files].sort((a, b) => reqs(b) - reqs(a)).slice(0, 8);
-  if (rows.length === 0) return <EmptyState title="No credentials" />;
+  const groups = new Map<string, CredentialFile[]>();
+  for (const f of [...files].sort((a, b) => reqs(b) - reqs(a))) groups.set(f.provider, [...(groups.get(f.provider) ?? []), f]);
+  if (files.length === 0) return <EmptyState title="No accounts" hint="Connect an account to start serving requests." />;
   return (
     <table className="tbl tbl-compact">
-      <thead>
-        <tr>
-          <th>Account</th>
-          <th className="text-right">Requests</th>
-          {summary && <th className="text-right">Tokens</th>}
-          <th className="text-right">Last 3h</th>
-        </tr>
-      </thead>
       <tbody>
-        {rows.map((f) => (
-          <tr key={f.id} className={f.disabled ? "opacity-50" : undefined}>
-            <td>
-              <span className="text-fg-2">{f.label || f.email || f.name}</span> <span className="text-faint">{f.provider}</span>
+        {[...groups.entries()].map(([provider, list]) => [
+          <tr key={provider}>
+            <td colSpan={4} className="text-[12px] text-muted">
+              {provider} <span className="num text-faint">{list.length}</span>
             </td>
-            <td className="num text-right">
-              {fmtInt(reqs(f))}
-              {failedOf(f) > 0 && <span className="ml-1.5 text-bad">{failedOf(f)}</span>}
-            </td>
-            {summary && <td className="num text-right text-muted">{agg.has(f.auth_index) ? fmtCompact(agg.get(f.auth_index)?.tokens.total_tokens) : NONE}</td>}
-            <td className="fit">
-              <div className="flex justify-end">{f.recent_requests ? <Spark buckets={f.recent_requests} width={72} /> : null}</div>
-            </td>
-          </tr>
-        ))}
+          </tr>,
+          ...list.map((f) => (
+            <tr key={f.id} className={cx("clickable", f.disabled && "opacity-50")} onClick={() => go("credentials", f.name)}>
+              <td className="max-w-0!">
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <StatusDot tone={credentialState(f).tone} />
+                  <span className="truncate text-fg-2">{credentialTitle(f)}</span>
+                  {planOf(f) && <span className="shrink-0 text-faint">{planOf(f)}</span>}
+                </span>
+              </td>
+              <td className="fit">{f.recent_requests ? <DotStrip buckets={f.recent_requests} d={3} gap={2} /> : null}</td>
+              <td className="fit">
+                <QuotaCell f={f} />
+              </td>
+              <td className="fit num text-right">
+                {fmtInt(reqs(f))}
+                {failedOf(f) > 0 && <span className="ml-1.5 text-bad">{failedOf(f)}</span>}
+              </td>
+            </tr>
+          )),
+        ])}
       </tbody>
     </table>
   );

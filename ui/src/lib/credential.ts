@@ -1,4 +1,4 @@
-import { cap, fmtDuration } from "./format";
+import { cap } from "./format";
 import type { Cooldown, CredentialFile } from "./types";
 import type { Tone } from "@/ui/primitives";
 
@@ -27,17 +27,4 @@ export function credentialState(f: CredentialFile): { tone: Tone; label: string 
   if (f.status === "error") return { tone: "bad", label: "Error" };
   if (f.status === "active" || f.status === "") return { tone: "ok", label: "Active" };
   return { tone: "warn", label: cap(f.status) };
-}
-
-/** One-line quota or cooldown summary for list rows, or null when there is nothing to say. */
-export function quotaSummary(f: CredentialFile): { text: string; tone: "warn" | "muted" } | null {
-  const cds = activeCooldowns(f);
-  if (cds.length > 0) {
-    const soonest = Math.min(...cds.map((c) => cooldownRemaining(c)));
-    const status = cds.find((c) => c.http_status)?.http_status;
-    return { text: `cooldown ${fmtDuration(soonest)}${status ? ` (${status})` : ""}`, tone: "warn" };
-  }
-  const signals = Object.entries(f.quota?.signals ?? {});
-  if (signals.length > 0) return { text: signals.slice(0, 2).map(([k, v]) => `${k} ${v}`).join("  "), tone: "muted" };
-  return null;
 }

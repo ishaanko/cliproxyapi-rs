@@ -9,7 +9,6 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
-import type { RecentBucket } from "@/lib/types";
 import { Icon, type IconName } from "./icons";
 
 export const cx = (...parts: (string | false | null | undefined)[]): string => parts.filter(Boolean).join(" ");
@@ -300,31 +299,6 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
         });
       }}
     />
-  );
-}
-
-/** Mini bar chart of 10-minute request buckets. Failed buckets are red. */
-export function Spark({ buckets, width = 84, height = 16 }: { buckets: RecentBucket[]; width?: number; height?: number }) {
-  const max = Math.max(1, ...buckets.map((b) => b.success + b.failed));
-  const n = Math.max(buckets.length, 1);
-  const gap = 1;
-  const bw = (width - gap * (n - 1)) / n;
-  return (
-    <svg width={width} height={height} role="img" aria-label="Recent requests" className="block">
-      {buckets.map((b, i) => {
-        const total = b.success + b.failed;
-        const x = i * (bw + gap);
-        if (total === 0) return <rect key={i} x={x} y={height - 1} width={bw} height={1} fill="#262626" />;
-        const h = Math.max(2, (total / max) * height);
-        const hf = (b.failed / total) * h;
-        return (
-          <g key={i}>
-            <rect x={x} y={height - h} width={bw} height={h - hf} fill="#cfcfcf" />
-            {hf > 0 && <rect x={x} y={height - hf} width={bw} height={hf} fill="var(--color-bad)" />}
-          </g>
-        );
-      })}
-    </svg>
   );
 }
 

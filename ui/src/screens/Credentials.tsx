@@ -1,14 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { api } from "@/lib/api";
-import { credentialState, credentialTitle, planOf, quotaSummary } from "@/lib/credential";
-import { NONE, fmtInt, relTime } from "@/lib/format";
+import { credentialState, credentialTitle, planOf } from "@/lib/credential";
+import { fmtInt, relTime } from "@/lib/format";
 import { useRowNav } from "@/lib/hotkeys";
 import { qk, useCredentials } from "@/lib/queries";
 import { go } from "@/lib/route";
 import { errorText, toast } from "@/lib/toast";
 import type { CredentialFile } from "@/lib/types";
-import { Button, EmptyState, ErrorState, IconButton, LoadingRows, PageHeader, SearchInput, Spark, Status, Switch, Tabs, cx } from "@/ui/primitives";
+import { Button, EmptyState, ErrorState, IconButton, LoadingRows, PageHeader, SearchInput, Status, Switch, Tabs, cx } from "@/ui/primitives";
+import { DotStrip } from "@/ui/dots";
+import { QuotaCell } from "@/ui/limits";
 import { AddCredential } from "./credentials/AddCredential";
 import { deleteCredential, downloadCredential } from "./credentials/actions";
 import { CredentialSheet } from "./credentials/CredentialSheet";
@@ -152,7 +154,6 @@ function Row({
   onDelete: () => void;
 }) {
   const state = credentialState(f);
-  const quota = quotaSummary(f);
   const plan = planOf(f);
   return (
     <tr data-active={active} data-row-index={index} className="clickable group" onClick={onOpen}>
@@ -167,12 +168,14 @@ function Row({
       <td title={f.status_message || undefined}>
         <Status tone={state.tone}>{state.label}</Status>
       </td>
-      <td className={cx("num", quota?.tone === "warn" ? "text-warn" : "text-muted")}>{quota?.text ?? NONE}</td>
+      <td>
+        <QuotaCell f={f} />
+      </td>
       <td className="num text-right">
         {fmtInt(f.success + f.failed)}
         {f.failed > 0 && <span className="ml-1.5 text-bad">{f.failed}</span>}
       </td>
-      <td className="fit">{f.recent_requests ? <Spark buckets={f.recent_requests} /> : null}</td>
+      <td className="fit">{f.recent_requests ? <DotStrip buckets={f.recent_requests} /> : null}</td>
       <td className="num text-muted">{relTime(f.last_refresh || f.updated_at)}</td>
       <td className="fit" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-end gap-1">

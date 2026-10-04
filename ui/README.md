@@ -33,10 +33,20 @@ bun dev/e2e.ts     # mutating flows through the real UI, writes screenshots/e2e-
 bun dev/shots.ts   # every screen into screenshots/*.png
 ```
 
-Both need Playwright's Chromium; set `CHROMIUM_PATH` to use another build.
+Quotas, Overview and Use with tools against the Rust server (debug builds serve
+`ui/dist` from disk, so rebuilding the UI needs no server rebuild):
+
+```
+bun dev/fake-upstream.ts &
+cargo run -p cpa-server --bin cliproxy -- --config ui/dev/rust.yaml &
+bun dev/seed.ts /tmp/cpa-ui-rust/auth http://127.0.0.1:18530 0
+bun dev/e2e-quotas.ts   # writes screenshots/quotas-e2e-report.txt and quotas-e2e-*.png
+```
+
+All need Playwright's Chromium; set `CHROMIUM_PATH` to use another build.
 
 ## Keys
 
-`Ctrl/Cmd K` palette, `g` then `o c k p m y l` to navigate, `/` search, `j k Enter`
+`Ctrl/Cmd K` palette, `g` then `o t c q k p m y l` to navigate, `/` search, `j k Enter`
 in tables, `e` toggles the selected credential, `Backspace` deletes the selected row,
 `Ctrl/Cmd S` saves config, `?` lists them.

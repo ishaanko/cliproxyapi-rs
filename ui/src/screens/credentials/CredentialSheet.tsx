@@ -7,13 +7,18 @@ import { qk, useCredentialModels } from "@/lib/queries";
 import { errorText, toast } from "@/lib/toast";
 import type { CredentialFile } from "@/lib/types";
 import { Sheet } from "@/ui/overlays";
-import { Button, Field, Input, KeyValue, Spark, Status } from "@/ui/primitives";
+import { DotStrip } from "@/ui/dots";
+import { CheckButton, LimitsList } from "@/ui/limits";
+import { Button, Field, Input, KeyValue, Status } from "@/ui/primitives";
 import { deleteCredential, downloadCredential } from "./actions";
 
-function Block({ title, children }: { title: string; children: ReactNode }) {
+function Block({ title, right, children }: { title: string; right?: ReactNode; children: ReactNode }) {
   return (
     <section className="border-b border-line px-5 py-4 last:border-0">
-      <h3 className="mb-2 text-[13px] font-medium">{title}</h3>
+      <div className="mb-2 flex min-h-7 items-center justify-between">
+        <h3 className="text-[13px] font-medium">{title}</h3>
+        {right}
+      </div>
       {children}
     </section>
   );
@@ -55,14 +60,18 @@ export function CredentialSheet({ file: f, onClose }: { file: CredentialFile; on
             ["Created", dateTime(f.created_at)],
             ["Refreshed", f.last_refresh ? `${dateTime(f.last_refresh)}  (${relTime(f.last_refresh)})` : NONE],
             ["Requests", <span key="r" className="num">{fmtInt(f.success)} ok{f.failed > 0 && <span className="ml-2 text-bad">{fmtInt(f.failed)} failed</span>}</span>],
-            ...(f.recent_requests ? ([["Last 3h", <Spark key="sp" buckets={f.recent_requests} width={160} height={20} />]] as [string, ReactNode][]) : []),
+            ...(f.recent_requests ? ([["Last 3h", <DotStrip key="sp" buckets={f.recent_requests} d={6} gap={3} />]] as [string, ReactNode][]) : []),
           ]}
         />
         {f.status_message && <div className="mono mt-2 text-[12px] break-words text-warn">{f.status_message}</div>}
       </Block>
 
+      <Block title="Limits" right={<CheckButton f={f} />}>
+        <LimitsList f={f} />
+      </Block>
+
       {(cooldowns.length > 0 || Object.keys(f.quota?.signals ?? {}).length > 0 || Object.keys(f.model_quotas ?? {}).length > 0) && (
-        <Block title="Quota and cooldown">
+        <Block title="Cooldowns and raw signals">
           {cooldowns.length > 0 && (
             <table className="tbl tbl-compact">
               <thead>

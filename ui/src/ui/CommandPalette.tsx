@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clearKey } from "@/lib/auth";
 import { qk } from "@/lib/queries";
-import { go, type Page } from "@/lib/route";
+import { NAV, go } from "@/lib/route";
 import type { CredentialFile, ModelInfo } from "@/lib/types";
 import { Kbd, cx } from "./primitives";
 
@@ -33,16 +33,6 @@ function score(query: string, text: string): number | null {
   return s;
 }
 
-const pages: { page: Page; label: string; keys: string }[] = [
-  { page: "overview", label: "Overview", keys: "g o" },
-  { page: "credentials", label: "Credentials", keys: "g c" },
-  { page: "keys", label: "API keys", keys: "g k" },
-  { page: "providers", label: "Providers", keys: "g p" },
-  { page: "models", label: "Models", keys: "g m" },
-  { page: "config", label: "Config", keys: "g y" },
-  { page: "logs", label: "Logs", keys: "g l" },
-];
-
 export function CommandPalette({ onClose, onHelp }: { onClose: () => void; onHelp: () => void }) {
   const qc = useQueryClient();
   const [query, setQuery] = useState("");
@@ -52,7 +42,7 @@ export function CommandPalette({ onClose, onHelp }: { onClose: () => void; onHel
 
   const items = useMemo<Item[]>(() => {
     const out: Item[] = [];
-    for (const p of pages) out.push({ id: `go-${p.page}`, group: "Go to", label: p.label, keys: p.keys, run: () => go(p.page) });
+    for (const p of NAV) out.push({ id: `go-${p.page}`, group: "Go to", label: p.label, keys: `g ${p.key}`, run: () => go(p.page) });
     out.push(
       { id: "add-credential", group: "Actions", label: "Add credential", keys: "login oauth upload", run: () => go("credentials", "add") },
       { id: "add-key", group: "Actions", label: "Add API key", keys: "client access", run: () => go("keys", "add") },

@@ -2,8 +2,21 @@ import { useSyncExternalStore } from "react";
 
 // Hash routing: #/<page>[/<sub>[/<more>]]. Deep links, back button and reload all work
 // without any server support.
-export const PAGES = ["overview", "credentials", "keys", "providers", "models", "config", "logs"] as const;
+export const PAGES = ["overview", "tools", "credentials", "quotas", "keys", "providers", "models", "config", "logs"] as const;
 export type Page = (typeof PAGES)[number];
+
+/** Sidebar and palette order; `key` is the second key of the `g` chord. */
+export const NAV: { page: Page; label: string; key: string }[] = [
+  { page: "overview", label: "Overview", key: "o" },
+  { page: "tools", label: "Use with tools", key: "t" },
+  { page: "credentials", label: "Credentials", key: "c" },
+  { page: "quotas", label: "Quotas", key: "q" },
+  { page: "keys", label: "API keys", key: "k" },
+  { page: "providers", label: "Providers", key: "p" },
+  { page: "models", label: "Models", key: "m" },
+  { page: "config", label: "Config", key: "y" },
+  { page: "logs", label: "Logs", key: "l" },
+];
 
 export interface Route {
   page: Page;

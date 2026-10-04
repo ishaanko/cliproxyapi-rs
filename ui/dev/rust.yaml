@@ -1,0 +1,45 @@
+# Rust server config for dev/e2e-quotas.ts: API-key providers point at dev/fake-upstream.ts
+# under aliases OAuth accounts do not serve, so no request leaves the machine.
+port: 18530
+host: "127.0.0.1"
+auth-dir: "/tmp/cpa-ui-rust/auth"
+api-keys:
+  - "sk-dev-client-aaaa1111"
+  - "sk-dev-client-bbbb2222"
+remote-management:
+  secret-key: "$2b$10$y34bBukuzDfPBfXGQ91xjeyiLVr9JgYLBkwjbMxaTfVpPtayIciwC"
+usage-statistics-enabled: true
+request-retry: 2
+routing:
+  strategy: "fill-first"
+  session-affinity: true
+claude-api-key:
+  - api-key: "sk-ant-max"
+    base-url: "http://127.0.0.1:18400"
+    models:
+      - name: "claude-sonnet-4-5"
+        alias: "fake-claude"
+  - api-key: "sk-ant-pro"
+    base-url: "http://127.0.0.1:18400"
+    models:
+      - name: "claude-sonnet-4-5"
+        alias: "fake-claude"
+codex-api-key:
+  - api-key: "sk-codex-plus"
+    base-url: "http://127.0.0.1:18400"
+    models:
+      - name: "gpt-5"
+        alias: "fake-gpt"
+  - api-key: "sk-codex-team"
+    base-url: "http://127.0.0.1:18400"
+    models:
+      - name: "gpt-5"
+        alias: "fake-gpt"
+openai-compatibility:
+  - name: "local"
+    base-url: "http://127.0.0.1:18400/v1"
+    api-key-entries:
+      - api-key: "sk-local"
+    models:
+      - name: "llama-70b"
+        alias: "llama-70b"

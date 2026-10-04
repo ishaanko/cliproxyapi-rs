@@ -1,0 +1,15 @@
+INFO sent 120 requests through http://127.0.0.1:18530
+INFO server lists 6 credentials
+PASS overview: dot chart has 24 hourly columns of 6 dots
+PASS overview: routing line names strategy, retries and affinity
+PASS overview: accounts grouped by provider with tightest limit
+PASS quotas: only accounts with limits or a usage endpoint, grouped
+PASS quotas: passive Claude windows parsed from unified headers
+PASS quotas: Codex windows, red at 93%, expired window dropped
+PASS quotas: Check asks the usage endpoint with the credential token
+PASS quotas: Check all runs each account and shows a rejected token
+PASS credentials: quota column shows the tightest window
+PASS tools: client key works against /v1/models
+PASS tools: snippet masks the key, copy carries the full key
+PASS no page or console errors
+OK: 12 passed, 0 failed
