@@ -34,7 +34,8 @@ pub struct CatalogContext<'a> {
     /// capabilities instead of being treated as "no provider found".
     pub providers_for_model: Option<&'a ProvidersForModel<'a>>,
     pub web_search_capability: &'a dyn Fn(&str) -> Option<bool>,
-    /// `None` leaves `apply_patch_tool_type` null for every model.
+    /// `None` (`enable-apply-patch` off) keeps only the template's own `freeform` declaration; every
+    /// other model gets a null `apply_patch_tool_type`.
     pub apply_patch_capability: Option<&'a dyn Fn(&str) -> bool>,
     pub optimize_multi_agent_v2: bool,
     pub client_version: &'a str,

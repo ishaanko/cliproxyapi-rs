@@ -465,20 +465,24 @@ pub(crate) fn finalize_tool_input(param: &mut Param) -> Vec<Vec<u8>> {
             Some(err) => st.err.set_tool_input_error(err),
         }
     }
-    if !st.tool_identity_map.values().any(|i| i.apply_patch) {
-        return Vec::new();
-    }
-    if st.err.tool_input_error().is_none() {
+    let enabled = st.tool_identity_map.values().any(|i| i.apply_patch);
+    if enabled && st.err.tool_input_error().is_none() {
         st.err.set_tool_input_error("upstream apply_patch stream ended before protocol completion");
     }
-    st.completed = true;
-    st.seq += 1;
-    let event = emit_event("response.failed", &cpa_json::parse(&apply_patch_failure(&st.response_id, st.seq)));
+    let mut event = Vec::new();
+    if enabled {
+        st.completed = true;
+        st.seq += 1;
+        event.push(emit_event("response.failed", &cpa_json::parse(&apply_patch_failure(&st.response_id, st.seq))));
+    }
+    // Go's ToolInputError lives on the state the executor reads; here the executor reads the
+    // param, so every state-level error is mirrored there (a stream that has an identity error
+    // stops at once with the gateway error).
     let err = st.err.tool_input_error().map(str::to_string);
     if let Some(err) = err {
         param.tool_input_error = Some(err);
     }
-    vec![event]
+    event
 }
 
 struct Stream<'a> {
