@@ -15,6 +15,7 @@ use cpa_translator::common::{
 };
 use futures_util::{Stream, StreamExt};
 use rand::RngCore;
+use tokio::sync::mpsc;
 
 use super::pb;
 use crate::helps::cloak_obfuscate::SensitiveWordMatcher;
@@ -205,6 +206,13 @@ pub struct ConnectFrame {
     pub payload: Vec<u8>,
 }
 
+/// Outcome of waiting for buffered bytes.
+enum Fill {
+    Ready,
+    Eof,
+    ClientGone,
+}
+
 /// Incremental Connect frame decoder over an async byte stream (Go: ReadConnectFrame).
 pub struct ConnectFrameReader<S> {
     stream: S,
@@ -225,29 +233,55 @@ where
         }
     }
 
-    /// Pulls from the stream until `buf` holds `want` bytes. `Ok(false)` on end of body.
-    async fn fill(&mut self, want: usize) -> Result<bool, FrameError> {
+    /// Pulls from the stream until `buf` holds `want` bytes. With a `client` channel, a closed
+    /// channel ends the wait (checked only when more bytes are needed).
+    async fn fill<T>(&mut self, want: usize, client: Option<&mpsc::Sender<T>>) -> Result<Fill, FrameError> {
         while self.buf.len() < want {
             if self.eof {
-                return Ok(false);
+                return Ok(Fill::Eof);
             }
-            match self.stream.next().await {
+            let item = match client {
+                Some(c) if c.is_closed() => return Ok(Fill::ClientGone),
+                Some(c) => {
+                    tokio::select! {
+                        biased;
+                        _ = c.closed() => return Ok(Fill::ClientGone),
+                        item = self.stream.next() => item,
+                    }
+                }
+                None => self.stream.next().await,
+            };
+            match item {
                 Some(Ok(chunk)) => self.buf.extend_from_slice(&chunk),
                 Some(Err(e)) => return Err(FrameError::Invalid(e.to_string())),
                 None => self.eof = true,
             }
         }
-        Ok(true)
+        Ok(Fill::Ready)
     }
 
     /// Reads the next frame. A clean end of body is [`FrameError::Eof`].
     pub async fn read_frame(&mut self) -> Result<ConnectFrame, FrameError> {
-        if !self.fill(5).await? {
-            return Err(if self.buf.is_empty() {
-                FrameError::Eof
-            } else {
-                FrameError::UnexpectedEof
-            });
+        Ok(self.read_frame_inner::<()>(None).await?.unwrap_or_else(|| unreachable!("no client channel")))
+    }
+
+    /// [`read_frame`](Self::read_frame) that gives up with `None` once `client` is closed (the
+    /// downstream request went away, which cancels the upstream read).
+    pub async fn read_frame_or_closed<T>(&mut self, client: &mpsc::Sender<T>) -> Result<Option<ConnectFrame>, FrameError> {
+        self.read_frame_inner(Some(client)).await
+    }
+
+    async fn read_frame_inner<T>(&mut self, client: Option<&mpsc::Sender<T>>) -> Result<Option<ConnectFrame>, FrameError> {
+        match self.fill(5, client).await? {
+            Fill::Ready => {}
+            Fill::ClientGone => return Ok(None),
+            Fill::Eof => {
+                return Err(if self.buf.is_empty() {
+                    FrameError::Eof
+                } else {
+                    FrameError::UnexpectedEof
+                });
+            }
         }
         let flag = self.buf[0];
         if !matches!(
@@ -269,22 +303,28 @@ where
             )));
         }
         self.buf.advance(5);
-        if length > 0 && !self.fill(length).await? {
-            // io.ReadFull: EOF only when nothing of the payload was read.
-            return Err(if self.buf.is_empty() {
-                FrameError::Eof
-            } else {
-                FrameError::UnexpectedEof
-            });
+        if length > 0 {
+            match self.fill(length, client).await? {
+                Fill::Ready => {}
+                Fill::ClientGone => return Ok(None),
+                // io.ReadFull: EOF only when nothing of the payload was read.
+                Fill::Eof => {
+                    return Err(if self.buf.is_empty() {
+                        FrameError::Eof
+                    } else {
+                        FrameError::UnexpectedEof
+                    });
+                }
+            }
         }
         let payload = self.buf.split_to(length).to_vec();
         if flag & CONNECT_FLAG_COMPRESSED == 0 {
-            return Ok(ConnectFrame { flag, payload });
+            return Ok(Some(ConnectFrame { flag, payload }));
         }
-        Ok(ConnectFrame {
+        Ok(Some(ConnectFrame {
             flag,
             payload: gunzip_limited(&payload)?,
-        })
+        }))
     }
 }
 

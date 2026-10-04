@@ -249,6 +249,7 @@ impl MetaExecutor {
         opts: &Options,
         payload: &[u8],
         body: Vec<u8>,
+        reporter: &UsageReporter,
     ) -> Result<reqwest::Response, ExecError> {
         let (base_url, token) = meta_creds(Some(enriched));
         if base_url.trim().is_empty() {
@@ -258,6 +259,8 @@ impl MetaExecutor {
         let headers = Self::headers(enriched, &token, true, opts, payload);
         tracing::debug!(target: "cpa::upstream", provider = PROVIDER, url = %url, "meta upstream request");
         record_request(&opts.api_log, cfg, PROVIDER, Some(enriched), "POST", &url, &headers, &body);
+        // Go: reporter.TrackHTTPClient / TrackHTTPClientRoundTripOnly around the client.
+        reporter.start_response_ttft();
         let resp = new_proxy_aware_http_client(&opts.proxy_url, Some(cfg), Some(enriched), None)
             .post(url)
             .headers(headers)
@@ -363,10 +366,10 @@ impl MetaExecutor {
         prepared: &mut Prepared,
         reporter: &UsageReporter,
     ) -> Result<Response, ExecError> {
-        let resp = self.send(cfg, enriched, opts, &req.payload, prepared.body.clone()).await?;
+        let resp = self.send(cfg, enriched, opts, &req.payload, prepared.body.clone(), reporter).await?;
         let status = resp.status();
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| {
+        let data = reporter.read_body_tracked(resp, false).await.map_err(|e| {
             let err = transport_error(&e);
             opts.api_log.record_api_response_error(cfg, &err.message);
             err
@@ -427,11 +430,11 @@ impl MetaExecutor {
         prepared: Prepared,
         reporter: &UsageReporter,
     ) -> Result<StreamResult, ExecError> {
-        let resp = self.send(cfg, enriched, opts, &req.payload, prepared.body.clone()).await?;
+        let resp = self.send(cfg, enriched, opts, &req.payload, prepared.body.clone(), reporter).await?;
         let status = resp.status();
         let headers = resp.headers().clone();
         if !status.is_success() {
-            let data = resp.bytes().await.map_err(|e| {
+            let data = reporter.read_body_tracked(resp, true).await.map_err(|e| {
                 let err = transport_error(&e);
                 opts.api_log.record_api_response_error(cfg, &err.message);
                 err
@@ -534,7 +537,7 @@ async fn run_stream(
     tx: mpsc::Sender<Result<Bytes, ExecError>>,
     usage_tx: oneshot::Sender<serde_json::Value>,
 ) {
-    let mut lines = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
+    let mut lines = LineReader::from_response_tracked(resp, STREAM_SCANNER_BUFFER, &reporter, true);
     let claude_tokens = ClaudeInputTokenState::new(prepared.from, TO, prepared.response_format, &prepared.original_payload);
     let mut sc = StreamCtx { prepared, model, reporter, tx, param: Param::default(), claude_tokens };
     let mut usage = StreamUsageBuffer::default();

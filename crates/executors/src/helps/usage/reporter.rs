@@ -25,6 +25,7 @@ use chrono::{DateTime, Utc};
 use cpa_auth::Auth;
 use cpa_core::thinking::extract_translated_reasoning_effort;
 use cpa_json::lazy::Doc;
+use cpa_runtime::apilog::ApiLogHandle;
 use cpa_runtime::executor::{ExecError, Options, meta};
 use futures_util::{Stream, StreamExt};
 use parking_lot::Mutex;
@@ -90,7 +91,83 @@ struct Inner {
     /// Which no-parse response-model extraction applies to the provider.
     fast_model: crate::helps::response_model::FastModel,
     published: AtomicBool,
+    /// Request log of the attempt: knows the upstream request still waiting for its response.
+    api_log: ApiLogHandle,
     state: Mutex<State>,
+}
+
+impl Inner {
+    /// The record this attempt would publish for `model` right now.
+    fn build_record_for_model(&self, model: &str, detail: Detail, failed: bool, fail: Failure) -> Record {
+        let s = self.state.lock();
+        // Additional-model records describe a side model the response model never refers to.
+        let response_model = if model == self.model { s.response_model.clone() } else { String::new() };
+        Record {
+            request_id: self.request_id.clone(),
+            trace_id: self.trace_id.clone(),
+            provider: self.provider.clone(),
+            base_url: self.base_url.clone(),
+            executor_type: self.executor_type.clone(),
+            model: model.to_string(),
+            alias: self.alias.trim().to_string(),
+            api_key: self.api_key.clone(),
+            session_id: s.session_id.clone(),
+            parent_session_id: s.parent_session_id.clone(),
+            auth_id: self.auth_id.clone(),
+            auth_index: self.auth_index.clone(),
+            access_token_sha256: s.access_token_hash.clone(),
+            auth_type: self.auth_type.clone(),
+            source: self.source.clone(),
+            reasoning_effort: s.reasoning.clone(),
+            service_tier: self.service_tier.clone(),
+            response_service_tier: detail.response_service_tier.trim().to_string(),
+            response_model,
+            generate: self.generate,
+            stream: s.stream,
+            requested_at: self.requested_at_utc,
+            latency: self.requested_at.elapsed(),
+            ttft: UsageReporter::ttft_duration(&s),
+            failed,
+            fail,
+            detail,
+        }
+    }
+
+    /// The failure of an attempt dropped while its upstream request was in flight (the client
+    /// hung up): Go's `context.Canceled` (HTTP 499). Before the response head arrived the text
+    /// is the transport error `Post "url": context canceled`.
+    fn cancel_failure(&self) -> Failure {
+        let body = match self.api_log.pending_request() {
+            Some((method, url)) => {
+                let mut op = method.to_ascii_lowercase();
+                if let Some(first) = op.get_mut(..1) {
+                    first.make_ascii_uppercase();
+                }
+                format!("{op} \"{url}\": context canceled")
+            }
+            _ => "context canceled".to_string(),
+        };
+        Failure { status_code: 499, body }
+    }
+}
+
+/// An attempt dropped after its request was sent and before anything was published is a client
+/// that went away (the handler future, and with it the executor call, was dropped): Go's
+/// cancelled context makes the executor publish this failure itself, so the record exists
+/// even though no executor code runs after the drop.
+impl Drop for Inner {
+    fn drop(&mut self) {
+        let Some(sink) = &self.sink else { return };
+        if *self.published.get_mut() {
+            return;
+        }
+        let s = self.state.get_mut();
+        if !(s.ttft_start.is_some() || s.ttft_set || s.first_packet_set) {
+            return;
+        }
+        let detail = ensure_token_breakdown_for_provider(Detail::default(), &self.provider, &self.executor_type);
+        sink.publish_dropped(self.build_record_for_model(&self.model, detail, true, self.cancel_failure()));
+    }
 }
 
 /// Cheap-to-clone handle to one attempt's usage state.
@@ -237,6 +314,7 @@ impl UsageReporter {
             response_model_final: AtomicBool::new(false),
             fast_model: crate::helps::response_model::fast_model_kind(provider),
             published: AtomicBool::new(false),
+            api_log: opts.map(|o| o.api_log.clone()).unwrap_or_default(),
             state: Mutex::new(State {
                 stream: opts.is_some_and(|o| o.stream),
                 session_id,
@@ -496,6 +574,36 @@ impl UsageReporter {
         })
     }
 
+    /// Reads a whole upstream body (Go: `io.ReadAll` over the TTFT-tracked response body),
+    /// marking TTFT on the first byte as [`observe_body_stream`](Self::observe_body_stream) does.
+    /// A body that arrives in one chunk is returned without a copy; a longer one is collected
+    /// into a buffer sized from `Content-Length` (capped), not grown by doubling.
+    pub async fn read_body_tracked(&self, resp: reqwest::Response, packet_only: bool) -> Result<Bytes, reqwest::Error> {
+        const MAX_PREALLOC: u64 = 16 << 20;
+        let expected = resp.content_length().unwrap_or(0).min(MAX_PREALLOC) as usize;
+        let mut stream = std::pin::pin!(self.observe_body_stream(resp.bytes_stream(), packet_only));
+        let Some(first) = stream.next().await else {
+            return Ok(Bytes::new());
+        };
+        let first = first?;
+        let Some(second) = stream.next().await else {
+            return Ok(first);
+        };
+        let mut buf = Vec::with_capacity(expected.max(first.len() + second.as_ref().map_or(0, Bytes::len)));
+        buf.extend_from_slice(&first);
+        buf.extend_from_slice(&second?);
+        while let Some(chunk) = stream.next().await {
+            buf.extend_from_slice(&chunk?);
+        }
+        Ok(Bytes::from(buf))
+    }
+
+    /// The TTFT a record published now would carry (Go: `ttftDuration`).
+    #[cfg(test)]
+    pub(crate) fn current_ttft(&self) -> Duration {
+        Self::ttft_duration(&self.inner.state.lock())
+    }
+
     fn ttft_duration(s: &State) -> Duration {
         if s.ttft_set {
             s.ttft
@@ -551,6 +659,13 @@ impl UsageReporter {
         if let Err(err) = result {
             self.publish_failure(err);
         }
+    }
+
+    /// Gives up on publishing: the attempt ended because its client went away and Go's executor
+    /// returns without recording anything (a cancelled downstream request is not an upstream
+    /// failure). Also stops the drop-time cancellation record.
+    pub fn abandon(&self) {
+        self.inner.published.store(true, Ordering::Release);
     }
 
     /// Guarantees a record is emitted even when the upstream response had no usage fields.
@@ -616,39 +731,7 @@ impl UsageReporter {
     }
 
     fn build_record_for_model(&self, model: &str, detail: Detail, failed: bool, fail: Failure) -> Record {
-        let i = &self.inner;
-        let s = i.state.lock();
-        // Additional-model records describe a side model the response model never refers to.
-        let response_model = if model == i.model { s.response_model.clone() } else { String::new() };
-        Record {
-            request_id: i.request_id.clone(),
-            trace_id: i.trace_id.clone(),
-            provider: i.provider.clone(),
-            base_url: i.base_url.clone(),
-            executor_type: i.executor_type.clone(),
-            model: model.to_string(),
-            alias: i.alias.trim().to_string(),
-            api_key: i.api_key.clone(),
-            session_id: s.session_id.clone(),
-            parent_session_id: s.parent_session_id.clone(),
-            auth_id: i.auth_id.clone(),
-            auth_index: i.auth_index.clone(),
-            access_token_sha256: s.access_token_hash.clone(),
-            auth_type: i.auth_type.clone(),
-            source: i.source.clone(),
-            reasoning_effort: s.reasoning.clone(),
-            service_tier: i.service_tier.clone(),
-            response_service_tier: detail.response_service_tier.trim().to_string(),
-            response_model,
-            generate: i.generate,
-            stream: s.stream,
-            requested_at: i.requested_at_utc,
-            latency: i.requested_at.elapsed(),
-            ttft: Self::ttft_duration(&s),
-            failed,
-            fail,
-            detail,
-        }
+        self.inner.build_record_for_model(model, detail, failed, fail)
     }
 
     /// `{"input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "total_tokens"}`
@@ -669,7 +752,25 @@ fn fail_from_error(err: &ExecError) -> Failure {
         Some(b) if !b.is_empty() => String::from_utf8_lossy(b).into_owned(),
         _ => err.message.trim().to_string(),
     };
-    Failure { status_code: err.status, body }
+    Failure { status_code: failure_status(err), body }
+}
+
+/// Go: `clienterror.HTTPStatusFromError`: an explicit status wins, otherwise a cancelled
+/// context is 499 and an exceeded deadline 504 (matched on the error text, which is all an
+/// `ExecError` keeps of the wrapped cause).
+fn failure_status(err: &ExecError) -> u16 {
+    if err.status > 0 {
+        return err.status;
+    }
+    let msg = err.message.trim();
+    let is = |tail: &str| msg == tail || msg.strip_suffix(tail).is_some_and(|rest| rest.ends_with(": "));
+    if is("context canceled") {
+        499
+    } else if is("context deadline exceeded") {
+        504
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -732,6 +833,121 @@ mod tests {
         assert!(reporter.is_first_packet_set() && !reporter.is_ttft_set());
         reporter.mark_first_response_byte();
         assert!(reporter.is_ttft_set());
+    }
+
+    /// Go: TestUsageReporterTrackHTTPClientStartsTTFTBeforeRoundTrip. The clock starts when
+    /// the request is sent, so a slow first chunk shows up in the TTFT.
+    #[tokio::test]
+    async fn observed_body_measures_from_request_start() {
+        let delay = Duration::from_millis(40);
+        let reporter = UsageReporter::new("openai", "OpenAICompatExecutor", "m", None, None);
+        let body = futures_util::stream::once(async move {
+            tokio::time::sleep(delay).await;
+            Ok::<_, std::io::Error>(Bytes::from_static(b"ok"))
+        });
+        let chunks: Vec<_> = reporter.observe_body_stream(body, false).collect().await;
+        assert_eq!(chunks.len(), 1);
+        assert!(reporter.is_ttft_set());
+        assert!(reporter.current_ttft() >= delay);
+    }
+
+    /// Go: TestUsageReporterTrackHTTPClientRoundTripOnly_*. A packet-only body (Codex/Meta
+    /// streams, error bodies) records the first-packet fallback but never the effective TTFT;
+    /// only a token event sets that.
+    #[tokio::test]
+    async fn packet_only_body_leaves_effective_ttft_unset() {
+        let reporter = UsageReporter::new("codex", "CodexExecutor", "m", None, None);
+        let body = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::new()), Ok(Bytes::from_static(b"data: {}\n\n"))]);
+        let _: Vec<_> = reporter.observe_body_stream(body, true).collect().await;
+        assert!(!reporter.is_ttft_set());
+        assert!(reporter.is_first_packet_set());
+        reporter.observe_token_event(true);
+        assert!(reporter.is_ttft_set());
+    }
+
+    #[tokio::test]
+    async fn read_body_tracked_returns_all_chunks_and_marks() {
+        let reporter = UsageReporter::new("openai", "OpenAICompatExecutor", "m", None, None);
+        let resp: reqwest::Response = http::Response::new(reqwest::Body::wrap_stream(futures_util::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from_static(b"ab")),
+            Ok(Bytes::from_static(b"cd")),
+            Ok(Bytes::from_static(b"ef")),
+        ])))
+        .into();
+        reporter.start_response_ttft();
+        let body = reporter.read_body_tracked(resp, false).await.expect("body");
+        assert_eq!(&body[..], b"abcdef");
+        assert!(reporter.is_ttft_set());
+    }
+
+    /// Go: TestUsageReporterObserveTokenEvent_FastPathNonTokenAndToken.
+    #[test]
+    fn observe_token_event_is_sticky() {
+        let reporter = UsageReporter::new("codex", "CodexExecutor", "m", None, None);
+        reporter.start_response_ttft();
+        reporter.observe_token_event(false);
+        assert!(!reporter.is_ttft_set() && reporter.is_first_packet_set());
+        let first_packet = reporter.inner.state.lock().first_packet;
+        std::thread::sleep(Duration::from_millis(2));
+        reporter.observe_token_event(false);
+        assert_eq!(reporter.inner.state.lock().first_packet, first_packet);
+        reporter.observe_token_event(true);
+        assert!(reporter.is_ttft_set());
+        let ttft = reporter.inner.state.lock().ttft;
+        std::thread::sleep(Duration::from_millis(2));
+        reporter.observe_token_event(true);
+        assert_eq!(reporter.inner.state.lock().ttft, ttft);
+    }
+
+    /// A reporter dropped after its request was sent (the client hung up) leaves a cancellation
+    /// failure that only a cancelled attempt records; one that never sent, or abandoned itself
+    /// (Go returns without recording), leaves nothing.
+    #[test]
+    fn dropped_reporter_leaves_cancellation_failure() {
+        use cpa_runtime::apilog::{ApiLog, UpstreamRequestLog};
+        let attempt = |send: bool, pending_request: bool, abandon: bool| {
+            let collector = cpa_runtime::usage_report::UsageCollector::new();
+            let mut opts = Options::new(Format::OpenAI);
+            opts.usage_collector = Some(collector.clone());
+            if pending_request {
+                opts.api_log = ApiLogHandle::new(Arc::new(ApiLog::new()));
+                let info = UpstreamRequestLog::from_auth("openai", None, "POST", "http://up/v1/chat", &http::HeaderMap::new(), b"{}");
+                opts.api_log.record_api_request(&cpa_config::Config::default(), info);
+            }
+            let reporter = UsageReporter::new("openai", "OpenAIExecutor", "m", None, Some(&opts));
+            if send {
+                reporter.start_response_ttft();
+            }
+            if abandon {
+                reporter.abandon();
+            }
+            drop(reporter);
+            let published = collector.take();
+            let late = Arc::new(Mutex::new(Vec::new()));
+            let sink = late.clone();
+            collector.detach(move |r| sink.lock().push(r));
+            assert!(published.is_empty(), "a dropped reporter must not look like a normal publish");
+            let late = late.lock().clone();
+            late
+        };
+        let waiting = attempt(true, true, false);
+        assert_eq!(waiting.len(), 1);
+        assert!(waiting[0].failed);
+        assert_eq!(waiting[0].fail, Failure { status_code: 499, body: "Post \"http://up/v1/chat\": context canceled".into() });
+        let answered = attempt(true, false, false);
+        assert_eq!(answered[0].fail, Failure { status_code: 499, body: "context canceled".into() });
+        assert!(attempt(false, false, false).is_empty());
+        assert!(attempt(true, true, true).is_empty());
+    }
+
+    #[test]
+    fn context_errors_map_to_http_status() {
+        let status = |status, msg: &str| failure_status(&ExecError::new(status, msg));
+        assert_eq!(status(0, "context canceled"), 499);
+        assert_eq!(status(0, "Post \"http://x\": context canceled"), 499);
+        assert_eq!(status(0, "context deadline exceeded"), 504);
+        assert_eq!(status(0, "operation was not context canceled"), 0);
+        assert_eq!(status(502, "context canceled"), 502);
     }
 
     #[test]

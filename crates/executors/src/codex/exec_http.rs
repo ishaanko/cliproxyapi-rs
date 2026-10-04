@@ -592,7 +592,11 @@ impl HttpStream {
     ) {
         loop {
             let next = tokio::select! {
-                _ = tx.closed() => return,
+                _ = tx.closed() => {
+                    // Go: `if ctx.Err() != nil { return }`, nothing is recorded.
+                    self.reporter.abandon();
+                    return;
+                }
                 next = lines.next_line() => next,
             };
             let Some(line) = next else { break };
@@ -619,6 +623,7 @@ impl HttpStream {
                     for chunk in chunks {
                         let non_empty = !chunk.is_empty();
                         if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
+                            self.reporter.abandon();
                             return;
                         }
                         if non_empty {

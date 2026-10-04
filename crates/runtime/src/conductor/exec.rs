@@ -27,6 +27,7 @@ use super::pick::{Eligibility, Picked};
 use super::rules;
 use super::session;
 use super::usage::{UsageFacts, tokens_from_response};
+use super::detach::DetachGuard;
 use crate::usage_report::UsageCollector;
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
@@ -581,21 +582,49 @@ impl Manager {
             let usage = (kind == Kind::Execute).then(UsageCollector::new);
             exec_opts.usage_collector.clone_from(&usage);
             let started = Instant::now();
+            // The result and usage templates exist before the call so a client that hangs up
+            // (dropping this future mid-call) still gets its usage recorded.
+            let mut detach = DetachGuard::new(
+                self.clone(),
+                usage.clone(),
+                exec_opts.api_log.clone(),
+                ExecResult {
+                    auth_id: auth.id.clone(),
+                    provider: provider.to_string(),
+                    model: result_model,
+                    route_model: route_model.to_string(),
+                    success: false,
+                    retry_after: None,
+                    credential_scope: false,
+                    error: None,
+                    options: exec_opts.clone(),
+                    skip_quota_observation: kind == Kind::Count,
+                    response_headers: HeaderMap::new(),
+                },
+                UsageFacts {
+                    stream: false,
+                    upstream_model: upstream_model.clone(),
+                    requested_model: requested_model_alias(&exec_opts, route_model),
+                    ..Default::default()
+                },
+                started,
+            );
             let mut res =
-                call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
+                detach.run(call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone())).await;
             let mut latency = started.elapsed();
             if let Err(err) = &res {
                 if err.upstream_attempted {
                     *upstream_err = Some(err.clone().into());
                 }
-                if let Some(refreshed) = self
-                    .try_refresh_after_unauthorized(&auth, err, did_refresh)
+                if let Some(refreshed) = detach
+                    .run(self.try_refresh_after_unauthorized(&auth, err, did_refresh))
                     .await
                 {
                     auth = refreshed;
                     did_refresh = true;
                     let started = Instant::now();
-                    res = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone())
+                    res = detach
+                        .run(call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()))
                         .await;
                     latency = started.elapsed();
                     if let Err(err2) = &res
@@ -605,27 +634,10 @@ impl Manager {
                     }
                 }
             }
-            let mut result = ExecResult {
-                auth_id: auth.id.clone(),
-                provider: provider.to_string(),
-                model: result_model,
-                route_model: route_model.to_string(),
-                success: res.is_ok(),
-                retry_after: None,
-                credential_scope: false,
-                error: None,
-                options: exec_opts.clone(),
-                skip_quota_observation: kind == Kind::Count,
-                response_headers: HeaderMap::new(),
-            };
-            let mut facts = UsageFacts {
-                latency,
-                stream: false,
-                upstream_model: upstream_model.clone(),
-                requested_model: requested_model_alias(&exec_opts, route_model),
-                reports: usage.as_ref().map(UsageCollector::take).unwrap_or_default(),
-                ..Default::default()
-            };
+            let (mut result, mut facts) = detach.take_parts();
+            result.auth_id.clone_from(&auth.id);
+            result.success = res.is_ok();
+            facts.latency = latency;
             if let Err(err) = &res
                 && claude_cancelled(&auth, err)
             {

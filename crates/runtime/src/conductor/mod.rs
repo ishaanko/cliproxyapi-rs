@@ -40,6 +40,7 @@ pub mod clock;
 pub mod cooldown;
 pub mod cooldown_state;
 mod credits;
+mod detach;
 pub mod errors;
 pub mod events;
 mod exec;

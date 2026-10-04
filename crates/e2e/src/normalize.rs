@@ -47,7 +47,7 @@ static RFC3339_RE: Lazy<Regex> = Lazy::new(|| {
 
 /// Keys whose values are always volatile regardless of content.
 const VOLATILE_KEYS: &[&str] =
-    &["latency_ms", "ttft_ms", "request_id", "trace_id", "execution_id", "elapsed_ms", "reset_seconds", "reset_time", "Date", "date"];
+    &["latency_ms", "request_id", "trace_id", "execution_id", "elapsed_ms", "reset_seconds", "reset_time", "Date", "date"];
 
 /// Request headers dropped from upstream captures (derived from the body or the connection).
 const DROP_REQUEST_HEADERS: &[&str] = &["host", "content-length", "sec-websocket-key"];
@@ -155,7 +155,12 @@ impl Normalizer {
                 // File-backed credentials hash their absolute path into `auth_index`.
                 let file_backed = m.get("path").and_then(Value::as_str).is_some_and(|p| p.contains(&self.work_dir));
                 for (k, x) in m.iter_mut() {
-                    if VOLATILE_KEYS.contains(&k.as_str()) && !x.is_null() {
+                    if k == "ttft_ms" && x.is_number() {
+                        // Unset (0) stays distinguishable from any measured time.
+                        if x.as_i64().is_some_and(|ms| ms > 0) {
+                            *x = Value::String("<ttft_ms>".into());
+                        }
+                    } else if VOLATILE_KEYS.contains(&k.as_str()) && !x.is_null() {
                         *x = Value::String(format!("<{}>", k.to_lowercase()));
                     } else if file_backed && matches!(k.as_str(), "auth_index" | "auth-index") {
                         *x = Value::String("<file-auth-index>".into());

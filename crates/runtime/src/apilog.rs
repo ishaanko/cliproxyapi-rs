@@ -211,6 +211,9 @@ struct LogState {
     response_timestamp: Option<DateTime<Local>>,
     response_headers: HeaderMap,
     credits_used: bool,
+    /// `(method, url)` of the upstream request sent and not yet answered (no response head, no
+    /// transport error): what a client hang-up cancels.
+    pending_request: Option<(String, String)>,
 }
 
 /// Final client response status of one inbound request (Go: the logging response-status
@@ -332,6 +335,11 @@ impl ApiLogHandle {
         }
     }
 
+    /// The upstream request that was sent and has no response yet, as `(method, url)`.
+    pub fn pending_request(&self) -> Option<(String, String)> {
+        self.get().and_then(|l| l.state.lock().pending_request.clone())
+    }
+
     /// Starts a fresh upstream attempt for response headers (Go: `WithFreshResponseHeadersHolder`).
     pub fn reset_response_headers(&self) {
         if let Some(l) = self.get() {
@@ -371,6 +379,8 @@ impl ApiLog {
     /// Records an outbound upstream request as a new attempt. With request logging off the
     /// request is kept only in deferred form; commercial mode records nothing.
     pub fn record_api_request(&self, cfg: &Config, info: UpstreamRequestLog) {
+        let mut s = self.state.lock();
+        s.pending_request = Some((info.method.clone(), info.url.clone()));
         if cfg.commercial_mode {
             return;
         }
@@ -381,7 +391,6 @@ impl ApiLog {
             info.url,
             format_auth_info(&info)
         );
-        let mut s = self.state.lock();
         if !cfg.request_log {
             s.defer(info);
             return;
@@ -402,6 +411,7 @@ impl ApiLog {
         tracing::debug!(target: "cpa::upstream", "upstream response status={status}");
         let mut s = self.state.lock();
         s.response_headers = headers.clone();
+        s.pending_request = None;
         if !request_log_capture_enabled(cfg) {
             return;
         }

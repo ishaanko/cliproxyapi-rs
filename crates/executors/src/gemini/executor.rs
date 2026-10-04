@@ -16,7 +16,7 @@ use http::HeaderMap;
 
 use super::common::{
     GL_API_VERSION, GL_ENDPOINT, PumpSetup, StreamPump, apply_custom_headers,
-    cap_gemini_max_output_tokens, compact_unsupported, error_body, fix_gemini_image_aspect_ratio,
+    cap_gemini_max_output_tokens, compact_unsupported, error_body_tracked, read_body_tracked, fix_gemini_image_aspect_ratio,
     is_count_tokens_action, json_headers, observed_lines, original_payload, post_json, read_body, set_header,
     set_model, thinking_error, translate_request_pair, upstream_error, usage_metadata,
 };
@@ -323,13 +323,12 @@ impl GeminiExecutor {
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = error_body(resp).await;
+            let body = error_body_tracked(reporter, resp).await;
             log.chunk(&body);
             return Err(upstream_error(status, &body));
         }
-        let data = log.tap_err(read_body(resp).await)?;
+        let data = log.tap_err(read_body_tracked(reporter, resp).await)?;
         log.chunk(&data);
-        reporter.mark_first_response_byte();
         reporter.observe_response_model(&data);
         let mut param = Param::default();
         let original = apply_patch_original_request(req, opts);
@@ -384,7 +383,7 @@ impl GeminiExecutor {
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = error_body(resp).await;
+            let body = error_body_tracked(reporter, resp).await;
             log.chunk(&body);
             return Err(upstream_error(status, &body));
         }
@@ -405,7 +404,13 @@ impl GeminiExecutor {
             let mut scan_err = None;
             loop {
                 let line = tokio::select! {
-                    _ = pump.tx.closed() => return,
+                    _ = pump.tx.closed() => {
+                        // Go: the cancelled request context fails the upstream read.
+                        log.error("context canceled");
+                        pump.fail(ExecError::new(0, "context canceled")).await;
+                        pump.finish();
+                        return;
+                    }
                     line = lines.next_line() => line,
                 };
                 let line = match line {

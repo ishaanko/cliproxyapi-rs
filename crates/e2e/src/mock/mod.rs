@@ -48,6 +48,40 @@ pub struct LoggedRequest {
     pub ws_frames: Vec<Value>,
     #[serde(default)]
     pub websocket: bool,
+    /// The server under test dropped the connection before the streamed reply finished.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub closed_early: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Flags a streamed reply as closed early when the body is dropped before its last chunk.
+struct EarlyCloseGuard {
+    mock: Mock,
+    idx: usize,
+    finished: bool,
+}
+
+impl EarlyCloseGuard {
+    fn disarm(&mut self) {
+        self.finished = true;
+    }
+}
+
+impl Drop for EarlyCloseGuard {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        let (mock, idx) = (self.mock.clone(), self.idx);
+        tokio::spawn(async move {
+            if let Some(e) = mock.inner.lock().await.log.get_mut(idx) {
+                e.closed_early = true;
+            }
+        });
+    }
 }
 
 struct Inner {
@@ -159,7 +193,7 @@ fn rechunk(chunks: Vec<Bytes>, mode: Chunking) -> Vec<Bytes> {
 }
 
 /// `stall_ms` pauses a stream after its first chunk.
-fn to_response(r: Rendered, stall_ms: u64, chunking: Chunking) -> Response {
+fn to_response(r: Rendered, stall_ms: u64, chunking: Chunking, track: Option<(Mock, usize)>) -> Response {
     let mut builder = Response::builder().status(StatusCode::from_u16(r.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
     for (k, v) in &r.headers {
         if let Ok(v) = HeaderValue::from_str(v) {
@@ -176,7 +210,19 @@ fn to_response(r: Rendered, stall_ms: u64, chunking: Chunking) -> Response {
                 tokio::time::sleep(if i == 1 { stall } else { Duration::from_millis(1) }).await;
                 item
             });
-            Body::from_stream(paced)
+            // A reply the mock itself aborts ends without the stream finishing: not a client close.
+            match track.filter(|_| !abort) {
+                Some((mock, idx)) => {
+                    let mut guard = EarlyCloseGuard { mock, idx, finished: false };
+                    let tail = stream::once(async move {
+                        guard.disarm();
+                        None::<Result<Bytes, io::Error>>
+                    });
+                    let tracked = paced.map(Some).chain(tail).filter_map(|x| async move { x });
+                    Body::from_stream(tracked)
+                }
+                None => Body::from_stream(paced),
+            }
         }
     };
     builder.body(body).unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
@@ -240,7 +286,7 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
         media::stabilize_body(op, &mut body);
     }
     entry.body = body.clone();
-    push_log(&mock, entry).await;
+    let idx = push_log(&mock, entry).await;
 
     if let Some(op) = media_op {
         let host = host_header.clone();
@@ -250,12 +296,10 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
         } else {
             mock.inner.lock().await.script.next(&cred)
         };
-        if pick.delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(pick.delay_ms)).await;
-        }
+        tokio::time::sleep(Duration::from_millis(pick.delay_ms.max(MIN_REPLY_DELAY_MS))).await;
         let mut rendered = media::render(&op, &pick.reply, &body, &host);
         rendered.headers.extend(pick.headers);
-        return to_response(rendered, pick.stall_ms, pick.chunking);
+        return to_response(rendered, pick.stall_ms, pick.chunking, Some((mock.clone(), idx)));
     }
 
     let Some((family, (op, ctx))) = family.and_then(|f| classify(f, &rest, &body).map(|c| (f, c))) else {
@@ -264,7 +308,7 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
             headers: vec![("content-type".into(), "application/json".into())],
             body: RBody::Full(Bytes::from(json!({"error":"mock: unknown route"}).to_string())),
         };
-        return to_response(rendered, 0, Chunking::Whole);
+        return to_response(rendered, 0, Chunking::Whole, None);
     };
     // Model listings are not part of any scenario script.
     let pick = if op == Op::Models {
@@ -272,12 +316,12 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
     } else {
         mock.inner.lock().await.script.next(&cred)
     };
-    if pick.delay_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(pick.delay_ms)).await;
+    if op != Op::Models || pick.delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(pick.delay_ms.max(MIN_REPLY_DELAY_MS))).await;
     }
     let mut rendered = replies::render(family, op, &ctx, &pick.reply);
     rendered.headers.extend(pick.headers);
-    to_response(rendered, pick.stall_ms, pick.chunking)
+    to_response(rendered, pick.stall_ms, pick.chunking, Some((mock.clone(), idx)))
 }
 
 async fn push_log(mock: &Mock, entry: LoggedRequest) -> usize {
@@ -307,6 +351,10 @@ async fn control(mock: &Mock, ctl: &str, req: Request) -> Response {
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+/// Floor on the time before any scripted reply starts, so a server's time-to-first-byte is a
+/// measurable positive number (the usage record's `ttft_ms` is compared as unset vs set).
+const MIN_REPLY_DELAY_MS: u64 = 8;
 
 /// Gap between upstream websocket frames; lets the server under test forward each frame before
 /// the next one (or a terminal close) arrives, keeping captures deterministic.

@@ -37,6 +37,7 @@ use super::models::{
 use super::pick::pinned_auth_id;
 use super::rules;
 use super::usage::{UsageFacts, tokens_from_response};
+use super::detach::DetachGuard;
 use crate::usage_report::UsageCollector;
 use crate::executor::{ChunkRx, DynExecutor, ExecError, HomeErrKind, Metadata, Options, Request, Response, StreamResult, meta};
 
@@ -370,9 +371,37 @@ impl Manager {
                 let usage = UsageCollector::new();
                 exec_opts.usage_collector = Some(usage.clone());
                 let started = Instant::now();
-                let res =
-                    call_unary_cancellable(kind, &executor_for_call, &prepared, exec_req.clone(), exec_opts.clone(), &guard.cancel())
-                        .await;
+                // A client that hangs up drops this future mid-call: Go reports the failed
+                // result (and its usage) with the cancelled context error.
+                let mut detach = DetachGuard::new(
+                    self.clone(),
+                    (kind == Kind::Execute).then(|| usage.clone()),
+                    exec_opts.api_log.clone(),
+                    ExecResult {
+                        auth_id: prepared.id.clone(),
+                        provider: provider.clone(),
+                        model: result_model.clone(),
+                        route_model: route_model.clone(),
+                        success: false,
+                        retry_after: None,
+                        credential_scope: false,
+                        error: None,
+                        options: exec_opts.clone(),
+                        skip_quota_observation: kind == Kind::Count,
+                        response_headers: HeaderMap::new(),
+                    },
+                    UsageFacts {
+                        stream: false,
+                        upstream_model: upstream_model.clone(),
+                        requested_model: requested_model_alias(&exec_opts, &route_model),
+                        ..Default::default()
+                    },
+                    started,
+                )
+                .home(prepared.clone(), true);
+                let res = detach
+                    .run(call_unary_cancellable(kind, &executor_for_call, &prepared, exec_req.clone(), exec_opts.clone(), &guard.cancel()))
+                    .await;
                 let latency = started.elapsed();
                 if let Err(err) = &res {
                     if err.upstream_attempted {
@@ -388,19 +417,8 @@ impl Manager {
                         err.status
                     );
                 }
-                let mut result = ExecResult {
-                    auth_id: prepared.id.clone(),
-                    provider: provider.clone(),
-                    model: result_model,
-                    route_model: route_model.clone(),
-                    success: res.is_ok(),
-                    retry_after: None,
-                    credential_scope: false,
-                    error: None,
-                    options: exec_opts.clone(),
-                    skip_quota_observation: kind == Kind::Count,
-                    response_headers: HeaderMap::new(),
-                };
+                let mut result = detach.take_result();
+                result.success = res.is_ok();
                 let mut facts = UsageFacts {
                     latency,
                     stream: false,

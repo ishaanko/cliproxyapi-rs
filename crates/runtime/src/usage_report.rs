@@ -64,7 +64,17 @@ pub struct Record {
 /// Receives the finished record of each reporter.
 pub trait UsageSink: Send + Sync {
     fn publish(&self, record: Record);
+
+    /// `record` is the failure of an attempt whose executor call was dropped before it published
+    /// anything (the client hung up). Only a sink that knows the attempt really was cancelled
+    /// may record it; by default it is recorded like any other.
+    fn publish_dropped(&self, record: Record) {
+        self.publish(record);
+    }
 }
+
+/// Forwards the records of a collector whose attempt is gone (see [`UsageCollector::detach`]).
+type DetachedSink = Arc<dyn Fn(Record) + Send + Sync>;
 
 /// Per-attempt record store: shared between the conductor (which drains it) and every reporter
 /// the executor creates from the attempt's options.
@@ -73,10 +83,19 @@ pub struct UsageCollector(Arc<CollectorInner>);
 
 #[derive(Default)]
 struct CollectorInner {
-    records: Mutex<Vec<Record>>,
+    store: Mutex<Store>,
     /// Set once an executor created a reporter on this collector: the executor reports its own
     /// usage, so the conductor need not scan the response for token counts.
     reporter_attached: AtomicBool,
+}
+
+#[derive(Default)]
+struct Store {
+    records: Vec<Record>,
+    detached: Option<DetachedSink>,
+    /// Failure of an executor call dropped unpublished; only recorded when the attempt is
+    /// detached (cancelled), never on a normal end.
+    dropped: Option<Record>,
 }
 
 impl UsageCollector {
@@ -86,7 +105,7 @@ impl UsageCollector {
 
     /// Removes and returns the records published so far, oldest first.
     pub fn take(&self) -> Vec<Record> {
-        std::mem::take(&mut *self.0.records.lock())
+        std::mem::take(&mut self.0.store.lock().records)
     }
 
     /// Marks that an executor reporter publishes into this collector (called by the reporter).
@@ -98,11 +117,52 @@ impl UsageCollector {
     pub fn has_reporter(&self) -> bool {
         self.0.reporter_attached.load(Ordering::Acquire)
     }
+
+    /// The attempt that drains this collector is gone (its client hung up) while an executor may
+    /// still publish: records already waiting and every later one go to `sink` instead. Like Go,
+    /// where a reporter publishes straight to the usage hub, a late failure is never lost.
+    pub fn detach(&self, sink: impl Fn(Record) + Send + Sync + 'static) {
+        let sink: DetachedSink = Arc::new(sink);
+        let waiting = {
+            let mut store = self.0.store.lock();
+            store.detached = Some(sink.clone());
+            let mut waiting = std::mem::take(&mut store.records);
+            waiting.extend(store.dropped.take());
+            waiting
+        };
+        for record in waiting {
+            sink(record);
+        }
+    }
 }
 
 impl UsageSink for UsageCollector {
     fn publish(&self, record: Record) {
-        self.0.records.lock().push(record);
+        let sink = {
+            let mut store = self.0.store.lock();
+            match &store.detached {
+                Some(sink) => sink.clone(),
+                None => {
+                    store.records.push(record);
+                    return;
+                }
+            }
+        };
+        sink(record);
+    }
+
+    fn publish_dropped(&self, record: Record) {
+        let sink = {
+            let mut store = self.0.store.lock();
+            match &store.detached {
+                Some(sink) => sink.clone(),
+                None => {
+                    store.dropped = Some(record);
+                    return;
+                }
+            }
+        };
+        sink(record);
     }
 }
 

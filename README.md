@@ -23,7 +23,7 @@ Development builds: the release profile is fat LTO with one codegen unit (slow t
 Verified against the Go implementation at upstream commit [`d7914af`](https://github.com/router-for-me/CLIProxyAPI/commit/d7914af) (2026-10-03):
 
 - **Translators:** 5,839 / 5,839 golden cases, captured from the Go test suite and replayed through the Go code (`cargo run --release -p cpa-conformance`).
-- **End to end:** 1,060 / 1,060 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
+- **End to end:** 1,068 / 1,068 HTTP, websocket, realtime, media, request-log, Home/Redis and plugin scenarios against a mock upstream, recorded from the Go binary ([report](conformance/e2e/report.md), `tools/e2e.sh`).
 
 ## Performance
 

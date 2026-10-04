@@ -522,10 +522,13 @@ impl ClaudeExecutor {
         auth: &Auth,
         opts: &Options,
         p: &Prepared,
+        reporter: &UsageReporter,
     ) -> Result<reqwest::Response, ExecError> {
         self.record_upstream_request(cfg, auth, opts, &p.url, &p.headers, &p.body_for_upstream);
         let client = super::http::claude_http_client(&opts.proxy_url, cfg, auth);
         let model_level_cooling = cfg.claude.model_level_cooling;
+        // Go: reporter.TrackHTTPClient; the first response byte (any status) is the TTFT.
+        reporter.start_response_ttft();
         let resp = match super::http::send_messages_shared(&client, &p.url, &p.headers, p.body_for_upstream.clone()).await {
             Ok(r) => r,
             Err(err) => {
@@ -540,7 +543,7 @@ impl ClaudeExecutor {
             return Ok(resp);
         }
         let resp_headers = resp.headers().clone();
-        let body = match resp.bytes().await {
+        let body = match reporter.read_body_tracked(resp, false).await {
             Ok(b) => match super::decode::decode_body(b) {
                 Ok(b) => b,
                 Err(e) => {
@@ -580,10 +583,10 @@ impl ClaudeExecutor {
         reporter: &UsageReporter,
     ) -> Result<Response, ExecError> {
         let to = Format::Claude;
-        let resp = self.send_upstream(cfg, auth, opts, p).await?;
+        let resp = self.send_upstream(cfg, auth, opts, p, reporter).await?;
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
-        let data = match resp.bytes().await.map_err(|e| crate::helps::status::transport_message(&e)).and_then(super::decode::decode_body) {
+        let data = match reporter.read_body_tracked(resp, false).await.map_err(|e| crate::helps::status::transport_message(&e)).and_then(super::decode::decode_body) {
             Ok(b) => b,
             Err(msg) => {
                 opts.api_log.record_api_response_error(cfg, &msg);

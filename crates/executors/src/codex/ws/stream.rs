@@ -301,6 +301,8 @@ impl WsStream {
             let read = tokio::select! {
                 _ = tx.closed() => {
                     call.set_close_reason("context_done");
+                    // Go sends ctx.Err() and returns without recording a failure.
+                    self.reporter.abandon();
                     return;
                 }
                 read = call.next_read() => read,
