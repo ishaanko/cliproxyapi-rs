@@ -435,12 +435,18 @@ fn step_start(root: &Value, st: &mut StreamState) -> Events {
             );
             cpa_json::set(&mut added, "sequence_number", next_seq(&mut st.seq));
             cpa_json::set(&mut added, "output_index", index);
-            cpa_json::set(&mut added, "item.id", item_id);
+            cpa_json::set(&mut added, "item.id", item_id.as_str());
             let signature = reasoning_encrypted_content(st.reasoning_encrypted.get(&index).map(String::as_str).unwrap_or_default());
             if !signature.is_empty() {
                 cpa_json::set(&mut added, "item.encrypted_content", signature);
             }
-            vec![emit("response.output_item.added", &added)]
+            let mut part = cpa_json::parse_str(
+                r#"{"type":"response.reasoning_summary_part.added","item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
+            );
+            cpa_json::set(&mut part, "sequence_number", next_seq(&mut st.seq));
+            cpa_json::set(&mut part, "item_id", item_id);
+            cpa_json::set(&mut part, "output_index", index);
+            vec![emit("response.output_item.added", &added), emit("response.reasoning_summary_part.added", &part)]
         }
         _ => vec![],
     }
@@ -488,8 +494,11 @@ fn step_delta(root: &Value, st: &mut StreamState) -> Events {
             if !text.is_empty() {
                 st.reasoning_summaries.entry(index).or_default().push(text.clone());
             }
-            let mut payload = cpa_json::parse_str(r#"{"type":"response.reasoning_summary_text.delta","output_index":0,"delta":""}"#);
+            let mut payload = cpa_json::parse_str(
+                r#"{"type":"response.reasoning_summary_text.delta","item_id":"","output_index":0,"summary_index":0,"delta":""}"#,
+            );
             cpa_json::set(&mut payload, "sequence_number", next_seq(&mut st.seq));
+            cpa_json::set(&mut payload, "item_id", st.item_ids.get(&index).cloned().unwrap_or_default());
             cpa_json::set(&mut payload, "output_index", index);
             cpa_json::set(&mut payload, "delta", text);
             vec![emit("response.reasoning_summary_text.delta", &payload)]
@@ -642,6 +651,32 @@ fn step_stop(root: &Value, st: &mut StreamState) -> Events {
             ]
         }
         "function_call" => function_call_stop(index, &item_id, st, updates),
+        "thought" => {
+            let text = st.reasoning_summaries.get(&index).map(|texts| texts.concat()).unwrap_or_default();
+            let mut text_done = cpa_json::parse_str(
+                r#"{"type":"response.reasoning_summary_text.done","item_id":"","output_index":0,"summary_index":0,"text":""}"#,
+            );
+            cpa_json::set(&mut text_done, "sequence_number", next_seq(&mut st.seq));
+            cpa_json::set(&mut text_done, "item_id", item_id.as_str());
+            cpa_json::set(&mut text_done, "output_index", index);
+            cpa_json::set(&mut text_done, "text", text.as_str());
+            let mut part_done = cpa_json::parse_str(
+                r#"{"type":"response.reasoning_summary_part.done","item_id":"","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}"#,
+            );
+            cpa_json::set(&mut part_done, "sequence_number", next_seq(&mut st.seq));
+            cpa_json::set(&mut part_done, "item_id", item_id);
+            cpa_json::set(&mut part_done, "output_index", index);
+            cpa_json::set(&mut part_done, "part.text", text);
+            let mut done = cpa_json::parse_str(r#"{"type":"response.output_item.done","output_index":0,"item":{}}"#);
+            cpa_json::set(&mut done, "sequence_number", next_seq(&mut st.seq));
+            cpa_json::set(&mut done, "output_index", index);
+            cpa_json::set(&mut done, "item", reasoning_item(index, st));
+            vec![
+                emit("response.reasoning_summary_text.done", &text_done),
+                emit("response.reasoning_summary_part.done", &part_done),
+                emit("response.output_item.done", &done),
+            ]
+        }
         _ => {
             let mut done = cpa_json::parse_str(r#"{"type":"response.output_item.done","output_index":0,"item":{}}"#);
             cpa_json::set(&mut done, "sequence_number", next_seq(&mut st.seq));
@@ -935,27 +970,16 @@ fn completed_output_item(index: i64, item_type: &str, st: &StreamState) -> Optio
 }
 
 fn reasoning_item(index: i64, st: &StreamState) -> Value {
-    let mut item = cpa_json::parse_str(r#"{"id":"","type":"reasoning","encrypted_content":"","summary":[]}"#);
+    let mut item = cpa_json::parse_str(r#"{"id":"","type":"reasoning","status":"completed","encrypted_content":"","summary":[]}"#);
     cpa_json::set(&mut item, "id", st.item_id(index));
     let signature = reasoning_encrypted_content(st.reasoning_encrypted.get(&index).map(String::as_str).unwrap_or_default());
     if !signature.is_empty() {
         cpa_json::set(&mut item, "encrypted_content", signature);
     }
-    let summaries: Vec<Value> = st
-        .reasoning_summaries
-        .get(&index)
-        .map(|texts| {
-            texts
-                .iter()
-                .map(|text| {
-                    let mut part = cpa_json::parse_str(r#"{"type":"summary_text","text":""}"#);
-                    cpa_json::set(&mut part, "text", text.as_str());
-                    part
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    set_items(&mut item, "summary", summaries);
+    // All summary fragments consolidate into one completed summary block.
+    let mut part = cpa_json::parse_str(r#"{"type":"summary_text","text":""}"#);
+    cpa_json::set(&mut part, "text", st.reasoning_summaries.get(&index).map(|texts| texts.concat()).unwrap_or_default());
+    set_items(&mut item, "summary", vec![part]);
     item
 }
 
