@@ -198,9 +198,19 @@ fn resolve_creds(auth: &Auth) -> Result<Creds, ExecError> {
     if key.is_empty() { service_account_creds(auth) } else { Ok(Creds::ApiKey { key, base_url }) }
 }
 
+/// Test-only host overrides keyed by location, standing in for Go's context round tripper that
+/// redirects the fixed Vertex hosts to a local server.
+#[cfg(test)]
+pub(super) static TEST_BASE_URLS: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::LazyLock::new(Default::default);
+
 /// Regional host, or the global host for `global`.
 fn vertex_base_url(location: &str) -> String {
     let loc = location.trim();
+    #[cfg(test)]
+    if let Some(base) = TEST_BASE_URLS.lock().get(loc) {
+        return base.clone();
+    }
     if loc == "global" {
         return GLOBAL_HOST.to_string();
     }
