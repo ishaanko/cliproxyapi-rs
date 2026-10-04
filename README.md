@@ -27,25 +27,29 @@ Verified against the Go implementation:
 
 ## Performance
 
-Go reference vs this port, same config, same zero-latency mock upstream, 64 concurrent connections, median of 7 runs on an 8 logical CPU pin (AMD Ryzen 7 7800X3D, shared WSL2 host, so spread is large; see [bench/results.md](bench/results.md) for every cell, spread, latency percentiles and load averages).
+Go reference vs this port, same config, same zero-latency mock upstream, median of 7 runs with nothing else running, server pinned to 8 logical CPUs (AMD Ryzen 7 7800X3D, WSL2). Every cell, spread, percentile and load average is in [bench/results.md](bench/results.md).
 
-| Scenario | Go req/s | Rust req/s | Rust/Go | p50 ms Go / Rust | CPU per request Rust/Go |
+Throughput at 64 concurrent connections:
+
+| Scenario | Go req/s | Rust req/s | Rust/Go | p99 ms Go / Rust | CPU per request Rust/Go |
 |---|---|---|---|---|---|
-| OpenAI chat, passthrough | 8,322 | 7,890 | 0.95x | 6.9 / 7.8 | 1.11x |
-| OpenAI chat SSE to Claude upstream | 3,978 | 2,680 | 0.67x | 15.5 / 21.2 | 1.57x |
-| Responses SSE to Codex upstream | 3,503 | 2,082 | 0.59x | 17.1 / 27.3 | 1.20x |
-| Claude messages to Gemini upstream | 5,969 | 7,013 | 1.17x | 8.3 / 8.6 | 0.95x |
-| `GET /v1/models` | 22,206 | 30,482 | 1.37x | 2.2 / 2.0 | 0.80x |
+| OpenAI chat, passthrough | 8,463 | 21,534 | 2.54x | 23.1 / 4.5 | 0.42x |
+| OpenAI chat SSE to Claude upstream | 4,592 | 10,429 | 2.27x | 29.5 / 9.6 | 0.42x |
+| Responses SSE to Codex upstream | 3,970 | 8,590 | 2.16x | 35.3 / 11.5 | 0.47x |
+| Claude messages to Gemini upstream | 7,831 | 17,030 | 2.17x | 34.6 / 5.9 | 0.41x |
+| `GET /v1/models` | 27,702 | 51,769 | 1.87x | 9.3 / 2.1 | 0.54x |
+
+Per request, on all 18 benchmark scenarios (long streams, native Claude and Gemini streams, Responses over websocket, 250 KB agent requests, 1024 requests in flight against a slow upstream): Rust uses 0.17x to 0.51x of Go's CPU and 0.09x to 0.69x of its instructions, with lower peak RSS than Go at the benchmark concurrency ([per-scenario table](bench/results.md#per-request-metrics-all-scenarios)).
 
 | | Go | Rust |
 |---|---|---|
-| Idle RSS | 53 MB | 21 MB |
-| Startup to healthy | 59 ms | 31 ms |
-| Binary (stripped) | 64.9 MiB | 47.9 MiB |
-| 2 MB conversation, chat to Claude, p50 | 262 ms | 364 ms |
-| 2 MB conversation, Claude to Gemini, p50 | 118 ms | 281 ms |
+| Idle RSS | 53 MB | 35 MB |
+| Startup to healthy | 55 ms | 16 ms |
+| 2 MB conversation, chat to Claude, p50 | 266 ms | 39 ms |
+| 2 MB conversation, Claude to Gemini, p50 | 116 ms | 33 ms |
+| Request errors during the whole run | 1,116 | 1 |
 
-Streaming adds about 1 to 2 ms to time to first byte on both servers. Reproduce with `bench/scripts/build.sh && bench/scripts/run.sh` ([methodology](bench/README.md)).
+Streaming adds under 1 ms to time to first byte on both servers. Reproduce with `bench/scripts/build.sh && tools/exclusive.sh bench/scripts/run.sh` ([methodology](bench/README.md)).
 
 ## License
 
