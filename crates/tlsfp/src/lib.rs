@@ -8,5 +8,7 @@ pub mod client;
 pub mod dial;
 pub mod ordered;
 pub mod profile;
+pub mod wire;
 
 pub use client::{ClientConfig, Error, FingerprintClient};
+pub use wire::{WireClient, WireConfig, WireProxy, WireRequest};

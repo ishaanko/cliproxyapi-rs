@@ -16,6 +16,7 @@ cpa-translator = { path = "../translator" }
 cpa-runtime = { path = "../runtime" }
 cpa-executors = { path = "../executors" }
 cpa-pluginapi = { path = "../pluginapi" }
+cpa-tlsfp = { path = "../tlsfp" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

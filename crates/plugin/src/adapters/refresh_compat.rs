@@ -76,6 +76,20 @@ impl Executor for PluginRefreshCompatExecutor {
         Ok(auth.clone())
     }
 
+    async fn http_request(&self, auth: &Auth, req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.inner.http_request(auth, req).await
+    }
+
+    /// Go forwards only when the inner executor implements `PrepareRequest` and otherwise
+    /// succeeds without touching the request; the trait's not-supported default stands in for
+    /// "does not implement".
+    async fn prepare_request(&self, req: &mut reqwest::Request, auth: &Auth) -> Result<(), ExecError> {
+        match self.inner.prepare_request(req, auth).await {
+            Err(e) if e.auth_code.as_deref() == Some("not_supported") => Ok(()),
+            other => other,
+        }
+    }
+
     async fn close_execution_session(&self, session_id: &str) {
         self.inner.close_execution_session(session_id).await;
     }

@@ -1,0 +1,36 @@
+{
+  "id": "media.search.routed_unsupported_self",
+  "desc": "a router pointing at its own executor is rejected",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/alpha/search",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "id": "sess-1",
+          "model": "alpha-route-self",
+          "query": "q"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "error": "unsupported Codex Alpha Search model route target \"self\" (\"e2e-formats\")"
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

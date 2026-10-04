@@ -80,6 +80,11 @@ impl ApiLog {
         self.data.lock().errors.push((status, text.to_string()));
     }
 
+    /// Publishes the final response status to the usage records of this request.
+    pub fn set_response_status(&self, status: u16) {
+        self.exec.set_response_status(status);
+    }
+
     /// Handle for `Options.api_log`: the executors record upstream attempts into this request's log.
     pub fn exec_handle(&self) -> ExecLogHandle {
         ExecLogHandle::new(self.exec.clone())

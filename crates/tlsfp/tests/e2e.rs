@@ -449,3 +449,59 @@ async fn tunnels_through_http_connect_and_socks5_proxies() {
     assert_eq!(resp.text().await.unwrap(), "hello from server");
     assert_eq!(hosts.lock().as_slice(), ["localhost"]);
 }
+
+// The plugin host bridge: a header profile over TLS, directly and through both tunnel kinds, with
+// the profile names leading, the plugin's own casing for the rest and a decoded gzip body.
+#[tokio::test]
+async fn wire_client_orders_headers_over_tls_directly_and_through_tunnels() {
+    use cpa_tlsfp::{WireClient, WireConfig, WireProxy, WireRequest};
+
+    let server = start_server(Behavior::H1Close, &[b"http/1.1"]).await;
+    let target: SocketAddr = ([127, 0, 0, 1], server.port).into();
+    let (http_port, connects) = start_connect_proxy(target).await;
+    let (socks_port, hosts) = start_socks_proxy(target).await;
+    let url = format!("https://localhost:{}/v1/x?a=1", server.port);
+    let proxies = [
+        WireProxy::Direct,
+        WireProxy::Url(format!("http://127.0.0.1:{http_port}")),
+        WireProxy::Url(format!("socks5://127.0.0.1:{socks_port}")),
+    ];
+    for proxy in proxies {
+        let client = WireClient::new(WireConfig {
+            header_profile: vec!["x-b".into(), "Host".into(), "X-A".into()],
+            disable_auto_compression: false,
+            auth_proxy: String::new(),
+            config_proxy: String::new(),
+            proxy,
+            extra_roots: vec![server.cert_der.clone()],
+        });
+        let mut req = WireRequest { method: "POST".into(), url: url.clone(), body: bytes::Bytes::from_static(b"{}"), ..Default::default() };
+        req.headers.insert("X-A".into(), vec!["1".into()]);
+        req.headers.insert("x-b".into(), vec!["2".into()]);
+        req.headers.insert("x-c".into(), vec!["3".into()]);
+        let resp = client.execute(req).await.unwrap();
+        assert_eq!(resp.text().await.unwrap(), "hello from server");
+    }
+    assert!(connects.lock()[0].starts_with(&format!("CONNECT localhost:{} HTTP/1.1\r\n", server.port)));
+    assert_eq!(hosts.lock().as_slice(), ["localhost"]);
+    let seen = server.seen.lock();
+    assert_eq!(seen.raw.len(), 3);
+    for raw in &seen.raw {
+        let head = String::from_utf8_lossy(raw);
+        let lines: Vec<&str> = head.split("\r\n\r\n").next().unwrap().split("\r\n").collect();
+        assert_eq!(
+            lines,
+            [
+                "POST /v1/x?a=1 HTTP/1.1",
+                "x-b: 2",
+                &format!("Host: localhost:{}", server.port),
+                "X-A: 1",
+                "User-Agent: Go-http-client/1.1",
+                "Content-Length: 2",
+                "x-c: 3",
+                "Accept-Encoding: gzip",
+                "Connection: close",
+            ]
+        );
+    }
+}

@@ -11,6 +11,9 @@ pub enum Format {
     Codex,
     Antigravity,
     Interactions,
+    /// A format name only plugins know (Go accepts any string as a `sdktranslator.Format`);
+    /// built from [`Format::intern`] so the variant stays `Copy`.
+    Custom(&'static str),
 }
 
 impl Format {
@@ -34,11 +37,37 @@ impl Format {
             Format::Codex => "codex",
             Format::Antigravity => "antigravity",
             Format::Interactions => "interactions",
+            Format::Custom(name) => name,
         }
     }
 
+    /// Built-in formats only; plugin format names go through [`Format::intern`].
     pub fn parse(s: &str) -> Option<Format> {
         Format::ALL.into_iter().find(|f| f.as_str() == s)
+    }
+
+    /// The built-in format for `s`, else a custom format carrying the exact name. Empty names
+    /// have no format. Custom names are interned (leaked once per distinct name; plugin format
+    /// vocabularies are tiny and process-lived).
+    pub fn intern(s: &str) -> Option<Format> {
+        if s.is_empty() {
+            return None;
+        }
+        if let Some(f) = Format::parse(s) {
+            return Some(f);
+        }
+        static NAMES: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+        let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = names.iter().find(|n| **n == s) {
+            return Some(Format::Custom(n));
+        }
+        let leaked: &'static str = Box::leak(s.to_string().into_boxed_str());
+        names.push(leaked);
+        Some(Format::Custom(leaked))
+    }
+
+    pub fn is_custom(self) -> bool {
+        matches!(self, Format::Custom(_))
     }
 }
 

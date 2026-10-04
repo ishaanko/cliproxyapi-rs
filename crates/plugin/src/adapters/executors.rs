@@ -458,7 +458,7 @@ impl ExecutorAdapter {
     /// Context for calls made by the conductor, which has no request context of its own: the
     /// execution metadata is attached for nested host model executions.
     pub(crate) fn conductor_ctx(opts: &Options) -> CallCtx {
-        CallCtx::background().with_ext(Arc::new(crate::ctx::RequestMeta(opts.metadata.clone())))
+        CallCtx::background().with_ext(Arc::new(crate::ctx::RequestMeta(opts.metadata.clone()))).with_api_log(opts.api_log.clone())
     }
 
     fn to_exec_error_ctx(ctx: &CallCtx, e: crate::client::PluginError) -> ExecError {
@@ -856,24 +856,42 @@ impl ExecutorAdapter {
         Ok(next)
     }
 
-    /// Executor-owned HTTP request (Go: `HttpRequest`), used by the management API call tool.
-    pub async fn http_request(&self, auth: Option<&Auth>, req: ExecutorHttpRequest) -> Result<ExecutorHttpResponse, ExecError> {
+    /// Executor-owned HTTP request (Go: `executorAdapter.HttpRequest`): the plugin performs the
+    /// request and its buffered response is rebuilt as an HTTP response (status 0 means 200).
+    async fn http_request_inner(&self, auth: &Auth, req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
         if !self.available() {
             return Err(self.unavailable_error());
         }
-        let mut req = req;
-        if let Some(a) = auth {
-            req.auth_id = a.id.clone();
-            req.auth_provider = a.provider.clone();
-            req.storage_json = storage_json_from_auth(Some(a));
-            req.metadata = a.metadata.clone();
-            req.attributes = a.attributes.clone();
-        }
+        let body = match req.body() {
+            None => Vec::new(),
+            Some(b) => match b.as_bytes() {
+                Some(bytes) => bytes.to_vec(),
+                None => return Err(ExecError::new(0, "read plugin http request body: request body is not buffered")),
+            },
+        };
+        let plugin_req = ExecutorHttpRequest {
+            auth_id: auth.id.clone(),
+            auth_provider: auth.provider.clone(),
+            method: req.method().as_str().to_string(),
+            url: req.url().to_string(),
+            headers: headers_to_go(req.headers()),
+            body,
+            storage_json: storage_json_from_auth(Some(auth)),
+            metadata: auth.metadata.clone(),
+            attributes: auth.attributes.clone(),
+        };
         let ctx = CallCtx::background();
-        let guard = ctx.token().clone().drop_guard();
-        let out = self.host.rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_HTTP_REQUEST, &req).await.map_err(Self::to_exec_error);
-        drop(guard);
-        out
+        let _guard = ctx.token().clone().drop_guard();
+        let resp: ExecutorHttpResponse =
+            self.host.rpc_cb(&self.record, &ctx, abi::METHOD_EXECUTOR_HTTP_REQUEST, &plugin_req).await.map_err(Self::to_exec_error)?;
+        let status = if resp.status_code == 0 { 200 } else { resp.status_code };
+        let status = u16::try_from(status).ok().and_then(|s| http::StatusCode::from_u16(s).ok()).ok_or_else(|| {
+            ExecError::new(0, format!("plugin executor {} returned invalid status {}", self.provider, resp.status_code))
+        })?;
+        let mut out = http::Response::new(Bytes::from(resp.body));
+        *out.status_mut() = status;
+        *out.headers_mut() = headers_from_go(&resp.headers);
+        Ok(reqwest::Response::from(out))
     }
 }
 
@@ -911,6 +929,10 @@ impl Executor for ExecutorAdapter {
 
     async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
         self.refresh_inner(auth).await
+    }
+
+    async fn http_request(&self, auth: &Auth, req: reqwest::Request) -> Result<reqwest::Response, ExecError> {
+        self.http_request_inner(auth, req).await
     }
 
     async fn count_tokens(&self, auth: &Auth, req: Request, opts: Options) -> Result<Response, ExecError> {

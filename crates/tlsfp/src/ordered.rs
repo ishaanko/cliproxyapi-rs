@@ -20,9 +20,16 @@ const MAX_BUFFERED_HEADER: usize = 1 << 20;
 /// `(method, request_target)`.
 pub type HeaderOrder = fn(method: &str, target: &str) -> &'static [&'static str];
 
+/// Where the desired header names come from: a per-profile function, or a name list the caller
+/// supplies per client (Go: the `headerProfile` slice of the plugin host HTTP bridge).
+enum Order {
+    Func(HeaderOrder),
+    Names(Vec<String>),
+}
+
 /// Stateful request rewriter; feed it everything the HTTP client writes.
 pub struct HeaderRewriter {
-    order: HeaderOrder,
+    order: Order,
     /// Header line (without CRLF) appended after the last header of every request head.
     trailing: Option<&'static str>,
     header: Vec<u8>,
@@ -32,7 +39,13 @@ pub struct HeaderRewriter {
 
 impl HeaderRewriter {
     pub fn new(order: HeaderOrder) -> Self {
-        Self { order, trailing: None, header: Vec::new(), body_remaining: 0, chunked: None }
+        Self { order: Order::Func(order), trailing: None, header: Vec::new(), body_remaining: 0, chunked: None }
+    }
+
+    /// Orders every request by the given names (case-insensitive match, emitted with the listed
+    /// casing), whatever its method and target.
+    pub fn with_names(names: Vec<String>) -> Self {
+        Self { order: Order::Names(names), trailing: None, header: Vec::new(), body_remaining: 0, chunked: None }
     }
 
     /// Appends `line` (for example `Connection: close`) after the last header of each request.
@@ -79,7 +92,7 @@ impl HeaderRewriter {
             };
             let end = end + 4;
             let head = std::mem::take(&mut self.header);
-            let (ordered, content_length, chunked) = order_request_header(&head[..end], self.order, self.trailing);
+            let (ordered, content_length, chunked) = order_request_header(&head[..end], &self.order, self.trailing);
             out.extend_from_slice(&ordered);
             buf = Cow::Owned(head[end..].to_vec());
             pos = 0;
@@ -151,15 +164,22 @@ fn request_uses_chunked(lines: &[&[u8]]) -> bool {
 
 /// Reorders and re-cases one request head (including the final blank line). Returns the new head,
 /// the declared content length and whether the body is chunked.
-fn order_request_header(header: &[u8], order: HeaderOrder, trailing: Option<&str>) -> (Vec<u8>, i64, bool) {
+fn order_request_header(header: &[u8], order: &Order, trailing: Option<&str>) -> (Vec<u8>, i64, bool) {
     let body = &header[..header.len() - 4];
     let lines = split_crlf(body);
     let header_lines = &lines[1..];
     let request_line = String::from_utf8_lossy(lines[0]);
     let mut parts = request_line.splitn(3, ' ');
     // A malformed request line keeps the original header order.
-    let desired = match (parts.next(), parts.next(), parts.next()) {
-        (Some(method), Some(target), Some(_)) => order(method, target),
+    let listed: Vec<&str>;
+    let desired: &[&str] = match (parts.next(), parts.next(), parts.next()) {
+        (Some(method), Some(target), Some(_)) => match order {
+            Order::Func(order) => order(method, target),
+            Order::Names(names) => {
+                listed = names.iter().map(String::as_str).collect();
+                &listed
+            }
+        },
         _ => &[],
     };
     let mut used = vec![false; header_lines.len()];

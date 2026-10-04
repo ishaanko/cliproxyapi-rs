@@ -65,7 +65,7 @@ impl Pipeline {
     }
 
     pub(crate) fn new_plugin_cx(&self, host: Arc<Host>, skip: &str) -> PluginCx {
-        let ctx = CallCtx::background().with_request_id(self.info.request_id.clone()).with_ext(Arc::new(self.info.clone()));
+        let ctx = CallCtx::background().with_request_id(self.info.request_id.clone()).with_ext(Arc::new(self.info.clone())).with_api_log(self.info.api_log.exec_handle());
         let guard = ctx.token().clone().drop_guard();
         PluginCx { host, ctx, skip: skip.trim().to_string(), trace_id: self.info.request_id.clone(), _cancel: Arc::new(guard) }
     }

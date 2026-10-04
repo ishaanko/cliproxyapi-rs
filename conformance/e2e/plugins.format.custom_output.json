@@ -1,0 +1,108 @@
+{
+  "id": "plugins.format.custom_output",
+  "desc": "a chat request to an executor with a custom output format is translated by the plugin (plain and streaming)",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "xproto-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-<auth-index:xproto.json>-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "choices": [
+              {
+                "finish_reason": "stop",
+                "index": 0,
+                "message": {
+                  "content": "from=x-acme-proto to=openai stream=false body=acme:format=x-acme-proto,source=openai,model=xproto-model,stream=false",
+                  "role": "assistant"
+                }
+              }
+            ],
+            "created": 0,
+            "id": "xproto-completion",
+            "model": "xproto-model",
+            "object": "chat.completion",
+            "usage": {
+              "completion_tokens": 2,
+              "prompt_tokens": 1,
+              "total_tokens": 3
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "xproto-model",
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": true,
+          "stream_options": {
+            "include_usage": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-cache",
+          "connection": "keep-alive",
+          "content-type": "text/event-stream",
+          "x-cpa-trace-id": "<ts14>-<auth-index:xproto.json>-<uuid:2>"
+        },
+        "body": {
+          "type": "sse",
+          "events": [
+            {
+              "data": "data: {\"choices\":[{\"delta\":{\"content\":\"from=x-acme-proto to=openai stream=true body=acme:format=x-acme-proto,source=openai,stream=true\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":0,\"id\":\"xproto-stream\",\"model\":\"xproto-model\",\"object\":\"chat.completion.chunk\"}"
+            },
+            {
+              "data": "data: {\"choices\":[{\"delta\":{\"content\":\"from=x-acme-proto to=openai stream=true body=acme:second\",\"role\":\"assistant\"},\"finish_reason\":null,\"index\":0}],\"created\":0,\"id\":\"xproto-stream\",\"model\":\"xproto-model\",\"object\":\"chat.completion.chunk\"}"
+            },
+            {
+              "data": "[DONE]"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

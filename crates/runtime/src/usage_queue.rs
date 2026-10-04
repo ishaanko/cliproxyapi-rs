@@ -57,10 +57,17 @@ pub fn queue_payload(r: &UsageRecord) -> Vec<u8> {
     };
     let model = non_empty(&r.model, "unknown");
     let alias = non_empty(&r.alias, &model);
-    // Go: `failed` also follows the response status (`resolveSuccess`).
-    let failed = r.failed || r.fail.status_code >= 400;
+    // Go: `failed = record.Failed || !resolveSuccess(ctx)`. The final client status is only known
+    // once the handler finished, so a record dispatched earlier (status 0) counts as a success.
+    let response_status = r.extra.response_status.as_ref().map_or(0, crate::apilog::ResponseStatus::get);
+    let failed = r.failed || response_status >= 400;
     let fail = if failed {
-        let status = if r.fail.status_code == 0 { 500 } else { r.fail.status_code };
+        // `resolveFail`: the record's own status, else the response status, else 500.
+        let status = match (r.fail.status_code, response_status) {
+            (0, 0) => 500,
+            (0, status) => status,
+            (status, _) => status,
+        };
         json!({"status_code": status, "body": r.fail.body.trim()})
     } else {
         json!({"status_code": 200, "body": ""})
@@ -193,6 +200,28 @@ mod tests {
         let pos = |k: &str| keys.iter().position(|x| *x == k);
         assert_eq!(pos("access_token_sha256"), pos("auth_index").map(|i| i + 1));
         assert!(pos("is_compaction") < pos("reasoning_effort") && pos("session_id") < pos("node_kind"));
+    }
+
+    // Go: `failed = record.Failed || !resolveSuccess(ctx)` where the context carries the final
+    // client status; a record dispatched before the handler finished sees no status.
+    #[test]
+    fn failed_folds_in_the_final_response_status() {
+        let status = crate::apilog::ResponseStatus::default();
+        let mut r = UsageRecord::default();
+        r.extra.response_status = Some(status.clone());
+        let fail_of = |r: &UsageRecord| {
+            let p = payload(r);
+            (p["failed"].clone(), p["fail"]["status_code"].clone())
+        };
+        assert_eq!(fail_of(&r), (false.into(), 200.into()), "status unknown yet");
+        status.set(200);
+        assert_eq!(fail_of(&r), (false.into(), 200.into()));
+        status.set(502);
+        assert_eq!(fail_of(&r), (true.into(), 502.into()), "late record sees the client's 502");
+        r.fail.status_code = 429;
+        assert_eq!(fail_of(&r), (true.into(), 429.into()), "the record's own status wins");
+        let failed_unknown = UsageRecord { failed: true, ..Default::default() };
+        assert_eq!(fail_of(&failed_unknown), (true.into(), 500.into()));
     }
 
     // Go's RFC3339Nano drops trailing zeros of the fraction (and the dot when it is zero).

@@ -1286,6 +1286,7 @@ dependencies = [
  "cpa-json",
  "cpa-pluginapi",
  "cpa-runtime",
+ "cpa-tlsfp",
  "cpa-translator",
  "futures-util",
  "http",

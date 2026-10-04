@@ -184,6 +184,22 @@ pub struct HostAuthSaveResponse {
     pub path: String,
 }
 
+/// Asks the host to clear quota and cooldown routing state for one credential.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HostRoutingResetCooldownRequest {
+    pub auth_index: String,
+}
+
+/// The credential whose quota and cooldown state was cleared and the model keys reset.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HostRoutingResetCooldownResponse {
+    pub auth_index: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub models: Vec<String>,
+}
+
 pub const AFFINITY_STATUS_BOUND: &str = "bound";
 pub const AFFINITY_STATUS_UNBOUND: &str = "unbound";
 pub const AFFINITY_STATUS_AMBIGUOUS: &str = "ambiguous";

@@ -97,8 +97,9 @@ fn exec_error(e: &ErrorMessage) -> ModelExecError {
     ModelExecError { status: e.status_or_500() as i32, message: e.text.clone() }
 }
 
+/// Go passes any protocol string through as a format (plugins can use custom ones).
 fn protocol(raw: &str) -> Result<Format, ModelExecError> {
-    Format::parse(raw.trim()).ok_or_else(|| ModelExecError { status: 400, message: format!("unsupported protocol {raw:?}") })
+    Format::intern(raw.trim()).ok_or_else(|| ModelExecError { status: 400, message: format!("unsupported protocol {raw:?}") })
 }
 
 #[async_trait]
