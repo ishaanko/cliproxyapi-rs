@@ -183,3 +183,71 @@ async fn failed_unary_attempt_stays_failed_despite_a_success_report() {
     assert!(rec.failed);
     assert_eq!(rec.fail.status_code, 502);
 }
+
+/// Streams one chunk, keeps the upstream open and lets the test publish the reporter's late
+/// cancellation failure the way a still-running executor task would.
+struct LateFailureExec {
+    held: Mutex<Vec<mpsc::Sender<Result<Bytes, ExecError>>>>,
+    collector: Mutex<Option<crate::usage_report::UsageCollector>>,
+}
+
+#[async_trait]
+impl Executor for LateFailureExec {
+    fn identifier(&self) -> &str {
+        "meta"
+    }
+
+    async fn execute(&self, _auth: &Auth, _req: Request, _opts: Options) -> Result<Response, ExecError> {
+        Ok(Response::default())
+    }
+
+    async fn execute_stream(&self, _auth: &Auth, _req: Request, opts: Options) -> Result<StreamResult, ExecError> {
+        let collector = opts.usage_collector.clone().expect("conductor attaches a collector");
+        collector.mark_reporter_attached();
+        *self.collector.lock() = Some(collector);
+        let (tx, rx) = mpsc::channel(4);
+        tx.try_send(Ok(Bytes::from_static(b"data: {}\n\n"))).expect("room for one chunk");
+        self.held.lock().push(tx);
+        Ok(StreamResult::new(Default::default(), rx))
+    }
+
+    async fn refresh(&self, auth: &Auth) -> Result<Auth, ExecError> {
+        Ok(auth.clone())
+    }
+
+    async fn count_tokens(&self, _auth: &Auth, _req: Request, _opts: Options) -> Result<Response, ExecError> {
+        Ok(Response::default())
+    }
+}
+
+/// The Meta hang-up: the client leaves while the upstream is idle, and the executor's reporter
+/// publishes the cancellation failure only afterwards. That failure must be the attempt's one
+/// record, with no success record made up by the conductor.
+#[tokio::test]
+async fn late_cancellation_failure_after_hang_up_is_the_only_record() {
+    let registry: &'static ModelRegistry = Box::leak(Box::new(ModelRegistry::new()));
+    let mgr = Manager::with_parts(Arc::new(ManualClock::new(Utc::now())), registry);
+    let exec = Arc::new(LateFailureExec { held: Mutex::new(Vec::new()), collector: Mutex::new(None) });
+    mgr.register_executor(exec.clone());
+    let tracker = Arc::new(UsageTracker::new());
+    mgr.set_usage_tracker(Some(tracker.clone()));
+    registry.register_client("a", "meta", &[ModelInfo { id: "gpt-5".into(), ..Default::default() }]);
+    mgr.register(Auth::new("a", "meta")).await.expect("register credential");
+
+    let mut stream = mgr.execute_stream(&["meta".into()], request(), Options::new(Format::OpenAI)).await.expect("stream");
+    assert!(stream.chunks.recv().await.is_some());
+    drop(stream);
+
+    let collector = exec.collector.lock().take().expect("collector");
+    let mut failure = report("gpt-5", "", true, 0);
+    failure.fail = Failure { status_code: 499, body: "context canceled".into() };
+    failure.stream = true;
+    collector.publish(failure);
+
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let events = tracker.requests(10, None).events;
+    assert_eq!(events.len(), 1, "exactly one usage record");
+    let rec = &events[0].record;
+    assert!(rec.failed && rec.stream);
+    assert_eq!((rec.fail.status_code, rec.fail.body.as_str()), (499, "context canceled"));
+}

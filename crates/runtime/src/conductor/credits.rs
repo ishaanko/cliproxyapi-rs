@@ -29,6 +29,7 @@ use super::models::{
 };
 use super::pick::pinned_auth_id;
 use super::usage::{UsageFacts, tokens_from_response};
+use super::detach::DetachGuard;
 use crate::usage_report::UsageCollector;
 use super::{Manager, executor_locked};
 use crate::executor::{DynExecutor, ExecError, Options, Request, Response, StreamResult};
@@ -342,31 +343,37 @@ impl Manager {
                 credits_opts.usage_collector = Some(usage.clone());
                 let started = Instant::now();
                 credits_opts.api_log.reset_response_headers();
-                let res = c
-                    .executor
-                    .execute(&c.auth, exec_req, credits_opts.clone())
+                // A client that hangs up drops this future mid-call: usage is still recorded.
+                let mut detach = DetachGuard::new(
+                    self.clone(),
+                    Some(usage.clone()),
+                    credits_opts.api_log.clone(),
+                    ExecResult {
+                        auth_id: c.auth.id.clone(),
+                        provider: c.provider.clone(),
+                        model: result_model,
+                        route_model: route_model.clone(),
+                        success: false,
+                        retry_after: None,
+                        credential_scope: false,
+                        error: None,
+                        options: credits_opts.clone(),
+                        skip_quota_observation: false,
+                        response_headers: Default::default(),
+                    },
+                    UsageFacts {
+                        upstream_model: upstream_model.clone(),
+                        requested_model: requested_model_alias(&credits_opts, &route_model),
+                        ..Default::default()
+                    },
+                    started,
+                );
+                let res = detach
+                    .run(c.executor.execute(&c.auth, exec_req, credits_opts.clone()))
                     .await
                     .map_err(|e| e.with_attempt_headers(&credits_opts.api_log));
-                let mut result = ExecResult {
-                    auth_id: c.auth.id.clone(),
-                    provider: c.provider.clone(),
-                    model: result_model,
-                    route_model: route_model.clone(),
-                    success: res.is_ok(),
-                    retry_after: None,
-                    credential_scope: false,
-                    error: None,
-                    options: credits_opts.clone(),
-                    skip_quota_observation: false,
-                    response_headers: Default::default(),
-                };
-                let mut facts = UsageFacts {
-                    latency: started.elapsed(),
-                    upstream_model: upstream_model.clone(),
-                    requested_model: requested_model_alias(&credits_opts, &route_model),
-                    reports: usage.take(),
-                    ..Default::default()
-                };
+                let (mut result, mut facts) = detach.take_parts();
+                result.success = res.is_ok();
                 match res {
                     Err(err) => {
                         result.error = Some(result_error_from_error(&err));

@@ -617,12 +617,9 @@ pub async fn stream_frames<S, E>(
     loop {
         // A client that went away ends the read, closing the upstream body (Go: the cancelled
         // context fails the read, and no later event can be delivered).
-        let read = tokio::select! {
-            _ = st.out.closed() => return,
-            read = reader.read_frame() => read,
-        };
-        let frame = match read {
-            Ok(f) => f,
+        let frame = match reader.read_frame_or_closed(&st.out).await {
+            Ok(Some(f)) => f,
+            Ok(None) => return,
             Err(FrameError::Eof) => break,
             Err(e) => {
                 tracing::warn!("devin executor: stream read error: {e}");

@@ -29,7 +29,6 @@ use cpa_runtime::executor::{
 };
 use cpa_runtime::service::ExecutorFactory;
 use cpa_translator::{Ctx, Format, Param};
-use futures_util::StreamExt;
 use http::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, USER_AGENT};
 use http::{HeaderMap, HeaderValue};
 
@@ -583,12 +582,7 @@ fn header_str(headers: &HeaderMap, name: &str) -> String {
 
 /// Reads a whole upstream body, marking the first byte for TTFT.
 async fn read_body(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
-    let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
-    let mut buf = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        buf.extend_from_slice(&chunk.map_err(|e| transport_error(&e))?);
-    }
-    Ok(Bytes::from(buf))
+    reporter.read_body_tracked(resp, false).await.map_err(|e| transport_error(&e))
 }
 
 /// Go: openAICompatImageEndpointPath, "" when the request is not an image call.

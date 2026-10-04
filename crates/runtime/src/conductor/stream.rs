@@ -221,37 +221,13 @@ impl Manager {
             let usage = UsageCollector::new();
             exec_opts.usage_collector = Some(usage.clone());
             let started = Instant::now();
-            let make_result = |auth: &Auth,
-                               error: &ExecError,
-                               credential_scope: bool,
-                               opts: &Options| ExecResult {
-                auth_id: auth.id.clone(),
-                provider: provider.to_string(),
-                model: result_model.clone(),
-                route_model: route_model.to_string(),
-                success: false,
-                retry_after: error.retry_after,
-                credential_scope,
-                error: Some(result_error_from_error(error)),
-                options: opts.clone(),
-                skip_quota_observation: false,
-                response_headers: error.recorded_headers(),
-            };
-            let facts = |started: Instant, tokens| UsageFacts {
-                latency: started.elapsed(),
-                stream: true,
-                upstream_model: exec_model.clone(),
-                requested_model: requested_model_alias(opts, route_model),
-                tokens,
-                reports: usage.take(),
-                ..Default::default()
-            };
 
-            // A client that hangs up drops this future mid-attempt: usage is still recorded.
+            // The result and usage templates exist before the call so a client that hangs up
+            // (dropping this future mid-attempt) still gets its usage recorded.
             let mut detach = DetachGuard::new(
                 self.clone(),
-                usage.clone(),
-                Some(auth.clone()),
+                Some(usage.clone()),
+                exec_opts.api_log.clone(),
                 ExecResult {
                     auth_id: auth.id.clone(),
                     provider: provider.to_string(),
@@ -273,6 +249,9 @@ impl Manager {
                 },
                 started,
             );
+            if ephemeral {
+                detach = detach.home(auth.clone(), false);
+            }
             let mut res = detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await;
             if let Err(err) = &res {
                 if err.upstream_attempted {
@@ -282,12 +261,13 @@ impl Manager {
                 let refreshed = if ephemeral {
                     None
                 } else {
-                    self.try_refresh_after_unauthorized(&auth, err, did_refresh).await
+                    detach.run(self.try_refresh_after_unauthorized(&auth, err, did_refresh)).await
                 };
                 if let Some(refreshed) = refreshed {
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
+                    detach.refreshed(&auth, &exec_opts);
                     res = detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await;
                     if let Err(e2) = &res
                         && e2.upstream_attempted
@@ -301,19 +281,19 @@ impl Manager {
                 && super::exec::claude_cancelled(&auth, err)
             {
                 // No result mark, but the reporter's failure record still counts.
-                let result = make_result(&auth, err, false, &exec_opts);
-                self.record_usage_only(&result, Some(&auth), facts(started, Default::default()));
+                let result = detach.failure_result(err, false);
+                self.record_usage_only(&result, Some(&auth), detach.facts());
                 return Err(err.clone().into());
             }
             let mut stream = match res {
                 Ok(s) => s,
                 Err(err) => {
                     let credential_scope = err.credential_scoped;
-                    let mut result = make_result(&auth, &err, credential_scope, &exec_opts);
+                    let mut result = detach.failure_result(&err, credential_scope);
                     let action = rules::match_action(&auth, &err, &cfg);
                     rules::apply_action_to_result(action, &mut result);
                     let credential_scope = result.credential_scope;
-                    self.record_attempt(ephemeral, &auth, result, facts(started, Default::default()));
+                    self.record_attempt(ephemeral, &auth, result, detach.facts());
                     if action.is_some() {
                         if rules::is_stop(action) {
                             return Err(Fail::stop(err));
@@ -352,6 +332,7 @@ impl Manager {
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
+                    detach.refreshed(&auth, &exec_opts);
                     match detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await {
                         Err(retry_err) => {
                             if retry_err.upstream_attempted {
@@ -376,8 +357,8 @@ impl Manager {
                 && !ephemeral
                 && super::exec::claude_cancelled(&auth, e)
             {
-                let result = make_result(&auth, e, false, &exec_opts);
-                self.record_usage_only(&result, Some(&auth), facts(started, Default::default()));
+                let result = detach.failure_result(e, false);
+                self.record_usage_only(&result, Some(&auth), detach.facts());
                 return Err(e.clone().into());
             }
 
@@ -385,11 +366,12 @@ impl Manager {
                 Err(boot_err) => {
                     let action = rules::match_action(&auth, &boot_err, &cfg);
                     let credential_scope = boot_err.credential_scoped;
-                    let mut result = make_result(&auth, &boot_err, credential_scope, &exec_opts);
+                    let mut result = detach.failure_result(&boot_err, credential_scope);
                     rules::apply_action_to_result(action, &mut result);
                     let credential_scope = result.credential_scope;
+                    let facts = detach.facts();
                     let record = |m: &Manager, result: ExecResult| {
-                        m.record_attempt(ephemeral, &auth, result, facts(started, Default::default()))
+                        m.record_attempt(ephemeral, &auth, result, facts)
                     };
                     if action.is_some() {
                         record(self, result);
@@ -432,9 +414,9 @@ impl Manager {
                 let empty = empty_stream("upstream stream closed before first payload");
                 let current = bootstrap_fail(empty.clone(), &stream.headers);
                 upstream_err = Some(current.clone());
-                let mut result = make_result(&auth, &empty, false, &exec_opts);
+                let mut result = detach.failure_result(&empty, false);
                 result.retry_after = None;
-                self.record_attempt(ephemeral, &auth, result, facts(started, Default::default()));
+                self.record_attempt(ephemeral, &auth, result, detach.facts());
                 if idx + 1 < exec_models.len() {
                     last_err = Some(empty);
                     continue;
@@ -452,7 +434,7 @@ impl Manager {
                 route_model: route_model.to_string(),
                 upstream_model: exec_model.clone(),
                 requested_model: requested_model_alias(opts, route_model),
-                options: exec_opts,
+                options: detach.take_result().options,
                 alias: attempt_alias,
                 started,
                 response_headers: stream.headers.clone(),
@@ -656,6 +638,7 @@ impl WrapSource {
             ..Default::default()
         };
         let (manager, started) = (self.manager.clone(), self.started);
+        let result = super::detach::for_detached_sink(result);
         self.reports.detach(move |record| {
             let facts = UsageFacts { latency: started.elapsed(), reports: vec![record], ..template.clone() };
             manager.record_usage_only(&result, auth.as_ref(), facts);

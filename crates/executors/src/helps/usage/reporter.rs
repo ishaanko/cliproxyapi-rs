@@ -62,9 +62,6 @@ struct State {
     first_packet_set: bool,
     ttft_start: Option<Instant>,
     ttft_set: bool,
-    /// The cancellation failure carries a bare `context canceled` instead of the in-flight
-    /// request's `Post "url": context canceled` (Claude OAuth cancellations).
-    cancel_plain: bool,
     /// The published record, kept only for reporters without a sink (the sink owns it otherwise).
     record: Option<Record>,
     /// Usage detail of the published record (what `published_detail` returns).
@@ -139,9 +136,9 @@ impl Inner {
     /// The failure of an attempt dropped while its upstream request was in flight (the client
     /// hung up): Go's `context.Canceled` (HTTP 499). Before the response head arrived the text
     /// is the transport error `Post "url": context canceled`.
-    fn cancel_failure(&self, plain: bool) -> Failure {
+    fn cancel_failure(&self) -> Failure {
         let body = match self.api_log.pending_request() {
-            Some((method, url)) if !plain => {
+            Some((method, url)) => {
                 let mut op = method.to_ascii_lowercase();
                 if let Some(first) = op.get_mut(..1) {
                     first.make_ascii_uppercase();
@@ -160,21 +157,16 @@ impl Inner {
 /// even though no executor code runs after the drop.
 impl Drop for Inner {
     fn drop(&mut self) {
-        if *self.published.get_mut() || self.sink.is_none() {
+        let Some(sink) = &self.sink else { return };
+        if *self.published.get_mut() {
             return;
         }
-        let (started, plain) = {
-            let s = self.state.get_mut();
-            (s.ttft_start.is_some() || s.ttft_set || s.first_packet_set, s.cancel_plain)
-        };
-        if !started {
+        let s = self.state.get_mut();
+        if !(s.ttft_start.is_some() || s.ttft_set || s.first_packet_set) {
             return;
         }
         let detail = ensure_token_breakdown_for_provider(Detail::default(), &self.provider, &self.executor_type);
-        let record = self.build_record_for_model(&self.model.clone(), detail, true, self.cancel_failure(plain));
-        if let Some(sink) = &self.sink {
-            sink.publish_dropped(record);
-        }
+        sink.publish_dropped(self.build_record_for_model(&self.model, detail, true, self.cancel_failure()));
     }
 }
 
@@ -336,11 +328,6 @@ impl UsageReporter {
     }
 
     // ---- request facts
-
-    /// Cancellation of this attempt is reported as a bare `context canceled` (no request URL).
-    pub fn set_cancel_plain(&self) {
-        self.inner.state.lock().cancel_plain = true;
-    }
 
     pub fn set_stream(&self, stream: bool) {
         self.inner.state.lock().stream = stream;
@@ -589,8 +576,11 @@ impl UsageReporter {
 
     /// Reads a whole upstream body (Go: `io.ReadAll` over the TTFT-tracked response body),
     /// marking TTFT on the first byte as [`observe_body_stream`](Self::observe_body_stream) does.
-    /// A body that arrives in one chunk is returned without a copy.
+    /// A body that arrives in one chunk is returned without a copy; a longer one is collected
+    /// into a buffer sized from `Content-Length` (capped), not grown by doubling.
     pub async fn read_body_tracked(&self, resp: reqwest::Response, packet_only: bool) -> Result<Bytes, reqwest::Error> {
+        const MAX_PREALLOC: u64 = 16 << 20;
+        let expected = resp.content_length().unwrap_or(0).min(MAX_PREALLOC) as usize;
         let mut stream = std::pin::pin!(self.observe_body_stream(resp.bytes_stream(), packet_only));
         let Some(first) = stream.next().await else {
             return Ok(Bytes::new());
@@ -599,7 +589,7 @@ impl UsageReporter {
         let Some(second) = stream.next().await else {
             return Ok(first);
         };
-        let mut buf = Vec::with_capacity(first.len() + second.as_ref().map_or(0, Bytes::len));
+        let mut buf = Vec::with_capacity(expected.max(first.len() + second.as_ref().map_or(0, Bytes::len)));
         buf.extend_from_slice(&first);
         buf.extend_from_slice(&second?);
         while let Some(chunk) = stream.next().await {

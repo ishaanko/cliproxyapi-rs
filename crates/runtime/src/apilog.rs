@@ -379,7 +379,8 @@ impl ApiLog {
     /// Records an outbound upstream request as a new attempt. With request logging off the
     /// request is kept only in deferred form; commercial mode records nothing.
     pub fn record_api_request(&self, cfg: &Config, info: UpstreamRequestLog) {
-        self.state.lock().pending_request = Some((info.method.clone(), info.url.clone()));
+        let mut s = self.state.lock();
+        s.pending_request = Some((info.method.clone(), info.url.clone()));
         if cfg.commercial_mode {
             return;
         }
@@ -390,7 +391,6 @@ impl ApiLog {
             info.url,
             format_auth_info(&info)
         );
-        let mut s = self.state.lock();
         if !cfg.request_log {
             s.defer(info);
             return;

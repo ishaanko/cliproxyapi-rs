@@ -322,21 +322,17 @@ pub(super) async fn read_body(
     reporter: &UsageReporter,
     resp: reqwest::Response,
 ) -> Result<Bytes, ExecError> {
-    use futures_util::StreamExt;
-    let mut stream = Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false));
-    let mut buf = Vec::new();
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(chunk) => buf.extend_from_slice(&chunk),
-            Err(e) => {
-                let err = transport_error(&e);
-                opts.api_log.record_api_response_error(cfg, &err.message);
-                return Err(err);
-            }
+    match reporter.read_body_tracked(resp, false).await {
+        Ok(buf) => {
+            opts.api_log.append_api_response_chunk(cfg, &buf);
+            Ok(buf)
+        }
+        Err(e) => {
+            let err = transport_error(&e);
+            opts.api_log.record_api_response_error(cfg, &err.message);
+            Err(err)
         }
     }
-    opts.api_log.append_api_response_chunk(cfg, &buf);
-    Ok(Bytes::from(buf))
 }
 
 /// Go: xaiInputHasItemType.
