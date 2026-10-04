@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::helps::session::{header_value_case_insensitive, header_values_case_insensitive};
 use super::credential_identity::sjson_string;
+use super::json_prefilter::json_may_contain_ascii;
 
 const CLAUDE_DIAGNOSTICS_TTL: Duration = Duration::from_secs(3600);
 const CLAUDE_DIAGNOSTICS_CLEANUP_PERIOD: Duration = Duration::from_secs(15 * 60);
@@ -40,6 +41,9 @@ pub struct ClaudeContinuityContext {
     pub previous_message_id: String,
     pub previous_request_id: String,
     pub prompt_id: String,
+    /// Calendar date this session was first seen on. The cloaked currentDate reminder reuses it
+    /// so the reminder text stays byte-stable within a session even when the local date flips.
+    pub pinned_date: String,
     pub initialized: bool,
 }
 
@@ -47,6 +51,7 @@ struct Entry {
     previous_message_id: String,
     previous_request_id: String,
     prompt_id: String,
+    pinned_date: String,
     minimum_sequence: u64,
     committed_sequence: u64,
     last_access: u64,
@@ -111,6 +116,7 @@ impl ClaudeDiagnosticsState {
                 previous_message_id: String::new(),
                 previous_request_id: String::new(),
                 prompt_id: String::new(),
+                pinned_date: String::new(),
                 minimum_sequence: sequence,
                 committed_sequence: 0,
                 last_access: 0,
@@ -139,6 +145,19 @@ impl ClaudeDiagnosticsState {
         };
         self.entries.insert(key, entry);
         result
+    }
+
+    /// Go: `PinClaudeSessionDate` body.
+    pub fn pin_date(&mut self, key: &str, date: &str) -> String {
+        let (key, date) = (key.trim(), date.trim());
+        if key.is_empty() || date.is_empty() {
+            return date.to_string();
+        }
+        let Some(entry) = self.entries.get_mut(key) else { return date.to_string() };
+        if entry.pinned_date.is_empty() {
+            entry.pinned_date = date.to_string();
+        }
+        entry.pinned_date.clone()
     }
 
     /// Go: `CommitClaudeContinuity` body.
@@ -235,6 +254,15 @@ pub fn begin_claude_continuity(
     explicit_prompt_id: &str,
 ) -> ClaudeContinuityBegin {
     STATE.lock().begin(credential_identity, session_id, is_new_prompt_turn, explicit_prompt_id, Instant::now())
+}
+
+/// Go: `PinClaudeSessionDate`: the calendar date pinned for this continuity session, recording
+/// `date` on the first call of a session and returning the pinned value afterwards. This keeps the
+/// cloaked currentDate reminder byte-stable so a local-midnight flip cannot invalidate the
+/// prompt-cache prefix. TTL expiry resets the entry (the next request re-anchors); an unknown key
+/// (for example after a restart) returns `date` unchanged.
+pub fn pin_claude_session_date(key: &str, date: &str) -> String {
+    STATE.lock().pin_date(key, date)
 }
 
 /// Go: `BeginClaudeDiagnostics`: `(key, sequence, previous_message_id)`.
@@ -397,7 +425,15 @@ fn is_claude_title_helper_request(root: &serde_json::Value) -> bool {
 /// which native Claude Code sends without `cc_prompt_id` or `cc_prev_req`.
 pub fn is_claude_probe_or_helper_request(body: &[u8]) -> bool {
     let root = crate::helps::parse_cache::parse(body);
-    is_claude_probe_request(&root) || is_claude_title_helper_request(&root)
+    if is_claude_probe_request(&root) {
+        return true;
+    }
+    // Without an output_config key the request is a helper only if one of the system title
+    // instructions appears, so skip the walks when none can.
+    json_may_contain_ascii(
+        body,
+        &["output_config", "naming a coding session", "Return a short title", "Write the title in the predominant language"],
+    ) && is_claude_title_helper_request(&root)
 }
 
 /// Go: `IsClaudeSubagentRequest`: agent id headers, a `parent_session_id` in `metadata.user_id`, or
@@ -431,7 +467,9 @@ pub fn is_claude_subagent_request(headers: &HeaderMap, body: &[u8]) -> bool {
 /// Go: `ClaudePayloadHas1hTTL`: any tool, system or message content block with
 /// `cache_control.ttl == "1h"`.
 pub fn claude_payload_has_1h_ttl(payload: &[u8]) -> bool {
-    if payload.is_empty() || !crate::helps::parse_cache::valid(payload) {
+    // A ttl of "1h" is the JSON string "1h"; its quotes are structural and never escaped, so a
+    // payload without that token cannot match.
+    if payload.is_empty() || !json_may_contain_ascii(payload, &[r#""1h""#]) || !crate::helps::parse_cache::valid(payload) {
         return false;
     }
     let root = crate::helps::parse_cache::parse(payload);
@@ -580,6 +618,20 @@ mod tests {
         assert!(s.begin("credential-a", "session-b", false, "", t0).previous_message_id.is_empty());
         assert!(s.begin("credential-b", "session-a", false, "", t0).previous_message_id.is_empty());
         assert_eq!(s.begin("", "session-a", false, "", t0), ClaudeContinuityBegin::default());
+    }
+
+    #[test]
+    fn pin_session_date_anchors_first_request_and_reanchors_after_ttl() {
+        let (mut s, t0) = (ClaudeDiagnosticsState::new(), Instant::now());
+        let key = s.begin("credential", "session", false, "", t0).key;
+        assert_eq!(s.pin_date(&key, "2026-08-01"), "2026-08-01");
+        // Later requests of the same session keep the anchor even when the date flips.
+        assert_eq!(s.pin_date(&key, "2026-08-02"), "2026-08-01");
+        // TTL expiry resets the entry, so the session re-anchors to the current date.
+        s.begin("credential", "session", false, "", at(t0, 3601));
+        assert_eq!(s.pin_date(&key, "2026-08-02"), "2026-08-02");
+        // Unknown keys (no continuity entry) fall back to the candidate date.
+        assert_eq!(s.pin_date("unknown-key", "2026-08-03"), "2026-08-03");
     }
 
     #[test]

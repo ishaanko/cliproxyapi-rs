@@ -168,6 +168,7 @@ pub struct ContinuityTags {
 /// (Go: resolveClaudeContinuityTags). `None` when there is no session or credential identity.
 pub fn resolve_claude_continuity_tags(
     ctx: &ClaudeCtx,
+    cfg: &Config,
     auth: &Auth,
     incoming_headers: &HeaderMap,
     payload: &[u8],
@@ -190,6 +191,10 @@ pub fn resolve_claude_continuity_tags(
     let (continuity_key, seq, prev_msg_id, stored_prev_req, stored_prompt_id) =
         (begun.key, begun.sequence, begun.previous_message_id, begun.previous_request_id, begun.prompt_id);
 
+    // The currentDate reminder is pinned to the session on its first request so a local-midnight
+    // flip between requests cannot rewrite it and invalidate the prompt-cache prefix.
+    let pinned_date = pin_claude_session_date(&continuity_key, &super::tz::claude_code_current_date(cfg, auth));
+
     let prompt_id = if !existing_prompt_id.is_empty() {
         existing_prompt_id.to_string()
     } else if !prev_msg_id.is_empty() && !stored_prompt_id.is_empty() && (has_execution_metadata || !is_new_turn) {
@@ -210,6 +215,7 @@ pub fn resolve_claude_continuity_tags(
         key: continuity_key,
         sequence: seq,
         prompt_id: prompt_id.clone(),
+        pinned_date,
         initialized: true,
         ..Default::default()
     };
@@ -1070,6 +1076,7 @@ pub fn apply_cloaking_internal(
     let mut is_subagent = false;
     let mut prev_req = String::new();
     let mut prompt_id = String::new();
+    let mut pinned_date = String::new();
     let mut incoming_headers = HeaderMap::new();
     if !is_probe_or_helper {
         incoming_headers = ctx.incoming_headers.clone().unwrap_or_default();
@@ -1077,6 +1084,7 @@ pub fn apply_cloaking_internal(
         let (existing_prev_req, existing_prompt_id) = extract_claude_billing_tags(&payload);
         if let Some(tags) = resolve_claude_continuity_tags(
             ctx,
+            cfg,
             auth,
             &incoming_headers,
             &payload,
@@ -1086,6 +1094,7 @@ pub fn apply_cloaking_internal(
         ) {
             prev_req = tags.prev_req;
             prompt_id = tags.prompt_id;
+            pinned_date = tags.ctx.pinned_date.clone();
             if let Some(continuity) = &ctx.continuity {
                 *continuity.lock() = tags.ctx;
             }
@@ -1093,7 +1102,9 @@ pub fn apply_cloaking_internal(
     }
 
     let turn_origin = if !is_probe_or_helper && !is_subagent { "human" } else { "" };
-    let now_date = super::tz::claude_code_current_date(cfg, auth);
+    // Without continuity state (probe/helper traffic, or no session identity) fall back to the
+    // per-request date, which is the pre-pinning behaviour.
+    let now_date = if pinned_date.is_empty() { super::tz::claude_code_current_date(cfg, auth) } else { pinned_date };
     let mut payload = check_system_instructions_with_signing_mode_at(
         &payload,
         settings.strict_mode,

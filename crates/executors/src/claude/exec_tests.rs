@@ -365,3 +365,105 @@ async fn embedded_executor_normalizes_the_upstream_model_and_restores_the_client
     assert_eq!(sent.g("model").str(), "claude-opus-4-6");
     assert_eq!(cpa_json::parse(&resp.payload).g("model").str(), "alias-opus-4-6");
 }
+
+// ---------------------------------------------------------------- cloaked date pin
+
+/// Calendar date of the currentDate reminder in the first user message of a captured body.
+fn cloak_date(body: &[u8]) -> String {
+    let root = cpa_json::parse(body);
+    let content = root.g("messages.0.content");
+    let texts: Vec<String> =
+        if content.is_array() { content.array().iter().map(|b| b.g("text").str()).collect() } else { vec![content.str()] };
+    for text in texts {
+        if let Some(rest) = text.split("Today's date is ").nth(1) {
+            return rest.chars().take(10).collect();
+        }
+    }
+    panic!("no currentDate reminder in first user message: {}", String::from_utf8_lossy(body));
+}
+
+fn date_pin_auth(id: &str, base_url: &str) -> Auth {
+    let mut auth = Auth::new(id, "claude");
+    auth.attributes.insert("api_key".into(), "sk-ant-oat-test-oauth-key-date-pin".into());
+    auth.attributes.insert("base_url".into(), base_url.into());
+    auth.attributes.insert("cloak_mode".into(), "always".into());
+    // The test clock is UTC wall time.
+    auth.attributes.insert("timezone".into(), "UTC".into());
+    auth.metadata.insert("account_uuid".into(), "11111111-2222-4333-8444-555555555555".into());
+    auth.metadata.insert("claude_device_ids".into(), serde_json::json!([format!("{:064x}", 0xd1)]));
+    auth
+}
+
+fn utc_unix(day: u32, hour: u32, minute: u32) -> i64 {
+    chrono::NaiveDate::from_ymd_opt(2026, 8, day).and_then(|d| d.and_hms_opt(hour, minute, 0)).map_or(0, |t| t.and_utc().timestamp())
+}
+
+fn session_opts(session: &str, stream: bool) -> Options {
+    let mut opts = Options::new(Format::Claude);
+    opts.headers.insert("x-session-id", session.parse().unwrap());
+    opts.stream = stream;
+    opts
+}
+
+/// Two requests (Execute and ExecuteStream) of one session across simulated local midnight carry
+/// byte-identical first messages, and a fresh session re-anchors to the new date.
+#[tokio::test]
+async fn cloaked_date_reminder_session_byte_stability() {
+    let upstream = mock_upstream(200, "application/json", MESSAGE.to_string()).await;
+    let auth = date_pin_auth("test-date-pin-exec-oauth", &upstream.base_url);
+    let payload = r#"{"model":"claude-opus-4-6","system":[{"type":"text","text":"You are an expert software engineer.","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"Say OK."}],"max_tokens":100}"#;
+    let exec = executor();
+    let (req, _) = claude_request(payload);
+
+    super::tz::test_clock::set(&auth.id, utc_unix(1, 23, 59));
+    exec.execute(&auth, req.clone(), session_opts("date-pin-session-1", false)).await.unwrap();
+
+    super::tz::test_clock::set(&auth.id, utc_unix(2, 0, 1));
+    exec.execute(&auth, req.clone(), session_opts("date-pin-session-1", false)).await.unwrap();
+    let mut streamed = exec.execute_stream(&auth, req.clone(), session_opts("date-pin-session-1", true)).await.unwrap();
+    while streamed.chunks.recv().await.is_some() {}
+
+    let bodies: Vec<Vec<u8>> = upstream.captured.lock().iter().map(|c| c.body.clone()).collect();
+    assert_eq!(bodies.len(), 3);
+    let first = cpa_json::parse(&bodies[0]).g("messages.0").raw();
+    for body in &bodies[1..] {
+        assert_eq!(cpa_json::parse(body).g("messages.0").raw(), first, "messages[0] changed between requests of one session");
+    }
+    for body in &bodies {
+        assert_eq!(cloak_date(body), "2026-08-01");
+    }
+
+    exec.execute(&auth, req, session_opts("date-pin-session-2", false)).await.unwrap();
+    let last = upstream.captured.lock().last().unwrap().body.clone();
+    assert_eq!(cloak_date(&last), "2026-08-02", "a fresh session re-anchors to the current date");
+}
+
+/// A probe declassified by a payload override across midnight keeps the session's pinned date.
+#[tokio::test]
+async fn cloaked_date_reminder_declassified_probe_pins_session_date() {
+    let upstream = mock_upstream(200, "application/json", MESSAGE.to_string()).await;
+    let auth = date_pin_auth("test-date-pin-exec-oauth-declass", &upstream.base_url);
+    // A payload override turns the max_tokens: 1 probe into a normal request.
+    let cfg = cpa_config::parse_config_bytes(
+        b"payload:\n  override:\n    - models:\n        - name: claude-opus-4-6\n          protocol: claude\n      params:\n        max_tokens: 100\n",
+    )
+    .unwrap();
+    let (_tx, rx) = watch::channel(Arc::new(cfg));
+    std::mem::forget(_tx);
+    let exec = super::new(rx);
+
+    super::tz::test_clock::set(&auth.id, utc_unix(1, 23, 59));
+    let normal = claude_request(r#"{"model":"claude-opus-4-6","messages":[{"role":"user","content":"normal request"}],"max_tokens":100}"#).0;
+    exec.execute(&auth, normal, session_opts("declass-session-1", false)).await.unwrap();
+
+    super::tz::test_clock::set(&auth.id, utc_unix(2, 0, 1));
+    let probe = claude_request(r#"{"model":"claude-opus-4-6","messages":[{"role":"user","content":"probe"}],"max_tokens":1}"#).0;
+    exec.execute(&auth, probe.clone(), session_opts("declass-session-1", false)).await.unwrap();
+    let mut streamed = exec.execute_stream(&auth, probe, session_opts("declass-session-1", true)).await.unwrap();
+    while streamed.chunks.recv().await.is_some() {}
+
+    let bodies: Vec<Vec<u8>> = upstream.captured.lock().iter().map(|c| c.body.clone()).collect();
+    assert_eq!(bodies.len(), 3);
+    assert_eq!(cloak_date(&bodies[1]), "2026-08-01", "declassified Execute request");
+    assert_eq!(cloak_date(&bodies[2]), "2026-08-01", "declassified ExecuteStream request");
+}
