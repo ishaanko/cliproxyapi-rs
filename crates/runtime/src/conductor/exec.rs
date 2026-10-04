@@ -424,6 +424,7 @@ impl Manager {
                 auth,
                 executor,
                 provider,
+                in_flight,
             } = picked;
             publish_selected_auth_metadata(&mut opts, &auth);
             round_attempted.insert(auth.id.clone());
@@ -503,6 +504,16 @@ impl Manager {
                 }
             };
             match attempt {
+                // A stream keeps the credential's in-flight slot until it is dropped.
+                AuthAttempt::Success(Outcome::Stream(s)) => {
+                    return Ok(Outcome::Stream(match in_flight {
+                        Some(guard) => StreamResult {
+                            chunks: super::in_flight::guard_stream(s.chunks, guard),
+                            ..s
+                        },
+                        None => s,
+                    }));
+                }
                 AuthAttempt::Success(o) => return Ok(o),
                 AuthAttempt::Return(f) => return Err(f),
                 AuthAttempt::Next(fail) => last_err = Some(fail),

@@ -17,6 +17,7 @@ mod realtime;
 mod redisqueue;
 mod rich;
 mod routing;
+mod rust_only;
 mod websocket;
 
 use crate::scenario::Scenario;
@@ -41,5 +42,6 @@ pub fn all(mock_port: u16) -> Vec<Scenario> {
     v.extend(plugins::scenarios(mock_port));
     v.extend(redisqueue::scenarios());
     v.extend(media::scenarios());
+    v.extend(rust_only::scenarios());
     v
 }

@@ -197,12 +197,13 @@ pub(crate) async fn delete_proxy_url(State(st): State<ManagementState>) -> ApiRe
     .await
 }
 
-/// Go: `normalizeRoutingStrategy`.
+/// Go: `normalizeRoutingStrategy`, plus the Rust-only `smart-quota`.
 fn normalize_routing_strategy(strategy: &str) -> Option<&'static str> {
     match strategy.trim().to_lowercase().as_str() {
         "" | "round-robin" | "roundrobin" | "rr" => Some("round-robin"),
         "weighted-round-robin" | "weightedroundrobin" | "wrr" => Some("weighted-round-robin"),
         "fill-first" | "fillfirst" | "ff" => Some("fill-first"),
+        "smart-quota" | "smartquota" | "sq" => Some("smart-quota"),
         _ => None,
     }
 }

@@ -7,7 +7,8 @@
 //! - round-robin: identity-based successor of the previous pick, so shrinking candidate sets
 //!   (retries, cooldowns) do not skew the rotation,
 //! - weighted round-robin: smooth (nginx style) accumulators, reset only when a weight changes,
-//! - fill-first: lowest id.
+//! - fill-first: lowest id,
+//! - smart-quota (Rust-only): highest usage-aware score, see [`super::quota_windows`].
 //!
 //! With session affinity enabled, a [`SessionAffinity`] wrapper binds a session to a credential
 //! (TTL cache) and falls back to the configured strategy for cold or failed bindings.
@@ -20,6 +21,7 @@ use parking_lot::Mutex;
 
 use super::clock::Clock;
 use super::errors::should_skip_credential_cooldown;
+use super::quota_windows::Score;
 use super::session::{self, SessionCache};
 use super::util::canonical_model_key;
 use crate::executor::{Metadata, meta};
@@ -33,6 +35,8 @@ pub enum Strategy {
     RoundRobin,
     WeightedRoundRobin,
     FillFirst,
+    /// Rust-only: prefer credentials with 5h headroom, expiring weekly allowance and low load.
+    SmartQuota,
 }
 
 impl Strategy {
@@ -41,15 +45,22 @@ impl Strategy {
         match s.trim().to_lowercase().as_str() {
             "weighted-round-robin" | "weightedroundrobin" | "wrr" => Strategy::WeightedRoundRobin,
             "fill-first" | "fillfirst" | "ff" => Strategy::FillFirst,
+            "smart-quota" | "smartquota" | "sq" => Strategy::SmartQuota,
             _ => Strategy::RoundRobin,
         }
     }
 }
 
+/// Default `routing.smart-quota-reserve-percent`.
+pub const DEFAULT_SMART_QUOTA_RESERVE: u8 = 30;
+
 /// The normalized selector configuration; the manager rebuilds the selector only on change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SelectorConfig {
     pub strategy: Strategy,
+    /// 5h headroom percent smart-quota tries to keep free; other strategies keep the default so a
+    /// setting they ignore never rebuilds the selector.
+    pub smart_quota_reserve: u8,
     pub session_affinity: bool,
     pub affinity_ttl: Duration,
     pub subagent_affinity: bool,
@@ -59,6 +70,7 @@ impl Default for SelectorConfig {
     fn default() -> Self {
         SelectorConfig {
             strategy: Strategy::RoundRobin,
+            smart_quota_reserve: DEFAULT_SMART_QUOTA_RESERVE,
             session_affinity: false,
             affinity_ttl: Duration::from_secs(3600),
             subagent_affinity: true,
@@ -73,6 +85,8 @@ pub struct Cand<'a> {
     /// Executor key of the credential.
     pub provider: &'a str,
     pub weight: i64,
+    /// Smart-quota score; `None` scores like a credential without data.
+    pub smart: Option<Score>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -191,6 +205,7 @@ impl Selector {
         }
         match strategy {
             Strategy::FillFirst => Some(0),
+            Strategy::SmartQuota => self.pick_smart(key, cands),
             Strategy::WeightedRoundRobin => {
                 let mut rot = self.rotation.lock();
                 if !rot.weighted.contains_key(key) && rot.weighted.len() >= MAX_ROTATION_KEYS {
@@ -210,6 +225,44 @@ impl Selector {
                 Some(i)
             }
         }
+    }
+
+    /// Smart-quota pick over `cands` (sorted by id). With a reserve configured and at least one
+    /// candidate known to have that much 5h headroom, only those compete; otherwise everyone
+    /// does. The highest weight wins; exact ties rotate by id like round-robin under `key`.
+    fn pick_smart(&self, key: &str, cands: &[Cand<'_>]) -> Option<usize> {
+        const TIE: f64 = 1e-9;
+        let score = |c: &Cand<'_>| c.smart.unwrap_or(Score::UNKNOWN);
+        let reserve = f64::from(self.config.smart_quota_reserve);
+        let has_reserve = |c: &Cand<'_>| {
+            score(c)
+                .five_hour_headroom
+                .is_some_and(|h| h + TIE >= reserve)
+        };
+        let restrict = reserve > 0.0 && cands.iter().any(has_reserve);
+        let eligible = |c: &Cand<'_>| !restrict || has_reserve(c);
+        let best = cands
+            .iter()
+            .filter(|c| eligible(c))
+            .map(|c| score(c).effective())
+            .max_by(f64::total_cmp)?;
+        let tied: Vec<(usize, Cand<'_>)> = cands
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, c)| eligible(c) && score(c).effective() >= best - TIE)
+            .collect();
+        let mut rot = self.rotation.lock();
+        if !rot.last_picked.contains_key(key) && rot.last_picked.len() >= MAX_ROTATION_KEYS {
+            rot.last_picked.clear();
+        }
+        // Successor of the previous pick among the tied candidates (sorted by id), wrapping.
+        let last = rot.last_picked.get(key).map(String::as_str).filter(|l| !l.is_empty());
+        let &(i, cand) = last
+            .and_then(|l| tied.iter().find(|(_, c)| c.id > l))
+            .or(tied.first())?;
+        rot.last_picked.insert(key.to_string(), cand.id.to_string());
+        Some(i)
     }
 
     /// Multi-provider pick (scheduler semantics): `cands` are the best-priority-tier candidates
@@ -243,6 +296,7 @@ impl Selector {
             Strategy::FillFirst => providers
                 .iter()
                 .find_map(|p| cands.iter().position(|c| c.provider == p)),
+            Strategy::SmartQuota => self.pick_smart(&format!("smart:{cursor_key}"), cands),
             Strategy::WeightedRoundRobin => {
                 let mut rot = self.rotation.lock();
                 rot.weighted
@@ -631,6 +685,7 @@ mod tests {
                 id,
                 provider: "p",
                 weight: *w,
+                smart: None,
             })
             .collect()
     }
@@ -691,16 +746,19 @@ mod tests {
                 id: "a1",
                 provider: "pa",
                 weight: 1,
+                smart: None,
             },
             Cand {
                 id: "a2",
                 provider: "pa",
                 weight: 1,
+                smart: None,
             },
             Cand {
                 id: "b1",
                 provider: "pb",
                 weight: 1,
+                smart: None,
             },
         ];
         let providers = vec!["pa".to_string(), "pb".to_string()];

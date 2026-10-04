@@ -103,6 +103,8 @@ pub struct ConfigSpec {
     pub keepalive_seconds: u32,
     pub bootstrap_retries: u32,
     pub force_model_prefix: bool,
+    /// `routing.session-affinity`.
+    pub session_affinity: bool,
     /// `usage-statistics-enabled`: records usage events for the management usage queue.
     pub usage_statistics: bool,
     /// `request-log`: write a log file for every request (otherwise only error requests).
@@ -159,6 +161,7 @@ impl ConfigSpec {
             keepalive_seconds: 0,
             bootstrap_retries: 0,
             force_model_prefix: false,
+            session_affinity: false,
             usage_statistics: false,
             request_log: false,
             commercial_mode: false,
@@ -368,6 +371,9 @@ impl ConfigSpec {
         if let Some(s) = &self.strategy {
             routing.insert("strategy".into(), json!(s));
         }
+        if self.session_affinity {
+            routing.insert("session-affinity".into(), json!(true));
+        }
         if !routing.is_empty() {
             m.insert("routing".into(), Value::Object(routing));
         }
@@ -418,6 +424,9 @@ impl ConfigSpec {
             routing.insert("strategy".into(), json!(s));
         }
         routing.insert("force-model-prefix".into(), json!(self.force_model_prefix));
+        if self.session_affinity {
+            routing.insert("session-affinity".into(), json!(true));
+        }
         routing.insert("retry".into(), Value::Object(retry));
         routing.insert("cooldown".into(), Value::Object(cooldown));
         let mut api_keys = json!({

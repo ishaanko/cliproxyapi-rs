@@ -486,7 +486,8 @@ pub struct QuotaExceeded {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct RoutingConfig {
-    /// "round-robin" (default), "weighted-round-robin", "fill-first".
+    /// "round-robin" (default), "weighted-round-robin", "fill-first", and the Rust-only
+    /// "smart-quota" (usage-aware selection from passive quota observations).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub strategy: String,
     #[serde(rename = "session-affinity", skip_serializing_if = "is_false")]
@@ -503,6 +504,13 @@ pub struct RoutingConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub session_affinity_subagents: Option<bool>,
+    /// Rust-only. `smart-quota` keeps this percent of the 5h window free by preferring credentials
+    /// with at least that much headroom. Default 30, clamped to 0..=100; ignored by other strategies.
+    #[serde(
+        rename = "smart-quota-reserve-percent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub smart_quota_reserve_percent: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -1855,3 +1855,5 @@ async fn client_disconnect_closes_idle_upstream_and_claude_oauth_records_nothing
         "no result for an abandoned Claude OAuth stream"
     );
 }
+
+mod smart_quota;

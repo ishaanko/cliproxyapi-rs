@@ -204,6 +204,17 @@ mod tests {
         );
     }
 
+    /// The Rust-only smart-quota key is a known routing field: the strict v8 validation used by
+    /// management writes accepts it and it reaches the parsed config.
+    #[test]
+    fn smart_quota_reserve_is_a_known_routing_key() {
+        let doc = "config-version: 8\nrouting:\n  strategy: smart-quota\n  smart-quota-reserve-percent: 20\n";
+        validate_v8_config(doc.as_bytes()).unwrap();
+        let cfg = crate::parse_config_bytes(doc.as_bytes()).unwrap();
+        assert_eq!(cfg.routing.strategy, "smart-quota");
+        assert_eq!(cfg.routing.smart_quota_reserve_percent, Some(20));
+    }
+
     #[test]
     fn moved_nodes_keep_flow_style_and_head_comments() {
         let doc = "# top comment\nconfig-version: 8\n\n# routing section\nrouting:\n  # strategy comment\n  strategy: round-robin\n  nope: 1\nquota-exceeded:\n  nope: 2\n";

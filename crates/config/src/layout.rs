@@ -561,6 +561,7 @@ static V8_CHILDREN: LazyLock<HashMap<String, HashSet<String>>> = LazyLock::new(|
         "session-affinity",
         "session-affinity-ttl",
         "session-affinity-subagents",
+        "smart-quota-reserve-percent",
     ] {
         add("routing", child);
     }
