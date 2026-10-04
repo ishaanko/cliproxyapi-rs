@@ -24,6 +24,8 @@ pub enum Content {
     Length,
     /// Text with cached prompt tokens in the usage.
     Cached,
+    /// Text ending with Anthropic's `pause_turn` stop reason (server tool iteration pause).
+    Pause,
 }
 
 /// How a stream's events are split over network writes.
