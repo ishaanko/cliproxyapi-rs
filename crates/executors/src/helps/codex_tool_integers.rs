@@ -120,9 +120,10 @@ fn normalize_field_types(params: &mut Value, fields: &[&str]) -> bool {
                 let mut seen: HashSet<String> = HashSet::new();
                 let mut next = Vec::with_capacity(items.len());
                 for item in items.iter() {
-                    // Go's gjson `String()` stringifies non-string items.
+                    // Go's gjson `String()` stringifies non-string items (null becomes "").
                     let mut s = match item {
                         Value::String(s) => s.clone(),
+                        Value::Null => String::new(),
                         other => other.to_string(),
                     };
                     if s == "number" {
