@@ -322,6 +322,11 @@ fn inline_comment_start(line: &str) -> Option<usize> {
 }
 
 impl Comments {
+    /// Number of head comment lines above each node (leading blank lines are not kept by the Go tree).
+    pub(crate) fn head_counts(&self) -> std::collections::HashMap<CPath, usize> {
+        self.head.iter().map(|(path, lines)| (path.clone(), lines.iter().skip_while(|l| l.is_empty()).count())).collect()
+    }
+
     /// Collects the comments of a YAML document.
     pub(crate) fn extract(text: &str) -> Self {
         let mut out = Comments {
@@ -563,6 +568,7 @@ impl Comments {
             carried.splice(0..0, lines);
         }
         self.move_prefix(&dotted(from), &dotted(to));
+        self.styles.move_scalar_marks(&dotted(from), &dotted(to));
         if !carried.is_empty() {
             self.head
                 .entry(dotted(to))

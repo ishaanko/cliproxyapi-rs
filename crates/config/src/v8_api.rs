@@ -28,15 +28,18 @@ impl DocComments {
         &self.0
     }
 
-    /// Records that `value`, at the key path `path`, was parsed from a JSON request body, which
-    /// yaml.v3 keeps in flow style with double-quoted keys and strings.
-    pub fn mark_json_subtree(&mut self, path: &[String], value: &Value) {
-        self.0.styles.mark_json_subtree(&key_path(path), value);
+    /// The marks of a JSON request body (flow collections, quoted keys and strings), to be moved
+    /// along with its nodes and then copied into the document with [`Self::adopt_marks_at`].
+    pub fn json_body(value: &Value) -> Self {
+        let mut marks = Comments::default();
+        marks.styles.mark_json_subtree(&Vec::new(), value);
+        Self(marks)
     }
 
-    /// Records that the mapping key at `path` came from a JSON request body (written quoted).
-    pub fn mark_json_key(&mut self, path: &[String]) {
-        self.0.styles.mark_json_key(key_path(path));
+    /// Copies the marks that `body` holds at `from` (a key path in the body) to `to` in the
+    /// document; `with_key` includes the quoting of the key itself.
+    pub fn adopt_marks_at(&mut self, body: &DocComments, from: &[String], to: &[String], with_key: bool) {
+        self.0.styles.adopt_subtree(&body.0.styles, &key_path(from), &key_path(to), with_key);
     }
 }
 

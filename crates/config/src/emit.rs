@@ -7,7 +7,7 @@
 //! A `Value` tree has no such memory; [`Styles`] remembers, per string value, how the source
 //! wrote it, which is what makes `"quoted"` survive a save (and a move to another key).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 
 use serde_yaml_ng::{Mapping, Value};
@@ -115,6 +115,11 @@ impl MarkedEventReceiver for StyleCollector {
                     return;
                 }
                 if is_key {
+                    // A quoted key stays quoted (by path: the text-keyed sets are for values).
+                    if double {
+                        let path = self.path();
+                        self.styles.quoted_keys.insert(path);
+                    }
                     return;
                 }
                 let set = match style {
@@ -196,9 +201,30 @@ impl Styles {
         }
     }
 
-    /// Records that the mapping key at `path` came from a JSON request body (written quoted).
-    pub(crate) fn mark_json_key(&mut self, path: CPath) {
-        self.quoted_keys.insert(path);
+    /// Moves the quoting of the scalar (or subtree) at `from` to `to`, as the reference does when a
+    /// field changes path: the node keeps its style, the key and the parents around it are new.
+    pub(crate) fn move_scalar_marks(&mut self, from: &CPath, to: &CPath) {
+        let moved: Vec<CPath> = self.quoted_values.iter().filter(|p| p.starts_with(from)).cloned().collect();
+        for old in moved {
+            self.quoted_values.remove(&old);
+            let mut new = to.clone();
+            new.extend_from_slice(&old[from.len()..]);
+            self.quoted_values.insert(new);
+        }
+    }
+
+    /// Copies the marks of `other` at and below `from` to the same places below `to`; `with_key`
+    /// also copies the quoting of the key at `from` itself.
+    pub(crate) fn adopt_subtree(&mut self, other: &Styles, from: &CPath, to: &CPath, with_key: bool) {
+        let rekey = |p: &CPath| {
+            let mut new = to.clone();
+            new.extend_from_slice(&p[from.len()..]);
+            new
+        };
+        self.flow.extend(other.flow.iter().filter(|p| p.starts_with(from)).map(rekey));
+        self.quoted_values.extend(other.quoted_values.iter().filter(|p| p.starts_with(from)).map(rekey));
+        self.quoted_keys
+            .extend(other.quoted_keys.iter().filter(|p| p.starts_with(from) && (with_key || p.len() > from.len())).map(rekey));
     }
 
     /// Adopts the flow and quoting marks of `other`.
@@ -206,6 +232,16 @@ impl Styles {
         self.flow.extend(other.flow.iter().cloned());
         self.quoted_keys.extend(other.quoted_keys.iter().cloned());
         self.quoted_values.extend(other.quoted_values.iter().cloned());
+    }
+
+    /// Whether the source wrote the collection at `path` in flow style.
+    pub(crate) fn is_flow(&self, path: &CPath) -> bool {
+        self.flow.contains(path)
+    }
+
+    /// Styles that only mark the given collections as flow.
+    pub(crate) fn with_flow(flow: HashSet<CPath>) -> Self {
+        Styles { flow, ..Styles::default() }
     }
 
     fn get(&self, s: &str) -> Option<Style> {
@@ -509,12 +545,21 @@ fn format_float(f: f64) -> String {
     }
 }
 
+/// Where each key and list item of a document lands (see [`probe_lines`]).
+struct Probe {
+    lines: HashMap<CPath, usize>,
+    /// Head comment lines emitted above a node (they shift every later line).
+    head: HashMap<CPath, usize>,
+    extra: usize,
+}
+
 struct Emitter<'a> {
     out: String,
     best_indent: i32,
     styles: &'a Styles,
     /// Document path of the node being written (only tracked when JSON marks exist).
     path: CPath,
+    probe: Option<Probe>,
 }
 
 /// A flow collection in yaml.v3 layout: `{a: 1, "b": [x, "y"]}`, strings double-quoted where the
@@ -692,8 +737,17 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    /// Notes the line of the node about to be written at the current path.
+    fn probe_here(&mut self) {
+        let Some(probe) = &mut self.probe else { return };
+        probe.extra += probe.head.get(&self.path).copied().unwrap_or(0);
+        let line = self.out.matches('\n').count() + 1 + probe.extra;
+        probe.lines.insert(self.path.clone(), line);
+    }
+
     fn tracking(&self) -> bool {
-        !self.styles.flow.is_empty()
+        self.probe.is_some()
+            || !self.styles.flow.is_empty()
             || !self.styles.quoted_keys.is_empty()
             || !self.styles.quoted_values.is_empty()
     }
@@ -728,6 +782,7 @@ impl<'a> Emitter<'a> {
                 self.path
                     .push(Seg::Key(k.as_str().unwrap_or_default().to_string()));
             }
+            self.probe_here();
             self.put_key(k);
             self.out.push(':');
             self.value_after_key(v, indent);
@@ -771,6 +826,7 @@ impl<'a> Emitter<'a> {
             if self.tracking() {
                 self.path.push(Seg::Index(i));
             }
+            self.probe_here();
             self.sequence_item(item, indent);
             if self.tracking() {
                 self.path.pop();
@@ -857,6 +913,32 @@ fn double_quoted(s: &str) -> String {
     out
 }
 
+/// The 1-based line of every key and list item of `root` as [`emit`] lays it out, with `head`
+/// comment lines above the nodes counted in. Nodes inside a flow collection have no entry of their
+/// own (they share the line of the collection).
+pub(crate) fn probe_lines(
+    root: &Value,
+    indent: usize,
+    styles: &Styles,
+    head: HashMap<CPath, usize>,
+) -> HashMap<CPath, usize> {
+    let mut e = Emitter {
+        out: String::new(),
+        best_indent: indent.max(1) as i32,
+        styles,
+        path: Vec::new(),
+        probe: Some(Probe { lines: HashMap::new(), head, extra: 0 }),
+    };
+    if e.json_text(root).is_none() {
+        match root {
+            Value::Mapping(m) if !m.is_empty() => e.mapping(m, -1, false, false),
+            Value::Sequence(s) if !s.is_empty() => e.sequence(s, -1, false, false),
+            _ => {}
+        }
+    }
+    e.probe.map(|p| p.lines).unwrap_or_default()
+}
+
 /// Renders `root` as a YAML document in yaml.v3 layout with the given indentation step (4 for
 /// `yaml.Marshal`, 2 for the encoders that call `SetIndent(2)`).
 pub(crate) fn emit(root: &Value, indent: usize, styles: &Styles) -> String {
@@ -865,6 +947,7 @@ pub(crate) fn emit(root: &Value, indent: usize, styles: &Styles) -> String {
         best_indent: indent.max(1) as i32,
         styles,
         path: Vec::new(),
+        probe: None,
     };
     if let Some(text) = e.json_text(root) {
         e.out.push_str(&text);

@@ -127,20 +127,25 @@ fn run(st: &ManagementState, config_path: &Path, req: &ConfigRequest) -> ApiResu
         if parts.is_empty() && !update.is_mapping() {
             return Err(ApiError::new(400, "config_must_be_object"));
         }
+        // yaml.v3 keeps the style of nodes parsed from a JSON body (flow, quoted strings); the
+        // marks travel with the body's nodes when the historical paths are rewritten.
+        let mut body_marks = (!req.yaml).then(|| cpa_config::DocComments::json_body(&update));
         // A PUT of the whole document is normalized below, together with its comments.
         if parts.is_empty() && !replaces_document {
-            cpa_config::normalize_v8_config_aliases(&mut update);
+            match body_marks.as_mut() {
+                Some(marks) => cpa_config::normalize_v8_config_aliases_with_comments(&mut update, marks),
+                None => cpa_config::normalize_v8_config_aliases(&mut update),
+            }
         }
         // Paths identify YAML keys, never array indexes. Lists are replaced whole.
         let dst = navigate(&mut root, parts)?;
-        // yaml.v3 keeps the style of nodes parsed from a JSON body (flow, quoted strings).
-        let json_body = !req.yaml;
         if req.method == Method::PATCH {
             let mut path = parts.clone();
-            merge_patch(dst, update, &mut path, json_body.then_some(&mut comments));
+            let marks = body_marks.as_ref().map(|body| Marks { body, doc: &mut comments, base: parts.len() });
+            merge_patch(dst, update, &mut path, marks);
         } else {
-            if json_body {
-                comments.mark_json_subtree(parts, &update);
+            if let Some(body) = &body_marks {
+                comments.adopt_marks_at(body, &[], parts, false);
             }
             *dst = update;
         }
@@ -296,24 +301,42 @@ fn delete_path(root: &mut Value, parts: &[String]) -> bool {
     true
 }
 
+/// JSON-body marks of a PATCH: the body's own marks and the document's, with the depth at which
+/// the body starts in the document.
+struct Marks<'a> {
+    body: &'a cpa_config::DocComments,
+    doc: &'a mut cpa_config::DocComments,
+    base: usize,
+}
+
+impl Marks<'_> {
+    fn reborrow(&mut self) -> Marks<'_> {
+        Marks { body: self.body, doc: &mut *self.doc, base: self.base }
+    }
+
+    /// Copies the marks of the body node that lands at the document `path`.
+    fn adopt(&mut self, path: &[String], with_key: bool) {
+        self.doc.adopt_marks_at(self.body, &path[self.base..], path, with_key);
+    }
+}
+
 /// Unlike JSON merge-patch, null is retained: optional key overrides use it to inherit the group
 /// value. DELETE is the explicit field-removal operation.
 fn merge_patch(
     dst: &mut Value,
     src: Value,
     path: &mut Vec<String>,
-    mut marks: Option<&mut cpa_config::DocComments>,
+    mut marks: Option<Marks<'_>>,
 ) {
     match (dst, src) {
         (Value::Mapping(d), Value::Mapping(s)) => {
             for (key, value) in s {
                 path.push(key.as_str().unwrap_or_default().to_string());
                 match d.get_mut(&key) {
-                    Some(old) => merge_patch(old, value, path, marks.as_deref_mut()),
+                    Some(old) => merge_patch(old, value, path, marks.as_mut().map(Marks::reborrow)),
                     None => {
-                        if let Some(marks) = marks.as_deref_mut() {
-                            marks.mark_json_key(path);
-                            marks.mark_json_subtree(path, &value);
+                        if let Some(marks) = marks.as_mut() {
+                            marks.adopt(path, true);
                         }
                         d.insert(key, value);
                     }
@@ -322,8 +345,8 @@ fn merge_patch(
             }
         }
         (dst, src) => {
-            if let Some(marks) = marks {
-                marks.mark_json_subtree(path, &src);
+            if let Some(marks) = marks.as_mut() {
+                marks.adopt(path, false);
             }
             *dst = src;
         }
