@@ -5,7 +5,7 @@
 use serde_json::{Value, json};
 
 use crate::client::{Auth, HttpReq, Step as Req};
-use crate::config::{ConfigSpec, KeyEntry, ModelCfg};
+use crate::config::{ConfigSpec, KeyEntry, ModelCfg, PluginSpec};
 use crate::mock::script::{Content, Reply, Script, Step};
 use crate::scenario::Scenario;
 
@@ -49,6 +49,12 @@ fn media_no_alpha(s: &mut ConfigSpec) {
 fn media_codex_alias(s: &mut ConfigSpec) {
     media(s);
     s.codex[0].models = vec![ModelCfg { name: "gpt-5.5".into(), alias: "search-alias".into(), ..Default::default() }];
+}
+
+/// A model router plugin that answers for the alpha-search source format.
+fn media_router(s: &mut ConfigSpec) {
+    media(s);
+    s.plugins.push(PluginSpec::new("e2e-formats"));
 }
 
 fn media_keepalive(s: &mut ConfigSpec) {
@@ -422,4 +428,12 @@ fn alpha_search(out: &mut Vec<Scenario>) {
     sc(out, "search.unknown_model", "model without a matching credential", ok(), one(search("/v1/alpha/search", json!({"model": "no-such-model", "query": "q"}))));
     sc(out, "search.missing_auth", "alpha search needs a client key", ok(), one(search("/v1/alpha/search", json!({"model": "gpt-5.5"})).auth(Auth::None)));
     sc(out, "search.wrong_method", "GET is not routed", ok(), one(HttpReq::get("/v1/alpha/search")));
+
+    // Plugin model routers see the request with the `codex-alpha-search` source format.
+    let routed = |model: &str| vec![Req::Pause(1500), Req::Http(search("/v1/alpha/search", json!({"id": "sess-1", "model": model, "query": "q"})))];
+    sc_with(out, "search.routed_model", "a router maps the requested model to a Codex model", ok(), routed("alpha-route-model"), media_router);
+    sc_with(out, "search.routed_provider_only", "a router naming the codex provider without a model keeps the requested one", ok(), routed("alpha-route-keep"), media_router);
+    sc_with(out, "search.routed_unsupported_provider", "a router pointing at another provider is rejected", ok(), routed("alpha-route-claude"), media_router);
+    sc_with(out, "search.routed_unsupported_self", "a router pointing at its own executor is rejected", ok(), routed("alpha-route-self"), media_router);
+    sc_with(out, "search.routed_unhandled", "a router that declines leaves the request alone", ok(), routed("gpt-5.5"), media_router);
 }

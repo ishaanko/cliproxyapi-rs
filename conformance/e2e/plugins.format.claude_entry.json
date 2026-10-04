@@ -1,0 +1,61 @@
+{
+  "id": "plugins.format.claude_entry",
+  "desc": "a Claude-dialect request to the same executor",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/messages",
+        "auth": "Client",
+        "headers": [],
+        "body": {
+          "model": "xproto-model",
+          "max_tokens": 4096,
+          "messages": [
+            {
+              "role": "user",
+              "content": "What is the weather in Paris?"
+            }
+          ],
+          "stream": false
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-<auth-index:xproto.json>-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "choices": [
+              {
+                "finish_reason": "stop",
+                "index": 0,
+                "message": {
+                  "content": "from=x-acme-proto to=claude stream=false body=acme:format=x-acme-proto,source=openai,model=xproto-model,stream=false",
+                  "role": "assistant"
+                }
+              }
+            ],
+            "created": 0,
+            "id": "xproto-completion",
+            "model": "xproto-model",
+            "object": "chat.completion",
+            "usage": {
+              "completion_tokens": 2,
+              "prompt_tokens": 1,
+              "total_tokens": 3
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

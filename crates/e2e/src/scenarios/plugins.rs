@@ -6,6 +6,7 @@
 use serde_json::{Value, json};
 
 use super::bodies::{self, Family, Kind};
+use super::management::auth_index;
 use crate::client::{Auth, HttpReq, Step as Req};
 use crate::config::{ConfigSpec, PluginSpec};
 use crate::mock::script::{Content, Script};
@@ -108,6 +109,17 @@ fn codex_service_tier(s: &mut ConfigSpec) {
     s.plugins.push(PluginSpec::new("codex-service-tier").priority(1).setting("fast", json!(true)));
 }
 
+// A plugin with a custom protocol format (executor output + response translator), a model
+// router for the Codex Alpha Search route and a management resource calling
+// `host.routing.reset_cooldown` (source: `crates/e2e/plugins/src/e2e-formats`).
+plugin_profile!(e2e_formats, "e2e-formats");
+
+/// The same plugin with a credential of its provider, so its executor can serve requests.
+fn e2e_formats_auth(s: &mut ConfigSpec) {
+    e2e_formats(s);
+    s.auth_files.push(("xproto.json", r#"{"type":"xproto","email":"xproto@example.test"}"#));
+}
+
 fn scheduler_pick(s: &mut ConfigSpec) {
     s.plugins.push(PluginSpec::new("scheduler").priority(1).setting("auth_id", json!("")).setting("delegate", json!("fill-first")));
 }
@@ -130,7 +142,7 @@ fn two_plugins(s: &mut ConfigSpec) {
     s.plugins.push(PluginSpec::new("response-normalizer").priority(2));
 }
 
-pub fn scenarios() -> Vec<Scenario> {
+pub fn scenarios(mock_port: u16) -> Vec<Scenario> {
     let mut out = vec![];
     management(&mut out);
     resources(&mut out);
@@ -141,6 +153,8 @@ pub fn scenarios() -> Vec<Scenario> {
     execution(&mut out);
     router(&mut out);
     lifecycle(&mut out);
+    custom_format(&mut out);
+    host_callbacks(&mut out, mock_port);
     out
 }
 
@@ -501,6 +515,51 @@ fn router(out: &mut Vec<Scenario>) {
             vec![Req::Pause(REGISTER_MS), Req::Http(web_search_request(false)), Req::Http(claude_messages())],
         )
         .profile(router_default_provider),
+    );
+}
+
+/// A plugin executor whose output format is a name only plugins know: the host passes it through
+/// the executor call and the plugin's response translator, with no built-in translator involved.
+fn custom_format(out: &mut Vec<Scenario>) {
+    let s = |id: &str, desc: &str, steps: Vec<Req>| Scenario::new(format!("plugins.format.{id}"), desc, script(), steps).profile(e2e_formats_auth);
+    let model_req = |stream: bool| HttpReq::post("/v1/chat/completions", bodies::chat("xproto-model", stream, Kind::Text));
+    out.push(s("models", "the plugin's model is listed", vec![Req::Pause(REGISTER_MS), Req::Http(HttpReq::get("/v1/models"))]));
+    out.push(s(
+        "custom_output",
+        "a chat request to an executor with a custom output format is translated by the plugin (plain and streaming)",
+        vec![Req::Pause(REGISTER_MS), Req::Http(model_req(false)), Req::Http(model_req(true))],
+    ));
+    out.push(s(
+        "claude_entry",
+        "a Claude-dialect request to the same executor",
+        vec![Req::Pause(REGISTER_MS), Req::Http(HttpReq::post("/v1/messages", bodies::claude("xproto-model", false, Kind::Text)))],
+    ));
+}
+
+/// `host.routing.reset_cooldown` called by a plugin on a credential cooling down after failures.
+fn host_callbacks(out: &mut Vec<Scenario>, mock_port: u16) {
+    let idx1 = auth_index("claude-api-key", mock_port, "anthropic", "sk-claude-1");
+    let idx2 = auth_index("claude-api-key", mock_port, "anthropic", "sk-claude-2");
+    let reset = |index: &str| Req::Http(HttpReq::get(&format!("/v0/resource/plugins/e2e-formats/reset?auth_index={index}")).auth(Auth::None));
+    out.push(
+        Scenario::new(
+            "plugins.hostcb.reset_cooldown",
+            "a plugin resets a credential's cooldown through the host callback",
+            Script::steps(vec![crate::mock::script::Step::always(crate::mock::script::Reply::error(500))]),
+            vec![
+                Req::Pause(REGISTER_MS),
+                Req::Http(chat(Family::Claude)),
+                get(&format!("{V0}/auth-files?auth_index={idx1}")),
+                get(&format!("{V0}/auth-files?auth_index={idx2}")),
+                reset(&idx1),
+                get(&format!("{V0}/auth-files?auth_index={idx1}")),
+                reset("ffffffffffffffff"),
+                reset(""),
+                reset(&idx2),
+                get(&format!("{V0}/auth-files?auth_index={idx2}")),
+            ],
+        )
+        .profile(e2e_formats),
     );
 }
 

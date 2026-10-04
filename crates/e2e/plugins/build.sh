@@ -20,6 +20,8 @@ export PATH=$GO_BIN_DIR:$PATH
 rm -rf "$WORK"
 mkdir -p "$WORK" "$OUT"
 cp -r "$GO_REPO/examples/plugin/." "$WORK/"
+# Plugins of our own, same layout as the examples: <name>/go/{main.go,go.mod}.
+cp -r "$REPO/crates/e2e/plugins/src/." "$WORK/"
 for d in "$WORK"/*/go; do
   name=$(basename "$(dirname "$d")")
   sed -i "s#CLIProxyAPI/v7#CLIProxyAPI/v8#g; s#v7.0.0#v8.0.0#g; s#=> ../../../..#=> $GO_REPO#" "$d/go.mod"

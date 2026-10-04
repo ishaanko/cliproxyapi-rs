@@ -28,7 +28,7 @@ fn script_ok() -> Script {
 
 /// Stable credential id shown by management and trace headers:
 /// first 8 bytes of sha256("<prefix>:<base_url>+<api_key>"), hex.
-fn auth_index(prefix: &str, mock_port: u16, family: &str, key: &str) -> String {
+pub(super) fn auth_index(prefix: &str, mock_port: u16, family: &str, key: &str) -> String {
     let seed = format!("{prefix}:http://127.0.0.1:{mock_port}/{family}+{key}");
     Sha256::digest(seed.as_bytes()).iter().take(8).map(|b| format!("{b:02x}")).collect()
 }
