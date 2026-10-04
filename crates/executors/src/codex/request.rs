@@ -283,7 +283,14 @@ pub fn prepare(cfg: &Config, auth: &Auth, req: &Request, opts: &Options, mode: M
     let body = edit(body, |v| normalize_parallel_tool_calls(v, &opts.headers, mode.is_ws()));
     let body = tool_schema::normalize_codex_tool_schemas(&body);
     let multi_agent_v2_conflict = mode.is_ws() && multi_agent_v2::has_namespace_conflict(&body);
-    let (body, optimize_multi_agent_v2) = multi_agent_v2::optimize_request_for_auth(&opts.headers, &body, Some(cfg), Some(auth), is_compat);
+    let (body, optimize_multi_agent_v2) = multi_agent_v2::optimize_request_for_auth_with(
+        &multi_agent_v2::RequestCtx { tools_prepared: opts.codex_multi_agent_v2_tools_prepared },
+        &opts.headers,
+        &body,
+        Some(cfg),
+        Some(auth),
+        is_compat,
+    );
     let (body, replay_scope) = if mode == Mode::Compact {
         (body, ReplayScope::default())
     } else {

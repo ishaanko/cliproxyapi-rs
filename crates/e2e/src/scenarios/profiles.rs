@@ -191,3 +191,9 @@ pub fn request_log_codex_ws(s: &mut ConfigSpec) {
     request_log(s);
     codex_websockets(s);
 }
+
+/// Codex multi-agent v2 optimization and orphan-delegation compatibility (legacy `codex:` layout).
+pub fn codex_collab_prepare(s: &mut ConfigSpec) {
+    s.codex_settings.push(("optimize-multi-agent-v2", json!(true)));
+    s.codex_settings.push(("orphan-delegation-compatibility", json!(true)));
+}

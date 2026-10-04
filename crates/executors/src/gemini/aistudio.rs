@@ -593,12 +593,12 @@ async fn process_event(
             if !feed_spaced(pump, &event.payload).await {
                 return Flow::Stop;
             }
-            if !finish_stream(pump).await {
-                return Flow::Stop;
-            }
+            // Go's finishStream does not short-circuit: the response model and usage are observed
+            // even when the apply_patch stream was rejected.
+            let finished = finish_stream(pump).await;
             reporter.observe_response_model(&event.payload);
             pump.usage.observe(parse_gemini_usage(&event.payload), true);
-            Flow::Finish
+            if finished { Flow::Finish } else { Flow::Stop }
         }
         _ => Flow::Continue,
     }

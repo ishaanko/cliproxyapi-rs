@@ -1,9 +1,10 @@
 //! OpenAI Responses over HTTP: `POST /v1/responses` (SSE or JSON) and `/v1/responses/compact`
 //! (Go: openai/openai_responses_handlers.go).
 //!
-//! `client.codex.optimize-multi-agent-v2` tool rewriting and the Codex orphan-delegation input
-//! rewrite (internal/client/codex/optimize-multi-agent-v2) are not ported; both are opt-in
-//! config features that leave the payload untouched when disabled.
+//! Before routing, `client.codex.optimize-multi-agent-v2` tool preparation (responses only) and the
+//! Codex orphan-delegation input rewrite (responses and compact) run on the body, like Go's
+//! `prepareCodexMultiAgentV2Tools` / `prepareCodexOrphanDelegation`. The websocket handler reuses
+//! the same helpers.
 
 use std::sync::Arc;
 
@@ -11,7 +12,11 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use bytes::Bytes;
+use cpa_config::Config;
 use cpa_core::format::Format;
+use cpa_executors::codex::multi_agent_v2::{
+    RequestCtx, is_collab_spawn_subagent, multi_agent_v2_client_enabled, prepare_tools, rewrite_orphan_delegation_input,
+};
 use cpa_json::J;
 use serde_json::Value;
 use tokio::sync::mpsc;
@@ -28,18 +33,50 @@ use crate::responses_error::{build_error_chunk, build_failed_chunk, sanitize_err
 use crate::responses_framer::{ResponsesSseFramer, is_codex_responses_client};
 use crate::state::AppState;
 
+/// Go `prepareCodexMultiAgentV2Tools`: rewrites the collaboration tool definitions for official
+/// Codex clients when `client.codex.optimize-multi-agent-v2` is on. Returns the rewritten body
+/// (`None` when untouched) and Go's prepared marker, which tells the executor to skip its own
+/// preparation.
+pub(crate) fn prepare_codex_multi_agent_v2_tools(
+    st: &AppState,
+    cfg: &Config,
+    headers: &HeaderMap,
+    raw: &[u8],
+) -> (Option<Vec<u8>>, bool) {
+    let enabled = cfg.client.codex.optimize_multi_agent_v2;
+    if !multi_agent_v2_client_enabled(headers, enabled) {
+        return (None, false);
+    }
+    let (updated, prepared) = prepare_tools(&RequestCtx::default(), headers, raw, enabled, st.manager.home_enabled());
+    (Some(updated), prepared)
+}
+
+/// Go `prepareCodexOrphanDelegation`: downgrades orphan `codex_app` delegation outputs to user
+/// messages for `X-Openai-Subagent: collab_spawn` requests. Uses the base config value, not the
+/// credential-scoped one, so it also applies before any credential is selected.
+pub(crate) fn prepare_codex_orphan_delegation(cfg: &Config, headers: &HeaderMap, raw: &[u8]) -> Option<Vec<u8>> {
+    if !cfg.codex.orphan_delegation_compatibility || raw.is_empty() || !is_collab_spawn_subagent(headers) {
+        return None;
+    }
+    Some(rewrite_orphan_delegation_input(headers, raw, true))
+}
+
 /// `POST /v1/responses` (also `/backend-api/codex/responses`).
 pub async fn responses(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> Response {
     let raw = match read_request_body(&info, body) {
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
+    let cfg = st.cfg();
+    let (updated, tools_prepared) = prepare_codex_multi_agent_v2_tools(&st, &cfg, &info.headers, &raw);
+    let raw = updated.map_or(raw, Bytes::from);
+    let raw = prepare_codex_orphan_delegation(&cfg, &info.headers, &raw).map_or(raw, Bytes::from);
     let root = crate::bodyview::fields_or_parse(&raw, &[("model", Want::Value), ("stream", Want::Value)]);
     let model = root.g("model").str();
     if matches!(root.g("stream").v(), Some(Value::Bool(true))) {
-        stream_responses(&st, &info, &model, raw).await
+        stream_responses(&st, &info, &model, raw, tools_prepared).await
     } else {
-        nonstream(&st, &info, &model, raw, "").await
+        nonstream(&st, &info, &model, raw, "", tools_prepared).await
     }
 }
 
@@ -50,6 +87,7 @@ pub async fn compact(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> 
         Ok(b) => b,
         Err(reply) => return reply.into_response(),
     };
+    let raw = prepare_codex_orphan_delegation(&st.cfg(), &info.headers, &raw).map_or(raw, Bytes::from);
     let mut root = cpa_json::parse(&raw);
     let stream = root.g("stream");
     if matches!(stream.v(), Some(Value::Bool(true))) {
@@ -66,17 +104,19 @@ pub async fn compact(State(st): State<AppState>, info: ReqInfo, body: Bytes) -> 
         raw
     };
     let model = root.g("model").str();
-    nonstream(&st, &info, &model, raw, "responses/compact").await
+    nonstream(&st, &info, &model, raw, "responses/compact", false).await
 }
 
-async fn nonstream(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes, alt: &str) -> Response {
+async fn nonstream(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes, alt: &str, tools_prepared: bool) -> Response {
     let pipeline = Pipeline::new(st, info);
     let interval = pipeline.settings.nonstream_keepalive;
     let passthrough = pipeline.settings.passthrough_headers;
     let model = model.to_string();
     let alt = alt.to_string();
     with_nonstream_keepalive(interval, async move {
-        match pipeline.execute(ExecArgs::new(Format::OpenAIResponse, &model, raw, &alt)).await {
+        let mut args = ExecArgs::new(Format::OpenAIResponse, &model, raw, &alt);
+        args.tools_prepared = tools_prepared;
+        match pipeline.execute(args).await {
             Err(err) => openai_error_reply(&err, passthrough),
             Ok(ok) => {
                 let b = ok.body.clone();
@@ -178,12 +218,14 @@ fn empty_stream() -> ExecRx {
     ExecRx::empty()
 }
 
-async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes) -> Response {
+async fn stream_responses(st: &AppState, info: &ReqInfo, model: &str, raw: Bytes, tools_prepared: bool) -> Response {
     let pipeline = Pipeline::new(st, info);
     let passthrough = pipeline.settings.passthrough_headers;
     let keepalive = pipeline.settings.stream_keepalive;
     let is_codex = is_codex_responses_client(&info.headers);
-    let mut es = pipeline.execute_stream(ExecArgs::new(Format::OpenAIResponse, model, raw, "")).await;
+    let mut args = ExecArgs::new(Format::OpenAIResponse, model, raw, "");
+    args.tools_prepared = tools_prepared;
+    let mut es = pipeline.execute_stream(args).await;
     let mut framer = ResponsesSseFramer::new(is_codex);
     let mut initial: Vec<u8> = Vec::new();
 

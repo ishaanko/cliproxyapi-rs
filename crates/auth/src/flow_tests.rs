@@ -239,6 +239,34 @@ async fn claude_refresh_does_not_replay_after_decode_or_transport_error() {
     assert!(started.elapsed() < Duration::from_millis(900), "no backoff sleep expected");
 }
 
+/// Go `TestRefreshTokensWithRetry_DoesNotReplayAfterResponseReadError`: a 200 whose body is cut
+/// short may hide a consumed single-use refresh token, so it is attempted once.
+#[tokio::test]
+async fn claude_refresh_does_not_replay_after_response_read_error() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            seen.fetch_add(1, Ordering::SeqCst);
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).await;
+            // Promises 64 bytes, sends 7, then hangs up.
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\n\r\n{\"acces").await;
+            let _ = stream.shutdown().await;
+        }
+    });
+    let svc = ClaudeAuth::with_client(http()).with_endpoints(claude_endpoints(&base));
+    let started = std::time::Instant::now();
+    let err = svc.refresh_tokens_with_retry("single-use-rt-3", 3).await.unwrap_err();
+    assert!(!err.is_retryable_refresh(), "{err}");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(started.elapsed() < Duration::from_millis(900), "no backoff sleep expected");
+}
+
 // ---------------- Codex ----------------
 
 fn codex_endpoints(base: &str) -> CodexEndpoints {

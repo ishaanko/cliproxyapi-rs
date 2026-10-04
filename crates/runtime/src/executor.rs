@@ -189,6 +189,9 @@ pub struct Options {
     /// conductor sets it per attempt and turns the records into usage events (Go: reporters
     /// publish to the process-wide usage manager).
     pub usage_collector: Option<crate::usage_report::UsageCollector>,
+    /// The Responses handler already prepared the Codex multi-agent v2 tool definitions (Go: the
+    /// `CodexMultiAgentV2ToolsPreparedContextKey` flag on the gin context).
+    pub codex_multi_agent_v2_tools_prepared: bool,
 }
 
 /// A frame from the downstream websocket reader; an error terminates the connection (Go:
@@ -267,6 +270,7 @@ impl Options {
             websocket_response_observer: None,
             lifecycle: None,
             usage_collector: None,
+            codex_multi_agent_v2_tools_prepared: false,
         }
     }
 

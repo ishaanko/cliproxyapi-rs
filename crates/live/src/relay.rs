@@ -603,9 +603,14 @@ impl SessionInner {
         self.state.lock().call_id.clone()
     }
 
+    /// The `call_id` log field: absent until the call id is known (Go: `logFields`).
+    fn call_id_field(&self) -> Option<String> {
+        Some(self.call_id()).filter(|c| !c.is_empty())
+    }
+
     /// Fields shared by every log line of the session.
     fn log_peer(&self, peer: Peer, state: &str, message: &str) {
-        tracing::info!(media_session_id = %self.id, peer = peer.name(), call_id = %self.call_id(), state, "{message}");
+        tracing::info!(media_session_id = self.id.as_str(), peer = peer.name(), call_id = self.call_id_field().as_deref(), state, "{message}");
     }
 
     fn on_state(&self, peer: Peer, state: RTCPeerConnectionState) {
@@ -622,10 +627,10 @@ impl SessionInner {
                 }
             }
             RTCPeerConnectionState::Disconnected => {
-                tracing::warn!(media_session_id = %self.id, peer = peer.name(), call_id = %self.call_id(), state = %name, "codex live WebRTC peer disconnected");
+                tracing::warn!(media_session_id = self.id.as_str(), peer = peer.name(), call_id = self.call_id_field().as_deref(), state = name.as_str(), "codex live WebRTC peer disconnected");
             }
             RTCPeerConnectionState::Failed => {
-                tracing::warn!(media_session_id = %self.id, peer = peer.name(), call_id = %self.call_id(), state = %name, "codex live WebRTC peer failed");
+                tracing::warn!(media_session_id = self.id.as_str(), peer = peer.name(), call_id = self.call_id_field().as_deref(), state = name.as_str(), "codex live WebRTC peer failed");
                 self.fail(&format!("{}_failed", peer.reason_prefix()), &format!("{} PeerConnection failed", peer.reason_prefix()));
             }
             RTCPeerConnectionState::Closed if !*self.done.borrow() => {
@@ -638,19 +643,23 @@ impl SessionInner {
 
     fn log_forwarding_started(&self) {
         self.forwarding_once.call_once(|| {
-            let (connection, transport) = match &self.proxy {
-                Some((_, scheme)) => (format!("via {scheme} proxy"), "tcp"),
-                None => ("direct".to_string(), "ice"),
+            // Go adds call_id, auth_index and credential only when non-empty; proxy_scheme comes
+            // from `logFields` for proxied remote peers.
+            let (connection, transport, proxy_scheme) = match &self.proxy {
+                Some((_, scheme)) => (format!("via {scheme} proxy"), "tcp", Some(scheme.as_str())),
+                None => ("direct".to_string(), "ice", None),
             };
+            let state = self.upstream_state.lock().to_string();
             tracing::info!(
-                media_session_id = %self.id,
+                media_session_id = self.id.as_str(),
                 peer = "remote",
-                call_id = %self.call_id(),
-                auth_index = %self.auth_index,
-                credential = %self.credential,
-                connection = %connection,
+                call_id = self.call_id_field().as_deref(),
+                auth_index = Some(self.auth_index.as_str()).filter(|v| !v.is_empty()),
+                credential = Some(self.credential.as_str()).filter(|v| !v.is_empty()),
+                connection = connection.as_str(),
                 remote_transport = transport,
-                state = %*self.upstream_state.lock(),
+                proxy_scheme,
+                state = state.as_str(),
                 "codex live remote media forwarding started"
             );
         });
@@ -668,7 +677,7 @@ impl SessionInner {
     /// The limiter slot is released here, synchronously, not after the peer connections finished
     /// closing.
     fn teardown(&self, reason: &str) {
-        tracing::info!(media_session_id = %self.id, peer = "session", call_id = %self.call_id(), reason, "codex live WebRTC media session closing");
+        tracing::info!(media_session_id = self.id.as_str(), peer = "session", call_id = self.call_id_field().as_deref(), reason, "codex live WebRTC media session closing");
         let _ = self.done.send(true);
         self.bridge.close();
         let (tunnels, on_close) = {
@@ -683,23 +692,23 @@ impl SessionInner {
         }
         self.permit.release();
         let Ok(handle) = tokio::runtime::Handle::try_current() else { return };
-        let (id, call_id, reason) = (self.id.clone(), self.call_id(), reason.to_string());
+        let (id, call_id, reason) = (self.id.clone(), self.call_id_field(), reason.to_string());
         let peers = [(Peer::Local, self.downstream.clone()), (Peer::Remote, self.upstream.clone())];
         handle.spawn(async move {
             for (peer, pc) in peers {
                 match pc.close().await {
-                    Ok(()) => tracing::info!(media_session_id = %id, peer = peer.name(), %call_id, state = "closed", "codex live WebRTC peer closed"),
-                    Err(e) => tracing::warn!(media_session_id = %id, peer = peer.name(), "codex live WebRTC peer close failed: {e}"),
+                    Ok(()) => tracing::info!(media_session_id = id.as_str(), peer = peer.name(), call_id = call_id.as_deref(), state = "closed", "codex live WebRTC peer closed"),
+                    Err(e) => tracing::warn!(media_session_id = id.as_str(), peer = peer.name(), "codex live WebRTC peer close failed: {e}"),
                 }
             }
-            tracing::info!(media_session_id = %id, peer = "session", %call_id, %reason, "codex live WebRTC media session closed");
+            tracing::info!(media_session_id = id.as_str(), peer = "session", call_id = call_id.as_deref(), reason = reason.as_str(), "codex live WebRTC media session closed");
         });
     }
 
     /// `fail`: closes the session once and reports the reason to the close handler.
     fn fail(&self, reason: &str, error: &str) {
         self.failure_once.call_once(|| {
-            tracing::warn!(media_session_id = %self.id, peer = "session", reason = %reason, "codex live WebRTC media session failed: {error}");
+            tracing::warn!(media_session_id = self.id.as_str(), peer = "session", reason, "codex live WebRTC media session failed: {error}");
             // The handler is taken before closing: closing drops any handler still registered.
             let handler = {
                 let mut state = self.state.lock();
@@ -816,7 +825,7 @@ impl MediaRelayFactory for PionMediaRelay {
         upstream_guard.disarm();
         let _ = down_handler.session.set(Arc::downgrade(&inner));
         let _ = up_handler.session.set(Arc::downgrade(&inner));
-        tracing::info!(media_session_id = %inner.id, peer = "session", "codex live WebRTC media session created");
+        tracing::info!(media_session_id = inner.id.as_str(), peer = "session", "codex live WebRTC media session created");
 
         let fail = |inner: &Arc<SessionInner>, message: String| {
             inner.close("closed");

@@ -1,0 +1,207 @@
+{
+  "id": "responses.codex.collab_spawn.compact",
+  "desc": "compact rewrites orphan delegations at the handler (tools are prepared by the executor only)",
+  "steps": [
+    {
+      "request": {
+        "method": "POST",
+        "path": "/v1/responses/compact",
+        "auth": "Client",
+        "headers": [
+          [
+            "user-agent",
+            "codex_cli_rs/0.144.1"
+          ],
+          [
+            "x-openai-subagent",
+            "collab_spawn"
+          ]
+        ],
+        "body": {
+          "model": "gpt-5.5",
+          "stream": false,
+          "input": [
+            {
+              "type": "function_call_output",
+              "call_id": "call_orphan_1",
+              "name": "create_thread",
+              "namespace": "codex_app",
+              "output": "<codex_delegation>task</codex_delegation>"
+            },
+            {
+              "type": "message",
+              "role": "user",
+              "content": [
+                {
+                  "type": "input_text",
+                  "text": "continue"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "type": "namespace",
+              "name": "collaboration",
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "spawn_agent",
+                  "description": "Spawns an agent.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "message": {
+                        "type": "string",
+                        "encrypted": true
+                      }
+                    }
+                  }
+                },
+                {
+                  "type": "function",
+                  "name": "send_message",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "message": {
+                        "type": "string",
+                        "encrypted": true
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json",
+          "x-cpa-trace-id": "<ts14>-4af74ce5d38820a1-<uuid:1>"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "id": "resp_mock01",
+            "object": "response",
+            "created_at": 1700000000,
+            "status": "completed",
+            "model": "gpt-5.5",
+            "output": [
+              {
+                "id": "msg_mock01",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "output_text",
+                    "annotations": [],
+                    "text": "Hello from mock"
+                  }
+                ]
+              }
+            ],
+            "parallel_tool_calls": true,
+            "store": false,
+            "usage": {
+              "input_tokens": 11,
+              "input_tokens_details": {
+                "cached_tokens": 0
+              },
+              "output_tokens": 7,
+              "output_tokens_details": {
+                "reasoning_tokens": 0
+              },
+              "total_tokens": 18
+            }
+          }
+        }
+      }
+    }
+  ],
+  "upstream": [
+    {
+      "family": "codex",
+      "method": "POST",
+      "path": "/responses/compact",
+      "query": "",
+      "credential": "sk-codex-2",
+      "headers": {
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "authorization": "Bearer sk-codex-2",
+        "connection": "Keep-Alive",
+        "content-type": "application/json",
+        "originator": "codex-tui",
+        "user-agent": "codex-tui/0.154.0 (Mac OS 26.5.2; arm64) iTerm.app/3.6.11 (codex-tui; 0.154.0)"
+      },
+      "body": {
+        "model": "gpt-5.5",
+        "input": [
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "Tool output from codex_app__create_thread:\n<codex_delegation>task</codex_delegation>"
+              }
+            ]
+          },
+          {
+            "type": "message",
+            "role": "user",
+            "content": [
+              {
+                "type": "input_text",
+                "text": "continue"
+              }
+            ]
+          }
+        ],
+        "tools": [
+          {
+            "type": "namespace",
+            "name": "collaboration-optimize",
+            "tools": [
+              {
+                "type": "function",
+                "name": "spawn_agent",
+                "description": "Available model overrides (optional; inherited parent model is preferred):\n- `gpt-6.1-sol`: Latest workhorse model for coding and everyday work. Reasoning efforts: low (default), medium, high, xhigh, max, ultra. Service tiers: priority.\n- `gpt-6-astra`: Frontier intelligence for the most demanding work. Reasoning efforts: low, medium (default), high, xhigh, max, ultra. Service tiers: priority.\n- `gpt-6-sol`: Previous generation workhorse model. Reasoning efforts: low, medium (default), high, xhigh, max, ultra. Service tiers: priority.\n- `gpt-6-luna`: Fast and affordable model for easier tasks. Reasoning efforts: low, medium (default), high, xhigh, max. Service tiers: priority.\n- `gpt-5.6-sol`: Older generation workhorse model. Reasoning efforts: low (default), medium, high, xhigh, max, ultra. Service tiers: priority.\n- `gpt-5.6-terra`: Older balanced model for straightforward work. Reasoning efforts: low, medium (default), high, xhigh, max, ultra. Service tiers: priority.\n- `gpt-5.6-luna`: Older fast and efficient model. Reasoning efforts: low, medium (default), high, xhigh, max. Service tiers: priority.\n- `gpt-5.5`: Legacy coding model. Reasoning efforts: low, medium (default), high, xhigh. Service tiers: priority.\n- `codex-auto-review`: Automatic approval review model for Codex. Reasoning efforts: low, medium (default), high, xhigh, max. Service tiers: priority.\n- `claude-3-5-haiku-20241022`: claude-3-5-haiku-20241022. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-3-7-sonnet-20250219`: claude-3-7-sonnet-20250219. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-opus-4-20250514`: claude-opus-4-20250514. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-sonnet-4-20250514`: claude-sonnet-4-20250514. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-opus-4-1-20250805`: claude-opus-4-1-20250805. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-haiku-4-5-20251001`: claude-haiku-4-5-20251001. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-opus-4-5-20251101`: Premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-sonnet-4-5-20250929`: claude-sonnet-4-5-20250929. Reasoning efforts: low, medium (default), high, xhigh.\n- `claude-opus-4-6`: Premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, max.\n- `claude-sonnet-4-6`: claude-sonnet-4-6. Reasoning efforts: low, medium (default), high, max.\n- `claude-fable-5`: Anthropic's most capable widely released model, for the most demanding reasoning and long-horizon agentic work. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-fable-5-1`: Claude Fable 5.1 extends Claude Fable 5 at the same input and output prices, with cache reads at a quarter of the cost, and brings stronger long-running agentic coding, multistep research, and document, spreadsheet, and slide work. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-opus-4-7`: Premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-opus-4-8`: Premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-opus-5`: Latest premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-opus-5-5`: Latest premium model combining maximum intelligence with practical performance. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-sonnet-5`: Anthropic's agentic Sonnet model for coding, tool use, and enterprise workflows. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `claude-sonnet-5-5`: Anthropic's agentic Sonnet model for coding, tool use, and enterprise workflows. Reasoning efforts: low, medium (default), high, xhigh, max.\n- `compat-gpt-4o`: compat-gpt-4o. Reasoning efforts: low, medium (default), high.\n- `compat-reason`: compat-reason. Reasoning efforts: low, medium (default), high.\n- `gemini-2.5-flash`: Stable version of Gemini 2.5 Flash, our mid-size multimodal model that supports up to 1 million tokens, released in June of 2025. Reasoning efforts: low, medium (default), high, xhigh.\n- `gemini-2.5-flash-lite`: Our smallest and most cost effective model, built for at scale usage. Reasoning efforts: low, medium (default), high, xhigh.\n- `gemini-2.5-pro`: Stable release (June 17th, 2025) of Gemini 2.5 Pro. Reasoning efforts: low, medium (default), high, xhigh.\n- `gemini-3-flash-preview`: Our most intelligent model built for speed, combining frontier intelligence with superior search and grounding. Reasoning efforts: low, medium (default), high.\n- `gemini-3-pro-image-preview`: Gemini 3 Pro Image Preview. Reasoning efforts: low (default), high.\n- `gemini-3-pro-preview`: Gemini 3 Pro Preview. Reasoning efforts: low (default), high.\n- `gemini-3.1-flash-image-preview`: Gemini 3.1 Flash Image Preview. Reasoning efforts: high (default).\n- `gemini-3.1-flash-lite-preview`: Our smallest and most cost effective model, built for at scale usage. Reasoning efforts: high (default).\n- `gemini-3.1-pro-preview`: Gemini 3.1 Pro Preview. Reasoning efforts: low, medium (default), high.\n- `gemini-3.5-flash`: Our most intelligent model built for speed, combining frontier intelligence with superior search and grounding. Reasoning efforts: low, medium (default), high.\n- `gemini-3.5-flash-lite`: Gemini 3.5 Flash Lite. Reasoning efforts: low, medium (default), high.\n- `gemini-3.6-flash`: Gemini 3.6 Flash. Reasoning efforts: low, medium (default), high.\n- `gemini-3.7-flash`: Gemini 3.7 Flash. Reasoning efforts: low, medium (default), high.\n- `gemini-3.8-flash`: Gemini 3.8 Flash. Reasoning efforts: low, medium (default), high.\n- `gpt-image-1.5`: gpt-image-1.5. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-image-2`: gpt-image-2. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-image-2.5`: gpt-image-2.5. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-image-2.5-flare`: gpt-image-2.5-flare. Reasoning efforts: low, medium (default), high, xhigh.\n- `gpt-image-2.5-sunburst`: gpt-image-2.5-sunburst. Reasoning efforts: low, medium (default), high, xhigh.\nSpawns an agent.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "type": "function",
+                "name": "send_message",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "instructions": ""
+      }
+    }
+  ]
+}

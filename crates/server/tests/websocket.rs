@@ -23,8 +23,15 @@ async fn serve_ws(h: &Harness) -> String {
 }
 
 async fn connect(url: &str) -> Socket {
+    connect_with(url, &[]).await
+}
+
+async fn connect_with(url: &str, headers: &[(&'static str, &'static str)]) -> Socket {
     let mut req = url.into_client_request().expect("request");
     req.headers_mut().insert("x-api-key", "k1".parse().expect("header"));
+    for (name, value) in headers {
+        req.headers_mut().insert(*name, value.parse().expect("header"));
+    }
     let (ws, _) = tokio_tungstenite::connect_async(req).await.expect("connect");
     ws
 }
@@ -142,4 +149,34 @@ async fn validation_errors_keep_the_socket_open_and_upstream_faults_close_it() {
     let create = format!(r#"{{"type":"response.create","model":"{}","input":[{{"type":"message","content":"broken"}}]}}"#, h.model);
     ws.send(WsMessage::Text(create.into())).await.expect("send");
     assert!(read_frames(&mut ws, 1).await.is_empty());
+}
+
+/// Go `TestResponsesWebsocketPreparesCodexMultiAgentV2Tools` plus the orphan-delegation step: both
+/// run on the normalized request before the tool-call cache, so an orphan `create_thread` output
+/// that carries a `call_id` becomes a user message instead of being dropped, and the stored
+/// transcript holds the rewritten input.
+#[tokio::test]
+async fn codex_tool_preparation_and_orphan_delegation_run_before_the_tool_cache() {
+    let h = harness("ws-prep", |c| {
+        c.client.codex.optimize_multi_agent_v2 = true;
+        c.codex.orphan_delegation_compatibility = true;
+    })
+    .await;
+    h.script("collaboration", Script::Stream(turn()));
+    let headers = [("user-agent", "codex_cli_rs/0.144.1"), ("x-openai-subagent", "collab_spawn")];
+    let mut ws = connect_with(&serve_ws(&h).await, &headers).await;
+
+    let create = format!(
+        r#"{{"type":"response.create","model":"{}","input":[{{"type":"function_call_output","call_id":"call_orphan","name":"create_thread","namespace":"codex_app","output":"collaboration task"}}],"tools":[{{"type":"namespace","name":"collaboration","tools":[{{"type":"function","name":"spawn_agent","description":"Spawns an agent.","parameters":{{"properties":{{"message":{{"encrypted":true}}}}}}}}]}}]}}"#,
+        h.model
+    );
+    ws.send(WsMessage::Text(create.into())).await.expect("send");
+    assert_eq!(read_frames(&mut ws, 3).await.len(), 3);
+
+    let sent: serde_json::Value = serde_json::from_str(&h.exec.seen.lock()[0].1).expect("json");
+    assert_eq!(sent["input"][0]["type"], "message");
+    assert_eq!(sent["input"][0]["content"][0]["text"], "Tool output from codex_app__create_thread:\ncollaboration task");
+    assert_eq!(sent["tools"][0]["name"], "collaboration");
+    assert!(sent["tools"][0]["tools"][0]["parameters"]["properties"]["message"].get("encrypted").is_none(), "{sent}");
+    assert_eq!(*h.exec.prepared.lock(), [true]);
 }
