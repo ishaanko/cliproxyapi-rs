@@ -16,7 +16,7 @@ use http::HeaderMap;
 use serde_json::Map;
 
 use super::common::{
-    PumpSetup, StreamPump, apply_custom_headers, compact_unsupported, error_body,
+    PumpSetup, StreamPump, apply_custom_headers, compact_unsupported, error_body, error_body_tracked, read_body_tracked,
     fix_gemini_image_aspect_ratio, is_count_tokens_action, json_headers, observed_lines, original_payload, post_json,
     pre_send, read_body, set_header, set_model, thinking_error, translate_request, upstream_error,
     usage_metadata,
@@ -503,13 +503,12 @@ impl GeminiVertexExecutor {
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = error_body(resp).await;
+            let body = error_body_tracked(reporter, resp).await;
             log.chunk(&body);
             return Err(upstream_error(status, &body));
         }
-        let data = log.tap_err(read_body(resp).await)?;
+        let data = log.tap_err(read_body_tracked(reporter, resp).await)?;
         log.chunk(&data);
-        reporter.mark_first_response_byte();
         reporter.observe_response_model(&data);
         let data = if imagen_sa { convert_imagen_to_gemini_response(&data, base_model) } else { data.to_vec() };
 
@@ -572,7 +571,7 @@ impl GeminiVertexExecutor {
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = error_body(resp).await;
+            let body = error_body_tracked(reporter, resp).await;
             log.chunk(&body);
             return Err(upstream_error(status, &body));
         }

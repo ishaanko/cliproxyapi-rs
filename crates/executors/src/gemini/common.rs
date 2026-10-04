@@ -228,6 +228,16 @@ pub(crate) async fn read_body(resp: reqwest::Response) -> Result<Bytes, ExecErro
     resp.bytes().await.map_err(|e| transport_failure(&e))
 }
 
+/// [`read_body`] on a TTFT-tracked response (Go: the tracked transport marks the first byte).
+pub(crate) async fn read_body_tracked(reporter: &UsageReporter, resp: reqwest::Response) -> Result<Bytes, ExecError> {
+    reporter.read_body_tracked(resp, false).await.map_err(|e| transport_failure(&e))
+}
+
+/// [`error_body`] on a TTFT-tracked response.
+pub(crate) async fn error_body_tracked(reporter: &UsageReporter, resp: reqwest::Response) -> Bytes {
+    reporter.read_body_tracked(resp, false).await.unwrap_or_default()
+}
+
 /// Line reader over a streaming response body that marks the first response byte for TTFT (Go:
 /// the TTFT-tracking round tripper). Takes the reporter by value so the stream is `'static`.
 pub(crate) fn observed_lines(reporter: UsageReporter, resp: reqwest::Response) -> LineReader {

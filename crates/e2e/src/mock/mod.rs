@@ -250,9 +250,7 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
         } else {
             mock.inner.lock().await.script.next(&cred)
         };
-        if pick.delay_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(pick.delay_ms)).await;
-        }
+        tokio::time::sleep(Duration::from_millis(pick.delay_ms.max(MIN_REPLY_DELAY_MS))).await;
         let mut rendered = media::render(&op, &pick.reply, &body, &host);
         rendered.headers.extend(pick.headers);
         return to_response(rendered, pick.stall_ms, pick.chunking);
@@ -272,8 +270,8 @@ async fn handle(State(mock): State<Mock>, req: Request) -> Response {
     } else {
         mock.inner.lock().await.script.next(&cred)
     };
-    if pick.delay_ms > 0 {
-        tokio::time::sleep(Duration::from_millis(pick.delay_ms)).await;
+    if op != Op::Models || pick.delay_ms > 0 {
+        tokio::time::sleep(Duration::from_millis(pick.delay_ms.max(MIN_REPLY_DELAY_MS))).await;
     }
     let mut rendered = replies::render(family, op, &ctx, &pick.reply);
     rendered.headers.extend(pick.headers);
@@ -307,6 +305,10 @@ async fn control(mock: &Mock, ctl: &str, req: Request) -> Response {
         _ => StatusCode::NOT_FOUND.into_response(),
     }
 }
+
+/// Floor on the time before any scripted reply starts, so a server's time-to-first-byte is a
+/// measurable positive number (the usage record's `ttft_ms` is compared as unset vs set).
+const MIN_REPLY_DELAY_MS: u64 = 8;
 
 /// Gap between upstream websocket frames; lets the server under test forward each frame before
 /// the next one (or a terminal close) arrives, keeping captures deterministic.

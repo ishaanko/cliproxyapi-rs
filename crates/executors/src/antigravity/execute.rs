@@ -90,9 +90,8 @@ impl AntigravityExecutor {
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
         p.log.metadata(status, &headers);
-        let body = p.log.tap_err(resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e)))?;
+        let body = p.log.tap_err(p.reporter.read_body_tracked(resp, false).await.map_err(|e| crate::helps::status::transport_error(&e)))?;
         p.log.chunk(&body);
-        p.reporter.mark_first_response_byte();
         if !(200..300).contains(&status) {
             return Err(self.handle_upstream_error(p, status, &body).await);
         }
@@ -110,7 +109,7 @@ impl AntigravityExecutor {
         let headers = resp.headers().clone();
         p.log.metadata(status, &headers);
         if !(200..300).contains(&status) {
-            let body = p.log.tap_err(resp.bytes().await.map_err(|e| crate::helps::status::transport_error(&e)))?;
+            let body = p.log.tap_err(p.reporter.read_body_tracked(resp, false).await.map_err(|e| crate::helps::status::transport_error(&e)))?;
             p.log.chunk(&body);
             return Err(self.handle_upstream_error(p, status, &body).await);
         }
@@ -118,12 +117,11 @@ impl AntigravityExecutor {
             clear_credits_failure_state(&p.auth);
         }
         let mut accumulator = ReplayAccumulator::new(&p.replay_scope, &p.request_payload);
-        let mut reader = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
+        let mut reader = LineReader::from_response_tracked(resp, STREAM_SCANNER_BUFFER, &p.reporter, false);
         let mut buffer: Vec<u8> = Vec::new();
         while let Some(line) = reader.next_line().await {
             let line = p.log.tap_err(line.map_err(ExecError::from))?;
             p.log.chunk(&line);
-            p.reporter.mark_first_response_byte();
             if let Some(acc) = accumulator.as_mut() {
                 acc.observe_sse_line(&line);
             }

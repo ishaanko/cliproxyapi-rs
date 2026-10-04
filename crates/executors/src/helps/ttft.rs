@@ -187,15 +187,78 @@ mod tests {
         assert!(!is_chat_token_event(b""));
     }
 
+    /// Go: TestIsResponsesTokenEvent_Classification.
     #[test]
     fn responses_token_events() {
-        assert!(is_responses_token_event(br#"data: {"type":"response.output_text.delta","delta":"x"}"#));
-        assert!(!is_responses_token_event(br#"{"type":"response.output_text.delta","delta":""}"#));
-        assert!(!is_responses_token_event(br#"{"type":"response.created"}"#));
-        assert!(is_responses_token_event(br#"{"type":"response.failed"}"#));
-        assert!(is_responses_token_event(
-            br#"{"type":"response.output_item.done","item":{"type":"message","content":[{"text":"a"}]}}"#
-        ));
+        let cases: &[(&str, bool)] = &[
+            ("", false),
+            ("   \n\t  ", false),
+            (r#"{"type":"codex.rate_limits","rate_limits":{"plan_type":"pro"}}"#, false),
+            (r#"{"type":"codex.response.metadata","etag":"W/\"123\""}"#, false),
+            (r#"{"type":"responsesapi.websocket_timing","timing":{"duration_ms":100}}"#, false),
+            (r#"{"type":"response.created","response":{"id":"resp_123","status":"in_progress"}}"#, false),
+            (r#"{"type":"response.in_progress","response":{"id":"resp_123","tools":[{"type":"function"}]}}"#, false),
+            (r#"{"type":"response.output_item.added","item":{"type":"reasoning","encrypted_content":"gAAAAAB..."}}"#, false),
+            (r#"{"type":"response.content_part.added","part":{"type":"text","text":""}}"#, false),
+            (r#"{"type":"response.reasoning_summary_part.added","part":{"type":"summary_text","text":""}}"#, false),
+            (r#"{"type":"response.reasoning_summary_text.delta","delta":""}"#, false),
+            (r#"{"type":"response.reasoning_summary_text.delta","delta":"**Inspecting**"}"#, true),
+            (r#"{"type":"response.reasoning.delta","delta":"Analyzing requirements..."}"#, true),
+            (r#"{"type":"response.reasoning_text.delta","delta":"Step 1: Check code"}"#, true),
+            (r#"{"type":"response.output_text.delta","delta":"Hello world"}"#, true),
+            (r#"{"type":"response.text.delta","delta":"Direct text chunk"}"#, true),
+            (r#"{"type":"response.function_call_arguments.delta","delta":"{\"query\":\"test\"}"}"#, true),
+            (r#"{"type":"response.custom_tool_call_input.delta","delta":"{\"param\":1}"}"#, true),
+            (r#"{"type":"response.code_interpreter_call_code.delta","delta":"import math\n"}"#, true),
+            (r#"{"type":"response.mcp_call_arguments.delta","delta":"{\"tool\":\"lookup\"}"}"#, true),
+            (r#"{"type":"response.shell_call_command.added","command":"ls -la"}"#, true),
+            (r#"{"type":"response.shell_call_command.added","command":""}"#, false),
+            (r#"{"type":"response.shell_call_command.delta","delta":"ls -la\n"}"#, true),
+            // Tool execution output is not a model token.
+            (r#"{"type":"response.shell_call_output_content.delta","delta":{"stdout":"output text\n","stderr":""}}"#, false),
+            (r#"{"type":"response.shell_call_output_content.done","output":[]}"#, false),
+            (r#"{"type":"response.refusal.delta","delta":"I cannot fulfill this request"}"#, true),
+            (r#"{"type":"response.audio.transcript.delta","delta":"Spoken text"}"#, true),
+            (r#"{"type":"response.audio.delta","delta":"UklGRi..."}"#, true),
+            (r#"{"type":"response.image_generation_call.partial_image","partial_image_b64":"iVBORw0KGgo..."}"#, true),
+            (r#"{"type":"response.web_search_call.in_progress"}"#, false),
+            (r#"{"type":"response.file_search_call.searching"}"#, false),
+            (r#"{"type":"response.code_interpreter_call.interpreting"}"#, false),
+            (r#"{"type":"response.mcp_call.in_progress"}"#, false),
+            (r#"{"type":"response.output_item.done","item":{"type":"function_call","name":"lookup","arguments":""}}"#, false),
+            (r#"{"type":"response.output_item.done","item":{"type":"function_call","name":"lookup","arguments":"{\"q\":1}"}}"#, true),
+            (r#"{"type":"response.output_item.done","item":{"type":"message","content":[]}}"#, false),
+            (r#"{"type":"response.output_item.done","item":{"type":"message","content":[{"type":"text","text":"hello"}]}}"#, true),
+            (r#"{"type":"response.completed","response":{"id":"resp_123","status":"completed"}}"#, true),
+            (r#"{"type":"response.done","response":{"id":"resp_123"}}"#, true),
+            (r#"{"type":"response.incomplete","response":{"id":"resp_123","status":"incomplete"}}"#, true),
+            (r#"{"type":"response.failed","response":{"id":"resp_123","status":"failed"}}"#, true),
+            (r#"{"type":"error","error":{"message":"overloaded","code":"rate_limit_exceeded"}}"#, true),
+            (r#"data: {"type":"response.output_text.delta","delta":"Hello SSE"}"#, true),
+            (r#"data: {"type":"response.created","response":{"id":"resp_sse"}}"#, false),
+        ];
+        for (payload, want) in cases {
+            assert_eq!(is_responses_token_event(payload.as_bytes()), *want, "{payload}");
+        }
+    }
+
+    /// Go: TestObserveResponsesTokenEvent_Behavior and _FirstPacketFallback.
+    #[test]
+    fn observe_responses_token_event_records_first_packet_then_token() {
+        let r = UsageReporter::new("codex", "CodexExecutor", "gpt-5.6-luna", None, None);
+        r.start_response_ttft();
+        assert!(!r.is_ttft_set());
+        observe_responses_token_event(&r, br#"{"type":"codex.rate_limits","rate_limits":{"plan_type":"pro"}}"#);
+        assert!(!r.is_ttft_set() && r.is_first_packet_set());
+        observe_responses_token_event(&r, br#"{"type":"response.created","response":{"id":"resp_1"}}"#);
+        assert!(!r.is_ttft_set());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        observe_responses_token_event(&r, br#"{"type":"response.output_text.delta","delta":"First word"}"#);
+        assert!(r.is_ttft_set());
+        let first = r.current_ttft();
+        assert!(first > std::time::Duration::ZERO);
+        observe_responses_token_event(&r, br#"{"type":"response.output_text.delta","delta":"Second word"}"#);
+        assert_eq!(r.current_ttft(), first);
     }
 
     #[test]

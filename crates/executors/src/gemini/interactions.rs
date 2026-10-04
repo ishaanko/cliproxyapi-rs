@@ -14,7 +14,7 @@ use cpa_translator::{Ctx, Format, Param};
 use http::{HeaderMap, HeaderValue};
 
 use super::common::{
-    GL_API_VERSION, PumpSetup, StreamPump, error_body, observed_lines, post_json, read_body,
+    GL_API_VERSION, PumpSetup, StreamPump, error_body_tracked, observed_lines, post_json, read_body_tracked,
     set_model, thinking_error, translate_request, upstream_error, usage_metadata,
 };
 use super::executor::{GeminiExecutor, request_headers, resolve_base_url};
@@ -169,9 +169,8 @@ pub(super) async fn execute(
         let status = resp.status().as_u16();
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
-        let data = log.tap_err(read_body(resp).await)?;
+        let data = log.tap_err(read_body_tracked(&reporter, resp).await)?;
         log.chunk(&data);
-        reporter.mark_first_response_byte();
         if !(200..300).contains(&status) {
             return Err(upstream_error(status, &data));
         }
@@ -224,7 +223,7 @@ pub(super) async fn execute_stream(
         let resp_headers = resp.headers().clone();
         log.metadata(status, &resp_headers);
         if !(200..300).contains(&status) {
-            let body = error_body(resp).await;
+            let body = error_body_tracked(&reporter, resp).await;
             log.chunk(&body);
             return Err(upstream_error(status, &body));
         }

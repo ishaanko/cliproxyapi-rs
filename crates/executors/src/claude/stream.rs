@@ -45,7 +45,7 @@ impl ClaudeExecutor {
         let response_format = opts.response_format_or_source();
         let prepared = self.prepare_messages_request(cfg, auth, req, &opts, true, &reporter)?;
         let replay_scope = prepared.replay_scope.clone();
-        let resp = match self.send_upstream(cfg, auth, &opts, &prepared).await {
+        let resp = match self.send_upstream(cfg, auth, &opts, &prepared, &reporter).await {
             Ok(resp) => resp,
             Err(err) => {
                 if replay_scope.replay_applied && should_clear_kimi_thinking_replay_after_error(Some(&err)) {
@@ -184,7 +184,7 @@ async fn run_stream(
 ) -> Result<(), StreamEnd> {
     let to = Format::Claude;
     let mut lines = LineReader::from_stream(
-        super::decode::decode_stream(Box::pin(resp.bytes_stream().map_err(|e| crate::helps::status::transport_message(&e)))),
+        super::decode::decode_stream(Box::pin(reporter.observe_body_stream(resp.bytes_stream(), false).map_err(|e| crate::helps::status::transport_message(&e)))),
         STREAM_SCANNER_BUFFER,
     );
     let mut upstream_message_id = String::new();

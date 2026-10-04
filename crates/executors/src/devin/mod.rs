@@ -381,6 +381,7 @@ impl DevinExecutor {
         auth: &Auth,
         opts: &Options,
         prepared: Prepared,
+        reporter: &UsageReporter,
     ) -> Result<reqwest::Response, ExecError> {
         let cfg = self.cfg.borrow().clone();
         let client = self.http_client(&opts.proxy_url, auth, None);
@@ -407,6 +408,8 @@ impl DevinExecutor {
         {
             headers.remove(http::header::USER_AGENT);
         }
+        // Go: reporter.TrackHTTPClient (first response byte is the TTFT).
+        reporter.start_response_ttft();
         let resp = match client.post(&prepared.url).headers(headers).body(prepared.body).send().await {
             Ok(resp) => resp,
             Err(e) => {
@@ -421,7 +424,7 @@ impl DevinExecutor {
         }
         let status = resp.status().as_u16();
         let headers = resp.headers().clone();
-        let body = read_limited(resp, MAX_ERROR_BODY).await;
+        let body = read_limited(resp, MAX_ERROR_BODY, reporter).await;
         opts.api_log.append_api_response_chunk(&cfg, &body);
         Err(new_status_error(status, &headers, &body))
     }
@@ -441,9 +444,9 @@ fn auth_log_fields(auth: &Auth) -> (String, String) {
 }
 
 /// Reads at most `limit` bytes of a response body (errors end the read early).
-async fn read_limited(resp: reqwest::Response, limit: usize) -> Vec<u8> {
+async fn read_limited(resp: reqwest::Response, limit: usize, reporter: &UsageReporter) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut stream = resp.bytes_stream();
+    let mut stream = std::pin::pin!(reporter.observe_body_stream(resp.bytes_stream(), false));
     while let Some(Ok(chunk)) = stream.next().await {
         let room = limit - out.len();
         out.extend_from_slice(&chunk[..chunk.len().min(room)]);
@@ -619,11 +622,11 @@ impl DevinExecutor {
     ) -> Result<Response, ExecError> {
         let prepared = self.prepare_request(auth, &req, &opts)?;
         reporter.set_upstream_model(&prepared.chat_model_uid);
-        let resp = self.send(auth, &opts, prepared).await?;
+        let resp = self.send(auth, &opts, prepared, reporter).await?;
         let headers = resp.headers().clone();
 
         let original = apply_patch_original_request(&req, &opts);
-        let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
+        let reader = ConnectFrameReader::new(reporter.observe_body_stream(resp.bytes_stream(), false).map_err(|e| transport_message(&e)).boxed());
         let cfg = self.cfg.borrow().clone();
         let (outcome, response_log) = consume_frames_to_interactions(reader, &req.model, &original).await;
         let interactions_raw = outcome.as_ref().map(|c| cpa_json::to_vec(&c.interactions)).unwrap_or_default();
@@ -697,7 +700,7 @@ impl DevinExecutor {
         let prepared = self.prepare_request(auth, &req, &opts)?;
         reporter.set_upstream_model(&prepared.chat_model_uid);
         let chat_model_uid = prepared.chat_model_uid.clone();
-        let resp = self.send(auth, &opts, prepared).await?;
+        let resp = self.send(auth, &opts, prepared, reporter).await?;
         let headers = resp.headers().clone();
 
         let (tx, rx) = mpsc::channel(STREAM_CHANNEL_DEPTH);
@@ -713,7 +716,7 @@ impl DevinExecutor {
             reporter: reporter.clone(),
             log: crate::helps::gemini_log::UpstreamLog::new(&opts, &self.cfg.borrow().clone()),
         };
-        let reader = ConnectFrameReader::new(resp.bytes_stream().map_err(|e| transport_message(&e)).boxed());
+        let reader = ConnectFrameReader::new(reporter.observe_body_stream(resp.bytes_stream(), false).map_err(|e| transport_message(&e)).boxed());
         tokio::spawn(async move {
             stream_frames(reader, params, tx, usage_tx).await;
         });

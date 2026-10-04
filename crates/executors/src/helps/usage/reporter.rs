@@ -496,6 +496,33 @@ impl UsageReporter {
         })
     }
 
+    /// Reads a whole upstream body (Go: `io.ReadAll` over the TTFT-tracked response body),
+    /// marking TTFT on the first byte as [`observe_body_stream`](Self::observe_body_stream) does.
+    /// A body that arrives in one chunk is returned without a copy.
+    pub async fn read_body_tracked(&self, resp: reqwest::Response, packet_only: bool) -> Result<Bytes, reqwest::Error> {
+        let mut stream = std::pin::pin!(self.observe_body_stream(resp.bytes_stream(), packet_only));
+        let Some(first) = stream.next().await else {
+            return Ok(Bytes::new());
+        };
+        let first = first?;
+        let Some(second) = stream.next().await else {
+            return Ok(first);
+        };
+        let mut buf = Vec::with_capacity(first.len() + second.as_ref().map_or(0, Bytes::len));
+        buf.extend_from_slice(&first);
+        buf.extend_from_slice(&second?);
+        while let Some(chunk) = stream.next().await {
+            buf.extend_from_slice(&chunk?);
+        }
+        Ok(Bytes::from(buf))
+    }
+
+    /// The TTFT a record published now would carry (Go: `ttftDuration`).
+    #[cfg(test)]
+    pub(crate) fn current_ttft(&self) -> Duration {
+        Self::ttft_duration(&self.inner.state.lock())
+    }
+
     fn ttft_duration(s: &State) -> Duration {
         if s.ttft_set {
             s.ttft
@@ -732,6 +759,70 @@ mod tests {
         assert!(reporter.is_first_packet_set() && !reporter.is_ttft_set());
         reporter.mark_first_response_byte();
         assert!(reporter.is_ttft_set());
+    }
+
+    /// Go: TestUsageReporterTrackHTTPClientStartsTTFTBeforeRoundTrip. The clock starts when
+    /// the request is sent, so a slow first chunk shows up in the TTFT.
+    #[tokio::test]
+    async fn observed_body_measures_from_request_start() {
+        let delay = Duration::from_millis(40);
+        let reporter = UsageReporter::new("openai", "OpenAICompatExecutor", "m", None, None);
+        let body = futures_util::stream::once(async move {
+            tokio::time::sleep(delay).await;
+            Ok::<_, std::io::Error>(Bytes::from_static(b"ok"))
+        });
+        let chunks: Vec<_> = reporter.observe_body_stream(body, false).collect().await;
+        assert_eq!(chunks.len(), 1);
+        assert!(reporter.is_ttft_set());
+        assert!(reporter.current_ttft() >= delay);
+    }
+
+    /// Go: TestUsageReporterTrackHTTPClientRoundTripOnly_*. A packet-only body (Codex/Meta
+    /// streams, error bodies) records the first-packet fallback but never the effective TTFT;
+    /// only a token event sets that.
+    #[tokio::test]
+    async fn packet_only_body_leaves_effective_ttft_unset() {
+        let reporter = UsageReporter::new("codex", "CodexExecutor", "m", None, None);
+        let body = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::new()), Ok(Bytes::from_static(b"data: {}\n\n"))]);
+        let _: Vec<_> = reporter.observe_body_stream(body, true).collect().await;
+        assert!(!reporter.is_ttft_set());
+        assert!(reporter.is_first_packet_set());
+        reporter.observe_token_event(true);
+        assert!(reporter.is_ttft_set());
+    }
+
+    #[tokio::test]
+    async fn read_body_tracked_returns_all_chunks_and_marks() {
+        let reporter = UsageReporter::new("openai", "OpenAICompatExecutor", "m", None, None);
+        let resp: reqwest::Response = http::Response::new(reqwest::Body::wrap_stream(futures_util::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from_static(b"ab")),
+            Ok(Bytes::from_static(b"cd")),
+            Ok(Bytes::from_static(b"ef")),
+        ])))
+        .into();
+        reporter.start_response_ttft();
+        let body = reporter.read_body_tracked(resp, false).await.expect("body");
+        assert_eq!(&body[..], b"abcdef");
+        assert!(reporter.is_ttft_set());
+    }
+
+    /// Go: TestUsageReporterObserveTokenEvent_FastPathNonTokenAndToken.
+    #[test]
+    fn observe_token_event_is_sticky() {
+        let reporter = UsageReporter::new("codex", "CodexExecutor", "m", None, None);
+        reporter.start_response_ttft();
+        reporter.observe_token_event(false);
+        assert!(!reporter.is_ttft_set() && reporter.is_first_packet_set());
+        let first_packet = reporter.inner.state.lock().first_packet;
+        std::thread::sleep(Duration::from_millis(2));
+        reporter.observe_token_event(false);
+        assert_eq!(reporter.inner.state.lock().first_packet, first_packet);
+        reporter.observe_token_event(true);
+        assert!(reporter.is_ttft_set());
+        let ttft = reporter.inner.state.lock().ttft;
+        std::thread::sleep(Duration::from_millis(2));
+        reporter.observe_token_event(true);
+        assert_eq!(reporter.inner.state.lock().ttft, ttft);
     }
 
     #[test]

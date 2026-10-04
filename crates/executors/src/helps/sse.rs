@@ -119,6 +119,15 @@ impl LineReader {
         Self::new(Box::pin(resp.bytes_stream().map(|r| r.map_err(|e| super::status::transport_message(&e)))), max_token_size)
     }
 
+    /// [`from_response`](Self::from_response) that marks `reporter`'s TTFT on the first body
+    /// byte (`packet_only`: first-packet fallback only; see `UsageReporter::observe_body_stream`).
+    pub fn from_response_tracked(resp: reqwest::Response, max_token_size: usize, reporter: &super::usage::UsageReporter, packet_only: bool) -> Self {
+        Self::new(
+            Box::pin(reporter.observe_body_stream(resp.bytes_stream(), packet_only).map(|r| r.map_err(|e| super::status::transport_message(&e)))),
+            max_token_size,
+        )
+    }
+
     /// Reads any byte stream whose errors render as text.
     pub fn from_stream<S, E>(stream: S, max_token_size: usize) -> Self
     where

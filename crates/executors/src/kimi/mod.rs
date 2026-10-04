@@ -172,11 +172,14 @@ impl KimiExecutor {
         url: &str,
         body: Vec<u8>,
         stream: bool,
+        reporter: &UsageReporter,
     ) -> Result<reqwest::Response, ExecError> {
         let token = kimi_creds(auth);
         let headers = kimi_headers(&token, stream, auth, &opts.headers);
         tracing::debug!(target: "cpa::upstream", provider = PROVIDER, url, "kimi upstream request");
         record_request(&opts.api_log, cfg, PROVIDER, Some(auth), "POST", url, &headers, &body);
+        // Go: reporter.TrackHTTPClient (first response byte is the TTFT).
+        reporter.start_response_ttft();
         let resp = self
             .http_client(cfg, auth, opts)
             .post(url)
@@ -194,9 +197,9 @@ impl KimiExecutor {
     }
 
     /// Non-2xx upstream response as `statusErr{code, msg: body}`; the body lands in the request log.
-    async fn upstream_error(cfg: &Config, opts: &Options, resp: reqwest::Response) -> ExecError {
+    async fn upstream_error(cfg: &Config, opts: &Options, resp: reqwest::Response, reporter: &UsageReporter) -> ExecError {
         let status = resp.status().as_u16();
-        let body = resp.bytes().await.unwrap_or_default();
+        let body = reporter.read_body_tracked(resp, false).await.unwrap_or_default();
         opts.api_log.append_api_response_chunk(cfg, &body);
         tracing::debug!(
             target: "cpa::upstream",
@@ -274,12 +277,12 @@ impl KimiExecutor {
         let body = self.prepare_chat_body(&cfg, &req, &opts, &base_model, false, reporter)?;
 
         let url = resolve_kimi_chat_url(Some(auth));
-        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false).await?;
+        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false, reporter).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(&cfg, &opts, resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp, reporter).await);
         }
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| {
+        let data = reporter.read_body_tracked(resp, false).await.map_err(|e| {
             let err = transport_error(&e);
             opts.api_log.record_api_response_error(&cfg, &err.message);
             err
@@ -322,9 +325,9 @@ impl KimiExecutor {
         let body = self.prepare_chat_body(&cfg, &req, &opts, &base_model, true, reporter)?;
 
         let url = resolve_kimi_chat_url(Some(auth));
-        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true).await?;
+        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true, reporter).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(&cfg, &opts, resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp, reporter).await);
         }
         let headers = resp.headers().clone();
         let apply_original = apply_patch_original_request(&req, &opts);
@@ -335,7 +338,7 @@ impl KimiExecutor {
         let (usage_tx, usage_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let mut lines = LineReader::from_response(resp, KIMI_SCANNER_BUFFER);
+            let mut lines = LineReader::from_response_tracked(resp, KIMI_SCANNER_BUFFER, &reporter, false);
             let mut usage = StreamUsageBuffer::default();
             let mut param = Param::default();
             let ctx = Ctx::default();
@@ -469,12 +472,12 @@ impl KimiExecutor {
         let body = self.prepare_responses_body(&cfg, &req, &opts, &base_model, false, reporter)?;
 
         let url = resolve_kimi_responses_url(Some(auth));
-        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false).await?;
+        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), false, reporter).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(&cfg, &opts, resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp, reporter).await);
         }
         let headers = resp.headers().clone();
-        let data = resp.bytes().await.map_err(|e| {
+        let data = reporter.read_body_tracked(resp, false).await.map_err(|e| {
             let err = transport_error(&e);
             opts.api_log.record_api_response_error(&cfg, &err.message);
             err
@@ -526,9 +529,9 @@ impl KimiExecutor {
         let body = self.prepare_responses_body(&cfg, &req, &opts, &base_model, true, reporter)?;
 
         let url = resolve_kimi_responses_url(Some(auth));
-        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true).await?;
+        let resp = self.send(&cfg, auth, &opts, &url, body.clone(), true, reporter).await?;
         if !resp.status().is_success() {
-            return Err(Self::upstream_error(&cfg, &opts, resp).await);
+            return Err(Self::upstream_error(&cfg, &opts, resp, reporter).await);
         }
         let headers = resp.headers().clone();
         let original_request = apply_patch_original_request(&req, &opts);
@@ -540,7 +543,7 @@ impl KimiExecutor {
         let (usage_tx, usage_rx) = oneshot::channel();
 
         tokio::spawn(async move {
-            let mut lines = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
+            let mut lines = LineReader::from_response_tracked(resp, STREAM_SCANNER_BUFFER, &reporter, false);
             let mut bridge = ApplyPatchResponsesState::new(source_format, &original_request, &original_request);
             let mut usage = StreamUsageBuffer::default();
             let mut param = Param::default();

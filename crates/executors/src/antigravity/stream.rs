@@ -72,7 +72,7 @@ impl AntigravityExecutor {
         let headers = resp.headers().clone();
         p.log.metadata(status, &headers);
         if !(200..300).contains(&status) {
-            let body = match resp.bytes().await {
+            let body = match p.reporter.read_body_tracked(resp, false).await {
                 Ok(b) => b,
                 Err(e) => {
                     let err = crate::helps::status::transport_error(&e);
@@ -111,7 +111,7 @@ impl AntigravityExecutor {
     ) {
         let reporter = p.reporter.clone();
         let mut accumulator = ReplayAccumulator::new(&p.replay_scope, &p.request_payload);
-        let mut reader = LineReader::from_response(resp, STREAM_SCANNER_BUFFER);
+        let mut reader = LineReader::from_response_tracked(resp, STREAM_SCANNER_BUFFER, &reporter, false);
         let mut claude_tokens = ClaudeInputTokenState::new(p.from, Format::Antigravity, p.response_format, &p.original_payload);
         let mut usage = StreamUsageBuffer::default();
         let mut param = Param::default();
@@ -158,7 +158,6 @@ impl AntigravityExecutor {
                 }
             };
             p.log.chunk(&line);
-            reporter.mark_first_response_byte();
             if let Some(acc) = accumulator.as_mut() {
                 acc.observe_sse_line(&line);
             }
