@@ -365,8 +365,7 @@ async fn run_steps(steps: Vec<Step>, format: Format, request: &str) -> Received 
     });
     stream_frames(ConnectFrameReader::new(Box::pin(source)), params, tx, usage_tx).await;
     drain(&rx, &sink);
-    let out = sink.lock().map(|r| r.clone()).unwrap_or_default();
-    out
+    sink.lock().map(|r| r.clone()).unwrap_or_default()
 }
 
 fn varint(mut v: u64, out: &mut Vec<u8>) {
@@ -496,7 +495,7 @@ async fn content_late_signatures() {
                 let label = format!("{format:?} split={split} {ending}");
                 let mut steps = vec![Step::Data(content_frame(9, b"planning"))];
                 let tail_signature = if split {
-                    steps.push(Step::Data(content_frame(10, signature[..20].as_bytes())));
+                    steps.push(Step::Data(content_frame(10, &signature.as_bytes()[..20])));
                     &signature[20..]
                 } else {
                     &signature[..]

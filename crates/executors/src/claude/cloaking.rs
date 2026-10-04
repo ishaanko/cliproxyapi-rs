@@ -166,6 +166,7 @@ pub struct ContinuityTags {
 
 /// Resolves `cc_prev_req` / `cc_prompt_id` and the continuity context for a cloaked request
 /// (Go: resolveClaudeContinuityTags). `None` when there is no session or credential identity.
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_claude_continuity_tags(
     ctx: &ClaudeCtx,
     cfg: &Config,
