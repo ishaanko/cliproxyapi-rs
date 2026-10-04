@@ -540,6 +540,15 @@ impl StreamState {
     }
 }
 
+/// Publishes a record on drop when the stream ended without one.
+struct EnsurePublishedOnDrop(UsageReporter);
+
+impl Drop for EnsurePublishedOnDrop {
+    fn drop(&mut self) {
+        self.0.ensure_published();
+    }
+}
+
 /// Streams the Connect frames of `reader` to `out` as client-format chunks. `usage_tx` receives
 /// the final usage when the stream completes. Returns when the stream ends or the receiver is
 /// dropped.
@@ -553,6 +562,8 @@ pub async fn stream_frames<S, E>(
     E: std::fmt::Display,
 {
     p.reporter.set_upstream_model(&p.chat_model_uid);
+    // Go: `defer reporter.EnsurePublished(ctx)`.
+    let _ensure_published = EnsurePublishedOnDrop(p.reporter.clone());
     let claude_tokens = ClaudeInputTokenState::new(
         p.source_format,
         Format::Interactions,
@@ -604,7 +615,13 @@ pub async fn stream_frames<S, E>(
 
     // 1. Consume frames.
     loop {
-        let frame = match reader.read_frame().await {
+        // A client that went away ends the read, closing the upstream body (Go: the cancelled
+        // context fails the read, and no later event can be delivered).
+        let read = tokio::select! {
+            _ = st.out.closed() => return,
+            read = reader.read_frame() => read,
+        };
+        let frame = match read {
             Ok(f) => f,
             Err(FrameError::Eof) => break,
             Err(e) => {

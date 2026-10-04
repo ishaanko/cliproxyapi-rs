@@ -31,6 +31,7 @@ use super::models::{
 use super::rewriter::StreamRewriter;
 use super::rules;
 use super::usage::{StreamUsage, UsageFacts};
+use super::detach::DetachGuard;
 use crate::usage_report::UsageCollector;
 use crate::executor::{Chunk, ChunkRx, ChunkSource, DynExecutor, ExecError, Options, Request, StreamResult};
 
@@ -246,7 +247,33 @@ impl Manager {
                 ..Default::default()
             };
 
-            let mut res = start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await;
+            // A client that hangs up drops this future mid-attempt: usage is still recorded.
+            let mut detach = DetachGuard::new(
+                self.clone(),
+                usage.clone(),
+                Some(auth.clone()),
+                ExecResult {
+                    auth_id: auth.id.clone(),
+                    provider: provider.to_string(),
+                    model: result_model.clone(),
+                    route_model: route_model.to_string(),
+                    success: false,
+                    retry_after: None,
+                    credential_scope: false,
+                    error: None,
+                    options: exec_opts.clone(),
+                    skip_quota_observation: false,
+                    response_headers: http::HeaderMap::new(),
+                },
+                UsageFacts {
+                    stream: true,
+                    upstream_model: exec_model.clone(),
+                    requested_model: requested_model_alias(opts, route_model),
+                    ..Default::default()
+                },
+                started,
+            );
+            let mut res = detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await;
             if let Err(err) = &res {
                 if err.upstream_attempted {
                     upstream_err = Some(err.clone().into());
@@ -261,7 +288,7 @@ impl Manager {
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
-                    res = start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await;
+                    res = detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await;
                     if let Err(e2) = &res
                         && e2.upstream_attempted
                     {
@@ -308,7 +335,7 @@ impl Manager {
                 }
             };
 
-            let mut boot = read_stream_bootstrap(&mut stream.chunks).await;
+            let mut boot = detach.run(read_stream_bootstrap(&mut stream.chunks)).await;
             if let Err(e) = &boot
                 && e.upstream_attempted
             {
@@ -325,7 +352,7 @@ impl Manager {
                     auth = refreshed;
                     did_refresh = true;
                     publish_selected_auth_metadata(&mut exec_opts, &auth);
-                    match start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home).await {
+                    match detach.run(start_stream(executor, &auth, exec_req.clone(), exec_opts.clone(), home)).await {
                         Err(retry_err) => {
                             if retry_err.upstream_attempted {
                                 upstream_err = Some(retry_err.clone().into());
@@ -335,7 +362,7 @@ impl Manager {
                         }
                         Ok(retry_stream) => {
                             stream = retry_stream;
-                            boot = read_stream_bootstrap(&mut stream.chunks).await;
+                            boot = detach.run(read_stream_bootstrap(&mut stream.chunks)).await;
                         }
                     }
                     if let Err(e) = &boot
@@ -603,6 +630,38 @@ impl WrapSource {
         true
     }
 
+    /// The consumer is gone but the executor's stream task may still publish (its failure for
+    /// the cancelled upstream read arrives after this wrapper is dropped): everything it
+    /// reports from now on is recorded as it appears.
+    fn detach_reports(&self) {
+        let auth = self.home_auth.clone().or_else(|| self.manager.get(&self.auth_id));
+        let result = ExecResult {
+            auth_id: self.auth_id.clone(),
+            provider: self.provider.clone(),
+            model: self.result_model.clone(),
+            route_model: self.route_model.clone(),
+            success: false,
+            retry_after: None,
+            credential_scope: false,
+            error: None,
+            options: self.options.clone(),
+            skip_quota_observation: false,
+            response_headers: self.response_headers.clone(),
+        };
+        let template = UsageFacts {
+            stream: true,
+            ttft: self.ttft,
+            upstream_model: self.upstream_model.clone(),
+            requested_model: self.requested_model.clone(),
+            ..Default::default()
+        };
+        let (manager, started) = (self.manager.clone(), self.started);
+        self.reports.detach(move |record| {
+            let facts = UsageFacts { latency: started.elapsed(), reports: vec![record], ..template.clone() };
+            manager.record_usage_only(&result, auth.as_ref(), facts);
+        });
+    }
+
     fn record_failure(&self, err: &ExecError) {
         let auth = self.home_auth.clone().or_else(|| self.manager.get(&self.auth_id));
         let mut result = ExecResult {
@@ -650,6 +709,7 @@ impl WrapSource {
         if send_failed {
             // The client hung up while sending: no result mark, but published usage counts.
             self.drain_reports();
+            self.detach_reports();
             return;
         }
         if self.failed {
@@ -658,9 +718,13 @@ impl WrapSource {
         if client_gone && self.claude_oauth {
             // Claude OAuth records no success for an abandoned stream, only its usage.
             self.drain_reports();
+            self.detach_reports();
             return;
         }
         let recs = self.reports.take();
+        // Go: the executor's own goroutine publishes the cancelled read as a failure, so an
+        // abandoned stream adds no success record of the conductor's making.
+        let late_reports = client_gone && self.reports.has_reporter() && recs.is_empty();
         if recs.is_empty()
             && !self.published_any
             && let Some(mut rx) = self.executor_usage.take()
@@ -687,7 +751,7 @@ impl WrapSource {
             response_headers: self.response_headers.clone(),
         };
         // Reports already recorded as they were published need no fallback record on top.
-        let facts = (!recs.is_empty() || !self.published_any).then(|| UsageFacts {
+        let facts = (!late_reports && (!recs.is_empty() || !self.published_any)).then(|| UsageFacts {
             latency: self.started.elapsed(),
             ttft: self.ttft,
             stream: true,
@@ -699,6 +763,9 @@ impl WrapSource {
         match &self.home_auth {
             Some(a) => self.manager.report_home_result(result, Some(a), facts),
             None => self.manager.mark_result_inner(result, facts),
+        }
+        if client_gone {
+            self.detach_reports();
         }
     }
 }

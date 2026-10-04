@@ -592,7 +592,13 @@ impl GeminiVertexExecutor {
             let mut scan_err = None;
             loop {
                 let line = tokio::select! {
-                    _ = pump.tx.closed() => return,
+                    _ = pump.tx.closed() => {
+                        // Go: the cancelled request context fails the upstream read.
+                        log.error("context canceled");
+                        pump.fail(ExecError::new(0, "context canceled")).await;
+                        pump.finish();
+                        return;
+                    }
                     line = lines.next_line() => line,
                 };
                 let line = match line {

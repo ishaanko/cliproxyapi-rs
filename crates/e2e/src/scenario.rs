@@ -67,6 +67,9 @@ pub struct UpstreamCapture {
     pub body: Value,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ws_frames: Vec<Value>,
+    /// The server closed the upstream connection before the streamed reply ended.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub closed_early: bool,
 }
 
 /// The golden file content for one scenario.

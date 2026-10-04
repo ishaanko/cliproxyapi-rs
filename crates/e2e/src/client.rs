@@ -42,7 +42,7 @@ pub enum Body {
     Typed(&'static str, String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct HttpReq {
     pub method: &'static str,
     /// Path including any query string.
@@ -50,11 +50,43 @@ pub struct HttpReq {
     pub auth: Auth,
     pub headers: Vec<(String, String)>,
     pub body: Body,
+    /// Drop the connection after the first response body chunk (a client that hangs up mid-stream).
+    pub abort_after_first_chunk: bool,
+    /// Drop the connection when no response head has arrived after this many ms.
+    pub abort_after_ms: Option<u64>,
+}
+
+/// Goldens embed this rendering (RESP sessions summarize their nested HTTP requests), so the
+/// abort options only show up when set.
+impl std::fmt::Debug for HttpReq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_struct("HttpReq");
+        d.field("method", &self.method).field("path", &self.path).field("auth", &self.auth).field("headers", &self.headers).field("body", &self.body);
+        if self.abort_after_first_chunk {
+            d.field("abort_after_first_chunk", &true);
+        }
+        if let Some(ms) = self.abort_after_ms {
+            d.field("abort_after_ms", &ms);
+        }
+        d.finish()
+    }
 }
 
 impl HttpReq {
     fn new(method: &'static str, path: &str, body: Body) -> Self {
-        HttpReq { method, path: path.to_string(), auth: Auth::Client, headers: vec![], body }
+        HttpReq { method, path: path.to_string(), auth: Auth::Client, headers: vec![], body, abort_after_first_chunk: false, abort_after_ms: None }
+    }
+
+    /// The client gives up waiting for the response head after `ms` and closes the connection.
+    pub fn abort_after_ms(mut self, ms: u64) -> Self {
+        self.abort_after_ms = Some(ms);
+        self
+    }
+
+    /// The client reads one body chunk and then closes the connection.
+    pub fn abort_after_first_chunk(mut self) -> Self {
+        self.abort_after_first_chunk = true;
+        self
     }
 
     pub fn get(path: &str) -> Self {
@@ -333,7 +365,16 @@ impl Client {
             Body::Raw { content_type, bytes } => req.header("content-type", content_type.as_str()).body(bytes.clone()),
             Body::Typed(content_type, t) => req.header("content-type", *content_type).body(t.clone()),
         };
-        let resp = req.send().await.with_context(|| format!("{} {}", r.method, r.path))?;
+        let sent = match r.abort_after_ms {
+            Some(ms) => match tokio::time::timeout(Duration::from_millis(ms), req.send()).await {
+                Ok(sent) => sent,
+                Err(_) => {
+                    return Ok(Observed { status: 0, headers: BTreeMap::new(), body: ObsBody::Text { value: "<client aborted before the response>".into() } });
+                }
+            },
+            None => req.send().await,
+        };
+        let resp = sent.with_context(|| format!("{} {}", r.method, r.path))?;
         let status = resp.status().as_u16();
         let headers = filtered_headers(resp.headers());
         let is_sse = headers.get("content-type").is_some_and(|c| c.contains("text/event-stream"));
@@ -342,6 +383,12 @@ impl Client {
         let mut transport_error = false;
         while let Some(chunk) = stream.next().await {
             match chunk {
+                Ok(b) if r.abort_after_first_chunk && !b.is_empty() => {
+                    // Dropping `stream` closes the connection; the first chunk's framing is
+                    // timing dependent, so only the fact of the abort is captured.
+                    drop(stream);
+                    return Ok(Observed { status, headers, body: ObsBody::Text { value: "<client aborted after first chunk>".into() } });
+                }
                 Ok(b) => buf.extend_from_slice(&b),
                 Err(_) => {
                     transport_error = true;

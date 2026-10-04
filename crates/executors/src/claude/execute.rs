@@ -470,6 +470,10 @@ impl ClaudeExecutor {
         let body_for_upstream =
             if body_for_upstream == body_for_translation[..] { body_for_translation.clone() } else { Bytes::from(body_for_upstream) };
 
+        if fp.oauth_cancellation {
+            // Go: newClaudeOAuthCancellationError replaces the transport error with ctx.Err().
+            reporter.set_cancel_plain();
+        }
         Ok(Prepared {
             url,
             upstream_stream,

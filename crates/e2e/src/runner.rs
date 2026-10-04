@@ -113,6 +113,7 @@ pub async fn run_scenario(opts: &RunOpts, s: &Scenario) -> Result<Capture> {
                 headers: n.request_headers(&l.headers),
                 body,
                 ws_frames,
+                closed_early: l.closed_early,
             }
         })
         .collect();

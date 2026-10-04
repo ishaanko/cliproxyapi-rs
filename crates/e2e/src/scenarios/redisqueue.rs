@@ -235,6 +235,37 @@ pub fn scenarios() -> Vec<Scenario> {
             .profile(profiles::usage_stats),
         );
     }
+    // A client that hangs up mid-request: the upstream call is cancelled and the attempt's usage
+    // record is a failure (499, "context canceled") with whatever was observed so far.
+    for f in FAMILIES {
+        let chat = |stream| HttpReq::post("/v1/chat/completions", bodies::chat(f.model(), stream, Kind::Text));
+        out.push(
+            s(
+                &format!("usage.abort.stream.{}", f.label()),
+                &format!("queued usage of a stream the client abandons after the first chunk, {} upstream", f.label()),
+                Script::steps(vec![Step::always(Reply::ok(Content::Text)).stalled(3000)]),
+                vec![
+                    Req::Http(chat(true).abort_after_first_chunk()),
+                    Req::Pause(SETTLE_MS),
+                    session(vec![auth(), cmd(&["LPOP", "usage"])]),
+                ],
+            )
+            .profile(profiles::usage_stats),
+        );
+        out.push(
+            s(
+                &format!("usage.abort.json.{}", f.label()),
+                &format!("queued usage of a non-stream request the client abandons while waiting, {} upstream", f.label()),
+                Script::steps(vec![Step::always(Reply::ok(Content::Text)).delayed(3000)]),
+                vec![
+                    Req::Http(chat(false).abort_after_ms(300)),
+                    Req::Pause(SETTLE_MS),
+                    session(vec![auth(), cmd(&["LPOP", "usage"])]),
+                ],
+            )
+            .profile(profiles::usage_stats),
+        );
+    }
     out.push(s(
         "usage_disabled",
         "no usage records are queued with usage-statistics-enabled off",

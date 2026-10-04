@@ -27,6 +27,7 @@ use super::pick::{Eligibility, Picked};
 use super::rules;
 use super::session;
 use super::usage::{UsageFacts, tokens_from_response};
+use super::detach::DetachGuard;
 use crate::usage_report::UsageCollector;
 use super::util::meta_string;
 use super::{Manager, session as session_mod};
@@ -570,8 +571,34 @@ impl Manager {
             let usage = (kind == Kind::Execute).then(UsageCollector::new);
             exec_opts.usage_collector.clone_from(&usage);
             let started = Instant::now();
-            let mut res =
-                call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone()).await;
+            // A client that hangs up drops this future mid-call: usage is still recorded.
+            let mut detach = usage.as_ref().map(|u| {
+                let template = ExecResult {
+                    auth_id: auth.id.clone(),
+                    provider: provider.to_string(),
+                    model: result_model.clone(),
+                    route_model: route_model.to_string(),
+                    success: false,
+                    retry_after: None,
+                    credential_scope: false,
+                    error: None,
+                    options: exec_opts.clone(),
+                    skip_quota_observation: false,
+                    response_headers: HeaderMap::new(),
+                };
+                let facts = UsageFacts {
+                    stream: false,
+                    upstream_model: upstream_model.clone(),
+                    requested_model: requested_model_alias(&exec_opts, route_model),
+                    ..Default::default()
+                };
+                DetachGuard::new(self.clone(), u.clone(), Some(auth.clone()), template, facts, started)
+            });
+            let call = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone());
+            let mut res = match detach.as_mut() {
+                Some(guard) => guard.run(call).await,
+                None => call.await,
+            };
             let mut latency = started.elapsed();
             if let Err(err) = &res {
                 if err.upstream_attempted {
@@ -584,8 +611,12 @@ impl Manager {
                     auth = refreshed;
                     did_refresh = true;
                     let started = Instant::now();
-                    res = call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone())
-                        .await;
+                    let call =
+                        call_unary(kind, &executor, &auth, exec_req.clone(), exec_opts.clone());
+                    res = match detach.as_mut() {
+                        Some(guard) => guard.run(call).await,
+                        None => call.await,
+                    };
                     latency = started.elapsed();
                     if let Err(err2) = &res
                         && err2.upstream_attempted

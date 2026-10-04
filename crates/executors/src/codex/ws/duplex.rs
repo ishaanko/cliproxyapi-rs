@@ -638,6 +638,8 @@ async fn read_loop(
                     let err = connection_error(err);
                     reporter.publish_failure(&err);
                     let _ = send(Err(err)).await;
+                } else {
+                    reporter.abandon();
                 }
                 return;
             }
