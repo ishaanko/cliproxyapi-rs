@@ -1,0 +1,153 @@
+{
+  "id": "mgmt.config.v8_historical_client_path",
+  "desc": "historical spellings of client.codex.optimize-multi-agent-v2",
+  "steps": [
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/providers/codex/optimize-multi-agent-v2",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": true
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/client/codex",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "optimize-multi-agent-v2": true
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/oauth/providers/codex/optimize-multi-agent-v2",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": true
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "path": "/v8/management/config/codex/optimize-multi-agent-v2",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": false
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": {
+            "config-version": 8,
+            "status": "ok"
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "path": "/v8/management/config/client/codex/optimize-multi-agent-v2",
+        "auth": "Mgmt",
+        "headers": [],
+        "body": null
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "access-control-allow-headers": "*",
+          "access-control-allow-methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+          "access-control-allow-origin": "*",
+          "access-control-expose-headers": "X-CPA-TRACE-ID, X-CPA-VERSION, X-CPA-COMMIT, X-CPA-BUILD-DATE, X-CPA-SUPPORT-PLUGIN, X-CPA-HOME-VERSION, X-CPA-HOME-BUILD-DATE, X-SERVER-VERSION, X-SERVER-BUILD-DATE, Location, Retry-After, X-Request-Id, OpenAI-Request-Id",
+          "cache-control": "no-store",
+          "content-type": "application/json; charset=utf-8",
+          "x-cpa-build-date": "unknown",
+          "x-cpa-commit": "none",
+          "x-cpa-support-plugin": "1",
+          "x-cpa-version": "dev"
+        },
+        "body": {
+          "type": "json",
+          "value": false
+        }
+      }
+    }
+  ],
+  "upstream": []
+}

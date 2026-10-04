@@ -159,7 +159,8 @@
                   "base-url": "http://<mock>/anthropic",
                   "keys": [
                     {
-                      "api-key": "sk-claude-1"
+                      "api-key": "sk-claude-1",
+                      "auth_index": "f46ece6b8824823d"
                     }
                   ],
                   "name": "claude-1"
@@ -168,7 +169,8 @@
                   "base-url": "http://<mock>/anthropic",
                   "keys": [
                     {
-                      "api-key": "sk-claude-2"
+                      "api-key": "sk-claude-2",
+                      "auth_index": "904eeaa86b64bbcf"
                     }
                   ],
                   "name": "claude-2"
@@ -179,7 +181,8 @@
                   "base-url": "http://<mock>/codex",
                   "keys": [
                     {
-                      "api-key": "sk-codex-1"
+                      "api-key": "sk-codex-1",
+                      "auth_index": "80228c41b545cfb8"
                     }
                   ],
                   "name": "codex-1"
@@ -188,7 +191,8 @@
                   "base-url": "http://<mock>/codex",
                   "keys": [
                     {
-                      "api-key": "sk-codex-2"
+                      "api-key": "sk-codex-2",
+                      "auth_index": "4af74ce5d38820a1"
                     }
                   ],
                   "name": "codex-2"
@@ -199,7 +203,8 @@
                   "base-url": "http://<mock>/gemini",
                   "keys": [
                     {
-                      "api-key": "sk-gemini-1"
+                      "api-key": "sk-gemini-1",
+                      "auth_index": "50bf9a9aa89466fd"
                     }
                   ],
                   "name": "gemini-1"
@@ -208,7 +213,8 @@
                   "base-url": "http://<mock>/gemini",
                   "keys": [
                     {
-                      "api-key": "sk-gemini-2"
+                      "api-key": "sk-gemini-2",
+                      "auth_index": "fb4d89a9d127dc43"
                     }
                   ],
                   "name": "gemini-2"
@@ -219,10 +225,12 @@
                   "base-url": "http://<mock>/compat",
                   "keys": [
                     {
-                      "api-key": "sk-compat-1"
+                      "api-key": "sk-compat-1",
+                      "auth_index": "8db9a3c0713f1d8d"
                     },
                     {
-                      "api-key": "sk-compat-2"
+                      "api-key": "sk-compat-2",
+                      "auth_index": "50b3c9a0d698bde0"
                     }
                   ],
                   "models": [

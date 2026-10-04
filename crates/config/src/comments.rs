@@ -394,6 +394,20 @@ impl Comments {
                             out.push('\n');
                         }
                     }
+                    // A flow collection is one line: the heads of its inner nodes go above it.
+                    if is_flow_line(raw) {
+                        for (path, lines) in &self.head {
+                            if path.len() > info.deepest.len()
+                                && path.starts_with(&info.deepest)
+                                && used_head.insert(path.clone())
+                            {
+                                for l in lines.iter().filter(|l| !l.is_empty()) {
+                                    out.push_str(l);
+                                    out.push('\n');
+                                }
+                            }
+                        }
+                    }
                     out.push_str(raw);
                     if info.inline_comment.is_none()
                         && let Some(c) = self.line.get(&info.deepest)
@@ -612,6 +626,16 @@ impl Comments {
         }
         self.line = line;
     }
+}
+
+/// Whether a rendered `key: {..}` / `- [..]` line carries a whole flow collection.
+fn is_flow_line(raw: &str) -> bool {
+    let rest = raw.trim_start().trim_start_matches("- ").trim_start();
+    let value = match split_key(rest) {
+        Some((_, value)) => value.trim_start_matches(':').trim_start(),
+        None => rest,
+    };
+    value.starts_with('{') || value.starts_with('[')
 }
 
 /// Whether the last line of `out` is a "key:" line whose value is the block that follows.

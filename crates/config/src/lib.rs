@@ -35,7 +35,8 @@ pub use env::load_dotenv;
 pub use error::{ConfigError, Result};
 pub use layout::marshal_document;
 pub use layout::{
-    MAX_CREDENTIAL_WEIGHT, WarnFn, is_v8_config_layout, normalize_config_layout, normalize_for_write,
+    MAX_CREDENTIAL_WEIGHT, WarnFn, is_v8_config_layout, normalize_config_layout, normalize_config_layout_keeping_styles,
+    normalize_for_write,
     set_v8_migration_warn_func, v8_alias_paths, validate_v8_config,
 };
 pub use load::{

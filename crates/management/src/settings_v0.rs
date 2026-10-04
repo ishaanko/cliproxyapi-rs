@@ -68,7 +68,7 @@ pub(crate) async fn put_config_yaml(State(st): State<ManagementState>, body: Byt
         let path = st.config_path.clone();
         let data = body.clone();
         blocking(move || {
-            crate::config_v8::write_config(&path, &data).map_err(|e| {
+            crate::config_v8::write_config(&path, &data, None).map_err(|e| {
                 tracing::error!("failed to write config: {e}");
                 ApiError::with_message(500, "write_failed", "failed to write config")
             })

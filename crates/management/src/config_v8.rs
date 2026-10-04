@@ -133,9 +133,15 @@ fn run(st: &ManagementState, config_path: &Path, req: &ConfigRequest) -> ApiResu
         }
         // Paths identify YAML keys, never array indexes. Lists are replaced whole.
         let dst = navigate(&mut root, parts)?;
+        // yaml.v3 keeps the style of nodes parsed from a JSON body (flow, quoted strings).
+        let json_body = !req.yaml;
         if req.method == Method::PATCH {
-            merge_patch(dst, update);
+            let mut path = parts.clone();
+            merge_patch(dst, update, &mut path, json_body.then_some(&mut comments));
         } else {
+            if json_body {
+                comments.mark_json_subtree(parts, &update);
+            }
             *dst = update;
         }
     }
@@ -160,11 +166,11 @@ fn run(st: &ManagementState, config_path: &Path, req: &ConfigRequest) -> ApiResu
         .map_err(|e| ApiError::with_message(422, "invalid_config", e.to_string()))?;
     cpa_config::validate_v8_config(data.as_bytes())
         .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
-    let (data, _) = cpa_config::normalize_config_layout(data.as_bytes(), true)
+    let (data, _) = cpa_config::normalize_config_layout_keeping_styles(data.as_bytes(), true, &comments)
         .map_err(|e| ApiError::with_message(400, "invalid_config", e.to_string()))?;
     // Save the validated canonical tree directly: projecting runtime defaults back onto it loses
     // explicit nulls, empty maps and opaque plugin settings.
-    write_config(config_path, &data).map_err(|e| {
+    write_config(config_path, &data, Some(&comments)).map_err(|e| {
         ApiError::with_message(500, "write_failed", e.to_string())
     })?;
     Ok(Outcome::Saved)
@@ -202,8 +208,12 @@ fn read(
 
 /// Go: `WriteConfig`. A v8 document is re-normalized to the latest layout, then written in place
 /// (same inode, `O_TRUNC`, fsync) with comment indentation normalized.
-pub(crate) fn write_config(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    let data = cpa_config::normalize_for_write(data)
+pub(crate) fn write_config(
+    path: &Path,
+    data: &[u8],
+    marks: Option<&cpa_config::DocComments>,
+) -> std::io::Result<()> {
+    let data = cpa_config::normalize_for_write(data, marks)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     let data = String::from_utf8_lossy(&data);
     let data = cpa_config::normalize_comment_indentation(&data);
@@ -288,19 +298,35 @@ fn delete_path(root: &mut Value, parts: &[String]) -> bool {
 
 /// Unlike JSON merge-patch, null is retained: optional key overrides use it to inherit the group
 /// value. DELETE is the explicit field-removal operation.
-fn merge_patch(dst: &mut Value, src: Value) {
+fn merge_patch(
+    dst: &mut Value,
+    src: Value,
+    path: &mut Vec<String>,
+    mut marks: Option<&mut cpa_config::DocComments>,
+) {
     match (dst, src) {
         (Value::Mapping(d), Value::Mapping(s)) => {
             for (key, value) in s {
+                path.push(key.as_str().unwrap_or_default().to_string());
                 match d.get_mut(&key) {
-                    Some(old) => merge_patch(old, value),
+                    Some(old) => merge_patch(old, value, path, marks.as_deref_mut()),
                     None => {
+                        if let Some(marks) = marks.as_deref_mut() {
+                            marks.mark_json_key(path);
+                            marks.mark_json_subtree(path, &value);
+                        }
                         d.insert(key, value);
                     }
                 }
+                path.pop();
             }
         }
-        (dst, src) => *dst = src,
+        (dst, src) => {
+            if let Some(marks) = marks {
+                marks.mark_json_subtree(path, &src);
+            }
+            *dst = src;
+        }
     }
 }
 
@@ -384,7 +410,7 @@ mod tests {
     #[test]
     fn patch_merges_maps_and_keeps_null_but_replaces_lists() {
         let mut v = y("a: {x: 1, y: [1, 2]}\n");
-        merge_patch(&mut v, y("a: {y: [3], z: null}\n"));
+        merge_patch(&mut v, y("a: {y: [3], z: null}\n"), &mut Vec::new(), None);
         assert_eq!(v, y("a: {x: 1, y: [3], z: null}\n"));
     }
 

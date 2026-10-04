@@ -23,6 +23,29 @@ impl DocComments {
     }
 }
 
+impl DocComments {
+    pub(crate) fn comments(&self) -> &Comments {
+        &self.0
+    }
+
+    /// Records that `value`, at the key path `path`, was parsed from a JSON request body, which
+    /// yaml.v3 keeps in flow style with double-quoted keys and strings.
+    pub fn mark_json_subtree(&mut self, path: &[String], value: &Value) {
+        self.0.styles.mark_json_subtree(&key_path(path), value);
+    }
+
+    /// Records that the mapping key at `path` came from a JSON request body (written quoted).
+    pub fn mark_json_key(&mut self, path: &[String]) {
+        self.0.styles.mark_json_key(key_path(path));
+    }
+}
+
+fn key_path(path: &[String]) -> Vec<crate::comments::Seg> {
+    path.iter()
+        .map(|k| crate::comments::Seg::Key(k.clone()))
+        .collect()
+}
+
 /// Renders `root` with the 4-space indent of `yaml.Marshal`, attaching `comments` by key path.
 pub fn marshal_document_with_comments(root: &Value, comments: &DocComments) -> Result<String> {
     render_yaml(root, &comments.0)

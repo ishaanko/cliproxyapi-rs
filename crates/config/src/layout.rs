@@ -939,6 +939,24 @@ fn utf8(data: &[u8]) -> Result<&str> {
 /// Returns the (possibly rewritten) document and whether it changed. Port of
 /// `NormalizeConfigLayout`.
 pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, bool)> {
+    normalize_config_layout_inner(data, migrate, None)
+}
+
+/// [`normalize_config_layout`] for a document rendered with JSON-origin styling (see
+/// [`crate::DocComments`]): a re-render keeps the flow style and quoting of those values.
+pub fn normalize_config_layout_keeping_styles(
+    data: &[u8],
+    migrate: bool,
+    marks: &crate::DocComments,
+) -> Result<(Vec<u8>, bool)> {
+    normalize_config_layout_inner(data, migrate, Some(marks))
+}
+
+fn normalize_config_layout_inner(
+    data: &[u8],
+    migrate: bool,
+    marks: Option<&crate::DocComments>,
+) -> Result<(Vec<u8>, bool)> {
     let text = utf8(data)?;
     let Some(mut root) = parse_yaml(text)? else {
         return if migrate {
@@ -949,6 +967,9 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
     };
     flatten_v8(&root)?;
     let mut comments = Comments::extract(text);
+    if let Some(marks) = marks {
+        comments.styles.adopt_marks(&marks.comments().styles);
+    }
     let mut changed = normalize_v8_private_ip_alias(&mut root, migrate)?;
 
     // Empty legacy structs have no leaf fields to move. Preserve them as empty v8 mappings; null
@@ -1037,10 +1058,12 @@ pub fn normalize_config_layout(data: &[u8], migrate: bool) -> Result<(Vec<u8>, b
 /// Pre-write step of the management `WriteConfig`: a document in any v8 layout (including the
 /// historical spellings) is re-normalized to the latest one; other documents pass through. A
 /// document that does not parse is an error.
-pub fn normalize_for_write(data: &[u8]) -> Result<Vec<u8>> {
+pub fn normalize_for_write(data: &[u8], marks: Option<&crate::DocComments>) -> Result<Vec<u8>> {
     let text = utf8(data)?;
     match parse_yaml(text)? {
-        Some(root) if is_v8_config_layout(&root) => Ok(normalize_config_layout(data, true)?.0),
+        Some(root) if is_v8_config_layout(&root) => {
+            Ok(normalize_config_layout_inner(data, true, marks)?.0)
+        }
         _ => Ok(data.to_vec()),
     }
 }

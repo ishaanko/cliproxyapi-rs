@@ -41,6 +41,7 @@ pub fn scenarios(mock_port: u16) -> Vec<Scenario> {
     let mut out = vec![];
     auth(&mut out);
     config(&mut out);
+    v8_aliases(&mut out);
     lists(&mut out);
     auth_files(&mut out, mock_port);
     observability(&mut out, mock_port);
@@ -145,6 +146,97 @@ fn config(out: &mut Vec<Scenario>) {
             mgmt(HttpReq::put(&format!("{V0}/debug"), json!({}))),
             get(&format!("{V0}/logging-to-file")),
             get(&format!("{V0}/usage-statistics-enabled")),
+        ],
+    ));
+}
+
+/// Historical v8 aliases (`oauth.providers.*` spellings of the shared upstream settings and the
+/// client options) and the transient `auth_index` of v8 api-keys entries.
+fn v8_aliases(out: &mut Vec<Scenario>) {
+    let s = |id: &str, desc: &str, steps: Vec<Req>| Scenario::new(format!("mgmt.config.{id}"), desc, script_ok(), steps);
+    let cfg = |path: &str| format!("{V8}/config/{path}");
+    out.push(s(
+        "v8_historical_paths",
+        "historical oauth.providers paths read, merge and delete the shared upstream settings",
+        vec![
+            mgmt(HttpReq::put(&cfg("upstream/codex/response-steering"), json!(true))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("oauth/providers/codex/response-steering")),
+            mgmt(HttpReq::patch(&cfg("oauth/providers/codex/stream-bootstrap-timeout"), json!("10s"))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream/codex")),
+            mgmt(HttpReq::put(&cfg("oauth/providers/claude/header-defaults/timezone"), json!("Asia/Shanghai"))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream/claude")),
+            get(&cfg("oauth/providers/codex")),
+            mgmt(HttpReq::put(&cfg("oauth/providers/xai/inject-x-search"), Value::Null)),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream/xai/inject-x-search")),
+            mgmt(HttpReq::delete(&cfg("oauth/providers/codex/response-steering"))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream/codex/response-steering")),
+            get(&cfg("upstream/codex")),
+            get(&format!("{V0}/config")),
+        ],
+    ));
+    out.push(s(
+        "v8_historical_client_path",
+        "historical spellings of client.codex.optimize-multi-agent-v2",
+        vec![
+            mgmt(HttpReq::put(&cfg("providers/codex/optimize-multi-agent-v2"), json!(true))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("client/codex")),
+            get(&cfg("oauth/providers/codex/optimize-multi-agent-v2")),
+            mgmt(HttpReq::put(&cfg("codex/optimize-multi-agent-v2"), json!(false))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("client/codex/optimize-multi-agent-v2")),
+        ],
+    ));
+    out.push(s(
+        "v8_historical_body",
+        "historical oauth.providers bodies on PATCH and PUT of the whole config",
+        vec![
+            mgmt(HttpReq::patch(&format!("{V8}/config"), json!({"oauth": {"providers": {"codex": {"response-steering": true, "header-defaults": {"user-agent": "oauth-agent"}}}}}))),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream")),
+            get(&cfg("oauth/providers/codex/header-defaults")),
+            mgmt(HttpReq::patch(
+                &format!("{V8}/config"),
+                json!({"oauth": {"providers": {"claude": {"header-defaults": null}}}, "upstream": {"claude": {"model-level-cooling": true}}}),
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("upstream")),
+            get(&format!("{V0}/config")),
+        ],
+    ));
+    out.push(s(
+        "v8_upstream_invalid",
+        "invalid shared upstream values are rejected at both paths",
+        vec![
+            mgmt(HttpReq::put(&cfg("upstream/codex/stream-bootstrap-buffering"), json!("invalid"))),
+            mgmt(HttpReq::put(&cfg("oauth/providers/codex/stream-bootstrap-buffering"), json!("invalid"))),
+            get(&cfg("upstream")),
+        ],
+    ));
+    out.push(s(
+        "v8_api_keys_auth_index",
+        "auth_index is injected into v8 api-keys reads and never persisted",
+        vec![
+            get(&cfg("api-keys/codex")),
+            mgmt(HttpReq::put(
+                &cfg("api-keys/codex"),
+                json!([{"name": "edge", "base-url": "https://api.openai.invalid", "keys": [{"api-key": "sk-e2e-edge", "auth_index": "bogus"}, {"api-key": "sk-e2e-edge-2", "auth-index": "bogus"}]}]),
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("api-keys/codex")),
+            get(&format!("{V8}/config.yaml")),
+            mgmt(HttpReq::patch(
+                &format!("{V8}/config"),
+                json!({"api-keys": {"claude": [{"name": "edge-claude", "base-url": "https://api.anthropic.invalid", "keys": [{"api-key": "sk-e2e-claude", "auth_index": "bogus"}]}]}}),
+            )),
+            Req::Pause(SETTLE_MS),
+            get(&cfg("api-keys")),
+            get(&format!("{V8}/config.yaml")),
         ],
     ));
 }

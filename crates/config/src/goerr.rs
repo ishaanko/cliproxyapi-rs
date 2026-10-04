@@ -43,6 +43,7 @@ fn parse_mismatch(message: &str) -> Option<Mismatch> {
         "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize" => "int",
         "f32" | "f64" => "float64",
         "bool" => "bool",
+        "a" if expected.starts_with("a boolean") => "bool",
         "a" if expected.starts_with("a string") => "string",
         "a" if expected.starts_with("a sequence") => "[]interface {}",
         "a" if expected.starts_with("a map") => "map[string]interface {}",
