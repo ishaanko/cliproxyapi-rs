@@ -436,14 +436,11 @@ fn empty_legacy_containers_move_to_v8_paths() {
             "codex-header-defaults",
             "oauth.providers.codex.header-defaults",
         ),
-        ("claude", "oauth.providers.claude"),
-        ("claude-code", "oauth.providers.claude.claude-code"),
-        (
-            "claude-header-defaults",
-            "oauth.providers.claude.header-defaults",
-        ),
+        ("claude", "upstream.claude"),
+        ("claude-code", "upstream.claude"),
+        ("claude-header-defaults", "upstream.claude.header-defaults"),
         ("antigravity", "oauth.providers.antigravity"),
-        ("xai", "oauth.providers.xai"),
+        ("xai", "upstream.xai"),
         ("devin", "oauth.providers.devin"),
     ];
     for (old, current) in sections {
@@ -885,9 +882,10 @@ api-keys:
         !saved.contains("# second") && !saved.contains("# group one") && !saved.contains("# a1"),
         "{saved}"
     );
-    // The rebuilt group takes over the comments of the group that moved up.
+    // The rebuilt group takes over the comments of the group that moved up. A v8 file is saved in
+    // the latest layout (4-space indent), even by a v0 save.
     assert!(
-        saved.contains("# bee\n# key head\n    - name: gemini-1"),
+        saved.contains("# bee\n# key head\n        - name: gemini-1"),
         "{saved}"
     );
     assert!(

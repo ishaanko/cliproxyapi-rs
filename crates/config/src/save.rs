@@ -13,8 +13,8 @@ use serde_yaml_ng::{Mapping, Value};
 use crate::comments::{CPath, Comments, Seg, dotted};
 use crate::error::{ConfigError, Result};
 use crate::layout::{
-    KEY_FAMILIES, family_comments_to_legacy, flatten_v8_with_comments, group_legacy_keys,
-    move_family_comments, normalize_config_layout, render_yaml, v8_paths,
+    CLIENT_PATHS, KEY_FAMILIES, aliases, family_comments_to_legacy, flatten_v8, group_legacy_keys,
+    is_v8_config_layout, move_family_comments, normalize_config_layout, render_yaml, v8_paths,
 };
 use crate::load::{decode_config, parse_config_bytes};
 use crate::types::*;
@@ -42,7 +42,8 @@ fn read_text(path: &Path) -> Result<String> {
 
 /// Writes `cfg` back to `path`, preserving comments and key order of the existing file. With
 /// `migrate_v8` the result is also migrated to the v8 layout (see [`normalize_config_layout`]) and
-/// `cfg.oauth_only_fields` is synchronised with the migrated document.
+/// `cfg.oauth_only_fields` is synchronised with the migrated document. Documents already in a v8
+/// layout (including historical v8 spellings) are always saved in the latest layout.
 pub fn save_config_preserve_comments(
     path: impl AsRef<Path>,
     cfg: &mut Config,
@@ -58,7 +59,8 @@ pub fn save_config_preserve_comments(
     }
     // `root` is the legacy-named view of the file; `layout` remembers which fields were v8.
     let mut comments = Comments::extract(&data);
-    let mut root = flatten_v8_with_comments(&layout, Some(&mut comments))?;
+    let mut root = flatten_v8(&layout)?;
+    let migrate_v8 = migrate_v8 || is_v8_config_layout(&layout);
     let generated = serde_yaml_ng::to_value(&*cfg)?;
     if !generated.is_mapping() {
         return Err(ConfigError::invalid("expected generated root mapping node"));
@@ -103,6 +105,23 @@ pub fn save_config_preserve_comments(
         &mut comments,
         stashed,
     )?;
+    if !migrate_v8 {
+        // Keep historical client fields at their original legacy paths. Otherwise the generated
+        // client path makes the next v0 save look like a v8 file.
+        for (old, current) in CLIENT_PATHS {
+            if yaml_path(&layout, old).is_none()
+                || yaml_path(&layout, current).is_some()
+                || yaml_path(&root, current).is_none()
+            {
+                continue;
+            }
+            comments.move_field(&root, current, old);
+            if let Some(value) = yaml_path(&root, current).cloned() {
+                delete_yaml_path(&mut root, current);
+                set_yaml_path(&mut root, old, value);
+            }
+        }
+    }
 
     let mut out = render_yaml(&root, &comments)?;
     let mut migrated = None;
@@ -575,9 +594,28 @@ struct FamilyStash {
 /// their legacy name, and each flattened legacy entry takes the comments of the group/key it came
 /// from (the originals are kept in the returned stash).
 fn comments_to_legacy(comments: &mut Comments, layout: &Value) -> Vec<FamilyStash> {
-    for (old, current) in v8_paths() {
+    // Sequential moves on a working copy: the last field leaving a section carries the comments
+    // of the ancestors it empties.
+    let mut doc = layout.clone();
+    for (old, current) in aliases() {
+        if yaml_path(&doc, old).is_none() {
+            continue;
+        }
         if yaml_path(layout, current).is_some() {
-            comments.move_prefix(&dotted(current), &dotted(old));
+            // The canonical field wins; the historical one is dropped with its comments.
+            comments.remove_prefix(&dotted(old));
+        } else {
+            let legacy = v8_paths()
+                .find(|(_, cur)| cur == current)
+                .map_or(*current, |(legacy, _)| *legacy);
+            comments.move_field(&doc, old, legacy);
+        }
+        delete_yaml_path(&mut doc, old);
+    }
+    for (old, current) in v8_paths() {
+        if yaml_path(&doc, current).is_some() {
+            comments.move_field(&doc, current, old);
+            delete_yaml_path(&mut doc, current);
         }
     }
     let mut stashed = Vec::new();
@@ -615,9 +653,9 @@ fn restore_v8_layout(
         let Some(value) = legacy_path(root, old).cloned() else {
             continue;
         };
+        comments.move_field(root, old, current);
         delete_yaml_path(root, old);
         set_yaml_path(root, current, value);
-        comments.move_prefix(&dotted(old), &dotted(current));
     }
     let mut baseline: Option<Value> = None;
     for (old, family) in KEY_FAMILIES {

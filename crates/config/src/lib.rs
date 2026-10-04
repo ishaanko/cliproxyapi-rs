@@ -34,8 +34,8 @@ pub use env::load_dotenv;
 pub use error::{ConfigError, Result};
 pub use layout::marshal_document;
 pub use layout::{
-    MAX_CREDENTIAL_WEIGHT, WarnFn, normalize_config_layout, set_v8_migration_warn_func,
-    validate_v8_config,
+    MAX_CREDENTIAL_WEIGHT, WarnFn, is_v8_config_layout, normalize_config_layout,
+    set_v8_migration_warn_func, v8_alias_paths, validate_v8_config,
 };
 pub use load::{
     load_config, load_config_optional, looks_like_bcrypt, normalize_home_port, parse_config_bytes,

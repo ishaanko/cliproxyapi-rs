@@ -12,6 +12,10 @@
 
 use std::collections::BTreeMap;
 
+use serde_yaml_ng::Value;
+
+use crate::yamlpath::yaml_path;
+
 /// One step of a document path.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Seg {
@@ -517,6 +521,39 @@ impl Comments {
             if let (Some(new), Some(v)) = (rekey(&old), self.line.remove(&old)) {
                 self.line.insert(new, v);
             }
+        }
+    }
+
+    /// [`Self::move_prefix`] for a field whose single-child ancestors disappear with the move
+    /// (`doc` is the document before it): their head and line comments become head comments of
+    /// the moved field, outermost first, like `copyYAMLPathValue`.
+    pub(crate) fn move_field(&mut self, doc: &Value, from: &str, to: &str) {
+        let parts: Vec<&str> = from.split('.').collect();
+        let mut carried: Vec<String> = Vec::new();
+        for end in (1..parts.len()).rev() {
+            let ancestor = parts[..end].join(".");
+            let single = yaml_path(doc, &ancestor)
+                .and_then(Value::as_mapping)
+                .is_some_and(|m| m.len() == 1);
+            if !single {
+                break;
+            }
+            let path = dotted(&ancestor);
+            let mut lines: Vec<String> = Vec::new();
+            if let Some(head) = self.head.remove(&path) {
+                lines.extend(head.into_iter().filter(|l| !l.is_empty()));
+            }
+            if let Some(line) = self.line.remove(&path) {
+                lines.push(line);
+            }
+            carried.splice(0..0, lines);
+        }
+        self.move_prefix(&dotted(from), &dotted(to));
+        if !carried.is_empty() {
+            self.head
+                .entry(dotted(to))
+                .or_default()
+                .splice(0..0, carried);
         }
     }
 

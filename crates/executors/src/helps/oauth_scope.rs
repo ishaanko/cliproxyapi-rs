@@ -27,12 +27,12 @@ mod tests {
         assert!(Arc::ptr_eq(&config_for_api_key(&plain), &plain));
 
         let mut scoped = Config::default();
-        scoped.codex.disable_codex_cloaking = true;
-        scoped.oauth_only_fields.insert("codex.disable-codex-cloaking".into());
+        scoped.codex_header_defaults.user_agent = "oauth-agent".into();
+        scoped.oauth_only_fields.insert("codex-header-defaults.user-agent".into());
         let scoped = Arc::new(scoped);
         let view = config_for_api_key(&scoped);
         assert!(!Arc::ptr_eq(&view, &scoped));
-        assert!(!view.codex.disable_codex_cloaking);
-        assert!(scoped.codex.disable_codex_cloaking);
+        assert!(view.codex_header_defaults.user_agent.is_empty());
+        assert_eq!(scoped.codex_header_defaults.user_agent, "oauth-agent");
     }
 }
